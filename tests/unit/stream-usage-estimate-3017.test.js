@@ -32,7 +32,17 @@ describe("a completed stream without upstream usage is estimated (#3017)", () =>
   });
 
   it("the interrupted path still estimates too", () => {
-    expect(src).toContain("if (!hasValidUsage(partialUsage) && streamState.content) {");
+    // The inline estimate moved into resolvePartialUsage; the interrupted
+    // path (onStreamAbandoned) must route through it.
+    const abandoned = src.indexOf("const onStreamAbandoned =");
+    expect(abandoned).toBeGreaterThan(0);
+    expect(src.indexOf("resolvePartialUsage(streamState", abandoned)).toBeGreaterThan(abandoned);
+    const helper = readFileSync(
+      new URL("../../open-sse/utils/usageTracking.js", import.meta.url),
+      "utf8",
+    );
+    expect(helper).toContain("if (!streamState.content) return null;");
+    expect(helper).toContain("return estimateUsage(body, streamState.content.length");
   });
 });
 
