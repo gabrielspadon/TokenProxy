@@ -3,14 +3,13 @@
 // boundary-contract.json "receipt.state.exit": one redacted receipt exists
 // for every non-cache generation. Exercised against the real persistence
 // funnel — saveUsageStats (open-sse/handlers/chatCore/requestDetail.js), which
-// strips the client headroom buffer and gates on nonzero tokens before
+// gates on nonzero tokens before
 // delegating to saveRequestUsage (src/lib/db/repos/usageRepo.js) — through a
 // real temporary SQLite database, matching the sibling cache-accounting gate.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { addBufferToUsage } from "open-sse/utils/usageTracking.js";
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
@@ -115,15 +114,17 @@ describe("receipt.state.exit — one redacted receipt exists for every non-cache
     expect(row.endpoint).toBe("/v1/responses");
   });
 
-  it('mutation "trust estimated cost": billed tokens are the de-buffered real count, never the padded client-facing estimate', async () => {
+  it('mutation "trust estimated cost": the recorded count is the same count the client was handed', async () => {
     const connectionId = "receipt-estimate-conn";
-    const real = { prompt_tokens: 500, completion_tokens: 80, estimated: true };
-    const padded = addBufferToUsage(real); // what the client actually sees, buffer baked in
-    expect(padded.prompt_tokens).toBeGreaterThan(real.prompt_tokens); // sanity: the fixture really is padded
+    // The harness sizes its context window and its compaction trigger from the
+    // usage it is handed, so the recorded number and the client-visible number
+    // must be one number. Any divergence here is the harness reasoning from a
+    // history it thinks is longer or shorter than it is.
+    const usage = { prompt_tokens: 500, completion_tokens: 80, estimated: true };
 
-    saveUsageStats({ provider: "acme", model: "m1", tokens: padded, connectionId, silent: true });
+    saveUsageStats({ provider: "acme", model: "m1", tokens: usage, connectionId, silent: true });
     const row = await waitForRow(connectionId);
-    expect(row.tokens.prompt_tokens).toBe(real.prompt_tokens);
-    expect(row.tokens.prompt_tokens).not.toBe(padded.prompt_tokens);
-  });
+    expect(row.tokens.prompt_tokens).toBe(500);
+    expect(row.tokens.completion_tokens).toBe(80);
+});
 });

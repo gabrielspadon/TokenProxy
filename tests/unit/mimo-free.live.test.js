@@ -4,6 +4,11 @@
  * Hits real endpoints — no mocks. Free provider, safe to call.
  */
 import { describe, it, expect } from "vitest";
+
+// Opt-in only, matches the repo's RUN_E2E convention (translator/real/*.e2e.test.js):
+// this file hits real xiaomimimo.com endpoints with no mock, which the real-io
+// guard now blocks by default. Run explicitly with RUN_LIVE_MIMO=1.
+const RUN = process.env.RUN_LIVE_MIMO === "1";
 import { proxyAwareFetch } from "../../open-sse/utils/proxyFetch.js";
 import { __test__ } from "../../open-sse/executors/mimo-free.js";
 
@@ -43,7 +48,7 @@ async function chatWith(jwt, ua) {
   return proxyAwareFetch(CHAT_URL, { method: "POST", headers, body: JSON.stringify(body) });
 }
 
-describe("MiMo Free bootstrap (live)", () => {
+describe.skipIf(!RUN)("MiMo Free bootstrap (live)", () => {
   it("bootstrap returns 200 with JWT", async () => {
     const { status, jwt } = await bootstrapWith(CHROME_UA);
     expect(status).toBe(200);
@@ -51,7 +56,7 @@ describe("MiMo Free bootstrap (live)", () => {
   });
 });
 
-describe("MiMo Free ended channel (live)", () => {
+describe.skipIf(!RUN)("MiMo Free ended channel (live)", () => {
   // Xiaomi ended the free MiMo channel (#3035): bootstrap still hands out a JWT,
   // but chat answers 400 "Unsupported model" for the old mimo-auto id. Lock that
   // end-state; a revived channel flips this back to 200 and tells us to re-enable

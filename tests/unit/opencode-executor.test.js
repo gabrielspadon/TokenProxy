@@ -1,4 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// opencode.js fires a real `https.get` to icanhazip.com/ip.sb/ifconfig.me on the
+// first buildHeaders() call with a loopback/private IP (public-IP discovery for
+// per-IP quota bucketing). Mocked here so the test never reaches the network;
+// never resolving is fine, the assertions only check the synchronous return.
+vi.mock('https', () => ({ default: { get: () => ({ on: () => {} }) } }));
+
 import { OpenCodeExecutor } from '../../open-sse/executors/opencode.js';
 
 // Regression tests for the OpenCode Free (-free models) 429 fix:
