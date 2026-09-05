@@ -742,14 +742,13 @@ export async function stopDaemon(sudoPassword) {
   // Try non-sudo first
   try { execSync("pkill -x tailscaled", { stdio: "ignore", windowsHide: true, timeout: 3000 }); } catch { /* ignore */ }
 
-  // Check if still alive
-  try { execSync("pgrep -x tailscaled", { stdio: "ignore", windowsHide: true, timeout: 2000 }); } catch { return; } // Dead, done
+  // Still alive? Escalate. Either way the stale socket gets cleaned up.
+  let alive = true;
+  try { execSync("pgrep -x tailscaled", { stdio: "ignore", windowsHide: true, timeout: 2000 }); } catch { alive = false; }
 
-  // Kill with sudo password
-  if (!IS_WINDOWS) {
+  if (alive && !IS_WINDOWS) {
     try { await execWithPassword("pkill -x tailscaled", sudoPassword || ""); } catch { /* ignore */ }
   }
 
-  // Cleanup socket
   try { if (fs.existsSync(TAILSCALE_SOCKET)) fs.unlinkSync(TAILSCALE_SOCKET); } catch { /* ignore */ }
 }
