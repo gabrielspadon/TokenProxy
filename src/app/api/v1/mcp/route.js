@@ -119,7 +119,7 @@ async function resolveOwnStatus(request) {
     // one would return the freshest anonymous entry from ANY caller. Only
     // non-anonymous identities qualify; none matching means no own telemetry.
     if (anonymous) continue;
-    const entry = readContextStatus(idPrefix(hash));
+    const entry = await readContextStatus(idPrefix(hash));
     if (entry && (!freshest || String(entry.updatedAt) > String(freshest.updatedAt))) {
       freshest = entry;
     }
@@ -196,7 +196,7 @@ async function handleToolsCall(request, rpc) {
         },
       });
     }
-    entry = readContextStatus(String(sidArg));
+    entry = await readContextStatus(String(sidArg));
   } else {
     entry = await resolveOwnStatus(request);
   }

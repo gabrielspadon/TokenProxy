@@ -98,7 +98,7 @@ export async function handleImageGenerationCore({
       if (error?.name === "AbortError") {
         return createErrorResult(499, "Request aborted");
       }
-      const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
+      const errMsg = formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
       log?.debug?.("IMAGE", `Executor error: ${errMsg}`);
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
     }
@@ -129,7 +129,7 @@ export async function handleImageGenerationCore({
       body: serializeRequestBody(requestBody),
     });
   } catch (error) {
-    const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
+    const errMsg = formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("IMAGE", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
   }
@@ -172,7 +172,7 @@ export async function handleImageGenerationCore({
 
   if (!providerResponse.ok) {
     const { statusCode, message } = await parseUpstreamError(providerResponse);
-    const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
+    const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("IMAGE", `Provider error: ${errMsg}`);
     return createErrorResult(statusCode, errMsg);
   }

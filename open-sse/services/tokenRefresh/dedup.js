@@ -98,6 +98,15 @@ export async function dedupRefresh(provider, oldToken, fn, log, conn = null) {
     } catch (err) {
       refreshDedupCache.delete(key);
       throw err;
+    } finally {
+      // The success result stays cached for its TTL, then the entry is
+      // removed so the map cannot grow one entry per distinct token forever.
+      if (entry.expiresAt) {
+        const t = setTimeout(() => {
+          if (refreshDedupCache.get(key) === entry) refreshDedupCache.delete(key);
+        }, REFRESH_RESULT_TTL_MS);
+        t.unref?.();
+      }
     }
   })();
   refreshDedupCache.set(key, entry);

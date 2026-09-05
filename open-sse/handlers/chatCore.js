@@ -1676,7 +1676,7 @@ export async function handleChatCore({
     }
     const errMsg = isAntigravity
       ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
-      : formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
+      : formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
     if (isBodyReadTimeoutError(error)) {
       reqSummary("failed", { rid, conn: connPrefix, status: HTTP_STATUS.GATEWAY_TIMEOUT, why: "body-timeout", ...saverFields });
       return withSaverHeaders(createErrorResult(
@@ -2004,7 +2004,7 @@ export async function handleChatCore({
 
     const errMsg = provider === "antigravity"
       ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
-      : formatProviderError(new Error(message), provider, model, safeStatusCode);
+      : formatProviderError(new Error(message), safeStatusCode);
     if (log?.errorLine) {
       const urlStr = provider !== "antigravity" && providerUrl ? `\n    URL: ${providerUrl}` : "";
       log.errorLine(

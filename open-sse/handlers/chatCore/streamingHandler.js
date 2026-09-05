@@ -313,10 +313,8 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
           const status = typeof rawStatus === "number" && rawStatus >= 400 && rawStatus < 600 ? rawStatus : 502;
           if (log?.errorLine) log.errorLine(reqTag, "✗", `ERROR ${status} · ${provider}/${model} · ${safeErrMsg}`);
           streamController?.handleError?.(new Error(safeErrMsg));
-          if (isAntigravityJsonRpc) {
-            try { await reader.cancel(); } catch {}
-            try { reader.releaseLock?.(); } catch {}
-          }
+          try { await reader?.cancel?.(); } catch {}
+          try { reader?.releaseLock?.(); } catch {}
           return failStream(status, safeErrMsg, "upstream-error-object");
         }
       } catch {
@@ -429,7 +427,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   const completionAwareController = {
     ...streamController,
     handleComplete: () => {
-      streamController.handleComplete();
+      streamController?.handleComplete?.();
       deliverNormalCompletion();
     },
   };

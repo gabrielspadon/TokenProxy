@@ -233,7 +233,7 @@ describe("schema distillation saver stage (chatCore pipeline)", () => {
   it("sid-keyed context_status snapshot is written with the final telemetry", async () => {
     const result = await drive({ schemaDistillEnabled: true, sid: "0badf00d", requestId: "0d000104" });
     expect(result.success).toBe(true);
-    const entry = readContextStatus("0badf00d");
+    const entry = await readContextStatus("0badf00d");
     expect(entry).not.toBeNull();
     expect(entry.rid).toBe("0d000104");
     expect(entry.ctxTokens).toBe(

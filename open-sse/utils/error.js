@@ -1,5 +1,6 @@
 import { ERROR_TYPES, DEFAULT_ERROR_MESSAGES, MAX_RATE_LIMIT_COOLDOWN_MS } from "../config/errorConfig.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { redactSecretsText } from "./redact.js";
 import { RID_HEADER } from "../../src/shared/observability/decide.js";
 
 /**
@@ -123,18 +124,6 @@ export function createCallerAbortResult() {
     error,
     response: errorResponse(status, error),
   };
-}
-
-/**
- * Write error to SSE stream (for streaming)
- * @param {WritableStreamDefaultWriter} writer - Stream writer
- * @param {number} statusCode - HTTP status code
- * @param {string} message - Error message
- */
-export async function writeStreamError(writer, statusCode, message) {
-  const errorBody = buildErrorBody(statusCode, message);
-  const encoder = new TextEncoder();
-  await writer.write(encoder.encode(`data: ${JSON.stringify(errorBody)}\n\n`));
 }
 
 /**
@@ -295,7 +284,7 @@ export async function parseUpstreamError(response, executor = null) {
     try {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
-        const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
+        const msg = redactSecretsText(parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`);
         // Executor parse wins; fill resetsAtMs from generic patterns when absent
         const resetsAtMs = parsed.resetsAtMs ?? (
           response.status === 429
@@ -332,7 +321,11 @@ export async function parseUpstreamError(response, executor = null) {
     message = bodyText;
   }
 
-  const messageStr = typeof message === "string" ? message : JSON.stringify(message);
+  // The upstream body is untrusted free text that reaches client-visible error
+  // strings and logs; a provider echoing an Authorization header would leak it.
+  const messageStr = redactSecretsText(
+    typeof message === "string" ? message : JSON.stringify(message),
+  );
   let finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
   // Annotate OpenRouter "Stealth" (or any upstream whose routing table has an
@@ -403,12 +396,10 @@ export function unavailableResponse(statusCode, message, retryAfter, retryAfterH
 /**
  * Format provider error with context
  * @param {Error} error - Original error
- * @param {string} provider - Provider name
- * @param {string} model - Model name
  * @param {number|string} statusCode - HTTP status code or error code
  * @returns {string} Formatted error message
  */
-export function formatProviderError(error, provider, model, statusCode) {
+export function formatProviderError(error, statusCode) {
   const code = statusCode || error.code || "FETCH_FAILED";
   const message = error.message || "Unknown error";
   // Expose low-level cause (e.g. UND_ERR_SOCKET, ECONNRESET, ETIMEDOUT) for diagnosing fetch failures

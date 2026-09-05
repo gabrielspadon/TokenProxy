@@ -168,7 +168,7 @@ describe('cache-epoch saturation on oversized bodies (#trackCacheEpoch)', () => 
     // Same body serialized again on the second call.
     await drive('csat0002');
 
-    const entry = readContextStatus(SID);
+    const entry = await readContextStatus(SID);
     expect(entry).not.toBeNull();
 
     const finalSerialized = JSON.stringify(JSON.parse(mocks.dispatched));

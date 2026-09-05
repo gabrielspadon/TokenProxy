@@ -152,7 +152,7 @@ export async function handleRerankCore({
         : {}),
     });
   } catch (error) {
-    const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
+    const errMsg = formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("RERANK", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
   }
@@ -189,7 +189,7 @@ export async function handleRerankCore({
 
   if (!providerResponse.ok) {
     const { statusCode, message } = await parseUpstreamError(providerResponse);
-    const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
+    const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("RERANK", `Provider error: ${errMsg}`);
     return createErrorResult(statusCode, errMsg);
   }

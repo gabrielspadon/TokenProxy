@@ -28,7 +28,7 @@ function strOrNull(value) {
 export async function GET() {
   let stored;
   try {
-    stored = readAllContextStatuses();
+    stored = await readAllContextStatuses();
   } catch (e) {
     // Same honesty contract as /api/token-saver/stats: a read that failed
     // measured nothing, so fail loudly instead of replying 200 with an

@@ -5,6 +5,17 @@ import {
 } from "../config/runtimeConfig.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
+const keepaliveEncoder = new TextEncoder();
+
+// A controller may arrive without isConnected (a test double, or a caller
+// wiring a plain object); fall back to the abort signal it does carry rather
+// than throwing inside a stream pull.
+function controllerIsConnected(sc) {
+  return typeof sc?.isConnected === "function"
+    ? sc.isConnected()
+    : !sc?.signal?.aborted;
+}
+
 // Get HH:MM:SS timestamp
 function getTimeString() {
   return new Date().toLocaleTimeString("en-US", {
@@ -268,7 +279,7 @@ export function createDisconnectAwareStream(
         return;
       }
 
-      if (!streamController.isConnected()) {
+      if (!controllerIsConnected(streamController)) {
         if (terminalObserver && !downstreamCancelled && !terminalObserver.sawTerminal()) {
           terminateIncomplete(new Error("stream ended before terminal event"));
         } else {
@@ -299,7 +310,7 @@ export function createDisconnectAwareStream(
           terminateCallerAbort();
           return;
         }
-        const wasConnected = streamController.isConnected();
+        const wasConnected = controllerIsConnected(streamController);
         // Controller already closed = downstream ended; not an upstream error, skip noisy log.
         const msg0 = error?.message || "";
         const isControllerClosed =
@@ -365,8 +376,8 @@ export function createDisconnectAwareStream(
       removeCallerAbortListener = null;
       streamController.handleDisconnect(reason || "cancelled", terminalDetail());
       terminalObserver?.release?.();
-      reader.cancel();
-      writer.abort();
+      reader.cancel().catch(() => {});
+      writer.abort().catch(() => {});
     },
   });
 }
@@ -521,7 +532,7 @@ export function pipeWithDisconnect(
     keepaliveTimer = setTimeout(() => {
       keepaliveTimer = null;
       if (keepaliveStopped || !keepaliveController) return;
-      if (!streamController.isConnected()) return;
+      if (!controllerIsConnected(streamController)) return;
       // Backpressure: a negative desiredSize means the queue has grown past the
       // high-water mark because the client is not reading. Skip this beat rather
       // than stacking bytes on a congested socket. A TransformStream readable
@@ -531,7 +542,7 @@ export function pipeWithDisconnect(
       // no drain signal, and the next arm retries one interval later.
       if (!(keepaliveController.desiredSize < 0)) {
         try {
-          keepaliveController.enqueue(new TextEncoder().encode(KEEPALIVE_FRAME));
+          keepaliveController.enqueue(keepaliveEncoder.encode(KEEPALIVE_FRAME));
           heartbeatCount++;
           dbg(tag, `keepalive ping #${heartbeatCount} (silence=${keepaliveMs}ms)`);
         } catch {
@@ -561,7 +572,7 @@ export function pipeWithDisconnect(
   const wrappedController = {
     signal: streamController.signal,
     startTime: streamController.startTime,
-    isConnected: () => streamController.isConnected(),
+    isConnected: () => controllerIsConnected(streamController),
     handleComplete: () => {
       dbg(
         tag,
@@ -570,7 +581,7 @@ export function pipeWithDisconnect(
       clearFirstChunk();
       clearStall();
       stopKeepalive();
-      streamController.handleComplete();
+      streamController.handleComplete?.();
     },
     handleError: (e) => {
       dbg(
@@ -581,7 +592,7 @@ export function pipeWithDisconnect(
       clearStall();
       stopKeepalive();
       if (terminalObserver && terminateWithTerminal?.(e)) return;
-      streamController.handleError(e);
+      streamController.handleError?.(e);
     },
     handleDisconnect: (r, detail) => {
       dbg(
@@ -591,7 +602,7 @@ export function pipeWithDisconnect(
       clearFirstChunk();
       clearStall();
       stopKeepalive();
-      streamController.handleDisconnect(r, {
+      streamController.handleDisconnect?.(r, {
         up: `${chunkCount}c/${totalBytes}b`,
         ...detail,
       });
@@ -600,7 +611,7 @@ export function pipeWithDisconnect(
       clearFirstChunk();
       clearStall();
       stopKeepalive();
-      streamController.abort();
+      streamController.abort?.();
     },
   };
 

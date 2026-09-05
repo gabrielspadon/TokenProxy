@@ -3,10 +3,10 @@
 // DATA_DIR/token-saver/, LRU-capped at 512 sessions, atomic tmp+rename writes,
 // mode 0600 (same discipline as tokenSaver/events.js). Telemetry only: the
 // entry carries byte/token counts and flags, never prompts or bodies.
-// Every operation is best-effort sync fs — a failure here must never reach
+// Every operation is best-effort async fs — a failure here must never reach
 // the request path, so all throws are swallowed inside this module.
 
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 // RELATIVE, not '@/': chatCore.js reaches this module under plain node, where
 // the alias does not resolve (same rule as decide.js).
@@ -73,10 +73,10 @@ function sanitize(entry) {
   return out;
 }
 
-function readAll() {
+async function readAll() {
   let parsed;
   try {
-    parsed = JSON.parse(fs.readFileSync(storeFile(), "utf8"));
+    parsed = JSON.parse(await fs.readFile(storeFile(), "utf8"));
   } catch {
     return []; // absent or corrupt file: start empty, never throw
   }
@@ -90,22 +90,29 @@ function readAll() {
   return out;
 }
 
-function writeAll(entries) {
+async function writeAll(entries) {
   const tmp = `${storeFile()}.${process.pid}.${tmpCounter++}.tmp`;
-  fs.mkdirSync(baseDir(), { recursive: true });
-  fs.writeFileSync(tmp, JSON.stringify({ v: 1, entries }), "utf8");
+  await fs.mkdir(baseDir(), { recursive: true });
+  await fs.writeFile(tmp, JSON.stringify({ v: 1, entries }), "utf8");
   try {
-    fs.chmodSync(tmp, 0o600);
+    await fs.chmod(tmp, 0o600);
   } catch {
     /* best-effort */
   }
-  fs.renameSync(tmp, storeFile());
+  await fs.rename(tmp, storeFile());
   try {
-    fs.chmodSync(storeFile(), 0o600);
+    await fs.chmod(storeFile(), 0o600);
   } catch {
     /* best-effort */
   }
 }
+
+// In-process write serialization: every write chains onto the tail, so two
+// concurrent writers in this process can no longer interleave their
+// read-merge-rename cycles (last write wins, both merges observed). Readers
+// await the tail for read-after-write consistency.
+// ponytail: single in-module chain; cross-process races keep the ENOENT retry.
+let writeQueue = Promise.resolve();
 
 // Upsert one session's telemetry. LRU: the rewritten entry moves to the tail
 // (newest), the oldest head drops once the cap is exceeded. Order in the file
@@ -116,8 +123,8 @@ export function writeContextStatus(sid, fields = {}) {
     // One full attempt is read entries, apply this write, rename. An
     // interleaved writer can win the rename in between (ENOENT on ours);
     // retry once from a fresh read so the update is never lost silently.
-    const applyOnce = () => {
-      const entries = readAll();
+    const applyOnce = async () => {
+      const entries = await readAll();
       // Merge over the session's existing entry: the pre-dispatch write
       // carries the estimate and the cache epoch, the post-response write
       // carries only what the provider reported, and a reader needs both.
@@ -135,23 +142,28 @@ export function writeContextStatus(sid, fields = {}) {
       const rest = entries.filter((e) => e.sid !== sid);
       rest.push(next);
       while (rest.length > MAX_ENTRIES) rest.shift();
-      writeAll(rest);
+      await writeAll(rest);
     };
-    try {
-      applyOnce();
-    } catch (err) {
-      if (err?.code !== "ENOENT") throw err;
-      applyOnce();
-    }
+    writeQueue = writeQueue.then(async () => {
+      try {
+        await applyOnce();
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+        await applyOnce();
+      }
+    }).catch(() => {
+      /* telemetry must never break the request path */
+    });
   } catch {
     /* telemetry must never break the request path */
   }
 }
 
-export function readContextStatus(sid) {
+export async function readContextStatus(sid) {
   try {
     if (!SID_RE.test(String(sid || ""))) return null;
-    const entries = readAll();
+    await writeQueue;
+    const entries = await readAll();
     for (let i = entries.length - 1; i >= 0; i--) {
       if (entries[i].sid === sid) return entries[i];
     }
@@ -163,9 +175,10 @@ export function readContextStatus(sid) {
 
 // Full snapshot, newest last. Used by the MCP route when scanning candidates
 // and by tests.
-export function readAllContextStatuses() {
+export async function readAllContextStatuses() {
   try {
-    return readAll();
+    await writeQueue;
+    return await readAll();
   } catch {
     return [];
   }
