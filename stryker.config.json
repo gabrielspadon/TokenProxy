@@ -48,7 +48,15 @@
     "tests/unit/zenmux-free-body-and-branches.test.js",
     "tests/unit/token-refresh-credential-fields.test.js",
     "tests/unit/responses-transformer-reasoning-and-misc.test.js",
-    "tests/unit/openai-to-cursor-more.test.js"
+    "tests/unit/openai-to-cursor-more.test.js",
+    "tests/unit/zenmux-free-remaining.test.js",
+    "tests/unit/responses-transformer-toolcall-init.test.js",
+    "tests/unit/openai-to-cursor-remaining.test.js",
+    "tests/unit/token-refresh-check-and-refresh.test.js",
+    "tests/unit/token-refresh-credential-field-guards.test.js",
+    "tests/unit/token-refresh-private-helpers.test.js",
+    "tests/unit/token-refresh-log-and-merge.test.js",
+    "tests/unit/responses-transformer-flush-and-buffer.test.js"
   ],
   "coverageAnalysis": "perTest",
   "concurrency": 4,
