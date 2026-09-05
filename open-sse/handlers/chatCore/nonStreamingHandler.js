@@ -6,7 +6,7 @@ import { withGenerationIdHeader } from "../../utils/generationId.js";
 import { rememberThoughtSignature } from "../../translator/concerns/thoughtSignature.js";
 import { canonicalEchoModel } from "../../services/model.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
-import { addBufferToUsage, claudeUsageToOpenAI, filterUsageForFormat } from "../../utils/usageTracking.js";
+import { claudeUsageToOpenAI, filterUsageForFormat } from "../../utils/usageTracking.js";
 import { createCallerAbortResult, createErrorResult, isCallerAbortError } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import {
@@ -896,7 +896,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }
 
   if (translatedResponse?.usage) {
-    translatedResponse.usage = filterUsageForFormat(addBufferToUsage(translatedResponse.usage), sourceFormat);
+    translatedResponse.usage = filterUsageForFormat(translatedResponse.usage, sourceFormat);
   }
 
   // Strip reasoning_content only when content is non-empty.

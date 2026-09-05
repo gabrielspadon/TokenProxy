@@ -18,8 +18,6 @@ export const COLORS = {
   cyan: "\x1b[36m"
 };
 
-// Buffer tokens to prevent context errors
-const BUFFER_TOKENS = 2000;
 const EXACT_COST_FIELDS = ["cost_usd", "cost_in_usd", "cost_in_usd_ticks"];
 
 // Reasoning is reported inside completion/output tokens, never in addition to
@@ -68,36 +66,6 @@ function getTimeString() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-/**
- * Add buffer tokens to usage to prevent context errors
- * @param {object} usage - Usage object (any format)
- * @returns {object} Usage with buffer added
- */
-export function addBufferToUsage(usage) {
-  if (!usage || typeof usage !== "object") return usage;
-
-  const result = { ...usage };
-
-  // Claude format
-  if (result.input_tokens !== undefined) {
-    result.input_tokens += BUFFER_TOKENS;
-  }
-
-  // OpenAI format
-  if (result.prompt_tokens !== undefined) {
-    result.prompt_tokens += BUFFER_TOKENS;
-  }
-
-  // Calculate or update total_tokens
-  if (result.total_tokens !== undefined) {
-    result.total_tokens += BUFFER_TOKENS;
-  } else if (result.prompt_tokens !== undefined && result.completion_tokens !== undefined) {
-    // Calculate total_tokens if not exists
-    result.total_tokens = result.prompt_tokens + result.completion_tokens;
-  }
-
-  return result;
-}
 
 export function filterUsageForFormat(usage, targetFormat) {
   if (!usage || typeof usage !== "object") return usage;
@@ -527,33 +495,6 @@ export function estimateInputTokens(body) {
   }
 }
 
-/**
- * Remove the client headroom buffer from an ESTIMATED usage object.
- *
- * The buffer at addBufferToUsage is deliberate client-facing headroom: it keeps
- * a client's own context counter from running the request into a context error.
- * Wire-reported usage carries it only on the copy handed to the client, and
- * stream.js keeps the raw value on state.usage "for logging" — so recorded cost
- * is the real number.
- *
- * Estimated usage has no such split: formatUsage bakes the buffer in, and the
- * same object is both sent to the client and assigned to state.usage, so it
- * reaches cost as +2000 phantom input tokens per request. Strip it at the one
- * recording funnel rather than at each of the producers, which keeps the client
- * headroom intact and makes estimated and wire usage bill the same way.
- *
- * @param {object} usage - Usage object carrying `estimated: true`
- * @returns {object} Usage with the buffer removed, floored at 0
- */
-export function stripBufferFromUsage(usage) {
-  if (!usage || typeof usage !== "object" || !usage.estimated) return usage;
-  const result = { ...usage };
-  const debuffer = (n) => Math.max(0, (n ?? 0) - BUFFER_TOKENS);
-  if (result.input_tokens !== undefined) result.input_tokens = debuffer(result.input_tokens);
-  if (result.prompt_tokens !== undefined) result.prompt_tokens = debuffer(result.prompt_tokens);
-  if (result.total_tokens !== undefined) result.total_tokens = debuffer(result.total_tokens);
-  return result;
-}
 
 /**
  * Estimate output tokens from content length
@@ -572,20 +513,20 @@ export function estimateOutputTokens(contentLength) {
 export function formatUsage(inputTokens, outputTokens, targetFormat) {
   // Claude format uses input_tokens/output_tokens
   if (targetFormat === FORMATS.CLAUDE) {
-    return addBufferToUsage({ 
-      input_tokens: inputTokens, 
-      output_tokens: outputTokens, 
-      estimated: true 
-    });
+    return {
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      estimated: true,
+    };
   }
 
   // Default: OpenAI format (works for openai, gemini, responses, etc.)
-  return addBufferToUsage({
+  return {
     prompt_tokens: inputTokens,
     completion_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
-    estimated: true
-  });
+    estimated: true,
+  };
 }
 
 /**
@@ -605,6 +546,19 @@ export function estimateUsage(body, contentLength, targetFormat = FORMATS.OPENAI
 /**
  * Log usage with cache info (green color)
  */
+/**
+ * Resolve the usage a stream had produced by the time it stopped, falling back to
+ * an estimate from the accumulated content when the provider never sent a usage
+ * frame. A stream that dies early still consumed tokens, and a client that is
+ * handed nothing keeps sizing its context from the last turn that reported.
+ */
+export function resolvePartialUsage(streamState, body, sourceFormat) {
+  if (!streamState) return null;
+  if (hasValidUsage(streamState.usage)) return streamState.usage;
+  if (!streamState.content) return null;
+  return estimateUsage(body, streamState.content.length, sourceFormat || FORMATS.OPENAI);
+}
+
 export function logUsage(provider, usage, model = null, connectionId = null, apiKey = null) {
   if (!usage || typeof usage !== "object") return;
 

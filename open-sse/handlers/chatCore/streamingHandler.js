@@ -11,7 +11,7 @@ import { STREAM_STALL_TIMEOUT_MS } from "../../config/runtimeConfig.js";
 import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamHelpers.js";
 import { peekStreamForContent } from "../../utils/streamContent.js";
 import { buildRequestDetail, extractRequestConfig, saveUsageStats, formatDoneLine, doneFields } from "./requestDetail.js";
-import { hasValidUsage, estimateUsage } from "../../utils/usageTracking.js";
+import { hasValidUsage, estimateUsage, resolvePartialUsage } from "../../utils/usageTracking.js";
 import { saveRequestDetail } from "../../../src/lib/usageDb.js";
 import { decide, req, reqSummary, RID_HEADER } from "../../../src/shared/observability/decide.js";
 import { SSE_HEADERS_CORS as SSE_HEADERS } from "../../utils/sseConstants.js";
@@ -450,7 +450,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   const transformedBody = pipeWithDisconnect(wrappedResponse, transformStream, completionAwareController, {
     onAbortTerminal,
     stallTimeoutMs,
-    terminalObserver: createSseTerminalObserver(emittedFormat),
+    terminalObserver: createSseTerminalObserver(emittedFormat, () => resolvePartialUsage(streamState, body, sourceFormat)),
     callerSignal,
   });
 
@@ -648,10 +648,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     completed = true;
     const detail = `[Streaming interrupted: ${reason || "unknown"}]`;
 
-    let partialUsage = streamState.usage;
-    if (!hasValidUsage(partialUsage) && streamState.content) {
-      partialUsage = estimateUsage(body, streamState.content.length, sourceFormat || FORMATS.OPENAI);
-    }
+    const partialUsage = resolvePartialUsage(streamState, body, sourceFormat);
     const tokens = partialUsage
       ? { ...partialUsage, completion_tokens: partialUsage.completion_tokens ?? partialUsage.output_tokens ?? 0 }
       : { prompt_tokens: 0, completion_tokens: 0 };

@@ -1,7 +1,7 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../src/lib/usageDb.js";
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
 import { COLORS } from "../../utils/stream.js";
-import { canonicalizeUsage, clampReasoningTokens, stripBufferFromUsage } from "../../utils/usageTracking.js";
+import { canonicalizeUsage, clampReasoningTokens } from "../../utils/usageTracking.js";
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -151,13 +151,8 @@ export function summarizeReasoning(translatedBody) {
   return undefined;
 }
 
-export function saveUsageStats({ provider, model, tokens: rawTokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid }) {
-  if (!rawTokens || typeof rawTokens !== "object") return;
-
-  // Estimated usage arrives with the client headroom buffer already baked in
-  // (formatUsage), unlike wire usage whose buffered copy never reaches here.
-  // Strip it so both bill identically. See stripBufferFromUsage.
-  const tokens = stripBufferFromUsage(rawTokens);
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid }) {
+  if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
   const outTokens = tokens.output_tokens ?? tokens.completion_tokens ?? 0;

@@ -7,6 +7,34 @@
 import { copyNonnegativeExactCosts } from "../utils/usageTracking.js";
 
 /**
+ * Apply a terminal event's usage onto the accumulating state. Called for every
+ * terminal event including response.failed: a stream that failed still consumed
+ * tokens upstream, and returning a zeroed usage makes the client's running total
+ * silently diverge from what was actually spent.
+ */
+function applyTerminalUsage(parsed, state) {
+  if (!parsed.response?.usage) return;
+  const u = parsed.response.usage;
+  state.usage.input_tokens = u.input_tokens || u.prompt_tokens || 0;
+  state.usage.output_tokens = u.output_tokens || u.completion_tokens || 0;
+  state.usage.total_tokens = u.total_tokens || (state.usage.input_tokens + state.usage.output_tokens);
+  // Preserve cache + reasoning breakdowns so cost calc and the client see
+  // cached_tokens (a subset of input_tokens) instead of a cache-blind total.
+  const inputDetails = u.input_tokens_details
+    || (u.cached_tokens !== undefined ? { cached_tokens: u.cached_tokens }
+    : u.cache_read_input_tokens !== undefined ? { cached_tokens: u.cache_read_input_tokens } : null);
+  if (inputDetails && typeof inputDetails === "object") {
+    state.usage.input_tokens_details = inputDetails;
+  }
+  const outputDetails = u.output_tokens_details
+    || (u.reasoning_tokens !== undefined ? { reasoning_tokens: u.reasoning_tokens } : null);
+  if (outputDetails && typeof outputDetails === "object") {
+    state.usage.output_tokens_details = outputDetails;
+  }
+  copyNonnegativeExactCosts(u, state.usage, { enumerable: false });
+}
+
+/**
  * Process a single SSE message and update state accordingly.
  */
 function processSSEMessage(msg, state) {
@@ -44,28 +72,10 @@ function processSSEMessage(msg, state) {
         state.incomplete_details = parsed.response.incomplete_details;
       }
     }
-    if (parsed.response?.usage) {
-      const u = parsed.response.usage;
-      state.usage.input_tokens = u.input_tokens || u.prompt_tokens || 0;
-      state.usage.output_tokens = u.output_tokens || u.completion_tokens || 0;
-      state.usage.total_tokens = u.total_tokens || (state.usage.input_tokens + state.usage.output_tokens);
-      // Preserve cache + reasoning breakdowns so cost calc and the client see
-      // cached_tokens (a subset of input_tokens) instead of a cache-blind total.
-      const inputDetails = u.input_tokens_details
-        || (u.cached_tokens !== undefined ? { cached_tokens: u.cached_tokens }
-        : u.cache_read_input_tokens !== undefined ? { cached_tokens: u.cache_read_input_tokens } : null);
-      if (inputDetails && typeof inputDetails === "object") {
-        state.usage.input_tokens_details = inputDetails;
-      }
-      const outputDetails = u.output_tokens_details
-        || (u.reasoning_tokens !== undefined ? { reasoning_tokens: u.reasoning_tokens } : null);
-      if (outputDetails && typeof outputDetails === "object") {
-        state.usage.output_tokens_details = outputDetails;
-      }
-      copyNonnegativeExactCosts(u, state.usage, { enumerable: false });
-    }
+    applyTerminalUsage(parsed, state);
   } else if (eventType === "response.failed") {
     state.status = "failed";
+    applyTerminalUsage(parsed, state);
   }
 }
 

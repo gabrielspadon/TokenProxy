@@ -1,6 +1,7 @@
 // Helpers for OpenAI Responses API streaming termination + event framing
 import { FORMATS } from "../translator/formats.js";
 import { formatSSE } from "./streamHelpers.js";
+import { filterUsageForFormat } from "./usageTracking.js";
 
 // Responses API events that signal the stream has reached a terminal state
 const OPENAI_RESPONSES_TERMINAL_EVENTS = new Set([
@@ -26,8 +27,8 @@ export function isOpenAIResponsesTerminalEvent(eventName, chunk) {
 const sharedEncoder = new TextEncoder();
 
 // Encoded response.failed + [DONE] payload for aborted/stalled Responses passthrough streams
-export function buildAbortedResponsesTerminalBytes() {
-  return sharedEncoder.encode(`${formatIncompleteOpenAIResponsesStreamFailure()}data: [DONE]\n\n`);
+export function buildAbortedResponsesTerminalBytes(usage = null) {
+  return sharedEncoder.encode(`${formatIncompleteOpenAIResponsesStreamFailure(usage)}data: [DONE]\n\n`);
 }
 
 // The early Responses bridge has already committed a 200 SSE response when
@@ -51,7 +52,7 @@ export function buildEarlyResponsesFailureTerminalBytes() {
 }
 
 // Synthesize a response.failed event for streams that close without a terminal event
-export function formatIncompleteOpenAIResponsesStreamFailure() {
+export function formatIncompleteOpenAIResponsesStreamFailure(usage = null) {
   return formatSSE({
     event: "response.failed",
     data: {
@@ -63,7 +64,8 @@ export function formatIncompleteOpenAIResponsesStreamFailure() {
           type: "stream_error",
           code: "stream_disconnected",
           message: "stream closed before response.completed"
-        }
+        },
+        ...(usage ? { usage: filterUsageForFormat(usage, FORMATS.OPENAI_RESPONSES) } : {})
       }
     }
   }, FORMATS.OPENAI_RESPONSES);

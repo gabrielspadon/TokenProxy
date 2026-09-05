@@ -1,4 +1,5 @@
 import { FORMATS } from "../translator/formats.js";
+import { filterUsageForFormat } from "./usageTracking.js";
 import { buildAbortedResponsesTerminalBytes } from "./responsesStreamHelpers.js";
 
 export const MAX_SSE_TERMINAL_RECORD_BYTES = 64 * 1024;
@@ -32,7 +33,11 @@ function dataValue(line) {
   return value.startsWith(" ") ? value.slice(1) : value;
 }
 
-function buildOpenAIIncompleteTerminal() {
+// A stream that dies early still consumed tokens. The client sizes its context
+// window and its compaction trigger from the usage it is handed, so a terminal
+// carrying no usage leaves that running total stalled at the last turn that
+// reported and the client compacts against a history it has mismeasured.
+function buildOpenAIIncompleteTerminal(usage) {
   return encoder.encode(
     `data: ${JSON.stringify({
       error: {
@@ -40,13 +45,22 @@ function buildOpenAIIncompleteTerminal() {
         type: "server_error",
         code: "stream_incomplete",
       },
+      ...(usage ? { usage: filterUsageForFormat(usage, FORMATS.OPENAI) } : {}),
     })}\n\ndata: [DONE]\n\n`,
   );
 }
 
-function buildClaudeIncompleteTerminal() {
+function buildClaudeIncompleteTerminal(usage) {
+  const claudeUsage = usage ? filterUsageForFormat(usage, FORMATS.CLAUDE) : null;
+  const deltaEvent = claudeUsage
+    ? `event: message_delta\ndata: ${JSON.stringify({
+      type: "message_delta",
+      delta: { stop_reason: "stream_incomplete" },
+      usage: claudeUsage,
+    })}\n\n`
+    : "";
   return encoder.encode(
-    `event: error\ndata: ${JSON.stringify({
+    `${deltaEvent}event: error\ndata: ${JSON.stringify({
       type: "error",
       error: {
         type: "api_error",
@@ -60,7 +74,7 @@ function buildClaudeIncompleteTerminal() {
  * Observe complete client-emitted SSE records without changing their bytes.
  * Returns null when the emitted protocol has no exact terminal predicate.
  */
-export function createSseTerminalObserver(emittedFormat) {
+export function createSseTerminalObserver(emittedFormat, getPartialUsage = null) {
   if (!SUPPORTED_FORMATS.has(emittedFormat)) return null;
 
   let decoder = new TextDecoder("utf-8", { fatal: false });
@@ -197,9 +211,15 @@ export function createSseTerminalObserver(emittedFormat) {
     },
 
     buildIncompleteTerminal() {
-      if (emittedFormat === FORMATS.OPENAI) return buildOpenAIIncompleteTerminal();
-      if (emittedFormat === FORMATS.CLAUDE) return buildClaudeIncompleteTerminal();
-      return buildAbortedResponsesTerminalBytes();
+      let usage = null;
+      try {
+        usage = getPartialUsage?.() || null;
+      } catch {
+        /* usage is best-effort; never lose the terminal over it */
+      }
+      if (emittedFormat === FORMATS.OPENAI) return buildOpenAIIncompleteTerminal(usage);
+      if (emittedFormat === FORMATS.CLAUDE) return buildClaudeIncompleteTerminal(usage);
+      return buildAbortedResponsesTerminalBytes(usage);
     },
 
     release() {
