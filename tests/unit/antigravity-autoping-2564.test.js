@@ -123,6 +123,7 @@ describe("Antigravity auto-ping is opt-in (#2564)", () => {
   let runQuotaAutoPingTick;
   let QUOTA_AUTOPING_CONFIG;
   let getAntigravityUsage;
+  let getUsageForProvider;
   let deps;
   let state;
   let execute;
@@ -134,6 +135,7 @@ describe("Antigravity auto-ping is opt-in (#2564)", () => {
     delete global.__quotaAutoPing;
 
     ({ getAntigravityUsage } = await import("open-sse/services/usage/google.js"));
+    ({ getUsageForProvider } = await import("open-sse/services/usage.js"));
     ({ runQuotaAutoPingTick } = await import("../../src/shared/services/quotaAutoPing.js"));
     ({ QUOTA_AUTOPING_CONFIG } = await import("../../src/shared/constants/config.js"));
 
@@ -148,6 +150,7 @@ describe("Antigravity auto-ping is opt-in (#2564)", () => {
       refreshAndUpdateCredentials: vi.fn(async (connection) => ({ connection, refreshed: false })),
       proxyAwareFetch: vi.fn(),
       getExecutor: vi.fn(() => ({ execute })),
+      getUsageForProvider,
     };
     state = { running: false, resetCache: {}, failureCache: {} };
     vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
@@ -177,7 +180,7 @@ describe("Antigravity auto-ping is opt-in (#2564)", () => {
     deps.getSettings.mockResolvedValue({ antigravityAutoPing: { connections: { "ag-1": true } } });
     await runQuotaAutoPingTick(deps, state);
 
-    expect(getAntigravityUsage).toHaveBeenCalledWith("token", null, expect.anything(), null);
+    expect(getAntigravityUsage).toHaveBeenCalledWith("token", undefined, expect.anything(), expect.anything());
     expect(execute).toHaveBeenCalledTimes(QUOTA_AUTOPING_CONFIG.providers.antigravity.quotaKeys.length);
     expect(execute.mock.calls.map(([call]) => call.model)).toEqual(
       QUOTA_AUTOPING_CONFIG.providers.antigravity.quotaKeys,
@@ -199,6 +202,7 @@ describe("an account-level refusal does not walk the other families (#2564)", ()
   let runQuotaAutoPingTick;
   let isAntigravityAccountRefusal;
   let getAntigravityUsage;
+  let getUsageForProvider;
   let deps;
   let state;
   let execute;
@@ -210,6 +214,7 @@ describe("an account-level refusal does not walk the other families (#2564)", ()
     delete global.__quotaAutoPing;
 
     ({ getAntigravityUsage } = await import("open-sse/services/usage/google.js"));
+    ({ getUsageForProvider } = await import("open-sse/services/usage.js"));
     ({ runQuotaAutoPingTick, isAntigravityAccountRefusal } =
       await import("../../src/shared/services/quotaAutoPing.js"));
 
@@ -224,6 +229,7 @@ describe("an account-level refusal does not walk the other families (#2564)", ()
       refreshAndUpdateCredentials: vi.fn(async (connection) => ({ connection, refreshed: false })),
       proxyAwareFetch: vi.fn(),
       getExecutor: vi.fn(() => ({ execute })),
+      getUsageForProvider,
     };
     state = { running: false, resetCache: {}, failureCache: {} };
     vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));

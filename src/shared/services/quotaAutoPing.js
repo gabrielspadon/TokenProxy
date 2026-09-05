@@ -3,9 +3,6 @@ import 'open-sse/index.js';
 
 import { getSettings, getProviderConnections, updateProviderConnection } from '@/lib/localDb';
 import * as localDb from '@/lib/localDb';
-import { getClaudeUsage } from 'open-sse/services/usage/claude.js';
-import { getCodexUsage } from 'open-sse/services/usage/codex.js';
-import { getAntigravityUsage } from 'open-sse/services/usage/google.js';
 import { getUsageForProvider } from 'open-sse/services/usage.js';
 import { getExecutor } from 'open-sse/executors/index.js';
 import {
@@ -28,25 +25,15 @@ import { QUOTA_AUTOPING_CONFIG } from '@/shared/constants/config';
 const C = QUOTA_AUTOPING_CONFIG;
 const CLAUDE_PING_URL = 'https://api.anthropic.com/v1/messages?beta=true';
 
-const providerHandlers = {
-  claude: {
-    getUsage: getClaudeUsage,
-    sendPing: sendClaudePing,
-  },
-  codex: {
-    getUsage: getCodexUsage,
-    sendPing: sendCodexPing,
-  },
-  antigravity: {
-    // The dispatcher calls getUsage(accessToken, proxyOptions); this one takes
-    // (accessToken, providerSpecificData, proxyOptions, hooks), so it is adapted
-    // here rather than bending the call for two providers that do not need it.
-    // providerSpecificData goes unread by that function, and hooks drives the
-    // account-verification reporter, which an unattended timer must not trigger.
-    getUsage: (accessToken, proxyOptions) =>
-      getAntigravityUsage(accessToken, null, proxyOptions, null),
-    sendPing: sendAntigravityPing,
-  },
+// Bespoke warm senders only. Usage reads ALWAYS go through the generic
+// dispatcher (deps.getUsageForProvider), which already covers every provider
+// here: a second per-provider usage table was the drift that kept this
+// scheduler blind to whatever the dashboard could already read, and it also
+// bypassed the injectable deps that make the tick testable.
+const PING_SENDERS = {
+  claude: sendClaudePing,
+  codex: sendCodexPing,
+  antigravity: sendAntigravityPing,
 };
 
 // Survive Next.js hot reload and keep one scheduler per server process.
@@ -394,6 +381,15 @@ async function sendAntigravityPing(connection, providerConfig, proxyOptions, dep
         );
         break;
       }
+      // A 400/404 is a model this account is not entitled to (or a renamed
+      // id). Counting it as landed masked a never-warmed family as warmed and
+      // spent one wasted poke per period on it forever.
+      if (status === 400 || status === 404) {
+        console.log(
+          `[AutoPing] antigravity: ${model} answered ${status}, not counting as warmed`
+        );
+        continue;
+      }
       landed += 1;
     } catch (e) {
       console.log(`[AutoPing] antigravity: ${model} ping errored: ${e.message}`);
@@ -477,17 +473,29 @@ async function sendGenericPing(connection, providerConfig, proxyOptions, deps) {
   return true;
 }
 
-// Usage for any provider, through the same dispatcher the dashboard reads. The
-// scheduler used to carry its own three-entry table, so a provider with a
-// perfectly good usage reader could not be warmed at all.
-async function readUsage(connection, handler, proxyOptions, deps) {
-  if (handler?.getUsage) return handler.getUsage(connection.accessToken, proxyOptions);
-  return deps.getUsageForProvider(connection, proxyOptions);
+// A repeat failure doubles the cooldown up to the cap. Without escalation a
+// permanently refusing endpoint got refresh+usage+ping attempts every 15min
+// forever (~96/day/connection), which is the loop-spend the lightning feature
+// must never cause.
+function recordFailure(state, key, nowMs = Date.now()) {
+  state.failureCache[key] = nowMs;
+  (state.failureCounts ??= {})[key] = ((state.failureCounts ??= {})[key] || 0) + 1;
+}
+
+function clearFailure(state, key) {
+  delete state.failureCache[key];
+  if (state.failureCounts) delete state.failureCounts[key];
 }
 
 function shouldSkipAfterFailure(state, key, nowMs = Date.now()) {
   const failedAt = state.failureCache[key];
-  return failedAt && nowMs - failedAt < C.failureCooldownMs;
+  if (!failedAt) return false;
+  const count = state.failureCounts?.[key] || 1;
+  const cooldown = Math.min(
+    C.failureCooldownMs * 2 ** (count - 1),
+    C.failureCooldownCapMs || 6 * 60 * 60 * 1000
+  );
+  return nowMs - failedAt < cooldown;
 }
 
 async function markRateLimitedUntil(connection, resetAt, provider, deps) {
@@ -527,11 +535,18 @@ async function markRateLimitedUntil(connection, resetAt, provider, deps) {
  * the I/O: read usage, warm once, verify the clock started, persist per-window
  * state.
  */
-async function pingConnection(conn, provider, providerConfig, handler, deps, state = g) {
+async function pingConnection(conn, provider, providerConfig, sendPingOverride, deps, state = g) {
   const key = cacheKey(provider, conn.id);
 
   // Avoid hammering provider auth/quota endpoints if a warm failed recently.
   if (shouldSkipAfterFailure(state, key)) return;
+
+  // A connection whose every cold family is on a warm brake has nothing this
+  // tick can do, so the refresh+usage read is held too. Without this hold, one
+  // permanently absent family (a plan without the weekly window, say) cost a
+  // token refresh and a usage GET every 60s tick, 1440/day per connection.
+  const probeHold = state.probeHold?.[key];
+  if (probeHold && Date.now() < probeHold) return;
 
   // A COLD WINDOW HAS NO RESET TO WAIT FOR, so the old "skip until we are near
   // the cached reset" guard cannot gate the read any more: it is what kept the
@@ -548,7 +563,7 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     snapshotOwner(conn, deps)
   );
   if (proxyCfg?.kind === 'required-unavailable') {
-    state.failureCache[key] = Date.now();
+    recordFailure(state, key);
     console.warn(`[AutoPing] ${provider}:${conn.id}: required_proxy_unavailable`);
     return { code: 'required_proxy_unavailable', status: 503 };
   }
@@ -559,13 +574,25 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     const r = await deps.refreshAndUpdateCredentials(connection, false, proxyOptions);
     connection = r.connection;
   } catch (e) {
-    state.failureCache[key] = Date.now();
+    recordFailure(state, key);
     console.warn(`[AutoPing] ${provider}:${conn.id}: refresh failed: ${e.message}`);
     return;
   }
 
-  const usage = await readUsage(connection, handler, proxyOptions, deps);
-  const quotas = usage?.quotas || {};
+  const usage = await deps.getUsageForProvider(connection, proxyOptions);
+  // A usage reader that failed returns {message}/{expired} WITHOUT a quotas
+  // object. Treating that as "every window absent" is what made a 429ing or
+  // broken usage endpoint trigger a real ping: cold is a fact about the
+  // account, not about our ability to read it.
+  if (!usage || typeof usage.quotas !== 'object' || usage.quotas === null) {
+    recordFailure(state, key);
+    console.warn(
+      `[AutoPing] ${provider}:${conn.id}: usage unreadable` +
+        `${usage?.message ? `: ${usage.message}` : ''} — skipping, not treating as cold`
+    );
+    return;
+  }
+  const quotas = usage.quotas;
 
   // TWO KINDS OF STATE, kept in two places on purpose.
   //
@@ -578,10 +605,18 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   // in-memory. Losing it on restart costs one tick of detection and nothing
   // else, and persisting it would mean a database write on every tick of every
   // healthy connection — a write for the express purpose of learning nothing.
+  // In-memory mirror of the last computed warm state. The durable write below
+  // can fail (DB busy, disk error); without this mirror a failed write erased
+  // the brake and the same family was re-warmed every tick for as long as the
+  // DB stayed unhappy. The DB copy wins when present, because it survived a
+  // restart and the mirror did not.
+  const mirror = (state.warmStateCache ??= {})[key];
   const warmState =
     connection.autoPingWindows && typeof connection.autoPingWindows === 'object'
       ? connection.autoPingWindows
-      : {};
+      : mirror && typeof mirror === 'object'
+        ? mirror
+        : {};
   const seenResets = (state.seenResets ??= {})[key] || {};
 
   const planState = {};
@@ -648,10 +683,17 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     );
   }
   if (verdict.changed) {
-    // A transition is worth a durable write; "still the same" is not.
-    await deps
-      .updateProviderConnection(connection.id, { autoPingWindows: verdict.state })
-      .catch?.(() => {});
+    // A transition is worth a durable write; "still the same" is not. The
+    // mirror lands first so the brake holds this process even when the write
+    // fails; the failure itself is logged, never swallowed silently.
+    state.warmStateCache[key] = verdict.state;
+    try {
+      await deps.updateProviderConnection(connection.id, { autoPingWindows: verdict.state });
+    } catch (e) {
+      console.warn(
+        `[AutoPing] ${provider}:${connection.id}: could not persist warm state: ${e.message}`
+      );
+    }
   }
 
   const plan = planWarm({
@@ -671,6 +713,13 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   state.seenResets[key] = nextSeen;
 
   (state.allRunning ??= {})[key] = plan.reason === 'every-window-running';
+  // Every cold family refused a warm (backoff, min interval, or same reset):
+  // hold the next probe for the min warm interval instead of re-reading usage
+  // on every tick. Reset detection is delayed by at most that interval.
+  (state.probeHold ??= {})[key] =
+    !plan.shouldWarm && plan.reason !== 'every-window-running' && plan.targets.length === 0
+      ? Date.now() + C.minWarmIntervalMs
+      : 0;
   if (plan.nextResetAt) state.resetCache[key] = new Date(plan.nextResetAt).toISOString();
 
   // The governing window is spent. The poller is the only thing that knows that
@@ -699,17 +748,17 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     `[AutoPing] ${provider}:${connection.id}: warming ${targets.join(', ')} (${plan.reason})`
   );
 
-  const sendPing = handler?.sendPing || sendGenericPing;
+  const sendPing = sendPingOverride || sendGenericPing;
   const ok = await sendPing(connection, providerConfig, proxyOptions, deps);
   if (!ok) {
     // Do not record a warm unless upstream took the tiny request.
-    state.failureCache[key] = Date.now();
+    recordFailure(state, key);
     console.warn(
       `[AutoPing] ${provider}:${connection.id}: warm request failed for ${targets.join(', ')}`
     );
     return;
   }
-  delete state.failureCache[key];
+  clearFailure(state, key);
 
   const nowIso = new Date().toISOString();
   const nextState = recordWarm({
@@ -736,15 +785,26 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     governing?.resetAt ||
     Object.values(plan.resetKeys || {}).sort()[0] ||
     (plan.nextResetAt ? new Date(plan.nextResetAt).toISOString() : null);
-  await deps.updateProviderConnection(connection.id, {
-    autoPingWindows: nextState,
-    // Kept for the dashboard and for anything still reading the single-window
-    // fields; the per-window map above is what the scheduler decides on.
-    lastPingedResetAt: observedReset || null,
-    lastPingedResetKey: observedReset ? normalizeResetKey(observedReset) : null,
-    lastPingAt: nowIso,
-    updatedAt: nowIso,
-  });
+  state.warmStateCache[key] = nextState;
+  try {
+    await deps.updateProviderConnection(connection.id, {
+      autoPingWindows: nextState,
+      // Kept for the dashboard and for anything still reading the single-window
+      // fields; the per-window map above is what the scheduler decides on.
+      lastPingedResetAt: observedReset || null,
+      lastPingedResetKey: observedReset ? normalizeResetKey(observedReset) : null,
+      lastPingAt: nowIso,
+      updatedAt: nowIso,
+    });
+  } catch (e) {
+    // The ping was SPENT. Losing this write must not re-spend it: the mirror
+    // above keeps the brake for this process, and the failure cooldown keeps a
+    // dead DB from turning every tick into a token.
+    recordFailure(state, key);
+    console.warn(
+      `[AutoPing] ${provider}:${connection.id}: warm spent but state write failed: ${e.message}`
+    );
+  }
 }
 
 function createDefaultDeps() {
@@ -772,7 +832,7 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
       // reader and the generic executor ping. Skipping it here is what kept
       // this scheduler to three providers while the rest of the pool had
       // perfectly good usage readers.
-      const handler = providerHandlers[provider] || null;
+      const sendPing = PING_SENDERS[provider] || null;
 
       const enabledMap = settings?.[providerConfig.settingsKey]?.connections || {};
       if (Object.keys(enabledMap).length === 0) continue;
@@ -784,9 +844,9 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
       );
       for (const conn of targets) {
         try {
-          await pingConnection(conn, provider, providerConfig, handler, deps, state);
+          await pingConnection(conn, provider, providerConfig, sendPing, deps, state);
         } catch (e) {
-          state.failureCache[cacheKey(provider, conn.id)] = Date.now();
+          recordFailure(state, cacheKey(provider, conn.id));
           console.warn(`[AutoPing] ${provider}:${conn.id}: ${e.message}`);
         }
       }

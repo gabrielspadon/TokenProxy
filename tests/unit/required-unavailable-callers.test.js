@@ -465,7 +465,7 @@ describe("required proxy unavailable caller boundaries", () => {
   it("auto ping forwards selected strict options without permitting fallback", async () => {
     mocks.getProviderConnectionById.mockResolvedValue(connection);
     mocks.resolveConnectionProxyConfig.mockResolvedValue(usableStrictProxy);
-    mocks.getCodexUsage.mockResolvedValue({
+    mocks.getUsageForProvider.mockResolvedValue({
       quotas: { session: { remaining: 1, total: 1, resetAt: new Date().toISOString() } },
     });
     const { runQuotaAutoPingTick } = await import("@/shared/services/quotaAutoPing.js");
@@ -478,13 +478,14 @@ describe("required proxy unavailable caller boundaries", () => {
       refreshAndUpdateCredentials: mocks.refreshAndUpdateCredentials,
       proxyAwareFetch: mocks.proxyAwareFetch,
       getExecutor: mocks.getExecutor,
+      getUsageForProvider: mocks.getUsageForProvider,
     };
 
     await runQuotaAutoPingTick(deps, { running: false, resetCache: {}, failureCache: {} });
 
     expect(mocks.refreshAndUpdateCredentials)
       .toHaveBeenCalledWith(connection, false, strictProxyOptions);
-    expect(mocks.getCodexUsage).toHaveBeenCalledWith(connection.accessToken, strictProxyOptions);
+    expect(mocks.getUsageForProvider).toHaveBeenCalledWith(connection, strictProxyOptions);
   });
 
   it("usage route forwards selected strict options without permitting fallback", async () => {

@@ -102,6 +102,12 @@ describe("quota auto-ping", () => {
       resolveConnectionProxyConfig: vi.fn().mockResolvedValue({}),
       refreshAndUpdateCredentials: vi.fn(async (connection) => ({ connection, refreshed: false })),
       proxyAwareFetch: vi.fn().mockResolvedValue({ ok: true }),
+      // Usage reads go through the generic dispatcher; keep steering them via
+      // the per-provider mocks so the existing cases stay expressive.
+      getUsageForProvider: vi.fn(async (connection) =>
+        connection.provider === "codex"
+          ? getCodexUsage(connection.accessToken)
+          : getClaudeUsage(connection.accessToken)),
       getExecutor: vi.fn(() => ({
         execute: vi.fn().mockResolvedValue({ response: { ok: true, text: codexResponseText } }),
       })),

@@ -82,6 +82,7 @@ vi.mock("open-sse/executors/index.js", () => ({
 // skip it exactly the way it skips a paused account, and it lapses by itself.
 describe("exhausted quota is recorded, not just detected (#1125)", () => {
   let runQuotaAutoPingTick;
+  let getUsageForProvider;
   let deps;
   let state;
   let getCodexUsage;
@@ -99,6 +100,7 @@ describe("exhausted quota is recorded, not just detected (#1125)", () => {
     ({ getCodexUsage } = await import("open-sse/services/usage/codex.js"));
     ({ getClaudeUsage } = await import("open-sse/services/usage/claude.js"));
     ({ runQuotaAutoPingTick } = await import("../../src/shared/services/quotaAutoPing.js"));
+    ({ getUsageForProvider } = await import("open-sse/services/usage.js"));
 
     deps = {
       getSettings: vi.fn().mockResolvedValue({ codexAutoPing: { connections: { "codex-1": true } } }),
@@ -108,6 +110,7 @@ describe("exhausted quota is recorded, not just detected (#1125)", () => {
       refreshAndUpdateCredentials: vi.fn(async (connection) => ({ connection, refreshed: false })),
       proxyAwareFetch: vi.fn().mockResolvedValue({ ok: true }),
       getExecutor: vi.fn(() => ({ execute: vi.fn() })),
+      getUsageForProvider,
     };
     state = { running: false, resetCache: {}, failureCache: {} };
     vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));

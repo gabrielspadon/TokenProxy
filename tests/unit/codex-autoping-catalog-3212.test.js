@@ -125,6 +125,7 @@ describe('selectCodexPingModel (#3212)', () => {
 
 describe('codex auto-ping model selection is wired (#3212)', () => {
   let runQuotaAutoPingTick;
+  let getUsageForProvider;
   let getCodexUsage;
   let deps;
   let state;
@@ -159,6 +160,7 @@ describe('codex auto-ping model selection is wired (#3212)', () => {
 
     ({ getCodexUsage } = await import('open-sse/services/usage/codex.js'));
     ({ runQuotaAutoPingTick } = await import('../../src/shared/services/quotaAutoPing.js'));
+    ({ getUsageForProvider } = await import('open-sse/services/usage.js'));
 
     deps = {
       getSettings: vi.fn(),
@@ -172,6 +174,7 @@ describe('codex auto-ping model selection is wired (#3212)', () => {
           .fn()
           .mockResolvedValue({ response: { ok: true, text: vi.fn().mockResolvedValue('') } }),
       })),
+      getUsageForProvider,
     };
     state = { running: false, resetCache: {}, failureCache: {} };
   });

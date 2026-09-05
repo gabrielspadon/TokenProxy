@@ -74,6 +74,7 @@ export const QUOTA_AUTOPING_CONFIG = {
   tickIntervalMs: 60000,                // scheduler tick
   refreshAheadMs: 300000,               // refetch usage when within 5min of reset
   failureCooldownMs: 900000,            // avoid failed ping spam while upstream/auth is unhealthy
+  failureCooldownCapMs: 21600000,       // repeat failures double the cooldown up to 6h
   // WARMING BRAKES. A family that will never be reported by a given plan looks
   // permanently cold, so the interval keeps that from costing a request every
   // tick, and the unstarted backoff drops a family we warmed without effect to
@@ -137,6 +138,11 @@ export const QUOTA_AUTOPING_CONFIG = {
     },
     kimi: {
       settingsKey: "kimiAutoPing",
+      // The registry's small-tier regex matches no kimi id, so without this
+      // the generic ping fell through to the LAST registry entry, which is
+      // whatever the registry happens to end with. Named so the warm cost is
+      // deliberate rather than accidental.
+      pingModel: "kimi-latest",
       // Kimi names its windows "Ratelimit" and "Weekly", neither of which
       // carries a parseable duration, so their periods are declared rather
       // than inferred.
