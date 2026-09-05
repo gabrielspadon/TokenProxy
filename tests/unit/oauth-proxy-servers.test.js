@@ -3,7 +3,7 @@
  * oauth-callback-wait.test.js already covers (waitForCallbackParams, the
  * basic startLocalServer listen/close cycle).
  *
- * Not covered there: waitForCallback; the register/get/clear session CRUD for
+ * Not covered there: the register/get/clear session CRUD for
  * all six providers; the Mode A (server-side exchange) / Mode B (redirect
  * fallback) branches; the CSRF loopback-origin and state-mismatch branches;
  * and the /callback + 404 branches of startLocalServer itself.
@@ -21,7 +21,6 @@ import { exchangeTokens } from '@/lib/oauth/providers';
 import { createProviderConnection } from '@/models';
 import {
   startLocalServer,
-  waitForCallback,
   registerCodexSession,
   getCodexSessionStatus,
   clearCodexSession,
@@ -87,22 +86,6 @@ describe('startLocalServer', () => {
     const first = await startLocalServer(() => {}, 41999);
     await expect(startLocalServer(() => {}, 41999)).rejects.toThrow(/already in use/);
     first.close();
-  });
-});
-
-describe('waitForCallback', () => {
-  // The success path stashes the callback on the executor's own `resolve`
-  // function object (resolve.__onCallback = ...), never on the promise it
-  // returns, and no caller reads it back (oauth.js:2 imports only
-  // waitForCallbackParams). That branch is unreachable dead code; only the
-  // timeout path is exercisable.
-  it('rejects on timeout', async () => {
-    vi.useFakeTimers();
-    const promise = waitForCallback(1000);
-    const rejected = expect(promise).rejects.toThrow(/Authentication timeout/);
-    await vi.advanceTimersByTimeAsync(1000);
-    await rejected;
-    vi.useRealTimers();
   });
 });
 
