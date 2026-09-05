@@ -7,6 +7,7 @@ import {
   default as WindsurfExecutor,
 } from "open-sse/executors/windsurf.js";
 import { PROVIDERS } from "open-sse/config/providers.js";
+import windsurfRegistry from "open-sse/providers/registry/windsurf.js";
 
 // ─── Protobuf helpers for building expected wire bytes in tests ──────────────
 
@@ -165,7 +166,10 @@ describe("WindsurfExecutor class", () => {
     const ex = new WindsurfExecutor();
     expect(ex.provider).toBe("windsurf");
     expect(ex.config).toBeDefined();
-    expect(ex.config.baseUrl).toContain("server.self-serve.windsurf.com");
+    // Provider is disabled in registry/index.js (no tool calling support), so the
+    // executor falls back to its own WS_CHAT_URL on server.codeium.com — the host
+    // that actually answers GetChatMessage (self-serve host 404s it).
+    expect(ex.config.baseUrl).toContain("server.codeium.com");
     expect(typeof ex.execute).toBe("function");
   });
 
@@ -187,12 +191,16 @@ describe("WindsurfExecutor class", () => {
 
   it("buildUrl returns the GetChatMessage endpoint", () => {
     const ex = new WindsurfExecutor();
-    expect(ex.buildUrl()).toBe("https://server.self-serve.windsurf.com/exa.language_server_pb.LanguageServerService/GetChatMessage");
+    expect(ex.buildUrl()).toBe("https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage");
   });
 
-  it("PROVIDERS.windsurf baseUrl is the chat endpoint (registry in sync)", () => {
-    expect(PROVIDERS.windsurf.baseUrl).toBe(
-      "https://server.self-serve.windsurf.com/exa.language_server_pb.LanguageServerService/GetChatMessage"
+  it("registry transport baseUrl matches the executor chat endpoint", () => {
+    // Provider is commented out of registry/index.js, so PROVIDERS.windsurf is
+    // absent by design; the registry FILE must still agree with the executor so
+    // re-enabling it cannot silently point at a different host.
+    expect(PROVIDERS.windsurf).toBeUndefined();
+    expect(windsurfRegistry.transport.baseUrl).toBe(
+      "https://server.codeium.com/exa.language_server_pb.LanguageServerService/GetChatMessage"
     );
   });
 });
