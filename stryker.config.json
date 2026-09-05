@@ -1,0 +1,66 @@
+{
+  "$schema": "./tests/node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "tests/vitest.config.js",
+    "dir": "tests",
+    "related": false
+  },
+  "mutate": [
+    "open-sse/translator/formats/maxTokens.js",
+    "open-sse/transformer/responsesTransformer.js",
+    "open-sse/executors/zenmux-free.js",
+    "src/sse/services/tokenRefresh.js",
+    "open-sse/translator/request/openai-to-cursor.js"
+  ],
+  "testFiles": [
+    "tests/translator/bugs-toClaude-context.test.js",
+    "tests/unit/max-tokens-mutation.test.js",
+    "tests/unit/openai-to-cursor-mutation.test.js",
+    "tests/unit/responses-transform-stream.test.js",
+    "tests/unit/responses-transformer-usage.test.js",
+    "tests/unit/responses-transformer-stream.test.js",
+    "tests/unit/zenmux-free-executor.test.js",
+    "tests/unit/zenmux-free-mutation.test.js",
+    "tests/unit/zenmux-free-literals.test.js",
+    "tests/unit/zenmux-free-provider.test.js",
+    "tests/unit/token-refresh-dispatch.test.js",
+    "tests/unit/token-refresh-wrapper-exports.test.js",
+    "tests/unit/codex-token-expired-refresh-1821.test.js",
+    "tests/unit/token-refresh-generic.test.js",
+    "tests/unit/token-refresh-expiry-math.test.js",
+    "tests/unit/codex-refresh-token.test.js",
+    "tests/unit/token-refresh-provider-bodies.test.js",
+    "tests/unit/token-refresh-local-persist.test.js",
+    "tests/unit/token-refresh-merge-failure.test.js",
+    "tests/unit/xai-tokenRefresh.test.js",
+    "tests/unit/token-refresh-lead.test.js",
+    "tests/unit/token-refresh-analytics-3570.test.js",
+    "tests/unit/cred-refresh-decisions.test.js",
+    "tests/translator/bugs-gemini-cursor-commandcode.test.js",
+    "tests/unit/responses-transformer-payload-shape.test.js",
+    "tests/unit/openai-to-cursor-literals.test.js",
+    "tests/unit/token-refresh-merge-and-project.test.js",
+    "tests/unit/zenmux-free-deep-equality.test.js",
+    "tests/unit/responses-transformer-logger.test.js",
+    "tests/unit/responses-transformer-idempotent-close.test.js",
+    "tests/unit/responses-transformer-tool-call-edges.test.js",
+    "tests/unit/zenmux-free-body-and-branches.test.js",
+    "tests/unit/token-refresh-credential-fields.test.js",
+    "tests/unit/responses-transformer-reasoning-and-misc.test.js",
+    "tests/unit/openai-to-cursor-more.test.js"
+  ],
+  "coverageAnalysis": "perTest",
+  "concurrency": 4,
+  "timeoutMS": 10000,
+  "thresholds": {
+    "high": 90,
+    "low": 75,
+    "break": 60
+  },
+  "reporters": [
+    "clear-text",
+    "json"
+  ],
+  "disableTypeChecks": false
+}
