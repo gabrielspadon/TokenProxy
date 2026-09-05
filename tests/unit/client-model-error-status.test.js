@@ -130,6 +130,80 @@ describe("client model error status projection", () => {
     expect(projectClientModelStatus(input)).toEqual(expected);
   });
 
+  it.each([
+    [
+      "an Anthropic entitlement refusal naming the model",
+      {
+        provider: "claude",
+        requestedModel: "claude-fable-5",
+        status: 403,
+        payload: {
+          error: {
+            type: "permission_error",
+            message: "Your account does not have access to claude-fable-5",
+          },
+        },
+      },
+      { clientErrorStatus: 403, unknownModelVerified: true },
+    ],
+    [
+      "an Anthropic entitlement refusal phrased without the model id",
+      {
+        provider: "anthropic",
+        requestedModel: "claude-fable-5",
+        status: 403,
+        payload: {
+          error: {
+            type: "permission_error",
+            message: "This model is not available to your organization",
+          },
+        },
+      },
+      { clientErrorStatus: 403, unknownModelVerified: true },
+    ],
+    [
+      "a 403 with no model in it, which must stay account-wide",
+      {
+        provider: "claude",
+        requestedModel: "claude-fable-5",
+        status: 403,
+        payload: {
+          error: { type: "permission_error", message: "Your credit balance is too low" },
+        },
+      },
+      { clientErrorStatus: 403, unknownModelVerified: false },
+    ],
+    [
+      "a 403 carrying an unrelated error type",
+      {
+        provider: "claude",
+        requestedModel: "claude-fable-5",
+        status: 403,
+        payload: {
+          error: { type: "authentication_error", message: "claude-fable-5 blocked" },
+        },
+      },
+      { clientErrorStatus: 403, unknownModelVerified: false },
+    ],
+    [
+      "an OpenAI entitlement refusal naming the model",
+      {
+        provider: "openai",
+        requestedModel: "gpt-5-pro",
+        status: 403,
+        payload: {
+          error: {
+            type: "invalid_request_error",
+            message: "Project does not have access to model gpt-5-pro",
+          },
+        },
+      },
+      { clientErrorStatus: 403, unknownModelVerified: true },
+    ],
+  ])("classifies %s", (_name, input, expected) => {
+    expect(projectClientModelStatus(input)).toEqual(expected);
+  });
+
   it("keeps failure metadata internal to the result and client error body", async () => {
     const failureMetadata = { clientErrorStatus: 404, unknownModelVerified: true };
     const result = createErrorResult(502, "upstream unavailable", undefined, failureMetadata);

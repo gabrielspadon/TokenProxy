@@ -41,6 +41,7 @@ const {
   getProviderCredentials,
   markAccountUnavailable,
 } = await import("../../src/sse/services/auth.js");
+const { projectClientModelStatus } = await import("../../open-sse/config/modelErrorClassifier.js");
 
 const ALPHA = "alpha";
 const BETA = "beta";
@@ -106,6 +107,42 @@ describe("model-keyed failure metadata", () => {
     expect(new Date(write[lockKey]).getTime()).toBe(NOW.getTime() + 24 * 60 * 60 * 1000);
     expect(write).not.toHaveProperty(MODEL_LOCK_ALL);
     expect(write[getModelFailureKey("claude-fable-5-1")]).toMatchObject({ unknownModelVerified: true });
+  });
+
+  // Fable is a separate entitlement lane: an account can hold quota for every
+  // other model and still refuse Fable with 403. Without a model-scoped lock the
+  // 403 status rule benches the whole account for two minutes and forgets, so
+  // the pool retries the incapable account forever.
+  it("locks only the refused model when an account lacks its entitlement", async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([{ id: "conn-1", provider: "claude", backoffLevel: 0 }]);
+    const payload = '{"type":"error","error":{"type":"permission_error","message":"Your account does not have access to claude-fable-5"}}';
+    const { unknownModelVerified, clientErrorStatus } = projectClientModelStatus({
+      provider: "claude",
+      requestedModel: "claude-fable-5",
+      status: 403,
+      payload: JSON.parse(payload),
+    });
+    expect(unknownModelVerified).toBe(true);
+
+    await expect(markAccountUnavailable(
+      "conn-1",
+      403,
+      payload,
+      "claude",
+      "claude-fable-5",
+      null,
+      { clientErrorStatus, unknownModelVerified },
+    )).resolves.toEqual({ shouldFallback: true, cooldownMs: 0 });
+
+    const write = dbMocks.updateProviderConnection.mock.calls[0][1];
+    expect(write).toHaveProperty(getModelLockKey("claude-fable-5"));
+    expect(write).not.toHaveProperty(MODEL_LOCK_ALL);
+    expect(write).not.toHaveProperty(getModelLockKey("claude-opus-5"));
+    // A 403 stays a 403 to the caller; only "no such model" normalizes to 404.
+    expect(write[getModelFailureKey("claude-fable-5")]).toMatchObject({
+      clientErrorStatus: 403,
+      unknownModelVerified: true,
+    });
   });
 
   it("still passes an UNVERIFIED model_not_found through without locking (#2032)", async () => {

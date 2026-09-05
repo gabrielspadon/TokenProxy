@@ -6,12 +6,12 @@ import {
   updateProviderStrategyProxyPoolSnapshotIfBound,
   getSettings,
   getProxyPools,
-} from "@/lib/localDb";
+} from '@/lib/localDb';
 import {
   resolveConnectionProxyConfig,
   toConnectionProxyOptions,
   pickProxyPoolId,
-} from "@/lib/network/connectionProxy";
+} from '@/lib/network/connectionProxy';
 import {
   buildModelFailureUpdate,
   buildModelLockUpdateAt,
@@ -22,16 +22,26 @@ import {
   getModelFailureKey,
   getModelLockKey,
   isModelLockActive,
-} from "open-sse/services/accountFallback.js";
-import { FREE_TIER_RATE_LIMIT_COOLDOWN_MS, MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
-import { ACCOUNT_ERROR_MESSAGE_MAX_CHARS } from "open-sse/config/runtimeConfig.js";
-import { resolveProviderId, NO_AUTH_PROVIDER_IDS, isNoAuthProvider, isProviderDisabled, FREE_PROVIDERS, FREE_TIER_PROVIDERS } from "@/shared/constants/providers.js";
-import { createHash } from "node:crypto";
-import { resolveSessionIdentity } from "open-sse/utils/sessionManager.js";
-import { readAllDrainDocs } from "@/lib/admin/state.js";
-import { evaluateQuota } from "./quotaGuard.js";
-import { selectAndReserve } from "./accountScheduler.js";
-import { createSchedulerRepos } from "./schedulerRepos.js";
+} from 'open-sse/services/accountFallback.js';
+import {
+  FREE_TIER_RATE_LIMIT_COOLDOWN_MS,
+  MAX_RATE_LIMIT_COOLDOWN_MS,
+} from 'open-sse/config/errorConfig.js';
+import { ACCOUNT_ERROR_MESSAGE_MAX_CHARS } from 'open-sse/config/runtimeConfig.js';
+import {
+  resolveProviderId,
+  NO_AUTH_PROVIDER_IDS,
+  isNoAuthProvider,
+  isProviderDisabled,
+  FREE_PROVIDERS,
+  FREE_TIER_PROVIDERS,
+} from '@/shared/constants/providers.js';
+import { createHash } from 'node:crypto';
+import { resolveSessionIdentity } from 'open-sse/utils/sessionManager.js';
+import { readAllDrainDocs } from '@/lib/admin/state.js';
+import { evaluateQuota } from './quotaGuard.js';
+import { selectAndReserve } from './accountScheduler.js';
+import { createSchedulerRepos } from './schedulerRepos.js';
 import {
   leaseRegistry,
   registerAccountCapacity,
@@ -39,18 +49,18 @@ import {
   releaseAccountLeaseOnResponse,
   lastLeaseRefusal,
   _getLeaseRegistry,
-} from "./accountLeaseRegistry.js";
-import { decide } from "@/shared/observability/decide.js";
+} from './accountLeaseRegistry.js';
+import { decide } from '@/shared/observability/decide.js';
 
 // The design's id shape is a literal 8-char prefix (conn=acc_9f2c). decide's
 // idPrefix is a SHA-256 prefix and is for credentials, not connection ids.
 const prefix8 = (v) => String(v ?? '').slice(0, 8);
-import { effectiveCapacity } from "@/shared/utils/accountCapacity.js";
-import { toRankerWindows } from "@/shared/utils/quotaWindowBridge.js";
-import { buildSwitchReceipt } from "@/shared/utils/switchReceipt.js";
-import { putWindows } from "@/lib/db/repos/quotaWindowsRepo.js";
-import * as log from "../utils/logger.js";
-import { collectClientApiKeyCandidates } from "@/lib/auth/clientApiKey";
+import { effectiveCapacity } from '@/shared/utils/accountCapacity.js';
+import { toRankerWindows } from '@/shared/utils/quotaWindowBridge.js';
+import { buildSwitchReceipt } from '@/shared/utils/switchReceipt.js';
+import { putWindows } from '@/lib/db/repos/quotaWindowsRepo.js';
+import * as log from '../utils/logger.js';
+import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
 
 // Serialize account selection per canonical provider without blocking unrelated providers.
 const providerSelectionQueues = new Map();
@@ -71,7 +81,7 @@ const HTTP_STATUS_RATE_LIMITED = 429;
 // a request that names no model still needs a key. A sentinel rather than the
 // empty string keeps the row legible and keeps a modelless request from sharing
 // a pin with a request for a model literally named "".
-const MODEL_ANY = "*";
+const MODEL_ANY = '*';
 
 /**
  * The HASH of this request's client session identity — never the raw id.
@@ -111,8 +121,11 @@ function resolveRoutingSessionHash(options, providerId) {
       const args = { headers, body, scope: providerId };
       const first = resolveSessionIdentity(args);
       // ephemeral is sessionManager's own "this id is disposable" flag (kiro).
-      if (!first?.ephemeral && first?.sessionId
-          && first.sessionId === resolveSessionIdentity(args)?.sessionId) {
+      if (
+        !first?.ephemeral &&
+        first?.sessionId &&
+        first.sessionId === resolveSessionIdentity(args)?.sessionId
+      ) {
         sessionId = first.sessionId;
       }
     } catch {
@@ -122,9 +135,9 @@ function resolveRoutingSessionHash(options, providerId) {
       sessionId = null;
     }
   }
-  return createHash("sha256")
-    .update(`${providerId}:${sessionId || "anonymous"}`)
-    .digest("hex")
+  return createHash('sha256')
+    .update(`${providerId}:${sessionId || 'anonymous'}`)
+    .digest('hex')
     .slice(0, 32);
 }
 
@@ -172,23 +185,25 @@ async function persistOperatorPin({ sessionHash, model, connection, windows, now
       const previousPinId = repos.getPin({ sessionHash, model })?.connectionId ?? null;
       if (previousPinId === connectionId) {
         repos.touchPin({ sessionHash, model, at });
-        return { reason: "pinned", receipt: null };
+        return { reason: 'pinned', receipt: null };
       }
       repos.setPin({ sessionHash, model, connectionId, at });
-      const trigger = previousPinId === null ? "first-pin" : "operator-pin";
-      const receipt = repos.recordSwitch(buildSwitchReceipt({
-        from: previousPinId,
-        to: connectionId,
-        windows: windows || [],
-        trigger,
-        model,
-        sessionHash,
-        now: nowMs,
-      }));
+      const trigger = previousPinId === null ? 'first-pin' : 'operator-pin';
+      const receipt = repos.recordSwitch(
+        buildSwitchReceipt({
+          from: previousPinId,
+          to: connectionId,
+          windows: windows || [],
+          trigger,
+          model,
+          sessionHash,
+          now: nowMs,
+        })
+      );
       return { reason: trigger, receipt };
     });
   } catch (error) {
-    log.warn("AUTH", `operator pin not persisted: ${error?.message || error}`);
+    log.warn('AUTH', `operator pin not persisted: ${error?.message || error}`);
     return null;
   }
 }
@@ -244,29 +259,34 @@ function persistWindows(connectionId, windows, { hasEvidence = false } = {}) {
 function retryDelayCapMs(provider) {
   if (!provider) return MAX_RATE_LIMIT_COOLDOWN_MS;
   const id = resolveProviderId(provider) || provider;
-  return (FREE_PROVIDERS?.[id] || FREE_TIER_PROVIDERS?.[id])
+  return FREE_PROVIDERS?.[id] || FREE_TIER_PROVIDERS?.[id]
     ? FREE_TIER_RATE_LIMIT_COOLDOWN_MS
     : MAX_RATE_LIMIT_COOLDOWN_MS;
 }
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
 const CODEX_PERMANENT_OAUTH_MARKERS = [
-  "invalidated oauth token",
-  "authentication token has been invalidated",
-  "refresh_token_invalidated",
-  "refresh_token_reused",
-  "refresh token already used",
+  'invalidated oauth token',
+  'authentication token has been invalidated',
+  'refresh_token_invalidated',
+  'refresh_token_reused',
+  'refresh token already used',
 ];
 
 function githubMonthlyResetMs(status, errorText, provider) {
-  if (resolveProviderId(provider) !== "github" || Number(status) !== 402) return null;
-  if (!String(errorText || "").toLowerCase().includes(GITHUB_MONTHLY_USAGE_LIMIT)) return null;
+  if (resolveProviderId(provider) !== 'github' || Number(status) !== 402) return null;
+  if (
+    !String(errorText || '')
+      .toLowerCase()
+      .includes(GITHUB_MONTHLY_USAGE_LIMIT)
+  )
+    return null;
   const now = new Date();
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 }
 
 function isCodexPermanentOAuthFailure(status, errorText, provider) {
-  if (resolveProviderId(provider) !== "codex" || Number(status) !== 401) return false;
+  if (resolveProviderId(provider) !== 'codex' || Number(status) !== 401) return false;
   const reason = describeProviderError(errorText).toLowerCase();
   return CODEX_PERMANENT_OAUTH_MARKERS.some((marker) => reason.includes(marker));
 }
@@ -280,8 +300,8 @@ function isCodexPermanentOAuthFailure(status, errorText, provider) {
  * nudges), code 112 does not recover on its own.
  */
 function isQoderQuotaExhausted(status, errorText, provider) {
-  if (resolveProviderId(provider) !== "qoder" || Number(status) !== 403) return false;
-  return /"code"\s*:\s*"112"/.test(String(errorText || ""));
+  if (resolveProviderId(provider) !== 'qoder' || Number(status) !== 403) return false;
+  return /"code"\s*:\s*"112"/.test(String(errorText || ''));
 }
 
 /**
@@ -316,7 +336,12 @@ export async function getReachableProviders() {
   return reachable;
 }
 
-export async function getProviderCredentials(provider, excludeConnectionIds = null, model = null, options = {}) {
+export async function getProviderCredentials(
+  provider,
+  excludeConnectionIds = null,
+  model = null,
+  options = {}
+) {
   // Decision-log context (docs/logging-design.md 3.2): rid/sid threaded from the
   // request-handling caller through options.logCtx. Absent on background
   // selection, and then the emitted lines simply carry no rid.
@@ -331,19 +356,26 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   });
   // decide() renders one k=v per key; repeated alternatives (alt=, folded by
   // the design into one comma-joined value) are joined here at the printer.
-  const flatten = (fields = {}) => Object.fromEntries(
-    Object.entries(fields)
-      .filter(([, v]) => v !== null && v !== undefined)
-      .map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v]),
-  );
-  const emit = (cls, verdict, fields) => { decide(cls, verdict, selCtx(flatten(fields))); };
+  const flatten = (fields = {}) =>
+    Object.fromEntries(
+      Object.entries(fields)
+        .filter(([, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v])
+    );
+  const emit = (cls, verdict, fields) => {
+    decide(cls, verdict, selCtx(flatten(fields)));
+  };
 
   // Normalize to Set for consistent handling
-  const excludeSet = excludeConnectionIds instanceof Set
-    ? excludeConnectionIds
-    : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
+  const excludeSet =
+    excludeConnectionIds instanceof Set
+      ? excludeConnectionIds
+      : excludeConnectionIds
+        ? new Set([excludeConnectionIds])
+        : new Set();
   const preferredConnectionId = options?.preferredConnectionId || null;
-  const strictPreferredConnection = Boolean(preferredConnectionId) && options?.strictPreferredConnection === true;
+  const strictPreferredConnection =
+    Boolean(preferredConnectionId) && options?.strictPreferredConnection === true;
   // Resolve aliases before queue acquisition so alias and canonical requests share one lock.
   const providerId = resolveProviderId(provider);
   // P-F4: resolveRoutingSessionHash was computed three times per request
@@ -351,8 +383,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   // options/providerId, so compute it once, ahead of the serialized queue.
   const routingSessionHash = resolveRoutingSessionHash(options, providerId);
   const currentQueue = providerSelectionQueues.get(providerId) || Promise.resolve();
-  let releaseQueue;
-  const nextQueue = new Promise(resolve => { releaseQueue = resolve; });
+  const { promise: nextQueue, resolve: releaseQueue } = Promise.withResolvers();
   providerSelectionQueues.set(providerId, nextQueue);
 
   try {
@@ -366,47 +397,48 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // dashboard: this is the call every modality routes through, and the
       // caller already treats null as "no account, fall through" (#2650).
       if (isProviderDisabled(settings, providerId)) {
-        log.warn("AUTH", `${provider} is disabled`);
+        log.warn('AUTH', `${provider} is disabled`);
         return null;
       }
       const override = (settings.providerStrategies || {})[providerId] || {};
-      const strategy = override.rotateStrategy || "none";
+      const strategy = override.rotateStrategy || 'none';
       let pickedId = override.proxyPoolId || null;
       let pickedPool = null;
-      if (strategy !== "none") {
+      if (strategy !== 'none') {
         const allPools = await getProxyPools({ isActive: true });
-        const availablePools = allPools.filter(p => p.proxyUrl);
-        const poolIds = availablePools.map(p => p.id);
+        const availablePools = allPools.filter((p) => p.proxyUrl);
+        const poolIds = availablePools.map((p) => p.id);
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
         pickedPool = availablePools.find((pool) => pool.id === pickedId) || null;
       }
       const proxyData = {
-        proxyPoolId: pickedId || "",
-        ...(strategy === "none" && Object.prototype.hasOwnProperty.call(override, "strictProxy")
+        proxyPoolId: pickedId || '',
+        ...(strategy === 'none' && Object.prototype.hasOwnProperty.call(override, 'strictProxy')
           ? { strictProxy: override.strictProxy }
           : {}),
-        ...(strategy !== "none" && pickedPool
+        ...(strategy !== 'none' && pickedPool
           ? { strictProxy: pickedPool.strictProxy === true }
           : {}),
       };
       const resolvedProxy = await resolveConnectionProxyConfig(proxyData, {
-        persistPoolSnapshot: strategy === "none" && pickedId
-          ? (pair) => updateProviderStrategyProxyPoolSnapshotIfBound(providerId, pickedId, pair)
-          : undefined,
+        persistPoolSnapshot:
+          strategy === 'none' && pickedId
+            ? (pair) => updateProviderStrategyProxyPoolSnapshotIfBound(providerId, pickedId, pair)
+            : undefined,
       });
-      if (resolvedProxy.kind !== "usable") return null;
+      if (resolvedProxy.kind !== 'usable') return null;
       const proxyOptions = toConnectionProxyOptions(resolvedProxy);
       return {
-        id: "noauth",
+        id: 'noauth',
         // Executors key their upstream session id on connectionId. Without it
         // deriveSessionId() falls through to a fresh random id on every call, so
         // each turn of one conversation reaches the provider as a new session and
         // burns a free-tier slot. "noauth" is the sentinel markAccountUnavailable
         // and clearAccountError already test for.
-        connectionId: "noauth",
-        connectionName: "Public",
+        connectionId: 'noauth',
+        connectionName: 'Public',
         isActive: true,
-        accessToken: "public",
+        accessToken: 'public',
         providerSpecificData: {
           connectionProxyEnabled: proxyOptions.connectionProxyEnabled,
           connectionProxyUrl: proxyOptions.connectionProxyUrl,
@@ -420,10 +452,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     const connections = await getProviderConnections({ provider: providerId, isActive: true });
-    log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
+    log.debug(
+      'AUTH',
+      `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(',') : 'none'}, model: ${model || 'any'}`
+    );
 
     if (connections.length === 0) {
-      log.warn("AUTH", `No credentials for ${provider}`);
+      log.warn('AUTH', `No credentials for ${provider}`);
       return null;
     }
 
@@ -451,10 +486,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // first question an auditor asks of a refusal.
     const drainExcluded = [];
     const modelLocked = [];
-    const availableConnections = connections.filter(c => {
+    const availableConnections = connections.filter((c) => {
       if (strictPreferredConnection && c.id !== preferredConnectionId) return false;
       if (excludeSet.has(c.id)) return false;
-      if (draining.has(c.id)) { drainExcluded.push(prefix8(c.id)); return false; }
+      if (draining.has(c.id)) {
+        drainExcluded.push(prefix8(c.id));
+        return false;
+      }
       if (c.id === ignoreLockConn) return true;
       if (isModelLockActive(c, model)) {
         const failure = getActiveModelFailure(c, model);
@@ -474,7 +512,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       });
     }
     for (const m of modelLocked) {
-      emit('SEL', 'model-locked', { conn: m.conn, lock: m.lock, ...(m.until ? { until: m.until } : {}) });
+      emit('SEL', 'model-locked', {
+        conn: m.conn,
+        lock: m.lock,
+        ...(m.until ? { until: m.until } : {}),
+      });
     }
 
     // Filter out accounts paused due to low remaining quota (safety buffer).
@@ -542,14 +584,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       emit('SEL', 'quota-unknown', { conn: prefix8(c.id), why: 'evidence-absent-not-empty' });
     }
 
-    log.debug("AUTH", `${provider} | available: ${routedConnections.length}/${connections.length}`);
-    connections.forEach(c => {
+    log.debug('AUTH', `${provider} | available: ${routedConnections.length}/${connections.length}`);
+    connections.forEach((c) => {
       const excluded = excludeSet.has(c.id);
       const isDraining = draining.has(c.id);
       const locked = isModelLockActive(c, model);
       if (excluded || isDraining || locked) {
         const lockUntil = getEarliestModelLockUntil(c, model);
-        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${isDraining ? "draining" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
+        log.debug(
+          'AUTH',
+          `  → ${c.id?.slice(0, 8)} | ${excluded ? 'excluded' : ''} ${isDraining ? 'draining' : ''} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ''}`
+        );
       }
     });
 
@@ -561,10 +606,15 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const lockedPairs = lockCandidates
         .map((connection) => ({ connection, failure: getActiveModelFailure(connection, model) }))
         .filter((entry) => entry.failure);
-      const selected = lockedPairs.sort((a, b) => a.failure.until.localeCompare(b.failure.until))[0];
+      const selected = lockedPairs.sort((a, b) =>
+        a.failure.until.localeCompare(b.failure.until)
+      )[0];
       if (selected) {
         const { failure } = selected;
-        log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(failure.until)}) | lastError=${failure.message?.slice(0, 50) || "none"}`);
+        log.warn(
+          'AUTH',
+          `${provider} | all ${connections.length} accounts locked for ${model || 'all'} (${formatRetryAfter(failure.until)}) | lastError=${failure.message?.slice(0, 50) || 'none'}`
+        );
         return {
           allRateLimited: true,
           retryAfter: failure.until,
@@ -574,7 +624,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           clientErrorStatus: failure.clientErrorStatus,
         };
       }
-      log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
+      log.warn('AUTH', `${provider} | all ${connections.length} accounts unavailable`);
       return null;
     }
 
@@ -592,7 +642,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (preferredConnectionId) {
       connection = routedConnections.find((c) => c.id === preferredConnectionId) || null;
       if (connection) {
-        log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
+        log.info(
+          'AUTH',
+          `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || 'unnamed'})`
+        );
       }
     }
 
@@ -617,7 +670,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         // LEASE.refused carries the numbers the wait is about (row 37): how
         // full, against what ceiling, when to try again.
         const refusal = lastLeaseRefusal(connection.id);
-        const cap = refusal?.cap ?? effectiveCapacity(connection, { settings, provider: providerId }).limit;
+        const cap =
+          refusal?.cap ?? effectiveCapacity(connection, { settings, provider: providerId }).limit;
         const held = refusal?.held ?? leaseRegistry.inFlight(connection.id);
         emit('LEASE', 'refused', {
           conn: prefix8(connection.id),
@@ -626,12 +680,15 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           next: `${SCHEDULER_RETRY_AFTER_SECONDS}s`,
           retry_after: `${SCHEDULER_RETRY_AFTER_SECONDS}s`,
         });
-        log.info("AUTH", `${provider} | ${connection.id?.slice(0, 8)} at capacity, caller should retry`);
+        log.info(
+          'AUTH',
+          `${provider} | ${connection.id?.slice(0, 8)} at capacity, caller should retry`
+        );
         return {
           allRateLimited: true,
           retryAfter: retryAt,
           retryAfterHuman: `${SCHEDULER_RETRY_AFTER_SECONDS}s`,
-          lastError: "Account at capacity",
+          lastError: 'Account at capacity',
           lastErrorCode: null,
           clientErrorStatus: null,
         };
@@ -658,13 +715,20 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         nowMs,
       });
       // Row 29: the operator pin is a real decision and says so.
-      emit('SEL', 'operator-pinned', { conn: prefix8(connection.id), why: pinned?.reason ?? 'operator-pin' });
-      selection = { verdict: 'operator-pinned', conn: prefix8(connection.id), why: pinned?.reason ?? null };
+      emit('SEL', 'operator-pinned', {
+        conn: prefix8(connection.id),
+        why: pinned?.reason ?? 'operator-pin',
+      });
+      selection = {
+        verdict: 'operator-pinned',
+        conn: prefix8(connection.id),
+        why: pinned?.reason ?? null,
+      };
       if (pinned?.receipt) {
         log.info(
-          "AUTH",
-          `${provider} | affinity ${pinned.reason} → ${connection.id?.slice(0, 8)}`
-          + ` from ${pinned.receipt.fromConnectionId?.slice(0, 8) || "none"}`
+          'AUTH',
+          `${provider} | affinity ${pinned.reason} → ${connection.id?.slice(0, 8)}` +
+            ` from ${pinned.receipt.fromConnectionId?.slice(0, 8) || 'none'}`
         );
       }
     } else {
@@ -720,15 +784,18 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         // window rolled over hours later. The operator sees that as the proxy
         // hammering accounts that had nothing left to give.
         const capacityWait = decision.reason === 'at-capacity';
-        const retryAt = !capacityWait && decision.earliestResetAt
-          ? decision.earliestResetAt
-          : new Date(nowMs + (decision.retryAfter || SCHEDULER_RETRY_AFTER_SECONDS) * 1000).toISOString();
+        const retryAt =
+          !capacityWait && decision.earliestResetAt
+            ? decision.earliestResetAt
+            : new Date(
+                nowMs + (decision.retryAfter || SCHEDULER_RETRY_AFTER_SECONDS) * 1000
+              ).toISOString();
         printTrace(decision.trace);
         log.info(
-          "AUTH",
-          `${provider} | scheduler: ${decision.reason}`
-          + `${decision.degraded ? " (no quota evidence)" : ""}`
-          + ` | caller should retry at ${retryAt}`
+          'AUTH',
+          `${provider} | scheduler: ${decision.reason}` +
+            `${decision.degraded ? ' (no quota evidence)' : ''}` +
+            ` | caller should retry at ${retryAt}`
         );
         return {
           allRateLimited: true,
@@ -761,7 +828,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         emit(entry.cls, entry.verdict, fields);
       }
       if (lease?.ungated) {
-        emit('LEASE', 'ungated', { conn: prefix8(connection.id), why: lease.why, held: lease.held });
+        emit('LEASE', 'ungated', {
+          conn: prefix8(connection.id),
+          why: lease.why,
+          held: lease.held,
+        });
       }
       selection = {
         verdict: decision.reason === 'pinned' ? 'pin-hit' : 'win',
@@ -777,7 +848,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         ? (pair) => updateConnectionProxyPoolSnapshotIfBound(connection.id, expectedPoolId, pair)
         : undefined,
     });
-    if (resolvedProxy.kind !== "usable") {
+    if (resolvedProxy.kind !== 'usable') {
       // Row 36: the account was selected but its proxy resolution failed —
       // pool id and the resolution verdict are the whole fact.
       emit('SEL', 'proxy-unusable', {
@@ -809,9 +880,11 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       expiresIn: connection.expiresIn,
       lastRefreshAt: connection.lastRefreshAt,
       projectId: connection.projectId,
-      connectionName: connection.displayName || connection.name || connection.email || connection.id,
+      connectionName:
+        connection.displayName || connection.name || connection.email || connection.id,
       copilotToken: connection.providerSpecificData?.copilotToken,
-      defaultModel: typeof connection.defaultModel === "string" ? connection.defaultModel.trim() || null : null,
+      defaultModel:
+        typeof connection.defaultModel === 'string' ? connection.defaultModel.trim() || null : null,
       providerSpecificData: {
         ...(connection.providerSpecificData || {}),
         connectionProxyEnabled: proxyOptions.connectionProxyEnabled,
@@ -840,7 +913,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // The selection verdict for the caller (REQ.ok sel=/path= later).
       selection,
       // Pass full connection for clearAccountError to read modelLock_* keys
-      _connection: connection
+      _connection: connection,
     };
   } finally {
     releaseQueue();
@@ -877,42 +950,57 @@ export function describeProviderError(errorText) {
   // Clipped far enough out that the upstream reason survives. At 100 chars the cut
   // landed mid-word inside "Upstream request failed: …", so the only diagnostic
   // that mattered was discarded before it reached either the client or the logs.
-  const clamp = (value) => String(value).replace(/\s+/g, " ").trim().slice(0, ACCOUNT_ERROR_MESSAGE_MAX_CHARS);
+  const clamp = (value) =>
+    String(value).replace(/\s+/g, ' ').trim().slice(0, ACCOUNT_ERROR_MESSAGE_MAX_CHARS);
 
-  if (typeof errorText === "string") return clamp(errorText);
-  if (!errorText || typeof errorText !== "object") return "Provider error";
+  if (typeof errorText === 'string') return clamp(errorText);
+  if (!errorText || typeof errorText !== 'object') return 'Provider error';
 
-  const code = typeof errorText.code === "string" ? errorText.code
-    : typeof errorText.cause?.code === "string" ? errorText.cause.code
-      : null;
+  const code =
+    typeof errorText.code === 'string'
+      ? errorText.code
+      : typeof errorText.cause?.code === 'string'
+        ? errorText.cause.code
+        : null;
 
   if (errorText instanceof Error) {
-    const message = errorText.message ? clamp(errorText.message) : errorText.name || "Provider error";
+    const message = errorText.message
+      ? clamp(errorText.message)
+      : errorText.name || 'Provider error';
     return code && !message.includes(code) ? clamp(`${message} (${code})`) : message;
   }
 
   const candidates = [
     errorText.error?.message,
     errorText.message,
-    typeof errorText.error === "string" ? errorText.error : null,
+    typeof errorText.error === 'string' ? errorText.error : null,
     errorText.detail,
     errorText.reason,
   ];
   for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
+    if (typeof candidate === 'string' && candidate.trim()) {
       return code && !candidate.includes(code) ? clamp(`${candidate} (${code})`) : clamp(candidate);
     }
   }
 
-  return code ? clamp(`Provider error (${code})`) : "Provider error";
+  return code ? clamp(`Provider error (${code})`) : 'Provider error';
 }
 
 // A verified "account does not serve this model" is stable until the plan
 // changes; 24h keeps the pool honest without a permanent operator-only lock.
 const UNKNOWN_MODEL_LOCK_MS = 24 * 60 * 60 * 1000;
 
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, failureMetadata = null, logCtx = null) {
-  if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
+export async function markAccountUnavailable(
+  connectionId,
+  status,
+  errorText,
+  provider = null,
+  model = null,
+  resetsAtMs = null,
+  failureMetadata = null,
+  logCtx = null
+) {
+  if (!connectionId || connectionId === 'noauth') return { shouldFallback: false, cooldownMs: 0 };
   // Request-scoped decision-log context ({rid, sid}); absent on background
   // calls, and then the LOCK lines carry no rid (docs/logging-design.md 3.2).
   const rid = typeof logCtx?.rid === 'string' ? logCtx.rid : null;
@@ -926,18 +1014,21 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     ...fields,
   });
   const numStatus = Number(status);
-  const lockClass = numStatus === 401 || numStatus === 403 || numStatus === 404
-    ? 'credential'
-    : numStatus === 429 ? 'quota' : 'transient';
+  const lockClass =
+    numStatus === 401 || numStatus === 403 || numStatus === 404
+      ? 'credential'
+      : numStatus === 429
+        ? 'quota'
+        : 'transient';
   const connections = await getProviderConnections({ provider });
-  const conn = connections.find(c => c.id === connectionId);
+  const conn = connections.find((c) => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;
 
   if (isCodexPermanentOAuthFailure(status, errorText, provider)) {
     const reason = describeProviderError(errorText);
     await updateProviderConnection(connectionId, {
       isActive: false,
-      testStatus: "reauth_required",
+      testStatus: 'reauth_required',
       lastError: reason,
       errorCode: 401,
       lastErrorAt: new Date().toISOString(),
@@ -945,12 +1036,16 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     });
     // The credential is dead and the provider says so: no reset exists, which
     // is exactly what expect_reset=false states (rows 47-48).
-    decide('LOCK', 'permanent', lockCtx({
-      status: numStatus || null,
-      class: 'credential',
-      why: reason,
-      expect_reset: false,
-    }));
+    decide(
+      'LOCK',
+      'permanent',
+      lockCtx({
+        status: numStatus || null,
+        class: 'credential',
+        why: reason,
+        expect_reset: false,
+      })
+    );
     return { shouldFallback: true, cooldownMs: 0 };
   }
 
@@ -959,17 +1054,18 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   // connection (what an operator would do manually) and let selection move to
   // the next Qoder account or the next combo fallback model.
   if (isQoderQuotaExhausted(status, errorText, provider)) {
-    const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Qoder quota exhausted (code 112)";
+    const reason =
+      typeof errorText === 'string' ? errorText.slice(0, 200) : 'Qoder quota exhausted (code 112)';
     await updateProviderConnection(connectionId, {
       isActive: false,
-      testStatus: "unavailable",
+      testStatus: 'unavailable',
       lastError: reason,
       errorCode: 403,
       lastErrorAt: new Date().toISOString(),
       backoffLevel: 0,
     });
     const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
-    log.warn("AUTH", `${connName} disabled: Qoder quota exhausted [403/code 112]`);
+    log.warn('AUTH', `${connName} disabled: Qoder quota exhausted [403/code 112]`);
     return { shouldFallback: true, cooldownMs: 0 };
   }
 
@@ -1001,13 +1097,17 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
       errorCode: status,
       lastErrorAt: new Date().toISOString(),
     });
-    decide('LOCK', 'model-unavailable', lockCtx({
-      status: numStatus || null,
-      class: 'capability',
-      reset: until,
-      why: 'verified-unknown-model',
-      expect_reset: false,
-    }));
+    decide(
+      'LOCK',
+      'model-unavailable',
+      lockCtx({
+        status: numStatus || null,
+        class: 'capability',
+        reset: until,
+        why: 'verified-unknown-model',
+        expect_reset: false,
+      })
+    );
     return { shouldFallback: true, cooldownMs: 0 };
   }
 
@@ -1065,11 +1165,11 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
     ...failureUpdate,
-    testStatus: "unavailable",
+    testStatus: 'unavailable',
     lastError: reason,
     errorCode: status,
     lastErrorAt: new Date().toISOString(),
-    backoffLevel: newBackoffLevel ?? backoffLevel
+    backoffLevel: newBackoffLevel ?? backoffLevel,
   });
 
   // The retired "locked modelLock_... for Ns [status]" line is replaced by
@@ -1077,30 +1177,45 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   // misreport the design calls out: a timed backoff on a credential fault
   // asserts a reset that will never happen.
   if (githubResetAtMs) {
-    decide('LOCK', 'monthly-reset', lockCtx({
-      status: numStatus || null,
-      reset: until,
-      why: 'usage-limit',
-    }));
+    decide(
+      'LOCK',
+      'monthly-reset',
+      lockCtx({
+        status: numStatus || null,
+        reset: until,
+        why: 'usage-limit',
+      })
+    );
   } else {
-    const why = lockClass === 'credential'
-      ? 'no-permanent-path-for-provider'
-      : lockClass === 'quota' ? 'retry-after' : 'upstream-error';
-    decide('LOCK', 'applied', lockCtx({
-      status: numStatus || null,
-      class: lockClass,
-      sched: 'backoff',
-      level: newBackoffLevel ?? backoffLevel,
-      cooldown: `${Math.max(0, Math.round(cooldownMs / 1000))}s`,
-      cap: `${Math.round(retryDelayCapMs(provider) / 1000)}s`,
-      why,
-      expect_reset: lockClass !== 'credential',
-    }));
+    const why =
+      lockClass === 'credential'
+        ? 'no-permanent-path-for-provider'
+        : lockClass === 'quota'
+          ? 'retry-after'
+          : 'upstream-error';
+    decide(
+      'LOCK',
+      'applied',
+      lockCtx({
+        status: numStatus || null,
+        class: lockClass,
+        sched: 'backoff',
+        level: newBackoffLevel ?? backoffLevel,
+        cooldown: `${Math.max(0, Math.round(cooldownMs / 1000))}s`,
+        cap: `${Math.round(retryDelayCapMs(provider) / 1000)}s`,
+        why,
+        expect_reset: lockClass !== 'credential',
+      })
+    );
     if (clampedApplied && requestedMs !== null) {
-      decide('LOCK', 'clamped', lockCtx({
-        requested: `${Math.max(0, Math.round(requestedMs / 1000))}s`,
-        applied: `${Math.max(0, Math.round(cooldownMs / 1000))}s`,
-      }));
+      decide(
+        'LOCK',
+        'clamped',
+        lockCtx({
+          requested: `${Math.max(0, Math.round(requestedMs / 1000))}s`,
+          applied: `${Math.max(0, Math.round(cooldownMs / 1000))}s`,
+        })
+      );
     }
   }
 
@@ -1121,25 +1236,31 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
  * @param {string|null} model - model that succeeded
  */
 export async function clearAccountError(connectionId, currentConnection, model = null) {
-  if (!connectionId || connectionId === "noauth") return;
+  if (!connectionId || connectionId === 'noauth') return;
   const conn = currentConnection._connection || currentConnection;
   const now = Date.now();
-  const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));
-  const allFailureKeys = Object.keys(conn).filter(k => k.startsWith("modelFailure_"));
+  const allLockKeys = Object.keys(conn).filter((k) => k.startsWith('modelLock_'));
+  const allFailureKeys = Object.keys(conn).filter((k) => k.startsWith('modelFailure_'));
 
-  if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0 && allFailureKeys.length === 0) return;
+  if (
+    !conn.testStatus &&
+    !conn.lastError &&
+    allLockKeys.length === 0 &&
+    allFailureKeys.length === 0
+  )
+    return;
 
   // Keys to clear: current model's lock + all expired locks
-  const keysToClear = allLockKeys.filter(k => {
+  const keysToClear = allLockKeys.filter((k) => {
     if (model && k === getModelLockKey(model)) return true; // succeeded model
-    if (model && k === getModelLockKey(null)) return true;  // account-level lock
+    if (model && k === getModelLockKey(null)) return true; // account-level lock
     const expiry = conn[k];
-    return expiry && new Date(expiry).getTime() <= now;   // expired
+    return expiry && new Date(expiry).getTime() <= now; // expired
   });
 
-  const failureKeysToClear = new Set(keysToClear.map((key) =>
-    getModelFailureKey(key.slice("modelLock_".length) || null)
-  ));
+  const failureKeysToClear = new Set(
+    keysToClear.map((key) => getModelFailureKey(key.slice('modelLock_'.length) || null))
+  );
   if (model && Object.hasOwn(conn, getModelFailureKey(model))) {
     failureKeysToClear.add(getModelFailureKey(model));
   }
@@ -1147,26 +1268,32 @@ export async function clearAccountError(connectionId, currentConnection, model =
     failureKeysToClear.add(getModelFailureKey(null));
   }
 
-  if (keysToClear.length === 0 && failureKeysToClear.size === 0 && conn.testStatus !== "unavailable" && !conn.lastError) return;
+  if (
+    keysToClear.length === 0 &&
+    failureKeysToClear.size === 0 &&
+    conn.testStatus !== 'unavailable' &&
+    !conn.lastError
+  )
+    return;
 
   // Check if any active locks remain after clearing
-  const remainingActiveLocks = allLockKeys.filter(k => {
+  const remainingActiveLocks = allLockKeys.filter((k) => {
     if (keysToClear.includes(k)) return false;
     const expiry = conn[k];
     return expiry && new Date(expiry).getTime() > now;
   });
 
-  const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
+  const clearObj = Object.fromEntries(keysToClear.map((k) => [k, null]));
   for (const key of failureKeysToClear) clearObj[key] = null;
 
   // Only reset error state if no active locks remain
   if (remainingActiveLocks.length === 0) {
     Object.assign(clearObj, {
-      testStatus: "active",
+      testStatus: 'active',
       lastError: null,
       errorCode: null,
       lastErrorAt: null,
-      backoffLevel: 0
+      backoffLevel: 0,
     });
   }
 
