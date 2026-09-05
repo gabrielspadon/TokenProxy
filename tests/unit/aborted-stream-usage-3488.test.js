@@ -40,9 +40,12 @@ function build(onStreamComplete) {
 async function abortMidStream(stream) {
   const reader = stream.readable.getReader();
   const writer = stream.writable.getWriter();
-  writer.write(chunk("Hello"));
+  // Cancelling the readable errors the writable with the cancel reason;
+  // observe writer.closed or that rejection surfaces as an unhandled one.
+  writer.closed.catch(() => {});
+  writer.write(chunk("Hello")).catch(() => {});
   await reader.read();
-  writer.write(chunk(" world"));
+  writer.write(chunk(" world")).catch(() => {});
   await reader.read();
   await reader.cancel("client_closed");
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -116,6 +119,7 @@ describe("a stream cancelled before anything arrived", () => {
   it("reports once, as aborted, without inventing content", async () => {
     const onStreamComplete = vi.fn();
     const stream = build(onStreamComplete);
+    stream.writable.getWriter().closed.catch(() => {});
     await stream.readable.cancel("client_closed");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(onStreamComplete).toHaveBeenCalledTimes(1);
