@@ -27,7 +27,7 @@ describe("applyCloaking billing header determinism", () => {
     const b = applyCloaking(bodyWith("a much longer second message with different content"), OAT_KEY, "session-1");
     expect(a.system[0].text).toBe(b.system[0].text);
     expect(a.system[0].text).toMatch(
-      /^x-anthropic-billing-header: cc_version=2\.1\.92\.[0-9a-f]{3}; cc_entrypoint=sdk-cli; cch=[0-9a-f]{5};$/
+      /^x-anthropic-billing-header: cc_version=2\.1\.261\.[0-9a-f]{3}; cc_entrypoint=sdk-cli; cch=[0-9a-f]{5};$/
     );
   });
 
