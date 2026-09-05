@@ -127,7 +127,8 @@ async function handleExecute({ model, body, stream, credentials, signal, log, pr
     finalResponse = new Response(JSON.stringify({
       id: cid, object: "chat.completion", created, model,
       choices: [{ index: 0, message: { role: "assistant", content: txt }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 0, completion_tokens: Math.ceil(txt.length / 4), total_tokens: 0 },
+      // ponytail: length/4 estimate, upstream sends no usage; swap in a tokenizer if billing accuracy matters
+      usage: (() => { const p = Math.ceil(fullText.length / 4), c = Math.ceil(txt.length / 4); return { prompt_tokens: p, completion_tokens: c, total_tokens: p + c }; })(),
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   }
   return { response: finalResponse, url: CHAT_URL, headers: {}, transformedBody: claudeBody };
@@ -140,10 +141,9 @@ async function _collectText(body) {
   let buf = "", txt = "";
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
+    buf += done ? decoder.decode() : decoder.decode(value, { stream: true });
     const lines = buf.split("\n");
-    buf = lines.pop() || "";
+    buf = done ? "" : lines.pop() || "";
     for (const ln of lines) {
       const t = ln.trim();
       if (!t.startsWith("data: ")) continue;
@@ -152,6 +152,7 @@ async function _collectText(body) {
         if (d.type === "content_block_delta" && d.delta) txt += d.delta.text || d.delta.thinking || "";
       } catch {}
     }
+    if (done) break;
   }
   return txt;
 }
@@ -172,10 +173,9 @@ function buildSSEStream(body, model, cid, created) {
 
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
+          buf += done ? decoder.decode() : decoder.decode(value, { stream: true });
           const lines = buf.split("\n");
-          buf = lines.pop() || "";
+          buf = done ? "" : lines.pop() || "";
           for (const ln of lines) {
             const t = ln.trim();
             if (!t.startsWith("data: ")) continue;
@@ -197,6 +197,7 @@ function buildSSEStream(body, model, cid, created) {
               }
             } catch {}
           }
+          if (done) break;
         }
         controller.enqueue(encoder.encode(SSE_DONE));
       } catch (err) {

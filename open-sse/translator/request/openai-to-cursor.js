@@ -9,7 +9,7 @@
 import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
-import { DEFAULT_MIN_TOKENS } from "../../config/runtimeConfig.js";
+import { adjustMaxTokens } from "../formats/maxTokens.js";
 
 function extractContent(content) {
   if (typeof content === "string") return content;
@@ -178,7 +178,7 @@ export function openaiToCursorRequest(model, body, stream, credentials) {
   return {
     ...rest,
     messages,
-    max_tokens: DEFAULT_MIN_TOKENS
+    max_tokens: adjustMaxTokens(body)
   };
 }
 

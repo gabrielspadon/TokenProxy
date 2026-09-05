@@ -175,7 +175,6 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
     }
     if (newCredentials.idToken)             updates.idToken = newCredentials.idToken;
     if (newCredentials.lastRefreshAt)       updates.lastRefreshAt = newCredentials.lastRefreshAt;
-    if (newCredentials.expiresAt)           updates.expiresAt = newCredentials.expiresAt;
     if (newCredentials.expiresIn) {
       updates.expiresAt = toExpiresAt(newCredentials.expiresIn);
       updates.expiresIn = newCredentials.expiresIn;
