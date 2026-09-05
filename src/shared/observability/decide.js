@@ -55,7 +55,7 @@ export const VERDICTS = Object.freeze({
   SEL: Object.freeze(['win', 'pin-hit', 'pin-expired', 'repin', 'skipped', 'operator-pinned', 'refused', 'drain-excluded', 'model-locked', 'quota-paused', 'quota-unknown', 'proxy-unusable']),
   LEASE: Object.freeze(['refused', 'ungated', 'double-release']),
   CRED: Object.freeze(['refresh-failed', 'rotated', 'same', 'chain-diverged', 'dedup-reuse', 'no-refresh-path']),
-  LOCK: Object.freeze(['applied', 'permanent', 'monthly-reset', 'clamped']),
+  LOCK: Object.freeze(['applied', 'permanent', 'monthly-reset', 'clamped', 'model-unavailable']),
   // rtk-applied/headroom-applied/mem-pruned/compact-applied/injected are the
   // token-saver path codes: folded into REQ.ok's path= (and save= carries the
   // measured bytes), so a saver never costs a line on the nominal path.

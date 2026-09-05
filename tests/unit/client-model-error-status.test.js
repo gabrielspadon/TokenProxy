@@ -56,6 +56,76 @@ describe("client model error status projection", () => {
       { provider: "gemini", requestedModel: "gemini-missing", status: 503, payload: null },
       { clientErrorStatus: 503, unknownModelVerified: false },
     ],
+    [
+      "a verified Anthropic not_found_error naming the model",
+      {
+        provider: "claude",
+        requestedModel: "claude-fable-5-1",
+        status: 404,
+        payload: { type: "error", error: { type: "not_found_error", message: "model: claude-fable-5-1" } },
+      },
+      { clientErrorStatus: 404, unknownModelVerified: true },
+    ],
+    [
+      "an Anthropic not_found_error naming a DIFFERENT model",
+      {
+        provider: "claude",
+        requestedModel: "claude-fable-5-1",
+        status: 404,
+        payload: { type: "error", error: { type: "not_found_error", message: "model: claude-other" } },
+      },
+      { clientErrorStatus: 404, unknownModelVerified: false },
+    ],
+    [
+      "the anthropic api-key twin via the claude predicate",
+      {
+        provider: "anthropic",
+        requestedModel: "claude-fable-5-1",
+        status: 404,
+        payload: { type: "error", error: { type: "not_found_error", message: "model: claude-fable-5-1" } },
+      },
+      { clientErrorStatus: 404, unknownModelVerified: true },
+    ],
+    [
+      "a verified OpenAI model_not_found code",
+      {
+        provider: "codex",
+        requestedModel: "gpt-6-pro",
+        status: 404,
+        payload: { error: { message: "The model `gpt-6-pro` does not exist or you do not have access to it.", type: "invalid_request_error", code: "model_not_found", param: null } },
+      },
+      { clientErrorStatus: 404, unknownModelVerified: true },
+    ],
+    [
+      "a verified OpenAI invalid_request_error with param=model on 400",
+      {
+        provider: "codex",
+        requestedModel: "gpt-6-pro",
+        status: 400,
+        payload: { error: { message: "Unsupported model gpt-6-pro when using Codex with a ChatGPT account.", type: "invalid_request_error", code: null, param: "model" } },
+      },
+      { clientErrorStatus: 404, unknownModelVerified: true },
+    ],
+    [
+      "an OpenAI 400 that does not name the requested model",
+      {
+        provider: "codex",
+        requestedModel: "gpt-6-pro",
+        status: 400,
+        payload: { error: { message: "Invalid value for temperature.", type: "invalid_request_error", code: null, param: "temperature" } },
+      },
+      { clientErrorStatus: 400, unknownModelVerified: false },
+    ],
+    [
+      "the openai api-key twin via the codex predicate",
+      {
+        provider: "openai",
+        requestedModel: "gpt-6-pro",
+        status: 404,
+        payload: { error: { message: "The model `gpt-6-pro` does not exist.", type: "invalid_request_error", code: "model_not_found", param: "model" } },
+      },
+      { clientErrorStatus: 404, unknownModelVerified: true },
+    ],
   ])("projects %s only from a verified structured model signature", (_name, input, expected) => {
     expect(projectClientModelStatus(input)).toEqual(expected);
   });

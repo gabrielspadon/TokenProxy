@@ -86,6 +86,44 @@ describe("model-keyed failure metadata", () => {
     expect(dbMocks.updateProviderConnection).not.toHaveBeenCalled();
   });
 
+  it("locks the (account, model) pair and rotates on a verified unknown-model signature", async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([{ id: "conn-1", provider: "claude", backoffLevel: 0 }]);
+
+    await expect(markAccountUnavailable(
+      "conn-1",
+      404,
+      '{"type":"error","error":{"type":"not_found_error","message":"model: claude-fable-5-1"}}',
+      "claude",
+      "claude-fable-5-1",
+      null,
+      { clientErrorStatus: 404, unknownModelVerified: true },
+    )).resolves.toEqual({ shouldFallback: true, cooldownMs: 0 });
+
+    const write = dbMocks.updateProviderConnection.mock.calls[0][1];
+    const lockKey = getModelLockKey("claude-fable-5-1");
+    expect(write).toHaveProperty(lockKey);
+    // 24h lock, model-scoped: other models on the account stay usable.
+    expect(new Date(write[lockKey]).getTime()).toBe(NOW.getTime() + 24 * 60 * 60 * 1000);
+    expect(write).not.toHaveProperty(MODEL_LOCK_ALL);
+    expect(write[getModelFailureKey("claude-fable-5-1")]).toMatchObject({ unknownModelVerified: true });
+  });
+
+  it("still passes an UNVERIFIED model_not_found through without locking (#2032)", async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([{ id: "conn-1", provider: "claude", backoffLevel: 0 }]);
+
+    await expect(markAccountUnavailable(
+      "conn-1",
+      404,
+      "model_not_found: claude-typo",
+      "claude",
+      "claude-typo",
+      null,
+      { clientErrorStatus: 404, unknownModelVerified: false },
+    )).resolves.toEqual({ shouldFallback: false, cooldownMs: 0 });
+
+    expect(dbMocks.updateProviderConnection).not.toHaveBeenCalled();
+  });
+
   it("writes independent alpha and beta lock pairs with the same exact expiry per pair", async () => {
     dbMocks.getProviderConnections.mockResolvedValue([{ id: "conn-1", provider: "demo", backoffLevel: 0 }]);
     const alphaReset = NOW.getTime() + 60_000;

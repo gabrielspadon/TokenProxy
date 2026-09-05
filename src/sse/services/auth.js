@@ -907,6 +907,10 @@ export function describeProviderError(errorText) {
   return code ? clamp(`Provider error (${code})`) : "Provider error";
 }
 
+// A verified "account does not serve this model" is stable until the plan
+// changes; 24h keeps the pool honest without a permanent operator-only lock.
+const UNKNOWN_MODEL_LOCK_MS = 24 * 60 * 60 * 1000;
+
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null, failureMetadata = null, logCtx = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   // Request-scoped decision-log context ({rid, sid}); absent on background
@@ -971,6 +975,41 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   // GitHub premium-request exhaustion is account-wide until the next UTC month.
   const githubResetAtMs = githubMonthlyResetMs(status, errorText, provider);
+
+  // A provider-verified "this account does not serve this model" is a fact
+  // about the (account, model) pair, not the request. The pass-through rules
+  // in errorConfig exist for the typo case (#2032) and would return this error
+  // to the caller without trying accounts that DO have the model (Fable vs
+  // Opus vs Sonnet lanes differ per Anthropic account). Only a structured
+  // signature naming the requested model reaches here (modelErrorClassifier),
+  // so a typo still passes through: no other account can fix a wrong name
+  // either, but the verified signature costs one lock instead of a retry loop.
+  if (failureMetadata?.unknownModelVerified === true && model) {
+    const until = new Date(Date.now() + UNKNOWN_MODEL_LOCK_MS).toISOString();
+    const reason = describeProviderError(errorText);
+    await updateProviderConnection(connectionId, {
+      ...buildModelLockUpdateAt(model, until),
+      ...buildModelFailureUpdate(model, {
+        status,
+        message: reason,
+        until,
+        resetsAt: null,
+        clientErrorStatus: failureMetadata?.clientErrorStatus ?? null,
+        unknownModelVerified: true,
+      }),
+      lastError: reason,
+      errorCode: status,
+      lastErrorAt: new Date().toISOString(),
+    });
+    decide('LOCK', 'model-unavailable', lockCtx({
+      status: numStatus || null,
+      class: 'capability',
+      reset: until,
+      why: 'verified-unknown-model',
+      expect_reset: false,
+    }));
+    return { shouldFallback: true, cooldownMs: 0 };
+  }
 
   // A request error belongs to the caller, so reset metadata must not turn it
   // into a persisted account lock or a replay on another account.
