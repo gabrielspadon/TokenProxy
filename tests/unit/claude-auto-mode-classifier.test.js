@@ -1296,7 +1296,7 @@ describe("Claude Code response classifier validation", () => {
         content: [{ type: "text", text: decision }],
         stop_reason: "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: 2008, output_tokens: 2 },
+        usage: { input_tokens: 8, output_tokens: 2 },
       });
     },
   );
@@ -1321,7 +1321,7 @@ describe("Claude Code response classifier validation", () => {
         content: [{ type: "text", text: decision }],
         stop_reason: "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: 2008, output_tokens: 2 },
+        usage: { input_tokens: 8, output_tokens: 2 },
       });
     },
   );
@@ -1341,7 +1341,7 @@ describe("Claude Code response classifier validation", () => {
       expect(await result.response.json()).toEqual({
         ...nativeClaudeMessage([{ type: "text", text: decision }]),
         model: "subscription",
-        usage: { input_tokens: 2008, output_tokens: 2 },
+        usage: { input_tokens: 8, output_tokens: 2 },
       });
     },
   );
@@ -1372,7 +1372,7 @@ describe("Claude Code response classifier validation", () => {
         content: [{ type: "text", text: decision }],
         stop_reason: "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: 2008, output_tokens: 2 },
+        usage: { input_tokens: 8, output_tokens: 2 },
       });
     },
   );
@@ -1926,7 +1926,7 @@ describe("Claude Code response classifier validation", () => {
     expect(await result.response.json()).toEqual({
       ...openAICompletion("ordinary prose"),
       model: "subscription",
-      usage: { prompt_tokens: 2008, completion_tokens: 2, total_tokens: 2010 },
+      usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
     });
   });
 
@@ -1984,7 +1984,7 @@ describe("Claude Code response classifier validation", () => {
         message: { role: "assistant", content: "ordinary Responses prose" },
         finish_reason: "stop",
       }],
-      usage: { prompt_tokens: 2008, completion_tokens: 2, total_tokens: 2010 },
+      usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
     });
   });
 
@@ -2014,7 +2014,7 @@ describe("Claude Code response classifier validation", () => {
           message: { role: "assistant", content: "ordinary native prose" },
           finish_reason: "stop",
         }],
-        usage: { prompt_tokens: 2008, completion_tokens: 2, total_tokens: 2010 },
+        usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
       });
     } finally {
       vi.useRealTimers();
@@ -2054,7 +2054,7 @@ describe("Claude Code response classifier validation", () => {
           message: { role: "assistant", content: "ordinary Responses SSE prose" },
           finish_reason: "stop",
         }],
-        usage: { prompt_tokens: 2008, completion_tokens: 2, total_tokens: 2010 },
+        usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
       });
     } finally {
       tee.mockRestore();
@@ -2096,7 +2096,7 @@ describe("Claude Code response classifier validation", () => {
         content: [{ type: "text", text: "ordinary Claude prose" }],
         stop_reason: "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: 2008, output_tokens: 2 },
+        usage: { input_tokens: 8, output_tokens: 2 },
       });
     } finally {
       restoreClassifierSpies(spies);
@@ -2169,7 +2169,7 @@ describe("Claude Code response classifier validation", () => {
       ],
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 2008, output_tokens: 2 },
+      usage: { input_tokens: 8, output_tokens: 2 },
     });
   });
 
@@ -2257,7 +2257,7 @@ describe("Claude Code response classifier validation", () => {
       content: [{ type: "thinking", thinking: "ordinary Chat reasoning" }],
       stop_reason: "end_turn",
       stop_sequence: null,
-      usage: { input_tokens: 2008, output_tokens: 2 },
+      usage: { input_tokens: 8, output_tokens: 2 },
     });
   });
 

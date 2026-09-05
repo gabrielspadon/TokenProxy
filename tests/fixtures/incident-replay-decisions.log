@@ -8,7 +8,7 @@
 <ts> UP.failover rid=aa000002 from=conn-aaa to=pool why=locked-60s
 <ts> SEL.win rid=aa000002 conn=conn-bbb model=claude-fable-5 key=fallback-order win=true rem=85 reset=<reset> why=initial-pin
 <ts> STREAM.usage-estimated rid=aa000002 conn=conn-bbb why=provider-omitted-usage
-<ts> REQ.ok rid=aa000002 conn=conn-bbb ce=310 route=claude/claude-fable-5>claude/claude-fable-5 fmt=openai>claude sel=win row=<row> t=<ms> in=2034 out=4 cr=0 cw=0 ttft=<ms> path=XFORM.headroom-skip,XFORM.cache-legacy
+<ts> REQ.ok rid=aa000002 conn=conn-bbb ce=310 route=claude/claude-fable-5>claude/claude-fable-5 fmt=openai>claude sel=win row=<row> t=<ms> in=34 out=4 cr=0 cw=0 ttft=<ms> path=XFORM.headroom-skip,XFORM.cache-legacy
 <ts> SEL.model-locked rid=aa000003 conn=conn-aaa model=claude-fable-5 lock=modelLock_claude-fable-5 until=<until>
 <ts> SEL.win rid=aa000003 conn=conn-bbb model=claude-fable-5 key=fallback-order win=true rem=85 reset=<reset> why=initial-pin
 <ts> SEL.repin rid=aa000003 model=claude-fable-5 from=none to=conn-bbb trigger=initial-pin why=no-existing-pin rcpt=rcpt-replay rep=2 first=<ts>
