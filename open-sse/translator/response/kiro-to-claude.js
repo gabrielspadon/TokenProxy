@@ -74,7 +74,6 @@ export function kiroToClaudeResponse(chunk, state) {
       typeof data.usage.completion_tokens === "number"
         ? data.usage.completion_tokens
         : 0;
-    state.usage = { input_tokens: promptTokens, output_tokens: outputTokens };
     // Claude clients read cache_read/cache_creation to price a turn and to size
     // their prompt cache. Both spellings are accepted because the Kiro executor
     // emits the Chat shape and passthrough responses use the nested details form.
@@ -82,6 +81,15 @@ export function kiroToClaudeResponse(chunk, state) {
       ?? data.usage.prompt_tokens_details?.cached_tokens;
     const cacheCreation = data.usage.cache_creation_input_tokens
       ?? data.usage.prompt_tokens_details?.cache_creation_tokens;
+    // Anthropic input_tokens is cache-EXCLUSIVE; OpenAI prompt_tokens is
+    // inclusive. Subtract like openai-to-claude.js does, or clients double-count
+    // the cached prefix when summing the three fields.
+    const inputTokens = Math.max(
+      0,
+      promptTokens - (typeof cacheRead === "number" ? cacheRead : 0)
+        - (typeof cacheCreation === "number" ? cacheCreation : 0),
+    );
+    state.usage = { input_tokens: inputTokens, output_tokens: outputTokens };
     if (typeof cacheRead === "number") state.usage.cache_read_input_tokens = cacheRead;
     if (typeof cacheCreation === "number") state.usage.cache_creation_input_tokens = cacheCreation;
   }
@@ -265,6 +273,15 @@ export function kiroToClaudeNonStreaming(data) {
   }
 
   const usage = data?.usage || {};
+  const nsCacheRead = usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens;
+  const nsCacheCreation =
+    usage.cache_creation_input_tokens ?? usage.prompt_tokens_details?.cache_creation_tokens;
+  // Same cache-exclusive input_tokens contract as the streaming path above.
+  const nsInputTokens = Math.max(
+    0,
+    (usage.prompt_tokens || 0) - (typeof nsCacheRead === "number" ? nsCacheRead : 0)
+      - (typeof nsCacheCreation === "number" ? nsCacheCreation : 0),
+  );
   return {
     id: `msg_${Date.now()}`,
     type: "message",
@@ -273,14 +290,12 @@ export function kiroToClaudeNonStreaming(data) {
     model: data?.model || "kiro",
     stop_reason: convertFinishReason(choice?.finish_reason || "stop"),
     usage: {
-      input_tokens: usage.prompt_tokens || 0,
+      input_tokens: nsInputTokens,
       output_tokens: usage.completion_tokens || 0,
       // Same cache preservation as the streaming path above.
-      ...(typeof (usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens) === "number"
-        ? { cache_read_input_tokens: usage.cache_read_input_tokens ?? usage.prompt_tokens_details.cached_tokens }
-        : {}),
-      ...(typeof (usage.cache_creation_input_tokens ?? usage.prompt_tokens_details?.cache_creation_tokens) === "number"
-        ? { cache_creation_input_tokens: usage.cache_creation_input_tokens ?? usage.prompt_tokens_details.cache_creation_tokens }
+      ...(typeof nsCacheRead === "number" ? { cache_read_input_tokens: nsCacheRead } : {}),
+      ...(typeof nsCacheCreation === "number"
+        ? { cache_creation_input_tokens: nsCacheCreation }
         : {}),
     },
   };
