@@ -7,6 +7,11 @@
 import fs from "fs";
 import path from "path";
 
+// Deliberately NOT the canonical toResponsesUsage in translator/concerns/
+// usage.js: that import chain (usageTracking -> observability/decide ->
+// dataDir) touches fs at module load, and this file must stay loadable in a
+// Cloudflare Worker where fs is absent (see createResponsesLogger's guard and
+// the worker-environment test). Local copy is the isolation, not an accident.
 function toResponsesUsage(usage) {
   if (!usage || typeof usage !== "object") return null;
 
