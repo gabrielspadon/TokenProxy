@@ -5,6 +5,7 @@ import { FETCH_CONNECT_TIMEOUT_MS, HTTP_STATUS } from "../config/runtimeConfig.j
 import {
   generateCursorBody,
   encodeField,
+  encodeMcpTools,
   wrapConnectRPCFrame,
   decodeMessage,
   parseConnectRPCFrame,
@@ -100,7 +101,17 @@ function isAgentTextRequest(body) {
 }
 
 function encodeHistoryMessage(message) {
-  const content = textFromContent(message?.content);
+  let content = textFromContent(message?.content);
+  // A tool-call turn carries no text; represent the call and its result as
+  // text history so AgentService sees the full conversation rather than a gap.
+  if (!content && message?.tool_calls?.length) {
+    content = message.tool_calls
+      .map((call) => `[tool_call ${call?.function?.name || ""} ${call?.function?.arguments || "{}"}]`)
+      .join("\n");
+  }
+  if (content && message?.role === "tool") {
+    content = `[tool_result ${message.tool_call_id || ""}] ${content}`;
+  }
   if (!content) return null;
 
   // ConversationHistoryMessage.user / .assistant -> repeated content -> text.
@@ -111,6 +122,18 @@ function encodeHistoryMessage(message) {
   return agentMessage(1, agentMessage(1, agentMessage(1, text)));
 }
 
+export function isAgentCapableRequest(body) {
+  // Wider than isAgentTextRequest: tool declarations and tool-call history are
+  // representable in the AgentService frame; only non-text content is not.
+  if (!Array.isArray(body?.messages) || body.messages.length === 0) return false;
+  return body.messages.every((message) => {
+    if (message?.role === "tool" || message?.tool_calls?.length) return true;
+    if (message?.content == null) return false;
+    return typeof message.content === "string"
+      || Array.isArray(message.content) && message.content.every((part) => part?.type === "text");
+  });
+}
+
 export function resolveCursorAgentModel(model) {
   const value = String(model || "");
   return /^claude-fable-/i.test(value) && value.endsWith("-fast")
@@ -118,7 +141,7 @@ export function resolveCursorAgentModel(model) {
     : value;
 }
 
-export function buildAgentRunFrame(messages, model) {
+export function buildAgentRunFrame(messages, model, tools = []) {
   const system = messages
     .filter((message) => message?.role === "system")
     .map((message) => textFromContent(message.content))
@@ -147,10 +170,12 @@ export function buildAgentRunFrame(messages, model) {
   );
   const conversationAction = agentMessage(1, userAction);
   const requestedModel = agentMessage(1, agentString(1, resolveCursorAgentModel(model)));
+  const mcpTools = encodeMcpTools(tools);
   const runRequest = concatBuffers(
     // An empty ConversationStateStructure starts a fresh local agent session.
     agentMessage(1, new Uint8Array()),
     agentMessage(2, conversationAction),
+    ...(mcpTools.length ? [agentMessage(4, mcpTools)] : []),
     ...(system ? [agentString(8, system)] : []),
     agentMessage(9, requestedModel),
   );

@@ -433,6 +433,134 @@ export function encodeMessageId(messageId, role, summaryId = null) {
   );
 }
 
+// ==================== AGENT.V1 MCP CODEC ====================
+// google.protobuf.Value plus the agent.v1 McpToolDefinition / McpArgs /
+// McpResult shapes, field numbers verified against Cursor's agent.proto.
+// Spec pinned by tests/unit/cursor-agent-proto.test.js.
+
+function encodeDoubleField(fieldNum, value) {
+  const tag = encodeVarint((fieldNum << 3) | WIRE_TYPE.FIXED64);
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setFloat64(0, value, true);
+  return concatArrays(tag, bytes);
+}
+
+export function encodeAgentValue(value) {
+  // Value oneof: 1 null_value, 2 number_value, 3 string_value, 4 bool_value,
+  // 5 struct_value, 6 list_value.
+  if (value === null || value === undefined) {
+    return encodeField(1, WIRE_TYPE.VARINT, 0);
+  }
+  if (typeof value === "boolean") {
+    return encodeField(4, WIRE_TYPE.VARINT, value ? 1 : 0);
+  }
+  if (typeof value === "number") {
+    return encodeDoubleField(2, value);
+  }
+  if (typeof value === "string") {
+    return encodeField(3, WIRE_TYPE.LEN, value);
+  }
+  if (Array.isArray(value)) {
+    // ListValue { repeated Value values = 1 }
+    const items = value.map((item) => encodeField(1, WIRE_TYPE.LEN, encodeAgentValue(item)));
+    return encodeField(6, WIRE_TYPE.LEN, concatArrays(...items));
+  }
+  // Struct { map<string, Value> fields = 1 }, entry { 1: key, 2: Value }
+  const entries = Object.entries(value).map(([key, item]) =>
+    encodeField(1, WIRE_TYPE.LEN, concatArrays(
+      encodeField(1, WIRE_TYPE.LEN, key),
+      encodeField(2, WIRE_TYPE.LEN, encodeAgentValue(item)),
+    )));
+  return encodeField(5, WIRE_TYPE.LEN, concatArrays(...entries));
+}
+
+export function decodeAgentValue(bytes) {
+  const msg = decodeMessage(bytes);
+  if (msg.has(1)) return null;
+  if (msg.has(2)) {
+    const raw = Uint8Array.from(msg.get(2)[0].value);
+    return new DataView(raw.buffer, raw.byteOffset, 8).getFloat64(0, true);
+  }
+  if (msg.has(3)) return Buffer.from(msg.get(3)[0].value).toString("utf8");
+  if (msg.has(4)) return msg.get(4)[0].value !== 0;
+  if (msg.has(6)) {
+    return decodeMessage(msg.get(6)[0].value).get(1)?.map((f) => decodeAgentValue(f.value)) ?? [];
+  }
+  // Struct, including the empty one: an absent field 5 on an empty message
+  // still decodes to {} because the oneof carried a zero-length struct.
+  const out = {};
+  for (const entry of decodeMessage(msg.has(5) ? msg.get(5)[0].value : bytes).get(1) ?? []) {
+    const fields = decodeMessage(entry.value);
+    const key = Buffer.from(fields.get(1)[0].value).toString("utf8");
+    out[key] = decodeAgentValue(fields.get(2)[0].value);
+  }
+  return out;
+}
+
+export function encodeMcpToolDefinition(tool) {
+  // Accepts the OpenAI wrapper shape ({ function: { name, description,
+  // parameters } }) or the flat MCP shape ({ name, description, inputSchema }).
+  const fn = tool?.function ?? tool ?? {};
+  const name = fn.name || "";
+  const description = fn.description || "";
+  const schema = fn.parameters ?? fn.inputSchema ?? tool?.inputSchema ?? {};
+  return concatArrays(
+    encodeField(1, WIRE_TYPE.LEN, name),
+    ...(description ? [encodeField(2, WIRE_TYPE.LEN, description)] : []),
+    encodeField(3, WIRE_TYPE.LEN, encodeAgentValue(schema)),
+    encodeField(4, WIRE_TYPE.LEN, "tokenproxy"),
+    encodeField(5, WIRE_TYPE.LEN, name),
+  );
+}
+
+export function encodeMcpTools(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return new Uint8Array(0);
+  return concatArrays(
+    ...tools.map((tool) => encodeField(1, WIRE_TYPE.LEN, encodeMcpToolDefinition(tool))),
+  );
+}
+
+export function decodeMcpArgs(bytes) {
+  // McpArgs { 1: name, 2: map args, 3: tool_call_id, 5: tool_name }
+  const msg = decodeMessage(bytes);
+  const text = (field) => msg.has(field) ? Buffer.from(msg.get(field)[0].value).toString("utf8") : "";
+  const args = {};
+  for (const entry of msg.get(2) ?? []) {
+    const fields = decodeMessage(entry.value);
+    const key = Buffer.from(fields.get(1)[0].value).toString("utf8");
+    args[key] = decodeAgentValue(fields.get(2)[0].value);
+  }
+  return { name: text(1), toolName: text(5), toolCallId: text(3), args };
+}
+
+export function encodeMcpResultSuccess({ textItems = [], imageItems = [], isError = false } = {}) {
+  // McpResult { 1: success { repeated 1: item, 2: is_error } };
+  // item oneof { 1: text { 1: string }, 2: image { 1: bytes, 2: mime_type } }.
+  const items = [
+    ...textItems.map((text) => encodeField(1, WIRE_TYPE.LEN,
+      encodeField(1, WIRE_TYPE.LEN, text))),
+    ...imageItems.map(({ data, mimeType }) => encodeField(2, WIRE_TYPE.LEN, concatArrays(
+      encodeField(1, WIRE_TYPE.LEN, data),
+      encodeField(2, WIRE_TYPE.LEN, mimeType || ""),
+    ))),
+  ].map((item) => encodeField(1, WIRE_TYPE.LEN, item));
+  const success = concatArrays(
+    ...items,
+    // is_error is emitted even when false so the consumer never infers a
+    // verdict from an absent field.
+    encodeField(2, WIRE_TYPE.VARINT, isError ? 1 : 0),
+  );
+  return encodeField(1, WIRE_TYPE.LEN, success);
+}
+
+export function encodeMcpResultError(message) {
+  return encodeField(2, WIRE_TYPE.LEN, encodeField(1, WIRE_TYPE.LEN, message || ""));
+}
+
+export function encodeMcpResultToolNotFound(toolName) {
+  return encodeField(5, WIRE_TYPE.LEN, encodeField(1, WIRE_TYPE.LEN, toolName || ""));
+}
+
 export function encodeMcpTool(tool) {
   const toolName = tool.function?.name || tool.name || "";
   const toolDesc = tool.function?.description || tool.description || "";
