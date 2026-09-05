@@ -26,7 +26,10 @@ export default {
     },
     retry: {
       "429": {
-        attempts: 3,
+        // Intentionally higher than the 5xx attempts: Antigravity's abuse
+        // gate answers 429 Quota Exhausted on bursts that clear within
+        // seconds, so it earns more retries than a real server error.
+        attempts: 6,
       },
       "500": {
         attempts: 3,
