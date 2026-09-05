@@ -166,6 +166,27 @@ describe("rewriteModelsListForClaude", () => {
     expect(out[2].display_name).toBe("x/big-window[1m]");
   });
 
+  it("appends bare official Anthropic ids so Claude Code window discovery matches (#compaction)", () => {
+    const out = rewriteModelsListForClaude(
+      [
+        { id: "cc/claude-sonnet-5", object: "model", owned_by: "cc", context_length: 1_000_000 },
+        { id: "cc/claude-sonnet-5(high)", object: "model", owned_by: "cc", context_length: 1_000_000 },
+        { id: "other/claude-sonnet-5", object: "model", owned_by: "other", context_length: 200_000 },
+        { id: "bai/deepseek-v4-flash", object: "model", owned_by: "bai" },
+      ],
+      compat,
+    );
+    const bare = out.filter((m) => m.id === "claude-sonnet-5");
+    // exactly one bare row, widest window wins, no thinking-variant rows
+    expect(bare).toHaveLength(1);
+    expect(bare[0].context_length).toBe(1_000_000);
+    expect(bare[0].display_name).toBe("claude-sonnet-5");
+    expect(out.some((m) => m.id === "claude-sonnet-5(high)")).toBe(false);
+    expect(out.some((m) => m.id === "deepseek-v4-flash")).toBe(false);
+    // prefixed rows still present
+    expect(out.some((m) => m.id === "claude-cc/claude-sonnet-5[1m]")).toBe(true);
+  });
+
   it("does not double-suffix ids that already carry [1m]", () => {
     const out = rewriteModelsListForClaude(
       [{ id: "myalias/my-model[1m]", object: "model", owned_by: "myalias" }],

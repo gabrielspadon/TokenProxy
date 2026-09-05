@@ -174,7 +174,7 @@ function shouldAppendSuffix(entry, compat) {
 // human-readable model name, and the [1m] beta-toggle suffix follows the
 // configured policy.
 export function rewriteModelsListForClaude(models, compat) {
-  return (models || []).map((entry) => {
+  const rewritten = (models || []).map((entry) => {
     const id = typeof entry?.id === "string" ? entry.id : "";
     if (!id) return entry;
     const alreadySuffixed = CONTEXT_SUFFIX_RE.test(id);
@@ -185,6 +185,33 @@ export function rewriteModelsListForClaude(models, compat) {
       display_name: `${displayNameFor(id)}${suffix}`,
     };
   });
+
+  // Official Anthropic model names must ALSO appear bare. A Claude Code
+  // session launched with --model claude-sonnet-5 matches its model id against
+  // this listing verbatim; when only claude-<alias>/claude-sonnet-5[1m] rows
+  // exist, nothing matches and the client falls back to its built-in 200k
+  // window and auto-compacts at ~160k while the gateway serves 1M (measured:
+  // compactMetadata preTokens 168172 against context_served 1000000). The
+  // bare name is already routable — the router resolves claude-sonnet-5 to a
+  // provider lane without any prefix — so listing it only tells the client
+  // the truth about the window it already has. One row per official name,
+  // widest window wins when several providers serve it; thinking variants
+  // like (high) are provider spellings, not client model ids, so skipped.
+  const official = new Map();
+  for (const entry of models || []) {
+    const id = typeof entry?.id === "string" ? entry.id : "";
+    const modelPart = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
+    if (!/^claude-[a-z0-9][a-z0-9.-]*$/.test(modelPart)) continue;
+    const prev = official.get(modelPart);
+    if (!prev || (entry.context_length || 0) > (prev.context_length || 0)) {
+      official.set(modelPart, entry);
+    }
+  }
+  for (const [name, entry] of official) {
+    if (rewritten.some((m) => m?.id === name)) continue;
+    rewritten.push({ ...entry, id: name, display_name: name });
+  }
+  return rewritten;
 }
 
 // Default-model mapping helpers (one-click write to ~/.claude/settings.json)
