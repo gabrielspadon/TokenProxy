@@ -137,6 +137,13 @@ export const MODEL_PRICING = {
     reasoning: 50.0,
     cache_creation: 12.5,
   },
+  "claude-fable-5-1": {
+    input: 10.0,
+    output: 50.0,
+    cached: 1.0,
+    reasoning: 50.0,
+    cache_creation: 12.5,
+  },
 
   // === OpenAI / GPT ===
   // Rates: official OpenAI standard-tier list prices, $/1M tokens
