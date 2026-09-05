@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "crypto";
 import { CLAUDE_TOOL_SUFFIX, CC_DEFAULT_TOOLS } from "../config/appConstants.js";
 
-const CLAUDE_VERSION = "2.1.92";
+const CLAUDE_VERSION = "2.1.261";
 const CC_ENTRYPOINT = "sdk-cli";
 
 // Generate billing header matching real Claude Code 2.1.92+ format:
