@@ -7,8 +7,9 @@ import { QUOTA_HISTORY_TABLES } from "./schema/quotaHistory.js";
 import { CONFIG_VERSION_TABLES } from "./configVersionSchema.js";
 import { CONTEXT_EVIDENCE_TABLES, REQUEST_IDENTITY_COLUMNS, REQUEST_IDENTITY_INDEXES } from "./contextEvidenceSchema.js";
 import { API_KEY_BUDGET_COLUMNS, BUDGET_TABLES } from "./budgetSchema.js";
+import { INVESTIGATION_TABLES } from "./investigationSchema.js";
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -28,6 +29,7 @@ export const TABLES = {
   ...CONFIG_VERSION_TABLES,
   ...CONTEXT_EVIDENCE_TABLES,
   ...BUDGET_TABLES,
+  ...INVESTIGATION_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
