@@ -120,7 +120,7 @@ export function toConnection(conn, { isDraining = false, now = Date.now() } = {}
     status: connectionStatus(conn, { isDraining, now }),
     isActive: Boolean(conn.isActive),
     isDraining: Boolean(isDraining),
-    lastQualifiedAt: isoOrNull(conn.lastTestedAt) ?? isoOrNull(conn.updatedAt),
+    lastQualifiedAt: isoOrNull(conn.lastTestedAt),
     lastError: redactError(conn.lastError),
   };
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// G1 — native qualification and generation receipts exist, and expose no token,
+// Provider validation receipts expose no token,
 // no raw validation frame and no prompt body.
 //
 // WHY THIS TEST IS STRUCTURAL, NOT A GREP OVER OUTPUT. connectionsRepo's
@@ -129,7 +129,7 @@ describe('GET /api/admin/qualification/{connectionId}', () => {
     const body = await res.json();
 
     expect(Object.keys(body).sort()).toEqual(
-      ['checkedAt', 'connectionId', 'generation', 'provider', 'quota', 'status'].sort()
+      ['checkedAt', 'connectionId', 'generation', 'validation', 'provider', 'quota', 'status'].sort()
     );
     expect(body.connectionId).toBe('conn-1');
     expect(body.provider).toBe('anthropic');
@@ -140,11 +140,23 @@ describe('GET /api/admin/qualification/{connectionId}', () => {
     expect(body.quota).toHaveLength(1);
     // The store speaks freshness, the ABI speaks provenance.
     expect(body.quota[0].confidence).toBe('measured');
+    expect(body.checkedAt).toBeNull();
+    expect(body.validation.ok).toBeNull();
+    expect(body.validation.generationVerified).toBe(false);
+    expect(body.generation.ok).toBe(false);
   });
 
   it('discloses no credential from the decrypted connection record', async () => {
     const body = await (await GET({}, params('conn-1'))).json();
     assertNoLeak(JSON.stringify(body));
+  });
+
+  it('does not promote an old inferred model or configuration time to generation evidence', async () => {
+    mocks.readQualification.mockResolvedValue({ ok: true, model: 'invented-default', latencyMs: 5, checkedAt: 'bad-time' });
+    const body = await (await GET({}, params('conn-1'))).json();
+    expect(body.checkedAt).toBeNull();
+    expect(body.validation).toMatchObject({ ok: true, model: null, upstreamContact: 'not-recorded', generationVerified: false });
+    expect(body.generation.model).toBeNull();
   });
 
   it('is 404 for a connection that does not exist, and says nothing else', async () => {
@@ -177,6 +189,7 @@ describe('GET /api/admin/qualification', () => {
           'status',
         ].sort()
       );
+      expect(conn.lastQualifiedAt).toBeNull();
     }
   });
 
@@ -194,7 +207,7 @@ describe('GET /api/admin/qualification', () => {
 });
 
 describe('POST /api/admin/qualification/{connectionId}/recheck', () => {
-  it('spends a real generation and reports credential-safe evidence only', async () => {
+  it('records a provider validation without inventing a generated response or model', async () => {
     mocks.testSingleConnection.mockResolvedValue({
       valid: true,
       latencyMs: 412,
@@ -209,11 +222,19 @@ describe('POST /api/admin/qualification/{connectionId}/recheck', () => {
     expect(mocks.testSingleConnection).toHaveBeenCalledWith('conn-1');
     expect(body.generation).toEqual({
       ok: true,
-      model: 'claude-sonnet-4.5',
+      model: null,
       latencyMs: 412,
       error: null,
     });
+    expect(body.validation).toMatchObject({ ok: true, kind: 'provider-validation', checkedAt: '2026-01-01T00:00:10.000Z', upstreamContact: 'not-recorded', generationVerified: false });
     assertNoLeak(JSON.stringify(body));
+  });
+
+  it('keeps malformed validation results unknown instead of treating truthy values as a pass', async () => {
+    mocks.testSingleConnection.mockResolvedValue({ valid: 'true' });
+    const body = await (await POST(request(), params('conn-1'))).json();
+    expect(body.validation.ok).toBeNull();
+    expect(body.generation.ok).toBe(false);
   });
 
   it("keeps a failed probe a 200 and redacts the upstream's error text", async () => {
@@ -277,7 +298,7 @@ describe('POST /api/admin/qualification/{connectionId}/recheck', () => {
     expect(mocks.testSingleConnection).not.toHaveBeenCalled();
   });
 
-  it('reuses a fresh probe instead of spending a second generation', async () => {
+  it('reuses a fresh provider validation instead of repeating the check', async () => {
     mocks.readQualification.mockResolvedValue({
       ok: true,
       model: 'claude-sonnet-4.5',

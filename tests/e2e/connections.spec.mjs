@@ -23,7 +23,8 @@ function qual(over = {}) {
     connectionId: "c-1", provider: "openai", displayName: "work account",
     status: "healthy", isActive: true, isDraining: false,
     lastQualifiedAt: "2026-01-02T00:00:00.000Z", lastError: null,
-    generation: { ok: true, model: "gpt-5", latencyMs: 420, error: null },
+    generation: { ok: true, model: null, latencyMs: 420, error: null },
+    validation: { ok: true, kind: "provider-validation", source: "recorded-recheck", checkedAt: "2026-01-02T00:00:00.000Z", model: null, latencyMs: 420, error: null, upstreamContact: "not-recorded", generationVerified: false },
     quota: [{ scope: "5h", remaining: 40, limit: 100, resetAt: "2026-01-02T05:00:00.000Z", observedAt: "2026-01-02T00:00:00.000Z", confidence: "reported" }],
     ...over,
   };
@@ -139,12 +140,21 @@ test("a rollback with nothing to roll back to renders the 409", async ({ page })
   await expect(dialog).toContainText("There is no earlier release to roll back to.");
 });
 
-test("the unreported facts are labelled as the gateway's silence, not zero", async ({ page }) => {
+test("routing constraints link to the current eligibility evidence", async ({ page }) => {
   await page.route("**/api/providers", (r) => r.fulfill(json(200, { connections: [conn()] })));
   await page.route("**/api/admin/qualification", (r) => r.fulfill(json(200, { connections: [qual()] })));
   await page.route("**/api/admin/drain?all=true", (r) => r.fulfill(json(200, { connections: [] })));
   await page.route("**/api/system/state**", (r) => r.fulfill(json(200, { measures: {}, providerHealth: { status: "ok", degradedProviders: [] } })));
   await page.route("**/api/admin/activation", (r) => r.fulfill(json(200, { active: null, history: [] })));
   await page.goto("/dashboard/connections");
-  await expect(page.getByText("Not reported by the gateway")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Routing constraints" })).toBeVisible();
+  await expect(page.getByText("Reported provider health is separate from routing eligibility.", { exact: false })).toBeVisible();
+});
+
+test("a passing provider check is not presented as a generated answer", async ({ page }) => {
+  await mockDetail(page);
+  await page.goto("/dashboard/connections/c-1");
+  await expect(page.getByText("Check passed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not verified by this check", { exact: true })).toBeVisible();
+  await expect(page.getByText("Answered", { exact: true })).toHaveCount(0);
 });

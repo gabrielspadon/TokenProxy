@@ -324,11 +324,10 @@ export default function ConnectionsPage() {
       </section>
 
       <section>
-        <h2>Not reported by the gateway</h2>
+        <h2>Routing constraints</h2>
         <ul className="bullets">
-          <li>The per-connection concurrency ceiling. Only a per-provider ceiling exists, set from the connection screen.</li>
-          <li>Which models are locked on a connection right now.</li>
-          <li>Whether a quota pause is holding a connection out of rotation at this moment.</li>
+          <li>Independent account limits and an optional provider ceiling can both constrain new work. Open an account to inspect both.</li>
+          <li><Link href="/dashboard">Capacity</Link> shows recorded model cooldowns and quota-threshold exclusions for the selected model. Reported provider health is separate from routing eligibility.</li>
           <li>Reordering the fallback list in one move. Priority is written one connection at a time.</li>
         </ul>
       </section>

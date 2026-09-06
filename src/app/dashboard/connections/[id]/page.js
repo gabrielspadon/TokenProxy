@@ -12,6 +12,7 @@ import { runGrant, importPasted } from "@/shared/oauthGrant";
 import { TONE, WORDS, AUTH } from "@/shared/status";
 import { fmtNum, fmtRelative, fmtTime, fmtDuration, isEpoch } from "@/shared/format";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { resolveAccountCapacity, resolveProviderCeiling } from "@/shared/utils/accountCapacity";
 import { Icon } from "@/shared/components/Icon";
 import "../styles.css";
 
@@ -35,8 +36,8 @@ const COPY = {
   thresholds: { title: "Set the quota pause thresholds", verb: "Save", requires: "An operator session.", changes: "The gateway pauses this account when a window's use crosses the threshold.", undo: "Clear the thresholds." },
   pool: { title: "Bind a proxy pool", verb: "Save", requires: "An operator session, and an active pool.", changes: "Every upstream call from this account goes through the pool. Whether that is strict comes from the pool itself.", undo: "Bind no pool." },
   endpoint: { title: "Override the endpoint", verb: "Save", requires: "An operator session, and an absolute http or https URL.", changes: "Calls go to the new base URL in the chosen API shape instead of the provider default.", undo: "Clear the override." },
-  concurrent: { title: "Set the provider's concurrency ceiling", verb: "Save", requires: "An operator session.", changes: "Every connection of this provider shares the new ceiling, not only this one.", undo: "Clear the ceiling and the default of 80 applies." },
-  recheck: { title: "Recheck this connection", verb: "Recheck", requires: "The connection not draining, and no other probe in flight.", changes: "One real request goes upstream and its verdict replaces the recorded standing.", undo: "Nothing to undo. A failed probe only updates the record." },
+  concurrent: { title: "Set the provider's concurrency ceiling", verb: "Save", requires: "An operator session.", changes: "Every connection of this provider shares this additional outer ceiling. Independent account limits still apply.", undo: "Clear the provider ceiling to remove the outer limit. Account limits remain in effect." },
+  recheck: { title: "Recheck this connection", verb: "Recheck", requires: "The connection not draining, and no other check in flight.", changes: "Runs the provider-specific validation and records its result. This may contact the provider, refresh credentials or consume quota. It does not establish that a model generated a response.", undo: "The observation remains recorded. A later check can replace the current result; credential refresh may also update stored credentials." },
   drain: { title: "Drain this connection", verb: "Drain", requires: "An operator session from this machine, and the drain record unchanged since this screen read it.", changes: "New requests stop landing here. Streams already open run to their end.", undo: "Cancel the drain." },
   undrain: { title: "Cancel the drain", verb: "Cancel the drain", requires: "An operator session from this machine, and the drain record unchanged since this screen read it.", changes: "The account starts taking new requests again.", undo: "Drain it again." },
   reauth: { title: "Replace the credential", verb: "Sign in", requires: "An operator session, and finishing the provider's own sign-in as the same account.", changes: "The stored credential is replaced in place. History and priority stay.", undo: "None. The old credential is overwritten." , irreversible: true },
@@ -77,7 +78,8 @@ export default function ConnectionPage({ params }) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState(null);
   const [field, setField] = useState({});
-  const [probe, setProbe] = useState(null); // last recheck generation shown inline
+  const [probe, setProbe] = useState(null);
+  const validation = probe || d?.validation;
   const [grantStep, setGrantStep] = useState(null);
 
   function openAction(kind, seed = {}) {
@@ -106,13 +108,13 @@ export default function ConnectionPage({ params }) {
       case "pool": r = await call(`/api/providers/${id}`, { method: "PUT", body: { proxyPoolId: field.poolId || "__none__" } }); break;
       case "endpoint": r = await call(`/api/providers/${id}`, { method: "PUT", body: { baseUrl: field.baseUrl || "", ...(field.apiType ? { apiType: field.apiType } : {}) } }); break;
       case "concurrent": {
-        const v = field.maxConcurrent === "" ? undefined : Number(field.maxConcurrent);
-        r = await call("/api/settings", { method: "PATCH", body: { providerStrategies: { [c.provider]: v === undefined ? {} : { maxConcurrent: v } } } });
+        const v = field.maxConcurrent === "" ? null : Number(field.maxConcurrent);
+        r = await call("/api/settings", { method: "PATCH", body: { providerStrategyPatch: { providerId: c.provider, values: { maxConcurrent: v } } } });
         break;
       }
       case "recheck": {
         r = await call(`/api/admin/qualification/${id}/recheck`, { method: "POST", body: field.force ? { force: true } : {} });
-        if (r.ok) setProbe(r.body.generation || null);
+        if (r.ok) setProbe(r.body.validation || null);
         break;
       }
       case "drain": r = await call(`/api/admin/drain/${id}`, { method: "POST", body: ver ? { ifMatch: ver } : {} }); break;
@@ -182,7 +184,8 @@ export default function ConnectionPage({ params }) {
               <dt>Default model</dt><dd>{c.defaultModel ? <span data-i18n-skip>{c.defaultModel}</span> : <span>Provider default</span>}</dd>
               <dt>Endpoint</dt><dd>{psd.baseUrl ? <span data-i18n-skip>{psd.baseUrl} ({psd.apiType || "chat"})</span> : <span>Provider default</span>}</dd>
               <dt>Proxy pool</dt><dd>{pool ? <span data-i18n-skip>{pool.name}{pool.strictProxy ? " (strict)" : ""}</span> : psd.proxyPoolId ? <span data-i18n-skip>{psd.proxyPoolId}</span> : <span>None</span>}</dd>
-              <dt>Provider ceiling</dt><dd>{maxConcurrent !== undefined ? <span data-i18n-skip>{fmtNum(maxConcurrent)}</span> : <span>Default of 80</span>}</dd>
+              <dt>Provider ceiling</dt><dd>{resolveProviderCeiling(settings.data, c.provider) !== null ? <span data-i18n-skip>{fmtNum(resolveProviderCeiling(settings.data, c.provider))}</span> : <span>No outer limit configured</span>}</dd>
+              <dt>Account ceiling</dt><dd>{resolveAccountCapacity(c) === 0 ? <span>Explicitly unlimited</span> : <span data-i18n-skip>{fmtNum(resolveAccountCapacity(c))}{c.maxConcurrent == null ? " (default)" : ""}</span>}</dd>
             </dl>
             <p className="caption">Whether the proxy is strict is the pool&apos;s own setting; the connection only names the pool.</p>
           </section>
@@ -196,17 +199,19 @@ export default function ConnectionPage({ params }) {
           </section>
 
           <section>
-            <h2>Last probe</h2>
+            <h2>Last validation</h2>
             {qual.error && !d ? <Notice {...refusal(qual.status, qual.error)} /> : null}
             {d || probe ? (
               <dl className="facts">
-                <dt>Verdict</dt><dd>{(probe || d?.generation)?.ok ? "Answered" : (probe || d?.generation) ? "Failed" : "Never probed"}</dd>
-                <dt>Model</dt><dd>{(probe || d?.generation)?.model ? <span data-i18n-skip>{(probe || d.generation).model}</span> : <span className="unreported">Not recorded</span>}</dd>
-                <dt>Latency</dt><dd>{typeof (probe || d?.generation)?.latencyMs === "number" ? <span data-i18n-skip>{fmtDuration((probe || d.generation).latencyMs)}</span> : <span className="unreported">Not recorded</span>}</dd>
-                <dt>Error</dt><dd>{(probe || d?.generation)?.error ? <span data-i18n-skip>{(probe || d.generation).error}</span> : <span>None</span>}</dd>
-                <dt>Qualified</dt><dd>{d?.lastQualifiedAt ? <span data-i18n-skip>{fmtRelative(d.lastQualifiedAt, now)}</span> : <span className="unreported">Never</span>}</dd>
+                <dt>Verdict</dt><dd>{validation?.ok === true ? "Check passed" : validation?.ok === false ? "Check failed" : "Not established"}</dd>
+                <dt>Generation</dt><dd className="unreported">Not verified by this check</dd>
+                <dt>Model</dt><dd className="unreported">Not recorded</dd>
+                <dt>Check duration</dt><dd>{typeof validation?.latencyMs === "number" ? <span data-i18n-skip>{fmtDuration(validation.latencyMs)}</span> : <span className="unreported">Not recorded</span>}</dd>
+                <dt>Error</dt><dd>{validation?.error ? <span data-i18n-skip>{validation.error}</span> : <span className="unreported">Not recorded</span>}</dd>
+                <dt>Observed</dt><dd>{validation?.checkedAt ? <span data-i18n-skip>{fmtRelative(validation.checkedAt, now)}</span> : <span className="unreported">Not recorded</span>}</dd>
               </dl>
-            ) : !qual.error ? <p className="empty">No probe on record.</p> : null}
+            ) : !qual.error ? <p className="empty">No validation on record.</p> : null}
+            <p className="caption">Provider checks differ. A local credential check, upstream authentication and a successful model request are separate evidence.</p>
             <div className="actions">
               <button type="button" className="button quiet" onClick={() => openAction("recheck", { force: false })}><Icon name="i-test" />Recheck</button>
             </div>
@@ -292,7 +297,7 @@ export default function ConnectionPage({ params }) {
           </div>
         ) : null}
         {action === "concurrent" ? (
-          <label className="field"><span>Ceiling</span><input className="input" type="number" min="1" placeholder="80" value={field.maxConcurrent ?? ""} onChange={(e) => setField((f) => ({ ...f, maxConcurrent: e.target.value }))} /></label>
+          <label className="field"><span>Ceiling</span><input className="input" type="number" min="1" placeholder="No outer limit" value={field.maxConcurrent ?? ""} onChange={(e) => setField((f) => ({ ...f, maxConcurrent: e.target.value }))} /></label>
         ) : null}
         {action === "recheck" ? (
           <label className="connections-check"><input type="checkbox" checked={!!field.force} onChange={(e) => setField((f) => ({ ...f, force: e.target.checked }))} /><span>Force, even if a result is fresh</span></label>

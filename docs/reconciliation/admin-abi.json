@@ -92,14 +92,30 @@
       },
       "QualificationDetail": {
         "type": "object",
-        "required": ["connectionId", "provider", "status", "checkedAt", "generation", "quota"],
+        "required": ["connectionId", "provider", "status", "checkedAt", "validation", "generation", "quota"],
         "properties": {
           "connectionId": { "type": "string" },
           "provider": { "type": "string" },
           "status": { "type": "string", "enum": ["healthy", "degraded", "cooldown", "drained", "unqualified", "error"] },
-          "checkedAt": { "type": "string", "format": "date-time" },
+          "checkedAt": { "type": ["string", "null"], "format": "date-time", "description": "Timestamp of the retained validation record. Configuration edits and provider-health flags are not check observations." },
+          "validation": {
+            "type": "object",
+            "required": ["ok", "kind", "source", "checkedAt", "model", "latencyMs", "error", "upstreamContact", "generationVerified"],
+            "properties": {
+              "ok": { "type": ["boolean", "null"] },
+              "kind": { "const": "provider-validation" },
+              "source": { "enum": ["recorded-recheck", "not-recorded"] },
+              "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+              "model": { "type": "null", "description": "The provider validator does not record a model-specific generation receipt." },
+              "latencyMs": { "type": ["number", "null"], "minimum": 0 },
+              "error": { "type": ["string", "null"] },
+              "upstreamContact": { "const": "not-recorded" },
+              "generationVerified": { "const": false }
+            }
+          },
           "generation": {
             "type": "object",
+            "deprecated": true,
             "description": "Legacy generation-named credential-check result. Provider checks may only inspect token presence/expiry or accept an intentional invalid request. This field does not prove model generation support.",
             "required": ["ok", "model", "latencyMs", "error"],
             "properties": {
@@ -251,7 +267,7 @@
     },
     "/api/admin/qualification/{connectionId}": {
       "get": {
-        "summary": "Full qualification detail for one connection: last passive status plus the most recent generation and quota evidence on file. Never contacts the provider.",
+        "summary": "Reported connection status with retained provider validation and quota evidence. A validation result does not establish model generation. This read never contacts the provider.",
         "readOnly": true,
         "stateChanging": false,
         "authClass": "operator",
@@ -275,7 +291,7 @@
         "parameters": [ { "name": "connectionId", "in": "path", "required": true, "schema": { "type": "string" } } ],
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "properties": { "force": { "type": "boolean", "description": "Probe even if a recent qualification result is still fresh. Default false." } } } } } },
         "responses": {
-          "200": { "description": "Probe completed (result may itself be a failed generation; that is still a successful call, reported inside the body's generation.ok field).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QualificationDetail" } } } },
+          "200": { "description": "Validation completed. Inspect validation.ok for passed, failed or unknown; HTTP success is not proof of model generation.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QualificationDetail" } } } },
           "400": { "description": "Request body present but not a JSON object, or force is not a boolean.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "401": { "description": "No operator credential presented.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "403": { "description": "Inference key only, or the caller is not a loopback peer.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },

@@ -577,20 +577,20 @@ export default function SystemPage() {
       <section aria-labelledby="h-gap">
         <h2 id="h-gap">
           <Icon name="i-alert" />
-          Not reported
+          Routing eligibility
         </h2>
         <p>
-          Two things the gateway acts on every time it routes reach no readable field, so this
-          screen cannot show them.
+          Provider health and routing eligibility are separate. An account can have a healthy
+          reported status while a model cooldown or quota threshold prevents new work.
         </p>
         <ul className="bullets">
           <li>
-            Whether a connection is being skipped because a quota window crossed its auto-pause
-            threshold. Such a connection reads as healthy above.
+            <Link href="/dashboard">Inspect Capacity</Link> for model-scoped eligibility, exclusion
+            reasons, quota observations and account controls.
           </li>
           <li>
-            Whether one model on a connection is locked out after a model-scoped failure, and until
-            when.
+            Eligibility is a current policy evaluation. A retained routing decision records the
+            evidence available when that request was dispatched.
           </li>
         </ul>
       </section>

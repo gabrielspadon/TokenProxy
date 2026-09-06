@@ -1,7 +1,6 @@
 import { getProviderConnectionById } from "@/lib/db/repos/connectionsRepo.js";
 import { getWindows } from "@/lib/db/repos/quotaWindowsRepo.js";
 import { testSingleConnection } from "@/app/api/providers/[id]/test/testUtils";
-import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { adminError, adminJson, parseAdminBody } from "@/lib/admin/policy.js";
 import { beginRecheck, endRecheck, readDrainDoc, readQualification, writeQualification } from "@/lib/admin/state.js";
@@ -12,18 +11,10 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 /**
- * POST /api/admin/qualification/{connectionId}/recheck — the ONE operation in
- * this ABI that spends a real generation.
- *
- * Everything else in /api/admin reports persisted state. This contacts the
- * upstream, which is why it is mutating, loopback-bound, single-flight per
- * connection, and refused outright while a connection is draining: a drain
- * exists to let traffic leave an account, and a probe is traffic.
- *
- * A FAILED PROBE IS A 200. The ABI says so, and it is the right shape: the call
- * succeeded, and its finding is `generation.ok: false`. Returning 502 here
- * would make "the upstream is broken" indistinguishable from "the admin ABI is
- * broken", which is the distinction an operator opened this endpoint to make.
+ * Provider-specific validation may contact an upstream or refresh credentials.
+ * Some providers check only local credential presence or expiry. The result
+ * does not establish a generated response. A completed check returns 200 with
+ * its application verdict, including a failed validation.
  */
 
 // A fresh probe inside this window is reused unless force is set, so a
@@ -68,8 +59,8 @@ export async function POST(request, { params }) {
     const startedAt = Date.now();
     const result = await testSingleConnection(connectionId);
     const probe = {
-      ok: Boolean(result?.valid),
-      model: getDefaultModel(conn.provider),
+      ok: typeof result?.valid === "boolean" ? result.valid : null,
+      model: null,
       // testSingleConnection reports its own latency for the paths that have
       // one; the wall time is the fallback so the field is never null on a
       // probe that did run.
@@ -91,7 +82,7 @@ export async function POST(request, { params }) {
     // would leave the connection looking never-checked.
     const probe = {
       ok: false,
-      model: getDefaultModel(conn.provider),
+      model: null,
       latencyMs: null,
       error: redactError(error?.message || String(error)),
       checkedAt: new Date().toISOString(),
