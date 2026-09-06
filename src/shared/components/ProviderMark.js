@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
 import Image from 'next/image';
+import { AI_PROVIDERS } from '@/shared/constants/providers';
+import { getProviderIconSrc, markProviderIconMissing } from '@/shared/utils/providerIcon';
 
 const BRANDS = {
   anthropic: ['claude', 'Anthropic', 'claude'],
@@ -18,13 +20,20 @@ const BRANDS = {
 export function providerIdentity(provider) {
   const key = String(provider || '').toLowerCase();
   const known = BRANDS[key];
-  return known
-    ? { logo: known[0], name: known[1], color: known[2] }
-    : {
-        logo: /^[a-z0-9-]+$/.test(key) ? key : null,
-        name: provider || 'Unknown provider',
-        color: 'other',
-      };
+  if (known) return { logo: known[0], src: `/providers/${known[0]}.png`, name: known[1], color: known[2] };
+  // Non-registry brands (custom openai-compatible-chat-<hash> nodes) have no
+  // asset under /providers, so requesting one 404s on every view. Only fetch
+  // when the id is in the local registry set or the icon registry resolves it
+  // to a mark it can actually serve (alias, compat shared mark); otherwise go
+  // straight to the initial-letter fallback.
+  const src = getProviderIconSrc(key);
+  const served = src && (key in AI_PROVIDERS || src !== `/providers/${key}.png`) ? src : null;
+  return {
+    logo: served ? key : null,
+    src: served,
+    name: provider || 'Unknown provider',
+    color: 'other',
+  };
 }
 export function ProviderMark({ provider, size = 'normal', label = false }) {
   const brand = providerIdentity(provider);
@@ -32,14 +41,17 @@ export function ProviderMark({ provider, size = 'normal', label = false }) {
   return (
     <span className="provider-identity" data-provider={brand.color} data-i18n-skip>
       <span className="provider-mark" data-size={size} aria-hidden="true">
-        {brand.logo && !failed ? (
+        {brand.src && !failed ? (
           <Image
-            src={`/providers/${brand.logo}.png`}
+            src={brand.src}
             alt=""
             width="28"
             height="28"
             unoptimized
-            onError={() => setFailed(true)}
+            onError={() => {
+              markProviderIconMissing(brand.logo);
+              setFailed(true);
+            }}
           />
         ) : (
           brand.name.slice(0, 2).toUpperCase()

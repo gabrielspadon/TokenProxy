@@ -49,6 +49,44 @@
     margin-block-start: 12px;
   }
 
+  /* The switch ledger. ~25 same-kind receipts collapse to one aligned row
+     each (mono identifiers, tabular columns); the full three-line receipt
+     with its quota evidence opens per row, so nothing is lost. */
+  .sessions-ledger {
+    display: grid;
+    grid-template-columns: 16px minmax(110px, 0.6fr) minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.6fr);
+    gap: 4px 14px;
+    align-items: baseline;
+    padding-block: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  summary.sessions-ledger {
+    cursor: pointer;
+    list-style: none;
+  }
+  summary.sessions-ledger::-webkit-details-marker {
+    display: none;
+  }
+  .sessions-caret::before {
+    content: '▸';
+    color: var(--slate);
+    font-size: var(--t-13);
+  }
+  .sessions-fold[open] > summary .sessions-caret::before {
+    content: '▾';
+  }
+  .sessions-fold {
+    border-block-end: 1px solid var(--rule);
+  }
+  .sessions-fold > .row {
+    border-block-end: 0;
+  }
+  .sessions-move {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   @media (min-width: 768px) {
     .sessions-row {
       grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1fr) minmax(0, 2fr);

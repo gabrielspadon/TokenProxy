@@ -9,7 +9,8 @@ import { Notice } from '@/shared/components/Notice';
 import { QuotaWindow } from '@/shared/components/QuotaWindow';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
-import { fmtNum, fmtRelative, fmtTime } from '@/shared/format';
+import { fmtNum, fmtRelative } from '@/shared/format';
+import { recordTime } from '@/shared/components/workspace/economics';
 import { TONE, WORDS as STATUS } from '@/shared/status';
 import { Icon } from '@/shared/components/Icon';
 import SessionPins from '@/shared/components/SessionPins';
@@ -95,7 +96,7 @@ function Receipt({ r, names, now }) {
   return (
     <div className="row sessions-row">
       <div className="who">
-        <Button variant="subtle" size="compact-sm" onClick={()=>setSelectedRecord({kind:'routing-switch',id:r.receiptId,model:r.model,connectionId:r.newConnectionId,fromConnectionId:r.oldConnectionId,...(Number.isFinite(Date.parse(r.timestamp))?{timestamp:new Date(r.timestamp).toISOString()}:{})})} aria-label={`Select routing receipt ${r.receiptId}`}>{fmtTime(r.timestamp)}</Button>
+        <Button variant="subtle" size="compact-sm" onClick={()=>setSelectedRecord({kind:'routing-switch',id:r.receiptId,model:r.model,connectionId:r.newConnectionId,fromConnectionId:r.oldConnectionId,...(Number.isFinite(Date.parse(r.timestamp))?{timestamp:new Date(r.timestamp).toISOString()}:{})})} aria-label={`Select routing receipt ${r.receiptId}`}>{recordTime(r.timestamp)}</Button>
         <span className="sub" data-i18n-skip>
           {fmtRelative(r.timestamp, now)}
         </span>
@@ -416,13 +417,33 @@ export default function SessionsPage() {
         ) : null}
         {rows.length ? (
           <div className="rows">
-            <div className="row head sessions-row">
-              <span>When</span>
+            <div className="row head sessions-ledger">
+              <span aria-hidden="true" />
+              <span>When (UTC)</span>
               <span>Why it moved</span>
+              <span>Model</span>
               <span>Accounts</span>
             </div>
             {rows.map((r) => (
-              <Receipt key={r.receiptId} r={r} names={names} now={now} />
+              <details key={r.receiptId} className="sessions-fold">
+                <summary className="sessions-ledger">
+                  <span className="sessions-caret" aria-hidden="true" />
+                  <span className="who">
+                    <span className="id" data-i18n-skip>{recordTime(r.timestamp)}</span>
+                    <span className="sub" data-i18n-skip>{fmtRelative(r.timestamp, now)}</span>
+                  </span>
+                  <span className="status" data-tone={TRIGGER_TONE[r.trigger]}>
+                    {TRIGGER[r.trigger] || <span data-i18n-skip>{r.trigger}</span>}
+                  </span>
+                  <span className="id" data-i18n-skip>{r.model}</span>
+                  <span className="sessions-move" data-i18n-skip>
+                    {r.oldConnectionId ? names.get(r.oldConnectionId)?.displayName || r.oldConnectionId : 'First pin'}
+                    {' → '}
+                    {names.get(r.newConnectionId)?.displayName || r.newConnectionId || 'Not reported'}
+                  </span>
+                </summary>
+                <Receipt r={r} names={names} now={now} />
+              </details>
             ))}
           </div>
         ) : null}

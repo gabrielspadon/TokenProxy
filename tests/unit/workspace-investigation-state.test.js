@@ -6,7 +6,7 @@ import {WorkspaceProvider,useWorkspace,INITIAL_SCOPE} from '../../src/shared/wor
 let current,root,container;
 function Probe(){const state=useWorkspace();useEffect(()=>{current=state;});return <span>{state.selectedRecord?.id||'No selection'}</span>;}
 async function render(key='capacity'){await act(async()=>root.render(<WorkspaceProvider><Probe key={key}/></WorkspaceProvider>));}
-beforeEach(()=>{globalThis.IS_REACT_ACT_ENVIRONMENT=true;vi.stubGlobal('fetch',vi.fn(async()=>new Response('{}',{status:200})));container=document.createElement('div');document.body.append(container);root=createRoot(container);});
+beforeEach(()=>{globalThis.IS_REACT_ACT_ENVIRONMENT=true;window.history.replaceState(null,'','/');vi.stubGlobal('fetch',vi.fn(async()=>new Response('{}',{status:200})));container=document.createElement('div');document.body.append(container);root=createRoot(container);});
 afterEach(()=>{act(()=>root.unmount());container.remove();vi.unstubAllGlobals();});
 it('retains the same typed identity across lens remounts and incompatible scope changes',async()=>{
   await render();expect(current.selectedRecord).toBeNull();
@@ -35,4 +35,30 @@ it('recovers exact comparison identities across lens remounts, saves and legacy 
   const {groupSortBy:_g,groupSortDirection:_d,costSource:_c,attemptKind:_a,...legacyEconomics}=definition.economics;
   const legacy={...definition,schemaVersion:1,economics:{...legacyEconomics,cohort:null},context:{sessionId:8,page:1,clientTool:null,projectLabel:null}};
   await act(async()=>current.restoreInvestigation({kind:'investigation',definition:legacy}));expect(current.contextView.baseline).toBeNull();
+});
+
+it('serializes the shared scope into the URL and restores it on a hard reload',async()=>{
+  await render();
+  await act(async()=>current.setScope({period:'custom',start:'2026-09-01T00:00:00.000Z',end:'2026-09-02T00:00:00.000Z',provider:'claude',model:'claude-opus-4',connectionId:'acct-1'}));
+  await act(async()=>current.setComparisonIds(['acct-1','acct-2']));
+  const search=window.location.search;
+  const params=new URLSearchParams(search);
+  expect(params.get('period')).toBe('custom');expect(params.get('provider')).toBe('claude');
+  expect(params.get('start')).toBe('2026-09-01T00:00:00.000Z');expect(params.get('compare')).toBe('acct-1,acct-2');
+  // Hard reload: a fresh provider tree hydrates from the URL alone.
+  act(()=>root.unmount());container.remove();container=document.createElement('div');document.body.append(container);root=createRoot(container);
+  await render();
+  expect(current.scope).toMatchObject({period:'custom',provider:'claude',model:'claude-opus-4',connectionId:'acct-1',start:'2026-09-01T00:00:00.000Z',end:'2026-09-02T00:00:00.000Z'});
+  expect(current.comparisonIds).toEqual(['acct-1','acct-2']);
+});
+it('clears scope params back to defaults and survives a malformed shared link',async()=>{
+  await render();
+  await act(async()=>current.setScope({provider:'claude'}));
+  expect(new URLSearchParams(window.location.search).get('provider')).toBe('claude');
+  await act(async()=>current.setScope({provider:null}));
+  expect(new URLSearchParams(window.location.search).get('provider')).toBeNull();
+  window.history.replaceState(null,'','?period=custom&start=not-a-date');
+  act(()=>root.unmount());container.remove();container=document.createElement('div');document.body.append(container);root=createRoot(container);
+  await render();
+  expect(current.scope).toEqual(INITIAL_SCOPE);
 });

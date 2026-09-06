@@ -89,7 +89,11 @@
   section > h2 { margin-block-end: 8px; }
   @media (min-width: 1024px) {
     .shell {
-      grid-template-columns: var(--rail) 1fr;
+      /* minmax(0,1fr): the main track must be able to shrink below the
+         economics ledger's fixed table width, or its min-content forces the
+         column past the viewport and the last columns clip instead of
+         scrolling inside their own surface. */
+      grid-template-columns: var(--rail) minmax(0, 1fr);
       grid-template-rows: auto 1fr;
       grid-template-areas: "rail strap" "rail main";
     }

@@ -110,6 +110,26 @@ export function ActivityBand({ resource: suppliedResource, title = 'Recorded att
                 Failures
               </span>
               <span style={{ marginInlineStart: 'auto' }}>
+                {!suppliedResource &&
+                  summary?.lastSeenAt &&
+                  Date.parse(summary.lastSeenAt) - Date.parse(summary.firstSeenAt) >
+                    7 * 86400000 && (
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      onClick={() =>
+                        workspace.setScope({
+                          period: 'custom',
+                          start: new Date(
+                            Date.parse(summary.lastSeenAt) - 7 * 86400000
+                          ).toISOString(),
+                          end: new Date(Date.parse(summary.lastSeenAt) + 1).toISOString(),
+                        })
+                      }
+                    >
+                      Focus recent activity · 7 days
+                    </Button>
+                  )}
                 <Button
                   size="compact-xs"
                   variant="subtle"
