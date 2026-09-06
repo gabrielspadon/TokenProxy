@@ -24,6 +24,16 @@ describe("passive eligibility follows configured provider-node routing", () => {
     expect(result.requested.provider).toBe(node.id);
     expect(result.accounts.map((a) => a.verdict)).toEqual(["admissible", "blocked"]);
   });
+  it("keeps a node's global disable separate from the built-in provider whose alias it shadows", () => {
+    const extra = { providerNodes: [{ ...node, prefix: 'cc' }],
+      connections: [account('node'), account('builtin', 'claude')], disabledModels: { cc: [model] } };
+    const builtin = project('claude', extra);
+    expect(builtin.accounts[1].verdict).toBe('admissible');
+    expect(builtin.accounts[1].reasons.some((r) => r.code === 'model-disabled')).toBe(false);
+    const configured = project('cc', extra);
+    expect(configured.accounts[0].verdict).toBe('blocked');
+    expect(configured.accounts[0].reasons.some((r) => r.code === 'model-disabled')).toBe(true);
+  });
   it("uses the selector's node-type precedence when multiple nodes share a prefix", () => {
     const nodes = [{ ...node, id: "anthropic-fixture", type: "anthropic-compatible" }, node];
     expect(project(node.prefix, { providerNodes: nodes }).requested.provider).toBe(node.id);

@@ -54,7 +54,7 @@ export function projectEligibility({ connections, windowsByConnection, drains = 
     }
     // Share routing's effective account policy, including inherited provider
     // lists, explicit empty account overrides and provider aliases.
-    if (matchingProvider && isAccountModelDisabled(disabledModels, providerId, model, isNoAuthProvider(providerId) ? null : conn.id, providerAliases)) {
+    if (matchingProvider && isAccountModelDisabled(disabledModels, providerId, model, isNoAuthProvider(providerId) ? null : conn.id, providerAliases, providerNodes)) {
       blockers.push(reason("model-disabled", "Model is disabled for this account by its effective operator policy.", "disabledModels"));
     }
     if (!supports) blockers.push(reason("account-model-excluded", "Model is excluded by this account's explicit allowlist.", "connection.providerSpecificData.enabledModels"));
