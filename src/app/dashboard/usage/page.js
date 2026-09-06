@@ -5,6 +5,7 @@ import { useEventStream } from '@/shared/hooks/useEventStream';
 import { useUsageStream } from '@/store/usageStream';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
+import { Icon } from '@/shared/components/Icon';
 import { Measure } from '@/shared/components/Measure';
 import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
@@ -235,7 +236,7 @@ export default function UsagePage() {
       </div>
 
       <div className="usage-controls">
-        <fieldset className="segmented">
+        <fieldset className="segmented usage-segmented">
           <legend>Period</legend>
           {PERIODS.map(([v, l]) => (
             <label key={v}>
@@ -269,7 +270,7 @@ export default function UsagePage() {
           />
         ) : null}
         {!fresh ? <p className="skeleton">Waiting for the first frame of this period</p> : null}
-        <div className="measures">
+        <div className="measures tiles">
           <Measure
             big
             label="Cost"
@@ -277,11 +278,13 @@ export default function UsagePage() {
             render={fmtUsd}
           />
           <Measure
+            big
             label="Requests"
             measure={fresh ? { value: usage.totalRequests ?? null } : null}
             render={fmtNum}
           />
           <Measure
+            big
             label="Tokens"
             measure={sum ? { value: sum.totalTokens } : null}
             render={fmtNum}
@@ -320,13 +323,15 @@ export default function UsagePage() {
 
       <section aria-labelledby="h-speed">
         <h2 id="h-speed">Response time</h2>
-        <div className="measures">
+        <div className="measures tiles">
           <Measure
+            big
             label="Average total time"
             measure={lat ? { value: lat.avgLatencyMs, unavailable: NO_LATENCY } : null}
             render={(v) => fmtUnit(v, 'millisecond')}
           />
           <Measure
+            big
             label="Average time to first token"
             measure={lat ? { value: lat.avgTtftMs, unavailable: NO_TTFT } : null}
             render={(v) => fmtUnit(v, 'millisecond')}
@@ -361,34 +366,59 @@ export default function UsagePage() {
           </p>
         ) : null}
         {series.length ? (
-          <div className="rows">
-            <div className="row head usage-grid">
-              <span>Bucket</span>
-              <span>Tokens</span>
-              <span>Cost</span>
-            </div>
-            {series.map((b, i) => (
-              <div key={b.bucketStart ?? `${b.label}-${i}`} className="row usage-grid">
-                <span className="who">
-                  <span className="name" data-i18n-skip>
-                    {b.label}
-                  </span>
-                </span>
-                <span>
-                  <span className="band" aria-hidden="true">
-                    <span
-                      className="used"
-                      style={{ width: `${peak > 0 ? ((b.cost || 0) / peak) * 100 : 0}%` }}
-                    />
-                  </span>
-                  <span className="band-meta">
-                    <span data-i18n-skip>{fmtNum(b.tokens || 0)}</span>
-                  </span>
-                </span>
-                <span data-i18n-skip>{fmtUsd(b.cost || 0)}</span>
+          <>
+            <ul className="spark" aria-hidden="true" data-i18n-skip>
+              {series.map((b, i) => (
+                <li
+                  key={b.bucketStart ?? `${b.label}-${i}`}
+                  data-peak={peak > 0 && (b.cost || 0) === peak ? 'true' : undefined}
+                  style={{
+                    height: `${peak > 0 ? Math.max(1, ((b.cost || 0) / peak) * 100) : 1}%`,
+                    animationDelay: `${Math.min(i * 12, 360)}ms`,
+                  }}
+                  title={`${b.label} ${fmtUsd(b.cost || 0)}`}
+                />
+              ))}
+            </ul>
+            <p className="spark-meta">
+              <span data-i18n-skip>{series[0]?.label}</span>
+              <span>
+                <span>Peak</span> <span data-i18n-skip>{fmtUsd(peak)}</span>
+              </span>
+              <span data-i18n-skip>{series[series.length - 1]?.label}</span>
+            </p>
+            <details className="fold">
+              <summary>Every bucket as numbers</summary>
+              <div className="rows">
+                <div className="row head usage-grid">
+                  <span>Bucket</span>
+                  <span>Tokens</span>
+                  <span>Cost</span>
+                </div>
+                {series.map((b, i) => (
+                  <div key={b.bucketStart ?? `${b.label}-${i}`} className="row usage-grid">
+                    <span className="who">
+                      <span className="name" data-i18n-skip>
+                        {b.label}
+                      </span>
+                    </span>
+                    <span>
+                      <span className="band" aria-hidden="true">
+                        <span
+                          className="used"
+                          style={{ width: `${peak > 0 ? ((b.cost || 0) / peak) * 100 : 0}%` }}
+                        />
+                      </span>
+                      <span className="band-meta">
+                        <span data-i18n-skip>{fmtNum(b.tokens || 0)}</span>
+                      </span>
+                    </span>
+                    <span data-i18n-skip>{fmtUsd(b.cost || 0)}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </details>
+          </>
         ) : null}
       </section>
 
@@ -417,7 +447,7 @@ export default function UsagePage() {
         label="Model on a connection"
         buckets={fresh ? usage.byAccount : null}
         name={(r, k) => r.accountName || k}
-        sub={(r) => [r.rawModel, r.provider].filter(Boolean).join(" ")}
+        sub={(r) => [r.rawModel, r.provider].filter(Boolean).join(' ')}
         priced={isPriced}
         empty="No connection served a request in this period."
       />
@@ -427,7 +457,7 @@ export default function UsagePage() {
         label="Key"
         buckets={fresh ? usage.byApiKey : null}
         name={keyLabel}
-        sub={(r) => [r.rawModel, r.provider].filter(Boolean).join(" ")}
+        sub={(r) => [r.rawModel, r.provider].filter(Boolean).join(' ')}
         priced={isPriced}
         empty="No client key spent anything in this period."
       />
@@ -437,7 +467,7 @@ export default function UsagePage() {
         label="Endpoint"
         buckets={fresh ? usage.byEndpoint : null}
         name={(r, k) => r.endpoint || k}
-        sub={(r) => [r.rawModel, r.provider].filter(Boolean).join(" ")}
+        sub={(r) => [r.rawModel, r.provider].filter(Boolean).join(' ')}
         priced={isPriced}
         empty="No endpoint was called in this period."
       />
@@ -447,7 +477,7 @@ export default function UsagePage() {
           <h2 id="h-health">Provider health</h2>
           <Freshness status={pollFresh(health)} lastDataAt={health.goodAt} />
         </div>
-        <fieldset className="segmented">
+        <fieldset className="segmented usage-segmented">
           <legend>Grouped by</legend>
           {GRAINS.map(([v, l]) => (
             <label key={v}>
@@ -679,7 +709,7 @@ export default function UsagePage() {
           cap is reached. This is a rolling window. The per-request counts above keep a longer,
           separate 45-day record.
         </p>
-        <details className="usage-details">
+        <details className="usage-details panel fold">
           <summary>Change what is recorded</summary>
           {settings.data ? (
             <form className="usage-form" onSubmit={saveLayer} key={String(layerOn)}>
@@ -785,6 +815,7 @@ export default function UsagePage() {
         )}
         <p className="usage-pager">
           <button type="button" className="button danger" onClick={resetPrices}>
+            <Icon name="i-delete" />
             Reset every price override
           </button>
         </p>

@@ -7,6 +7,15 @@
     margin-block-end: 20px;
   }
 
+  /* A translated period or grain label is longer than its English original,
+     and an inline-flex fieldset takes its min-content width from the widest
+     run of labels, so at 390 the German set pushed the page 1px wide. Let the
+     segment set wrap onto a second line instead of forcing the column. */
+  .usage-segmented {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+
   /* One column set for every rollup and the cost series: who, the band, the
      money. The band column carries the proportion, so it takes the slack. */
   .usage-grid {

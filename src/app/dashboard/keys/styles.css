@@ -16,6 +16,23 @@
   .keys-ceiling .label { color: var(--slate); font-size: var(--t-13); }
   .keys-ceiling-value { font-weight: 500; }
 
+  /* A Decisions value is a whole translated sentence inside a .status badge.
+     .status is inline-flex, so the sentence is one flex item sized at
+     max-content and it never shrinks. Cap the badge and let the sentence wrap
+     inside itself; wrapping the FLEX line instead drops the dot onto a line of
+     its own, which is how the German 390 shot read. */
+  .keys-decisions .status { max-width: 100%; align-items: baseline; }
+  .keys-decisions .status > * { min-width: 0; }
+
+  /* dl.facts is `max-content minmax(0,1fr)`, so a translated term sets the
+     term column. "Client Key erforderlich" takes 240px of a 358px row and
+     leaves the sentence beside it 102px, which overflows the page at 390.
+     Below the row breakpoint, stack term over value so neither competes. */
+  @media (max-width: 767px) {
+    .keys-decisions dl.facts { grid-template-columns: minmax(0, 1fr); }
+    .keys-decisions dl.facts dd { margin-block-end: 8px; }
+  }
+
   .keys-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
 
   .keys-once { display: flex; flex-direction: column; gap: 8px; margin-block: 14px; }

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEventStream } from '@/shared/hooks/useEventStream';
 import { Freshness } from '@/shared/components/Freshness';
+import { Icon } from '@/shared/components/Icon';
 import { Notice } from '@/shared/components/Notice';
 import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
@@ -524,36 +525,47 @@ export default function TranslationPage() {
           A snapshot lives under one of eight fixed names. An arbitrary name is refused, because a
           name would otherwise choose where on the machine the content lands.
         </p>
-        <label className="field">
-          <span>Editor</span>
-          <textarea
-            className="input translation-code"
-            rows={6}
-            value={snapshotText}
-            onChange={(e) => setSnapshotText(e.target.value)}
-            spellCheck={false}
-            data-i18n-skip
-          />
-        </label>
-        <div className="rows">
-          {SNAPSHOT_NAMES.map((name) => (
-            <div
-              key={name}
-              className="row"
-              style={{ gridTemplateColumns: 'minmax(0, 1fr) auto auto' }}
-            >
-              <span className="id" data-i18n-skip>
-                {name}
-              </span>
-              <button type="button" className="link-button" onClick={() => loadSnapshot(name)}>
-                Load
-              </button>
-              <button type="button" className="link-button" onClick={() => saveSnapshot(name)}>
-                Save
-              </button>
-              {snapshotStatus[name] ? <Notice {...snapshotStatus[name]} /> : null}
-            </div>
-          ))}
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Snapshot editor</h3>
+          </div>
+          <label className="field">
+            <span>Snapshot content, as JSON</span>
+            <textarea
+              className="input translation-code"
+              rows={6}
+              value={snapshotText}
+              onChange={(e) => setSnapshotText(e.target.value)}
+              spellCheck={false}
+              data-i18n-skip
+            />
+          </label>
+          <p className="caption">
+            Load a name below to read it here. Save writes this text back under that name.
+          </p>
+        </div>
+        <div className="panel">
+          <div className="panel-head">
+            <h3>The eight fixed names</h3>
+          </div>
+          <div className="rows">
+            {SNAPSHOT_NAMES.map((name) => (
+              <div key={name} className="row translation-snapshot-row">
+                <span className="id" data-i18n-skip>
+                  {name}
+                </span>
+                <button type="button" className="button quiet" onClick={() => loadSnapshot(name)}>
+                  <Icon name="i-refresh" />
+                  Load
+                </button>
+                <button type="button" className="button quiet" onClick={() => saveSnapshot(name)}>
+                  <Icon name="i-edit" />
+                  Save
+                </button>
+                {snapshotStatus[name] ? <Notice {...snapshotStatus[name]} /> : null}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -567,61 +579,73 @@ export default function TranslationPage() {
           [redacted] before it renders. No session, client, or request id is ever shown as a
           labelled fact here.
         </p>
-        <div className="toolbar">
-          <label className="field">
-            <span>Filter</span>
-            <input className="input" value={filter} onChange={(e) => setFilter(e.target.value)} />
-          </label>
-          <div className="actions">
+        <div className="panel">
+          <div className="panel-head">
+            <h3>Live console</h3>
+            <span className="caption">
+              <span data-i18n-skip>{fmtNum(shown.length)}</span> <span>of</span>{' '}
+              <span data-i18n-skip>{fmtNum(logs.length)}</span> <span>lines shown</span>
+            </span>
+          </div>
+          <div className="verb-row">
+            <label className="field">
+              <span>Filter</span>
+              <input className="input" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            </label>
             <button type="button" className="button quiet" onClick={() => setPaused((p) => !p)}>
+              <Icon name={paused ? 'i-play' : 'i-pause'} />
               {paused ? 'Resume' : 'Pause'}
             </button>
-            <button type="button" className="link-button" onClick={checkNow}>
+            <button type="button" className="button quiet" onClick={checkNow}>
+              <Icon name="i-refresh" />
               Check for new lines
             </button>
             <button type="button" className="button danger" onClick={clearLogs}>
+              <Icon name="i-delete" />
               Clear
             </button>
           </div>
-        </div>
-        {lastCheck ? (
-          lastCheck.error ? (
-            <Notice {...lastCheck.error} />
-          ) : (
-            <p className="caption">
-              {lastCheck.changed ? 'New lines arrived.' : 'Nothing new since last look.'} Revision{' '}
-              <span data-i18n-skip>{fmtNum(lastCheck.revision)}</span>
+          {lastCheck ? (
+            lastCheck.error ? (
+              <Notice {...lastCheck.error} />
+            ) : (
+              <p className="caption">
+                {lastCheck.changed ? 'New lines arrived.' : 'Nothing new since last look.'} Revision{' '}
+                <span data-i18n-skip>{fmtNum(lastCheck.revision)}</span>
+              </p>
+            )
+          ) : null}
+          {stream.status === 'stale' ? (
+            <Notice
+              tone="warn"
+              title="The console stream stopped."
+              next="Lines below are from the last frame received. Reconnecting in the background."
+            />
+          ) : null}
+          {logs.length === 0 ? (
+            <p className="empty">
+              No console record yet. One appears here the next time the gateway logs anything.
             </p>
-          )
-        ) : null}
-        {stream.status === 'stale' ? (
-          <Notice
-            tone="warn"
-            title="The console stream stopped."
-            next="Lines below are from the last frame received. Reconnecting in the background."
-          />
-        ) : null}
-        {logs.length === 0 ? (
-          <p className="empty">
-            No console record yet. One appears here the next time the gateway logs anything.
-          </p>
-        ) : null}
-        {logs.length && shown.length === 0 ? (
-          <p className="empty">No line matches this filter.</p>
-        ) : null}
-        {shown.length ? (
-          <ol className="translation-log" tabIndex={0} aria-label="Console lines" aria-live={paused ? undefined : 'polite'}>
-            {shown.map((line, i) => (
-              <li key={i} data-i18n-skip>
-                {redact(line)}
-              </li>
-            ))}
-          </ol>
-        ) : null}
-        <p className="caption">
-          Capped at 500 lines in this view. <span data-i18n-skip>{fmtNum(logs.length)}</span> held,{' '}
-          <span data-i18n-skip>{fmtNum(shown.length)}</span> shown.
-        </p>
+          ) : null}
+          {logs.length && shown.length === 0 ? (
+            <p className="empty">No line matches this filter.</p>
+          ) : null}
+          {shown.length ? (
+            <ol
+              className="translation-log"
+              tabIndex={0}
+              aria-label="Console lines"
+              aria-live={paused ? undefined : 'polite'}
+            >
+              {shown.map((line, i) => (
+                <li key={i} data-i18n-skip>
+                  {redact(line)}
+                </li>
+              ))}
+            </ol>
+          ) : null}
+          <p className="caption">Capped at 500 lines in this view.</p>
+        </div>
       </section>
 
       <Confirm

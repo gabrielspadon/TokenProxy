@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
+import { Icon } from '@/shared/components/Icon';
 import { Measure } from '@/shared/components/Measure';
 import { Notice } from '@/shared/components/Notice';
 import { Confirm } from '@/shared/components/Confirm';
@@ -33,6 +34,14 @@ const LAYERS = [
   { key: 'headroomEnabled', stage: 'headroom', name: 'Headroom proxy' },
 ];
 const STAGES = [...new Set(LAYERS.map((l) => l.stage))];
+// Panel grouping only; every layer still switches on its own flag above.
+const GROUPS = [
+  { title: 'History', stages: ['mem', 'pairs', 'reorder'] },
+  { title: 'Tool traffic', stages: ['rtk', 'tools', 'schema'] },
+  { title: 'Compression', stages: ['pxpipe', 'qac'] },
+  { title: 'Prompt injection', stages: ['inject', 'midinject', 'thinking'] },
+  { title: 'Safeguards', stages: ['privacy', 'headroom'] },
+];
 const THRESHOLDS = [
   { key: 'pxpipeMinChars', name: 'Smallest request worth compressing', unit: 'character' },
   { key: 'pxpipeTimeoutMs', name: 'Time to wait before abandoning', unit: 'millisecond' },
@@ -183,29 +192,53 @@ export default function ShapingPage() {
         {settings.error && !s ? <Notice {...refusal(settings.status, settings.error)} /> : null}
         {done ? <Notice tone="ok" title={done} /> : null}
         {!s && settings.loading ? <p className="skeleton">Reading</p> : null}
-        {s ? (
-          <div className="rows">
-            {LAYERS.map((l) => {
-              const on = !!s[l.key];
-              return (
-                <div key={l.key} className="row shaping-layer">
-                  <span className="who">
-                    <span className="name">{l.name}</span>
-                    <span className="sub">
-                      <span data-i18n-skip>{l.stage}</span>
-                    </span>
-                  </span>
-                  <span className="status" data-tone={on ? 'ok' : undefined}>
-                    {on ? 'On' : 'Off'}
-                  </span>
-                  <button type="button" className="button quiet" onClick={() => toggle(l, !on)}>
-                    {on ? 'Turn off' : 'Turn on'}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
+        <div className="panel-grid">
+          {s
+            ? GROUPS.map((g) => {
+                const members = LAYERS.filter((l) => g.stages.includes(l.stage));
+                const onCount = members.filter((l) => !!s[l.key]).length;
+                return (
+                  <div key={g.title} className="panel">
+                    <div className="panel-head">
+                      <h3>{g.title}</h3>
+                      <span className="caption">
+                        <span data-i18n-skip>
+                          {fmtNum(onCount)} / {fmtNum(members.length)}
+                        </span>{' '}
+                        <span>on</span>
+                      </span>
+                    </div>
+                    <div className="rows">
+                      {members.map((l) => {
+                        const on = !!s[l.key];
+                        return (
+                          <div key={l.key} className="row shaping-layer">
+                            <span className="who">
+                              <span className="name">{l.name}</span>
+                              <span className="sub">
+                                <span data-i18n-skip>{l.stage}</span>
+                              </span>
+                            </span>
+                            <span className="status" data-tone={on ? 'ok' : undefined}>
+                              {on ? 'On' : 'Off'}
+                            </span>
+                            <button
+                              type="button"
+                              className="button quiet"
+                              onClick={() => toggle(l, !on)}
+                            >
+                              <Icon name={on ? 'i-pause' : 'i-play'} />
+                              {on ? 'Turn off' : 'Turn on'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
+            : null}
+        </div>
       </section>
 
       <section aria-labelledby="h-bytes">
@@ -278,7 +311,7 @@ export default function ShapingPage() {
 
       <section aria-labelledby="h-totals">
         <h2 id="h-totals">What the stack cost and saved</h2>
-        <div className="measures">
+        <div className="measures tiles">
           <Measure
             big
             label="Requests shaped, all time"
@@ -402,7 +435,7 @@ export default function ShapingPage() {
           here that can change an answer.
         </p>
         {s ? (
-          <>
+          <div className="panel">
             <div className="shaping-form">
               {THRESHOLDS.map((t) => (
                 <label key={t.key} className="field">
@@ -423,13 +456,14 @@ export default function ShapingPage() {
                 </label>
               ))}
             </div>
-            <div className="actions">
+            <div className="verb-row">
               <button
                 type="button"
                 className="button"
                 disabled={Object.keys(draft).length === 0}
                 onClick={save}
               >
+                <Icon name="i-edit" />
                 Save
               </button>
               <button
@@ -440,8 +474,14 @@ export default function ShapingPage() {
               >
                 Discard
               </button>
+              {Object.keys(draft).length ? (
+                <span className="caption">
+                  <span data-i18n-skip>{fmtNum(Object.keys(draft).length)}</span>{' '}
+                  <span>unsaved</span>
+                </span>
+              ) : null}
             </div>
-          </>
+          </div>
         ) : null}
       </section>
 

@@ -35,4 +35,17 @@
     overflow-wrap: anywhere;
   }
   .translation-log li:last-child { border-block-end: 0; }
+
+  /* One snapshot name, then its two verbs. The name takes the slack so the
+     buttons stay a fixed pair at every width. */
+  .translation-snapshot-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+
+  /* The console panel already draws the border, so the log inside it does not
+     draw a second one against the panel edge. */
+  .panel > .translation-log { border-color: var(--rule); background: var(--paper); }
+
+  /* A .panel caps its inputs at 320px, which is right for a name or a number
+     and wrong for a JSON body: at 1440 the editor read as a stamp inside a
+     1160px panel. A code field takes the panel it was given. */
+  .panel .field .input.translation-code { max-width: none; }
 }

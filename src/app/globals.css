@@ -311,7 +311,10 @@
   .fold[open] summary { margin-block-end: 8px; }
 
   /* Panels side by side so 1440 is filled rather than left half-dead
-     (pass-2 defect 1). One column until there is room for two. */
-  .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+     (pass-2 defect 1). One column until there is room for two. The 26rem
+     floor is measured, not chosen: at 320px a panel took a third of 1440 and
+     a three-column row inside it wrapped its label onto five lines. min() so
+     a viewport narrower than the floor still gets one full-width column. */
+  .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: 16px; align-items: start; }
   .panel-grid > .panel + .panel { margin-block-start: 0; }
 }
