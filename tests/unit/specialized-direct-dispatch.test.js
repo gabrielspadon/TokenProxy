@@ -145,3 +145,16 @@ it("keeps replay-unsafe GitHub failures intact without trying another endpoint",
   expect(fallback).not.toHaveBeenCalled();
   expect(response.bodyUsed).toBe(false);
 });
+
+it("does not infer nonacceptance from an oversized GitHub diagnostic body", async () => {
+  const executor = new GithubExecutor();
+  const text = "The requested model is not supported" + "x".repeat(17000);
+  const response = new Response(text, { status: 400 });
+  vi.spyOn(BaseExecutor.prototype, "execute").mockResolvedValue({ response });
+  const fallback = vi.spyOn(executor, "executeWithResponsesEndpoint"), afterDispatch = vi.fn();
+  const result = await executor.execute({ ...request(), afterDispatch });
+  expect(result.response).toBe(response);
+  expect(fallback).not.toHaveBeenCalled();
+  expect(afterDispatch).not.toHaveBeenCalled();
+  expect(await result.response.text()).toBe(text);
+});

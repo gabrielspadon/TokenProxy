@@ -9,6 +9,7 @@ import { FORMATS } from "../translator/formats.js";
 import { parseSSELine, formatSSE } from "../utils/streamHelpers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { inspectErrorBody } from "../utils/inspectErrorBody.js";
 import { createExecutorResponseHeaderTimeout } from "../utils/responseHeaderTimeout.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
@@ -173,7 +174,8 @@ export class GithubExecutor extends BaseExecutor {
     // Gemini/Claude would otherwise loop into a misleading "does not support
     // Responses API" 400 instead of surfacing the real /chat/completions error (#1062).
     if (result.response.status === HTTP_STATUS.BAD_REQUEST && result.response.headers?.get?.("x-tokenproxy-replay-safe") !== "false" && this.supportsResponsesEndpoint(model)) {
-      const errorBody = await result.response.clone().text();
+      const inspected = await inspectErrorBody(result.response, { signal: options.signal });
+      const errorBody = inspected.complete ? inspected.text : '';
 
       if (errorBody.includes("not accessible via the /chat/completions endpoint") || errorBody.includes("The requested model is not supported")) {
         await notifyDispatchResponse(options.afterDispatch, result.response, "model-endpoint-unsupported");
