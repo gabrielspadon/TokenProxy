@@ -24,7 +24,13 @@ export async function createSqlJsAdapter(filePath) {
   const SAVE_DEBOUNCE_MS = 100;
 
   function persist({ syncDirectory = false } = {}) {
-    const data = Buffer.from(db.export());
+    let data;
+    try { data = Buffer.from(db.export()); }
+    finally {
+      // sql.js export closes and reopens its native connection, resetting
+      // connection-scoped pragmas, including foreign-key enforcement.
+      db.exec(PRAGMA_SQL);
+    }
     const tmp = filePath + ".tmp";
     const fd = fs.openSync(tmp, "w", 0o600);
     try {
