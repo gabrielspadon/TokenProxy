@@ -38,5 +38,5 @@
 .comparisonHead span, .comparisonHead small { color: #5e6b82; }
 .comparisonHead strong, .comparisonHead time { font-family: var(--font-plex-mono), 'IBM Plex Mono', monospace; margin: 3px 0; }
 .costs { font-size: 13px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #dce2ec; }
-@media(max-width:1100px) { .twoColumns { grid-template-columns: 1fr; gap: 4px; } }
+@media(max-width:1100px) { .twoColumns { grid-template-columns: minmax(0,1fr); gap: 4px; } }
 @media(max-width:650px) { .fingerprints, .facts, .comparisonHead { grid-template-columns: 1fr; } .table { min-width: 550px; } }
