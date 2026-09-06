@@ -18,6 +18,7 @@ import {
   ANTHROPIC_COMPAT_BASE,
 } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { extractRetryAfterDeadline } from "../utils/error.js";
 
 // Format byte count to human-readable string for debug logs
 function fmtBytes(n) {
@@ -327,6 +328,13 @@ export class BaseExecutor {
           "FETCH",
           `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`,
         );
+
+        // A provider deadline belongs to the coordinator's pinned-account wait.
+        // Returning it intact prevents both fixed-delay retries and URL fallback
+        // from issuing another generation before Retry-After expires.
+        if ((response.status === 429 || response.status === 503) && extractRetryAfterDeadline(response)) {
+          return { response, url, headers, transformedBody };
+        }
 
         if (
           await tryRetry(
