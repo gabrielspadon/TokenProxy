@@ -14,8 +14,14 @@ let directDispatcherPromise = null;
 
 async function getDirectDispatcher() {
   if (!directDispatcherPromise) {
+    // bodyTimeout: 0 matches the proxy dispatcher below. undici's default is
+    // 300s between body chunks, which is SHORTER than the app-level stall
+    // guard (STREAM_STALL_TIMEOUT_MS, 360s), so a reasoning stream quiet for
+    // five minutes died with UND_ERR_BODY_TIMEOUT on the direct path while
+    // surviving through a proxy. Stall protection stays app-level, where it
+    // is tied to upstream byte activity and configurable.
     directDispatcherPromise = import("undici")
-      .then(({ Agent }) => new Agent(HAPPY_EYEBALLS_OPTIONS));
+      .then(({ Agent }) => new Agent({ ...HAPPY_EYEBALLS_OPTIONS, bodyTimeout: 0 }));
   }
   return directDispatcherPromise;
 }

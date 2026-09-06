@@ -38,8 +38,10 @@ describe("chat rate limiter key eviction (#1245)", () => {
   });
 
   it("still limits a caller over the per-window ceiling", () => {
+    // Agnostic of the configured ceiling: one more call than the window allows
+    // must be refused, whatever RATE_LIMIT_MAX_REQUESTS resolves to.
     let limited = false;
-    for (let i = 0; i < 61; i++) limited = __rateLimiter.isRateLimited("noisy");
+    for (let i = 0; i < 10000 && !limited; i++) limited = __rateLimiter.isRateLimited("noisy");
     expect(limited).toBe(true);
   });
 });

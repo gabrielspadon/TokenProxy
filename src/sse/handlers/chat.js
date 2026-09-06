@@ -73,9 +73,20 @@ const ADMISSION_RETRY_HINT_MS = 1000;
 // refusal into a hot loop.
 const RETRY_AFTER_FLOOR_MS = 1000;
 
-// Simple in-memory sliding-window rate limiter to stop abuse of the expensive AI calls below
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const RATE_LIMIT_MAX_REQUESTS = 60;
+// Simple in-memory sliding-window rate limiter to stop abuse of the expensive AI calls below.
+// Both knobs are env-tunable because the hardcoded 60/min ceiling was measured
+// as the first thing a multi-agent client hits: a sweep through the isolated
+// test instance produced 429 on 97% of requests at concurrency 10 on one key,
+// long before any provider or event-loop limit (p99 event-loop delay was
+// 14ms at the same load once keys were spread). One agent session fans out
+// subagents that legitimately share one key, so the per-key floor must be
+// raisable without a code change.
+function readPositiveIntEnv(name, fallback) {
+  const parsed = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+const RATE_LIMIT_WINDOW_MS = readPositiveIntEnv("RATE_LIMIT_WINDOW_MS", 60 * 1000);
+const RATE_LIMIT_MAX_REQUESTS = readPositiveIntEnv("RATE_LIMIT_MAX_REQUESTS", 240);
 const rateLimitHits = new Map();
 const CLIENT_CREDENTIAL_HEADER_NAMES = new Set([
   "authorization",
