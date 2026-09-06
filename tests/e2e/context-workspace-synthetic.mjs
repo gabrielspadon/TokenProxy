@@ -117,6 +117,12 @@ try {
   report.checks.push({ reducedMotionPreference: true, canvasAnimations: animations });
   report.accessibility = await accessibilityViolations();
   assert.deepEqual(report.accessibility, []);
+  const initialDockHeight = (await dock.boundingBox()).height;
+  await page.getByRole('separator', { name: 'Resize detail panel' }).focus();
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press('ArrowUp');
+  const expandedDockHeight = (await dock.boundingBox()).height;
+  assert(expandedDockHeight > initialDockHeight);
+  report.checks.push({ keyboardDockResize: { before: initialDockHeight, after: expandedDockHeight } });
   report.inspectorTabs = [];
   for (const [name, target] of [['Recorded controls', 'controls'], ['Session routing', 'routing']]) {
     await dock.getByText(name, { exact: true }).click();
