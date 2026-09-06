@@ -553,11 +553,11 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false } =
         Array.isArray(enabledModels) && enabledModels.length > 0;
       const isCompatibleProvider =
         isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
-      let cursorProxyOptions;
+      // The proxy options were already handed to the live resolver above; this
+      // await only surfaces a required-proxy failure before any catalog work.
       if (inFlight?.cursorProxy) {
         const resolved = await inFlight.cursorProxy;
         if (resolved.error) throw resolved.error;
-        cursorProxyOptions = resolved.value;
       }
 
       // Build kind lookup for static models so we can filter even when only IDs are exposed
