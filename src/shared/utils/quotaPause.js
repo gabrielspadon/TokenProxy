@@ -146,7 +146,9 @@ export function deriveQuotaSnapshot(provider, rawUsage) {
   const entries = Array.isArray(quotas) ? quotas : Object.entries(quotas);
   if (entries.length === 0) return null;
 
-  const now = new Date().toISOString();
+  const sourceTime = rawUsage.quotaObservation?.observedAt;
+  const now = typeof sourceTime === "string" && Number.isFinite(Date.parse(sourceTime))
+    ? new Date(sourceTime).toISOString() : new Date().toISOString();
   const windows = [];
 
   for (const entry of entries) {

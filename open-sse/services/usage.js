@@ -1,3 +1,4 @@
+import { withQuotaObservation } from "./usage/observation.js";
 /**
  * Usage Fetcher - Get usage data from provider APIs
  */
@@ -82,7 +83,7 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
 
   const handler = USAGE_HANDLERS[provider];
   if (!handler) return { message: `Usage API not implemented for ${provider}` };
-  return await handler({
+  const usage = await handler({
     provider,
     connectionId,
     accessToken,
@@ -95,4 +96,5 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
     onValidationRequired: options.onValidationRequired,
     onVerificationSuccess: options.onVerificationSuccess,
   });
+  return withQuotaObservation(usage);
 }

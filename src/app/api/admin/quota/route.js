@@ -1,4 +1,5 @@
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
+import { getQuotaHistorySummary } from "@/lib/db/repos/quotaHistoryRepo.js";
 import { getAllWindows } from "@/lib/db/repos/quotaWindowsRepo.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { adminError, adminJson } from "@/lib/admin/policy.js";
@@ -22,10 +23,10 @@ export async function GET(request) {
   if (denied) return denied;
 
   try {
-    const [conns, byConnection] = await Promise.all([getProviderConnections(), getAllWindows()]);
+    const [conns, byConnection, history] = await Promise.all([getProviderConnections(), getAllWindows(), getQuotaHistorySummary()]);
     const now = Date.now();
     const snapshots = conns.map((conn) => toQuotaSnapshot(conn, byConnection.get(conn.id) ?? [], { now }));
-    return adminJson({ snapshots, asOf: new Date(now).toISOString(), mode: "passive", historyAvailable: false });
+    return adminJson({ snapshots, asOf: new Date(now).toISOString(), mode: "passive", historyAvailable: history.observationCount > 0, historyEndpoint: "/api/admin/quota/history", historyBackfilled: false, retainedHistory: history });
   } catch {
     return adminError(500, "state_unavailable", "Quota state could not be read.");
   }
