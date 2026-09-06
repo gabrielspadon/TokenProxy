@@ -132,7 +132,13 @@ export async function saveRequestStats(detail) {
         latency.ttft || 0,
       ]
     );
-    saveContextMetrics(db, { ...detail, timestamp: detail.timestamp || new Date().toISOString() });
+    try {
+      db.transaction(() => saveContextMetrics(db, { ...detail, timestamp: detail.timestamp || new Date().toISOString() }));
+    } catch {
+      // Optional observability must never roll back authoritative billed usage.
+      db.run(`UPDATE requestStats SET contextSessionId=NULL,contextTelemetryError='invalid-metrics' WHERE id=?`, [detail.id]);
+      db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
+    }
     });
     await maybeCleanup(db);
   } catch (e) {

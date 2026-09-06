@@ -28,20 +28,21 @@ export function normalizeContextStages(stages) {
 // cross this boundary; bodies, raw identities, headers and credentials cannot.
 export function saveContextMetrics(db, detail) {
   const c = detail.contextTelemetry;
-  if (!c || !/^[a-f0-9]{32,64}$/.test(c.sessionHash || "")) return;
+  if (!c) return;
+  if (!/^[a-f0-9]{32,64}$/.test(c.sessionHash || "")) throw new Error("Invalid context identity");
   const stages = normalizeContextStages(c.stages);
   const controls = Object.fromEntries(Object.entries(c.controls || {}).filter(([k,v]) => CONTROL_NAMES.has(k) && typeof v === "boolean"));
   const at = detail.timestamp;
   db.run(`INSERT INTO contextSessions(sessionHash, identitySource, firstSeenAt, lastSeenAt) VALUES(?, ?, ?, ?)
-    ON CONFLICT(sessionHash) DO UPDATE SET firstSeenAt = MIN(firstSeenAt, excluded.firstSeenAt), lastSeenAt = MAX(lastSeenAt, excluded.lastSeenAt)`,
-  [c.sessionHash, c.identitySource === "routing" ? "routing" : "request", at, at]);
+    ON CONFLICT(sessionHash) DO UPDATE SET identitySource=excluded.identitySource, firstSeenAt = MIN(firstSeenAt, excluded.firstSeenAt), lastSeenAt = MAX(lastSeenAt, excluded.lastSeenAt)`,
+  [c.sessionHash, ["explicit", "inferred", "routing"].includes(c.identitySource) ? c.identitySource : "request", at, at]);
   const sessionId = db.get(`SELECT id FROM contextSessions WHERE sessionHash = ?`, [c.sessionHash]).id;
   const u = detail.tokens;
   const hasUsage = u && present(u.prompt_tokens, u.input_tokens, u.completion_tokens, u.output_tokens, u.cached_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens);
   const source = detail.status === "pending" || !hasUsage ? "missing" : u.estimated ? "estimated" : "provider";
   const cacheRead = present(u?.cached_tokens, u?.cache_read_input_tokens, u?.prompt_tokens_details?.cached_tokens, u?.input_tokens_details?.cached_tokens);
   const cacheWrite = present(u?.cache_creation_input_tokens, u?.cache_write_tokens);
-  db.run(`UPDATE requestStats SET contextSessionId=?, logicalRequestId=?, requestedModel=?, clientTool=?,
+  db.run(`UPDATE requestStats SET contextTelemetryError=NULL,contextSessionId=?, logicalRequestId=?, requestedModel=?, clientTool=?,
     contextEstimate=?, inputEstimate=?, bodyBeforeBytes=?, bodyAfterBytes=?, cachePrefixBytes=?, compactHint=?,
     usageSource=?, usageInputPresent=?, usageOutputPresent=?, cacheReadPresent=?, cacheWritePresent=?,
     messageCount=?, toolCount=?, routeKind=?, formatPair=?, selection=?, contextControls=?, attempt=? WHERE id=?`,
@@ -147,7 +148,8 @@ export async function getContextOverview(f = {}) {
   const projects = db.all(`SELECT s.projectLabel,COUNT(DISTINCT s.id) AS sessions,COUNT(*) AS attempts ${JOIN} ${filter.sql}
     GROUP BY s.projectLabel ORDER BY attempts DESC LIMIT 100`, filter.args);
   const settings = await getSettings();
-  return { summary: totals, sessions, pagination: p, projects, stages: stageSummary(db,filter), dimensions: dimensions(db,filter),
+  const recording = db.get(`SELECT COUNT(*) AS rejectedAttempts,MAX(timestamp) AS lastRejectedAt FROM requestStats WHERE contextTelemetryError IS NOT NULL`);
+  return { recording: { ...recording, scope: "all retained attempts" }, summary: totals, sessions, pagination: p, projects, stages: stageSummary(db,filter), dimensions: dimensions(db,filter),
     retentionDays: retentionDays(settings), recordingStartedAt: db.get(`SELECT value FROM _meta WHERE key='contextRecordingStartedAt'`)?.value ?? null,
     units: { context: "tokens", shaping: "bytes", latency: "ms" }, filters: f,
     definitions: { providerInputTokens: "Cache-inclusive input reported by upstream; missing input is excluded.", savedBytes: "Signed sum of before minus after across measured stages; negative values are expansion.", cacheHitRate: "Observed cache-read / cache-inclusive input, only for attempts reporting both.", compactionHints: "Prefix discontinuity observations, not proof of a client compaction.", projectLabel: "Operator assigned; no prompt or path inference.", pending: "In flight or interrupted before completion was persisted; never assumed successful." } };

@@ -6,7 +6,7 @@ export function createContextTelemetry(fields) {
   const routingHash = /^[a-f0-9]{32,64}$/.test(fields.sessionHash || "") ? fields.sessionHash : null;
   return { ...fields, requestId,
     sessionHash: routingHash || createHash("sha256").update(requestId).digest("hex"),
-    identitySource: routingHash ? "routing" : "request",
+    identitySource: routingHash ? (["explicit", "inferred"].includes(fields.sessionIdentitySource) ? fields.sessionIdentitySource : "routing") : "request",
     logicalRequestId: fields.logicalRequestId || requestId,
   };
 }

@@ -1408,7 +1408,7 @@ export async function handleChatCore({
   if (saverFields.ce !== undefined) saverMeta.ce = saverFields.ce;
   if (compactHint) saverMeta.compactHint = true;
   const contextTelemetry = createContextTelemetry({
-    ...contextIdentity, sessionHash: credentials?.sessionHash,
+    ...contextIdentity, sessionHash: credentials?.sessionHash, sessionIdentitySource: credentials?.sessionIdentitySource,
     timestamp: new Date(requestStartTime).toISOString(),
     requestedModel: clientRawRequest?.body?.model || body.model,
     clientTool, inputEstimate, messageCount, toolCount,

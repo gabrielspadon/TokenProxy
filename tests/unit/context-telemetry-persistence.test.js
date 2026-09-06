@@ -45,6 +45,14 @@ describe("private persisted context lifecycle", () => {
     expect(turns.find(t=>t.id==="missing").providerInputTokens).toBeNull();
     expect(turns.find(t=>t.id==="estimate").providerInputTokens).toBeNull();
   });
+  it("retains billed usage when optional context metrics are invalid", async () => {
+    const malformed=detail("invalid",{contextTelemetry:{stages:[{stage:"rtk",in:100,out:50},{stage:"final",in:60,out:20}]}});
+    await saveRequestStats(malformed);
+    expect(db.get("SELECT promptTokens,completionTokens,contextSessionId,contextTelemetryError FROM requestStats WHERE id='invalid'"))
+      .toMatchObject({promptTokens:1000,completionTokens:25,contextSessionId:null,contextTelemetryError:"invalid-metrics"});
+    expect(db.all("SELECT * FROM contextStages")).toEqual([]);
+    expect((await getContextOverview()).recording.rejectedAttempts).toBe(1);
+  });
   it("normalizes cache-exclusive Claude input without double-counting", async () => {
     await saveRequestStats(detail("claude",{tokens:{input_tokens:100,output_tokens:5,cache_read_input_tokens:800,cache_creation_input_tokens:100}}));
     expect((await getContextOverview()).summary).toMatchObject({providerInputTokens:1000,cacheReadTokens:800,cacheWriteTokens:100,cacheHitRate:0.8});
