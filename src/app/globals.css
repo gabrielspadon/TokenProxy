@@ -82,7 +82,7 @@
   .brand { font-weight: 600; text-decoration: none; font-size: var(--t-15); }
   .rail nav { display: none; }
   .rail .rail-foot { display: none; }
-  .content { grid-area: main; padding: 16px; width: 100%; max-width: calc(var(--measure) + 96px); }
+  .content { grid-area: main; padding: 16px; width: 100%; max-width: 1400px; }
   .screen-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-block-end: 16px; }
   .screen-head h1 { margin-inline-end: auto; }
   section + section { margin-block-start: 28px; }
@@ -242,6 +242,19 @@
   .empty { color: var(--slate); padding: 16px 0; }
   .skeleton { color: var(--slate); }
 
+  /* Bordered control panel (DIRECTION-2 change 4). Depth stays border-drawn. */
+  .panel { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised); padding: 14px 16px; }
+  .panel > h2, .panel > h3 { margin-block-end: 8px; }
+  .verb-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .panel .field .input, .panel .field .select { max-width: 320px; }
+
+  /* Stat tiles (DIRECTION-2 change 2): the measures block, big numerals, 2-up at 390. */
+  .measure .value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  @media (max-width: 480px) { .measures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  dialog.confirm[open] { animation: dialog-in 120ms ease-out; }
+  @keyframes dialog-in { from { opacity: 0; transform: translateY(4px); } }
+
   .login { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
   .login-card { width: min(100%, 400px); display: flex; flex-direction: column; gap: 16px; }
   .login-card h1 { font-size: var(--t-24); }
@@ -253,10 +266,52 @@
   .version[data-update="true"] { color: var(--ember); }
   dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; }
   dl.facts dt { color: var(--slate); }
+
+  /* Batch 3 (tools/remote/notifications/access/system). Appended as one block;
+     nothing above is edited. A destructive control panel carries the refusal
+     accent, a section heading may carry a sprite icon, stacked panels space
+     themselves, and a panel's facts wrap against the panel, not the measure. */
+  .panel[data-tone="danger"] { border-inline-start: 3px solid var(--refusal); }
+  .panel + .panel { margin-block-start: 16px; }
+  section > h2 .icon, section > .screen-head h2 .icon { color: var(--signal-deep); margin-inline-end: 6px; }
+  [dir="rtl"] section > h2 .icon, [dir="rtl"] section > .screen-head h2 .icon { margin-inline-end: 0; margin-inline-start: 6px; }
+  .panel > .verb-row { margin-block-start: 12px; }
+  .panel > p, .panel > dl.facts { max-width: none; }
 }
 
 @layer states {
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
+}
+
+/* ---- pass-2 batch 2 additions (keys, usage, shaping, translation).
+   Appended additively; nothing above this comment is edited. Adds the stat
+   tile modifier, the bordered control panel, the sparkline bar chart, and
+   the prose fold. Every value comes from tokens declared above. ---- */
+@layer components {
+  .tiles .measure .value { font-family: var(--mono); }
+
+  .panel { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised); padding: 14px 16px; }
+  .panel + .panel { margin-block-start: 16px; }
+  .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-block-end: 8px; }
+  .panel-head h3 { margin-inline-end: auto; }
+  .panel > .rows { border-block-start: 0; }
+  .panel > .rows > .row:last-child { border-block-end: 0; }
+
+  /* One bar per bucket, height scaled to the period peak. Drawn once on
+     first paint; the reduced-motion rule in @layer states kills it. */
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 120px; border-block-end: 1px solid var(--rule); }
+  .spark li { flex: 1 1 0; min-width: 2px; background: var(--wire); transform-origin: bottom; animation: spark-draw 0.5s ease-out backwards; }
+  .spark li[data-peak="true"] { background: var(--signal); }
+  .spark-meta { display: flex; justify-content: space-between; gap: 12px; color: var(--slate); font-size: var(--t-12); }
+  @keyframes spark-draw { from { transform: scaleY(0); } }
+
+  .fold summary { cursor: pointer; width: fit-content; color: var(--slate); }
+  .fold[open] summary { margin-block-end: 8px; }
+
+  /* Panels side by side so 1440 is filled rather than left half-dead
+     (pass-2 defect 1). One column until there is room for two. */
+  .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+  .panel-grid > .panel + .panel { margin-block-start: 0; }
 }
