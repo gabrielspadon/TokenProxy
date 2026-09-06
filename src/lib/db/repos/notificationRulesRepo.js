@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
 import { DATA_FILE } from '../paths.js';
 import { readContextAnalytics } from '../analytics/client.js';
+import { validateNotificationEvidenceQuery } from '../analytics/notificationRuleQueries.mjs';
 import { CONDITIONS, conditionFor } from '../../notifications/conditions.mjs';
 import { evaluateRule } from '../../notifications/evaluate.mjs';
 
@@ -326,18 +327,20 @@ export async function snoozeEvent(id, until, { now = Date.now() } = {}) {
 // ── Evaluation and dry run ────────────────────────────────────────────────
 
 async function evidenceFor(rule, { start, end, signal }) {
+  // Validate HERE, with the worker's own validator, before the query crosses
+  // the thread boundary. Inside the worker a malformed range is indistinguish-
+  // able from a failed read, so it would surface as "temporarily unavailable"
+  // and blame the service for the caller's input.
+  const query = validateNotificationEvidenceQuery({
+    operation: 'notification-evidence',
+    conditionKind: rule.conditionKind,
+    scopeKind: rule.scopeKind,
+    scopeId: rule.scopeId,
+    ...(start === undefined ? {} : { start }),
+    ...(end === undefined ? {} : { end }),
+  });
   const writer = await getAdapter();
-  return readContextAnalytics(
-    {
-      operation: 'notification-evidence',
-      conditionKind: rule.conditionKind,
-      scopeKind: rule.scopeKind,
-      scopeId: rule.scopeId,
-      start,
-      end,
-    },
-    { file: DATA_FILE, driver: writer.driver, signal }
-  );
+  return readContextAnalytics(query, { file: DATA_FILE, driver: writer.driver, signal });
 }
 
 // One group's evidence, shaped for whichever evaluator the condition declares.
