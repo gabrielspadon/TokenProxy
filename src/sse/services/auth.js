@@ -62,6 +62,7 @@ import { putWindows, getWindows } from '@/lib/db/repos/quotaWindowsRepo.js';
 import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaRanking.js';
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
+import { cachePrefixDigest } from '@/sse/services/cachePrefixDigest.js';
 
 // Serialize account selection per canonical provider without blocking unrelated providers.
 const providerSelectionQueues = new Map();
@@ -136,8 +137,20 @@ function resolveRoutingSessionHash(options, providerId) {
       sessionId = null;
     }
   }
+  // The CACHE PREFIX joins the key when the body carries one, because a Claude
+  // Code subagent INHERITS its parent's session uuid and would otherwise share
+  // the parent's single pin: one session with thirty agents collapsed onto one
+  // account (production, 2026-09-06: sel=pin-hit 3975 of 4000, five
+  // connections, top one 1702). Different agents carry different system blocks
+  // and tool sets, so they separate here; the five turns of ONE agent carry the
+  // same ones, so they keep one pin and the provider-side cache survives.
+  //
+  // Absent a breakpoint the digest is '' and NOTHING is appended, so the hash
+  // input stays byte-identical to what it was before this branch existed and
+  // non-caching traffic keeps its pin unchanged.
+  const prefixDigest = cachePrefixDigest(body);
   return createHash('sha256')
-    .update(`${providerId}:${sessionId || 'anonymous'}`)
+    .update(`${providerId}:${sessionId || 'anonymous'}${prefixDigest ? `:${prefixDigest}` : ''}`)
     .digest('hex')
     .slice(0, 32);
 }
