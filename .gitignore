@@ -82,6 +82,13 @@ docs/*
 # directory, or a clean checkout cannot re-derive what was agreed.
 !docs/reconciliation/
 !docs/reconciliation/**
+# The route-level HTTP contracts the operator surface is wired against, and
+# the prompt packet that hands a rebuild to an agent. Both are inputs a clean
+# checkout must be able to reproduce the surface from.
+!docs/contract/
+!docs/contract/**
+!docs/prompts/
+!docs/prompts/**
 test/*
 open-sse/test/*
 RM.vn.md
