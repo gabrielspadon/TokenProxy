@@ -94,9 +94,25 @@ describe("image connect timeout propagation", () => {
     expect(response.status).toBe(200);
     expect(mocks.getSettings).toHaveBeenCalledTimes(1);
     expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gemini-3.1-flash-image',
       connectTimeout: { providerOverride: 8000, globalTimeout: 15000 },
       signal: imageRequest.signal,
     }));
+  });
+
+  it('rejects an explicitly selected chat model without substituting an image model', async () => {
+    const response = await handleImageGeneration(request('antigravity/claude-sonnet-4-6'));
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Model 'claude-sonnet-4-6' does not support image generation");
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it('requires a model instead of silently selecting an image default', async () => {
+    const incoming = new Request('http://localhost/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'paint a lighthouse' }) });
+    const response = await handleImageGeneration(incoming);
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('Missing model');
+    expect(mocks.execute).not.toHaveBeenCalled();
   });
 
   it("reuses the same settings snapshot across combo model fallback", async () => {
