@@ -82,7 +82,8 @@ export function readQuotaWorkbench(db, query) {
   const grouped = new Map();
   for (const row of rows) {
     // Never let an unknown absolute amount join a known percentage scale.
-    const measurement = row.unit ? 'absolute' : 'percentage';
+    const measurement =
+      row.unit && (numeric(row.remaining) || !numeric(row.percentage)) ? 'absolute' : 'percentage';
     const dimensions = {
       connectionId: row.connectionId,
       provider: row.provider,

@@ -124,6 +124,45 @@ describe('quota workbench query boundary', () => {
     expect((await getQuotaWorkbench(params({ connectionId: "' OR 1=1 --" }))).total).toBe(0);
     expect((await getQuotaWorkbench(params({ end: '2026-09-06T10:20:00.000Z' }))).total).toBe(12);
   });
+  it('uses reported percentage evidence when the named quota unit has no absolute balance', async () => {
+    for (let i = 0; i < 5; i++) {
+      const observedAt = new Date(Date.parse(start) + i * 300_000).toISOString();
+      await captureQuotaUsage(
+        conn,
+        {
+          quotaObservation: { id: `percent-only-${i}`, observedAt },
+          quotas: {
+            weekly: {
+              unit: 'requests',
+              remainingPercentage: 90 - i * 5,
+              resetAt: '2026-09-07T00:00:00Z',
+            },
+          },
+        },
+        { capturedAt: observedAt }
+      );
+    }
+    const result = await getQuotaWorkbench(params());
+    expect(result.series).toHaveLength(1);
+    expect(result.series[0]).toMatchObject({
+      measurement: 'percentage',
+      unit: 'requests',
+      coverage: { records: 5, measured: 5 },
+      analysis: {
+        state: 'available',
+        unit: 'percentage points',
+        rate: { median: 60, unit: 'percentage points/hour' },
+      },
+    });
+    expect(result.series[0].points.map((point) => point.value)).toEqual([90, 85, 80, 75, 70]);
+    await seed();
+    const mixed = await getQuotaWorkbench(params());
+    expect(mixed.series).toHaveLength(2);
+    expect(mixed.series.map((series) => series.analysis.unit).sort()).toEqual([
+      'percentage points',
+      'requests',
+    ]);
+  });
   it('reads beyond a first history page before computing the trend', async () => {
     db.transaction(() => {
       for (let i = 0; i < 250; i++)
