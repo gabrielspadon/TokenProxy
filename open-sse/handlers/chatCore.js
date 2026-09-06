@@ -823,7 +823,7 @@ export async function handleChatCore({
     const at = Buffer.byteLength(JSON.stringify(translatedBody));
     const measurement = { ran: Boolean(ran), stage, delta: at - saverPrev.bytes, in: saverPrev.bytes, out: at };
     contextStages.push(measurement);
-    if (at !== saverPrev.bytes) saverStages.push(measurement);
+    if (saverWillRun && at !== saverPrev.bytes) saverStages.push(measurement);
     saverPrev.bytes = at;
   };
 

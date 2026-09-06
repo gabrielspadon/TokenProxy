@@ -76,6 +76,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -117,6 +118,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "https://user:secret@example.com:8787/proxy?token=abc123",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -147,6 +149,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "https://user:secret@example.com:8787/proxy?token=abc123",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -195,6 +198,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -247,6 +251,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -308,6 +313,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       cavemanEnabled: false,
       ponytailEnabled: false,
       pxpipeEnabled: true,
+      pxpipeAllowLossy: true,
       pxpipeMinChars: 1000,
       pxpipeTransform,
       onPxpipeEvent,
@@ -340,7 +346,7 @@ describe("handleChatCore Headroom diagnostics", () => {
   it("pxpipe applies transform when no opt-out header is present", async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
     const onPxpipeEvent = vi.fn();
-    const transformedBody = { model: "claude-3-5-sonnet", stream: false, max_tokens: 100, system: "base", messages: [{ role: "user", content: [{ type: "text", text: "PXPIPE_SENTINEL" }] }] };
+    const transformedBody = { model: "claude-3-5-sonnet", stream: false, max_tokens: 100, system: "base", messages: [{ role: "user", content: [{ type: "text", text: "PXPIPE_SENTINEL" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "fixture" } }] }] };
     const pxpipeTransform = vi.fn(async () => ({
       applied: true,
       reason: "applied",
@@ -367,6 +373,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       cavemanEnabled: false,
       ponytailEnabled: false,
       pxpipeEnabled: true,
+      pxpipeAllowLossy: true,
       pxpipeMinChars: 1000,
       pxpipeTransform,
       onPxpipeEvent,

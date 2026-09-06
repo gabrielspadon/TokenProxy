@@ -84,9 +84,7 @@ import {
 import { handleNonStreamingResponse } from "../../open-sse/handlers/chatCore/nonStreamingHandler.js";
 import { handleForcedSSEToJson } from "../../open-sse/handlers/chatCore/sseToJsonHandler.js";
 import { handleChatCore } from "../../open-sse/handlers/chatCore.js";
-import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
-// These fixtures validate the explicitly opted-in legacy filters.
-const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
+import { compressMessages } from "../../open-sse/rtk/index.js";
 import { getModelInfo } from "../../open-sse/config/models.js";
 
 const AT = Date.parse("2026-09-04T00:00:00.000Z");
@@ -211,7 +209,7 @@ describe("handleChatCore REQ.ok one-liner", () => {
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
     expect(reqs[0]).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=abcdef1234 conn=test-con route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=row-123 t=\d+ in=8 out=4 cr=0 cw=0 ttft=\d+( path=\S+)?$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=abcdef1234 conn=test-con route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
     );
   });
 
@@ -225,6 +223,7 @@ describe("handleChatCore REQ.ok one-liner", () => {
     await result.response.text();
     const detailArg = harness.saveRequestDetailMock.mock.calls.at(-1)[0];
     expect(detailArg.rid).toBe("abcdef1234");
+    expect(reqLines()[0]).toContain(`row=${detailArg.id}`);
   });
 });
 
@@ -554,7 +553,7 @@ describe("REQ.ok save=/ce= with a composed saver pipeline", () => {
     expect(reqs).toHaveLength(1);
     // "hello" → "hi" is a 3-byte shrink; save_tok rounds /4 toward -1.
     expect(reqs[0]).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=saver-0001 conn=test-con save=rtk:-3 save_tok=-1 route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=row-123 t=\d+ in=8 out=4 cr=0 cw=0 ttft=\d+( path=\S+)?$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=saver-0001 conn=test-con save=rtk:-3 save_tok=-1 route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
     );
     // first request of the session: no previous body to compare against
     expect(reqs[0]).not.toContain("ce=");
