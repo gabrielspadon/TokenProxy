@@ -7,7 +7,7 @@ import { latestVersion } from '../../src/lib/db/migrations/index.js';
 import { DATA_FILE } from '../../src/lib/db/paths.js';
 
 const additions = ['requestId', 'logicalRequestId', 'attempt', 'contextSessionId', 'projectId',
-  'rateSnapshotId', 'pricingCapturedAt', 'costSource', 'costEvidence', 'usageSource', 'estimatedCostUsd', 'reportedCostUsd'];
+  'rateSnapshotId', 'pricingCapturedAt', 'dispatchCoverage', 'costSource', 'costEvidence', 'usageSource', 'estimatedCostUsd', 'reportedCostUsd'];
 let db;
 afterAll(() => db?.close?.());
 describe('usage attribution additive migration', () => {
@@ -18,7 +18,7 @@ describe('usage attribution additive migration', () => {
       if (name === 'usageRateSnapshots') continue;
       const columns = Object.fromEntries(Object.entries(definition.columns).filter(([key]) =>
         !(name === 'usageHistory' && additions.includes(key))
-        && !(name === 'requestStats' && ['rateSnapshotId', 'pricingCapturedAt'].includes(key))));
+        && !(name === 'requestStats' && ['rateSnapshotId', 'pricingCapturedAt', 'dispatchCoverage'].includes(key))));
       old.exec(buildCreateTableSql(name, { ...definition, columns }));
     }
     old.prepare('INSERT INTO _meta(key,value) VALUES(?,?)').run('backupSchemaVersion', '4');
