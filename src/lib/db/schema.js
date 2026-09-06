@@ -4,8 +4,9 @@
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
 import { QUOTA_HISTORY_TABLES } from "./schema/quotaHistory.js";
+import { CONFIG_VERSION_TABLES } from "./configVersionSchema.js";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -22,6 +23,7 @@ PRAGMA busy_timeout = 5000;
 // For destructive changes (drop/rename/type-change), write a migration file.
 export const TABLES = {
   ...QUOTA_HISTORY_TABLES,
+  ...CONFIG_VERSION_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
