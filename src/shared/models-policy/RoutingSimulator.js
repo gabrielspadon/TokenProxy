@@ -184,6 +184,7 @@ export function RoutingSimulator({ draft }) {
           <MultiSelect
             label="Required capabilities"
             data={capabilities}
+            maxValues={12}
             value={input.requiredCapabilities || []}
             disabled={busy}
             onChange={(requiredCapabilities) => update({ requiredCapabilities })}
@@ -266,6 +267,7 @@ export function RoutingSimulator({ draft }) {
         {validation && (
           <Alert
             color={validation.draftPreview?.valid === false ? 'orange' : 'teal'}
+            styles={{ title: { color: validation.draftPreview?.valid === false ? '#804000' : '#076449' } }}
             title="Capture shape validated"
             mt="sm"
           >

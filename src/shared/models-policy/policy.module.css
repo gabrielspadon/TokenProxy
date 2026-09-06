@@ -1,5 +1,7 @@
 .root {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 14px;
   color: #243550;
   font-size: 14px;
@@ -22,6 +24,15 @@
 .root p {
   margin: 5px 0;
   color: #5b6980;
+}
+.root input:disabled {
+  color: #5b6980;
+  -webkit-text-fill-color: #5b6980;
+  opacity: 1;
+}
+.root input:disabled::placeholder {
+  color: #66768d;
+  -webkit-text-fill-color: #66768d;
 }
 .heading,
 .toolbar,
@@ -51,6 +62,7 @@
   flex-wrap: wrap;
 }
 .surface {
+  min-width: 0;
   background: #fff;
   border: 1px solid #dce3ee;
   border-top: 0;
@@ -59,6 +71,9 @@
   display: grid;
   grid-template-columns: 245px minmax(0, 1fr);
   min-height: 350px;
+}
+.editorGrid[data-empty] {
+  min-height: 170px;
 }
 .planList {
   background: #f8faff;
@@ -164,6 +179,23 @@
   flex-wrap: wrap;
   margin-top: 7px;
   font-size: 13px;
+}
+.notice {
+  padding: 10px 12px;
+  border-inline-start: 3px solid #27836e;
+  background: #fff;
+  color: #243550;
+  font-size: 13px;
+}
+.notice > strong {
+  color: #076449;
+  margin-inline-end: 12px;
+}
+.notice[data-partial] {
+  border-inline-start-color: #a96b19;
+}
+.notice[data-partial] > strong {
+  color: #804000;
 }
 .receipt pre {
   flex-basis: 100%;

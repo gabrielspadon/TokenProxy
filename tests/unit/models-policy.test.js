@@ -156,6 +156,18 @@ afterEach(async () => {
 });
 
 describe('Covered policy editor transformations', () => {
+  it('retains the focused member input while its model identifier changes', async () => {
+    await render();
+    await click('New draft from active');
+    const selector = 'input[aria-label="Member 1 model"]';
+    const field = document.querySelector(selector);
+    field.focus();
+    await input(selector, 'claude/edited-model');
+    expect(document.querySelector(selector)).toBe(field);
+    expect(document.activeElement).toBe(field);
+    await input(selector, 'claude/edited-model-two');
+    expect(document.activeElement).toBe(field);
+  });
   it('renames a plan and preserves its exact override and member bindings without mutating the source', () => {
     const source = documentFixture(),
       next = editPlan(source, 'fast', { name: 'renamed' });

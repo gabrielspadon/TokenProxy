@@ -58,7 +58,7 @@ function Validation({ result }) {
   return (
     <div className={styles.validation}>
       <Group gap="xs">
-        <Badge color={result.valid ? 'teal' : 'orange'} variant="light">
+        <Badge color={result.valid ? 'teal' : 'orange'} c={result.valid ? '#076449' : '#804000'} variant="light">
           {result.valid ? 'Locally valid' : 'Needs correction'}
         </Badge>
         <Text size="sm">
@@ -302,10 +302,8 @@ export function ModelsPolicy() {
         </Alert>
       )}
       {notice && (
-        <Alert
-          color={notice.partial ? 'orange' : 'teal'}
-          title={notice.title || (notice.partial ? 'Partial completion' : 'Recorded')}
-        >
+        <div className={styles.notice} role="status" data-partial={notice.partial || undefined}>
+          <strong>{notice.title || (notice.partial ? 'Partial completion' : 'Recorded')}</strong>
           {notice.message}
           {notice.result && (
             <div className={styles.receipt}>
@@ -318,7 +316,7 @@ export function ModelsPolicy() {
               )}
             </div>
           )}
-        </Alert>
+        </div>
       )}
       <div className={styles.toolbar}>
         <Group gap="xs">

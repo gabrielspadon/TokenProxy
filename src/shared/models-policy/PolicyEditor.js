@@ -51,7 +51,7 @@ function Member({ id, model, index, account, accounts, disabled, onModel, onAcco
           {...listeners}
           aria-label={`Reorder member ${index + 1}`}
         >
-          <Icon name="drag_indicator" />
+          <Icon name="i-menu" />
         </ActionIcon>
       </Tooltip>
       <span className={styles.ordinal}>{index + 1}</span>
@@ -79,7 +79,7 @@ function Member({ id, model, index, account, accounts, disabled, onModel, onAcco
         aria-label={`Remove member ${index + 1}`}
         onClick={onRemove}
       >
-        <Icon name="close" />
+        <Icon name="i-close" />
       </ActionIcon>
     </div>
   );
@@ -89,7 +89,7 @@ function OrderedMembers({ plan, document, onChange, accounts, disabled }) {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
-  const ids = plan.models.map((model, index) => `${index}:${model}`);
+  const ids = plan.models.map((_, index) => `${plan.id}:member:${index}`);
   const connections = document.settings.comboStrategies?.[plan.name]?.memberConnections || {};
   function binding(model, id) {
     const next = { ...connections };
@@ -269,7 +269,7 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
         <Tabs.Tab value="defaults">Routing defaults</Tabs.Tab>
       </Tabs.List>
       <Tabs.Panel value="plans">
-        <div className={styles.editorGrid}>
+        <div className={styles.editorGrid} data-empty={document.combos.length === 0 || undefined}>
           <aside className={styles.planList} aria-label="Routing plans">
             <div className={styles.sectionHead}>
               <h3>Plans</h3>
