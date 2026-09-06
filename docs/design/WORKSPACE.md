@@ -1,5 +1,7 @@
 # Analytical workspace
 
+The operator's [shared design contract](WORKSPACE-CONTRACT.md) is the acceptance authority for the current implementation. Use it alongside the component and data contracts.
+
 The user rejected the Graphite composition. Its build and interaction results are
 historical technical evidence, not visual acceptance. This direction replaces its
 graph-led overview with a linked workspace for account capacity, context and token
