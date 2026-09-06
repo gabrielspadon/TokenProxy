@@ -1,3 +1,4 @@
+import { createSseDecoder } from "./sseDecoder.js";
 import { STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { detectUpstreamErrorContent } from "../services/upstreamErrorContent.js";
 
@@ -32,16 +33,17 @@ export function hasOutputTokens(usage) {
 // Native Claude message_stop is opt-in because it is itself client-visible.
 export function frameCarriesContent(line, { includeClaudeTerminal = false, requireActionableGeminiOutput = false } = {}) {
   if (!line.startsWith("data:")) return false;
-  const payload = line.slice(5).trim();
-  if (!payload || payload === "[DONE]") return false;
+  const parsed = parseDataPayload(line.slice(5));
+  return parsed !== null && payloadCarriesContent(parsed, { includeClaudeTerminal, requireActionableGeminiOutput });
+}
 
-  let parsed;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return false;
-  }
+function parseDataPayload(data) {
+  const payload = data.trim();
+  if (!payload || payload === "[DONE]") return null;
+  try { return JSON.parse(payload); } catch { return null; }
+}
 
+function payloadCarriesContent(parsed, { includeClaudeTerminal, requireActionableGeminiOutput }) {
   // Antigravity can finish with only internal thought parts and token metadata.
   // Those are not an answer or tool action. Waiting for a visible Gemini part
   // keeps this pre-client gate fail-safe and leaves account/combo fallback to
@@ -81,11 +83,11 @@ export function frameCarriesContent(line, { includeClaudeTerminal = false, requi
 // it is never the transcript, so partial coverage is fine.
 export function frameContentText(line) {
   if (!line.startsWith("data:")) return "";
-  const payload = line.slice(5).trim();
-  if (!payload || payload === "[DONE]") return "";
-  let parsed;
-  try { parsed = JSON.parse(payload); } catch { return ""; }
+  const parsed = parseDataPayload(line.slice(5));
+  return parsed === null ? "" : payloadContentText(parsed);
+}
 
+function payloadContentText(parsed) {
   const delta = parsed.choices?.[0]?.delta;
   if (nonEmptyString(delta?.content)) return delta.content;
   if (parsed.type === "content_block_delta" && nonEmptyString(parsed.delta?.text)) return parsed.delta.text;
@@ -112,16 +114,23 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
     try { await reader.cancel?.(reason); } catch {}
     finally { releaseReader(); }
   };
-  const decoder = new TextDecoder("utf-8", { fatal: false });
   const rawChunks = [];
   let rawBytes = 0;
-  let pending = "";
   let hasContent = false;
   let upstreamError = null;
   let upstreamDone = false;
   let readError = null;
   let timedOut = false;
   let pendingRead = null;
+
+  const decoder = createSseDecoder(event => {
+    if (hasContent || upstreamError) return;
+    const parsed = parseDataPayload(event.data);
+    if (parsed !== null && payloadCarriesContent(parsed, { includeClaudeTerminal, requireActionableGeminiOutput })) {
+      upstreamError = detectUpstreamErrorContent(payloadContentText(parsed));
+      if (!upstreamError) hasContent = true;
+    }
+  });
 
   const deadline = Date.now() + timeoutMs;
   let timer = null;
@@ -146,29 +155,13 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
       const { done, value } = next;
       if (done) {
         upstreamDone = true;
-        pending += decoder.decode();
-        if (pending.trim() && frameCarriesContent(pending.trim(), { includeClaudeTerminal, requireActionableGeminiOutput })) hasContent = true;
+        decoder.finish();
         break;
       }
 
       rawChunks.push(value);
       rawBytes += value.byteLength;
-      pending += decoder.decode(value, { stream: true });
-
-      let newline;
-      while ((newline = pending.indexOf("\n")) !== -1) {
-        const line = pending.slice(0, newline).trim();
-        pending = pending.slice(newline + 1);
-        if (frameCarriesContent(line, { includeClaudeTerminal, requireActionableGeminiOutput })) {
-          // An upstream that answers 200 and puts its error in the first content
-          // frame would otherwise be forwarded as the model's answer. Nothing has
-          // reached the client yet at this point, so reporting no content lets
-          // the caller fall over to the next account or combo member cleanly.
-          upstreamError = detectUpstreamErrorContent(frameContentText(line));
-          if (!upstreamError) hasContent = true;
-          break;
-        }
-      }
+      decoder.feed(value);
       if (hasContent || upstreamError) break;
 
       if (rawBytes >= PEEK_MAX_BYTES) {
@@ -180,6 +173,7 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
     readError = error;
     hasContent = false;
   } finally {
+    decoder.release();
     if (upstreamDone) releaseReader();
     if (timer) clearTimeout(timer);
   }

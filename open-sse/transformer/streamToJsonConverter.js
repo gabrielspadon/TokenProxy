@@ -4,6 +4,7 @@
  * Used when client requests non-streaming but provider forces streaming (e.g., Codex)
  */
 
+import { createSseDecoder } from "../utils/sseDecoder.js";
 import { copyNonnegativeExactCosts } from "../utils/usageTracking.js";
 
 /**
@@ -37,14 +38,8 @@ function applyTerminalUsage(parsed, state) {
 /**
  * Process a single SSE message and update state accordingly.
  */
-function processSSEMessage(msg, state) {
-  if (!msg.trim()) return;
-
-  const eventMatch = msg.match(/^event:\s*(.+)$/m);
-  const dataMatch = msg.match(/^data:\s*(.+)$/m);
-  if (!dataMatch) return;
-
-  const dataStr = dataMatch[1].trim();
+function processSSEMessage(event, state) {
+  const dataStr = event.data.trim();
   if (dataStr === "[DONE]") return;
 
   let parsed;
@@ -54,7 +49,7 @@ function processSSEMessage(msg, state) {
   // Some OpenAI-compatible providers (e.g. SLG/singularityapi) send data-only
   // SSE with no `event:` line, relying on the JSON payload's own `type` field
   // instead — fall back to that so their streams aren't silently dropped.
-  const eventType = eventMatch ? eventMatch[1].trim() : (parsed.type || "");
+  const eventType = event.event !== undefined ? event.event.trim() : (parsed.type || "");
 
   if (eventType === "response.created") {
     state.responseId = parsed.response?.id || state.responseId;
@@ -94,8 +89,6 @@ export async function convertResponsesStreamToJson(stream, { reader: suppliedRea
 
   const reader = suppliedReader || stream.getReader();
   const ownsReader = !suppliedReader;
-  const decoder = new TextDecoder();
-  let buffer = "";
 
   const state = {
     responseId: "",
@@ -106,25 +99,16 @@ export async function convertResponsesStreamToJson(stream, { reader: suppliedRea
     items: new Map()
   };
 
+  const decoder = createSseDecoder(event => processSSEMessage(event, state));
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const messages = buffer.split("\n\n");
-      buffer = messages.pop() || "";
-
-      for (const msg of messages) {
-        processSSEMessage(msg, state);
-      }
+      decoder.feed(value);
     }
-
-    // Flush remaining buffer (last event may not end with \n\n)
-    if (buffer.trim()) {
-      processSSEMessage(buffer, state);
-    }
+    decoder.finish();
   } finally {
+    decoder.release();
     if (ownsReader) reader.releaseLock();
   }
 
