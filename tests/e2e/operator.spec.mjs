@@ -62,6 +62,37 @@ test('semantic search is keyboard contained and restores focus', async ({ page }
   await expect(page).toHaveURL(/\/dashboard\/context$/);
 });
 
+test('routing refits late arriving work and desktop resize without clipped nodes', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.__operatorStreamDelayMs = 1500;
+  });
+  await page.goto('/dashboard');
+  await expect(page.locator('.graph-provider')).toHaveCount(5);
+  await expect(page.locator('.graph-request')).toHaveCount(3);
+  for (const width of [1440, 1120, 1600]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect
+      .poll(() =>
+        page.locator('.routing-canvas').evaluate((canvas) => {
+          const bounds = canvas.getBoundingClientRect();
+          return [...canvas.querySelectorAll('.react-flow__node')].every((node) => {
+            const rect = node.getBoundingClientRect();
+            return (
+              rect.left >= bounds.left &&
+              rect.right <= bounds.right &&
+              rect.top >= bounds.top &&
+              rect.bottom <= bounds.bottom
+            );
+          });
+        })
+      )
+      .toBe(true);
+    await expect(page.locator('.react-flow__edge.animated')).toHaveCount(5);
+  }
+});
+
 test('context shows explicit measurement sources and request stage changes', async ({ page }) => {
   await page.goto('/dashboard/context');
   await expect(page.getByRole('heading', { name: 'OceanStack', exact: true })).toBeVisible();

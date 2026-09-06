@@ -247,17 +247,15 @@ const contextRecords = [
   },
   {
     session: { id: 2, projectLabel: 'TokenProxy', identitySource: 'inferred', clientTool: 'Codex' },
-    turns: turns
-      .slice(0, 18)
-      .map((t, i) => ({
-        ...t,
-        id: `codex-${i}`,
-        provider: 'openai',
-        model: 'gpt-5.4',
-        connectionId: 'visual-1',
-        clientTool: 'Codex',
-        compactHint: false,
-      })),
+    turns: turns.slice(0, 18).map((t, i) => ({
+      ...t,
+      id: `codex-${i}`,
+      provider: 'openai',
+      model: 'gpt-5.4',
+      connectionId: 'visual-1',
+      clientTool: 'Codex',
+      compactHint: false,
+    })),
   },
   {
     session: { id: 3, projectLabel: null, identitySource: 'request', clientTool: 'API client' },
@@ -399,7 +397,7 @@ export async function installOperatorFixture(page) {
         this.timer = setTimeout(() => {
           this.onopen?.({});
           this.onmessage?.({ data: JSON.stringify(frame) });
-        }, 30);
+        }, window.__operatorStreamDelayMs ?? 30);
       }
       close() {
         clearTimeout(this.timer);

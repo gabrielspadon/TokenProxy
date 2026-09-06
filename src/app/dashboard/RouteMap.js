@@ -1,7 +1,14 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ReactFlow, Handle, Position, Background } from '@xyflow/react';
+import {
+  ReactFlow,
+  Handle,
+  Position,
+  Background,
+  useReactFlow,
+  useStore,
+} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
 import { Brand } from '@/shared/components/Brand';
@@ -117,6 +124,18 @@ function RouterNode({ data }) {
   );
 }
 const nodeTypes = { router: RouterNode };
+function FitRoutingView() {
+  const { viewportInitialized, fitBounds, getNodesBounds, getNodes } = useReactFlow();
+  const topology = useStore((s) => s.nodes.map((n) => n.id).join('|'));
+  const width = useStore((s) => s.width);
+  const height = useStore((s) => s.height);
+  useEffect(() => {
+    if (viewportInitialized && width > 0 && height > 0) {
+      fitBounds(getNodesBounds(getNodes()), { padding: 0.055 });
+    }
+  }, [viewportInitialized, topology, width, height, fitBounds, getNodesBounds, getNodes]);
+  return null;
+}
 export function RouteMap({
   usage,
   conns,
@@ -152,6 +171,7 @@ export function RouteMap({
       type: 'router',
       width: 210,
       height: 74,
+      measured: { width: 210, height: 74 },
       position: { x: 0, y: (height / (requests.length + 1)) * (i + 1) - 37 },
       data: { ...s, kind: 'request', selected: i === selectedRequest },
     })),
@@ -162,6 +182,7 @@ export function RouteMap({
       type: 'router',
       width: 76,
       height: 76,
+      measured: { width: 76, height: 76 },
       position: { x: 292, y: height / 2 - 38 },
       data: { kind: 'hub' },
     },
@@ -173,6 +194,7 @@ export function RouteMap({
       type: 'router',
       width: 260,
       height: 50,
+      measured: { width: 260, height: 50 },
       position: { x: 460, y: 5 + i * 64 },
       data: { ...c, selected: c.id === selectedConnection },
     })),
@@ -274,6 +296,7 @@ export function RouteMap({
               }}
               attributionPosition="bottom-right"
             >
+              <FitRoutingView />
               <Background color="var(--graph-dot)" gap={22} size={1} />
             </ReactFlow>
           ) : (
