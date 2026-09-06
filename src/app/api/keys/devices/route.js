@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getApiKeys } from "@/lib/localDb";
 import { getApiKeyDeviceCounts } from "@/sse/services/apiKeyDevices.js";
+import { requireAdmin } from "@/lib/admin/guard.js";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,9 @@ export const dynamic = "force-dynamic";
  * caller already listed by id, and echoing the secret here would put it in a
  * second response for no reason.
  */
-export async function GET() {
+export async function GET(request) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const counts = getApiKeyDeviceCounts();
     const keys = await getApiKeys();
@@ -28,7 +31,7 @@ export async function GET() {
         deviceCount: counts[k.key] || 0,
       })),
       windowMinutes: 30,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error fetching key devices:", error);
     return NextResponse.json({ error: "Failed to fetch key devices" }, { status: 500 });

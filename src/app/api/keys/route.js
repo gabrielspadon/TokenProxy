@@ -3,11 +3,15 @@ import { getApiKeys, createApiKey, updateApiKey } from "@/lib/localDb";
 import { deleteApiKeys, getApiKeyUsageTotals, pickLimits } from "@/lib/db/repos/apiKeysRepo.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { getApiKeyDeviceCount } from "@/sse/services/apiKeyDevices.js";
+import { requireAdmin } from "@/lib/admin/guard.js";
+import { publicApiKey } from "@/lib/admin/publicApiKey.js";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/keys - List API keys
-export async function GET() {
+export async function GET(request) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const keys = await getApiKeys();
     // Each key carries its ceilings; without what it has already spent, a
@@ -21,11 +25,11 @@ export async function GET() {
       // bill (#930). A live in-memory window, so an absent key is 0 rather than
       // unknown.
       keys: keys.map((k) => ({
-        ...k,
+        ...publicApiKey(k),
         usage: totals[k.key] || zero,
         deviceCount: getApiKeyDeviceCount(k.key),
       })),
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error fetching keys:", error);
     return NextResponse.json({ error: "Failed to fetch keys" }, { status: 500 });
@@ -34,6 +38,8 @@ export async function GET() {
 
 // POST /api/keys - Create new API key
 export async function POST(request) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const body = await request.json();
     // expiresAt is optional and absent means never expires, so a caller that
@@ -68,7 +74,7 @@ export async function POST(request) {
       maxCompletionTokens: stored.maxCompletionTokens,
       maxCostUsd: stored.maxCostUsd,
       allowedModels: stored.allowedModels,
-    }, { status: 201 });
+    }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error creating key:", error);
     return NextResponse.json({ error: "Failed to create key" }, { status: 500 });
@@ -79,6 +85,8 @@ export async function POST(request) {
 // single-key route stays as it is; this is the same operation over a set, so a
 // leaked batch is revoked in one action rather than one dialog per key.
 export async function DELETE(request) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const ids = new URL(request.url).searchParams.getAll("id").filter(Boolean);
     if (!ids.length) {

@@ -79,6 +79,7 @@ if (
 
 // Always require JWT token regardless of requireLogin setting
 const ALWAYS_PROTECTED = [
+  "/api/keys",
   "/api/shutdown",
   "/api/settings/database",
   "/api/version/shutdown",
@@ -88,7 +89,6 @@ const ALWAYS_PROTECTED = [
 // Require auth, but allow through if requireLogin is disabled
 const PROTECTED_API_PATHS = [
   "/api/settings",
-  "/api/keys",
   "/api/providers",
   "/api/provider-nodes",
   "/api/proxy-pools",

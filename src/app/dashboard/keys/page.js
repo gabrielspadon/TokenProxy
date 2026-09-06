@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
@@ -154,6 +154,7 @@ export default function KeysPage() {
   const [action, setAction] = useState(null);
   const [form, setForm] = useState(BLANK);
   const [created, setCreated] = useState(null);
+  const actionEpoch = useRef(0);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState(null);
@@ -168,14 +169,26 @@ export default function KeysPage() {
   const rows = useMemo(() => keys.data?.keys || [], [keys.data]);
   const set = useCallback((field, value) => setForm((f) => ({ ...f, [field]: value })), []);
   const close = useCallback(() => {
+    actionEpoch.current++;
     setAction(null);
     setRefused(null);
     setCreated(null);
     setCopied(false);
     setForm(BLANK);
+    setBusy(false);
   }, []);
 
+  useEffect(() => () => { actionEpoch.current++; }, []);
+  useEffect(() => {
+    if (!created?.key) return;
+    const timeout = setTimeout(close, 60000);
+    const hide = () => { if (document.visibilityState === 'hidden') close(); };
+    document.addEventListener('visibilitychange', hide);
+    return () => { clearTimeout(timeout); document.removeEventListener('visibilitychange', hide); };
+  }, [created, close]);
+
   const open = (kind, key) => {
+    actionEpoch.current++;
     setRefused(null);
     setResult(null);
     setCreated(null);
@@ -210,12 +223,15 @@ export default function KeysPage() {
     setBusy(true);
     setRefused(null);
     const k = action.key;
+    const epoch = actionEpoch.current;
     let res;
     if (action.kind === 'create') {
       res = await call('/api/keys', {
         method: 'POST',
         body: { name: form.name.trim(), expiresAt: form.expiresAt || null, ...limitsBody() },
       });
+    } else if (action.kind === 'reveal') {
+      res = await call(`/api/keys/${encodeURIComponent(k.id)}/reveal`, { method: 'POST' });
     } else if (action.kind === 'limits') {
       res = await call(`/api/keys/${encodeURIComponent(k.id)}`, {
         method: 'PUT',
@@ -232,13 +248,14 @@ export default function KeysPage() {
       const q = picked.map((id) => `id=${encodeURIComponent(id)}`).join('&');
       res = await call(`/api/keys?${q}`, { method: 'DELETE' });
     }
+    if (epoch !== actionEpoch.current) return;
     setBusy(false);
     if (!res.ok) {
       setRefused(refusal(res.status, res.body));
       return;
     }
     keys.refresh();
-    if (action.kind === 'create') {
+    if (action.kind === 'create' || action.kind === 'reveal') {
       setCreated(res.body);
       return;
     }
@@ -294,6 +311,13 @@ export default function KeysPage() {
   };
 
   const COPY = {
+    reveal: {
+      title: `Reveal ${action?.key?.name || 'this key'}`,
+      verb: 'Reveal',
+      requires: 'An operator session.',
+      changes: 'Sends this credential to your browser for client setup. Its activation, expiry and limits stay as configured.',
+      undo: 'Close the dialog to clear the displayed value. If copied, it remains on your clipboard.',
+    },
     create: {
       title: 'Create a key',
       verb: 'Create',
@@ -436,6 +460,7 @@ export default function KeysPage() {
                         <span className="id" data-i18n-skip>
                           {k.id}
                         </span>
+                        {k.keyPreview ? <span className="id" data-i18n-skip> {k.keyPreview}</span> : null}
                         {k.createdAt ? (
                           <>
                             {' '}
@@ -499,6 +524,10 @@ export default function KeysPage() {
                         </dd>
                       </dl>
                       <div className="verb-row">
+                        <button type="button" className="button quiet" onClick={() => open('reveal', k)}>
+                          <Icon name="i-keys" />
+                          Reveal key
+                        </button>
                         <button
                           type="button"
                           className="button quiet"
@@ -682,25 +711,23 @@ export default function KeysPage() {
             cannot preview the answer.
           </li>
           <li>
-            A key&apos;s own value, in any form. The list route returns it in full and this screen
-            drops it, so a key is shown once when it is created and never again.
-          </li>
-          <li>
             A key&apos;s name and its expiry after it exists. Both are set when the key is created,
             and the update route accepts neither.
           </li>
         </ul>
       </section>
 
+      <p className="caption">Key lists contain masked previews. Revealing a stored credential requires an explicit operator action on that key, even when dashboard sign-in is turned off.</p>
+
       <Confirm
         open={!!action}
         busy={busy}
         refusal={refused}
-        title={created ? 'Key created' : copyFor?.title}
+        title={created ? (action?.kind === 'reveal' ? 'Key revealed' : 'Key created') : copyFor?.title}
         verb={created ? 'Done' : copyFor?.verb}
         requires={created ? 'An operator session.' : copyFor?.requires}
-        changes={created ? 'The key is live and can route inference now.' : copyFor?.changes}
-        undo={created ? 'Revoke the key. What it spent stays on the record.' : copyFor?.undo}
+        changes={created ? 'This credential is visible temporarily. Its configured activation, expiry and limits govern subsequent requests.' : copyFor?.changes}
+        undo={created ? 'Close the dialog to clear the displayed value. Copied values remain on your clipboard.' : copyFor?.undo}
         irreversible={!created && !!copyFor?.irreversible}
         onConfirm={run}
         onClose={close}
@@ -736,7 +763,7 @@ export default function KeysPage() {
         ) : null}
         {created ? (
           <div className="keys-once">
-            <p>This key is shown once. Copy it now.</p>
+            <p>This value clears after 60 seconds, when you leave this tab, or when you close the dialog. Use Reveal key to retrieve it again.</p>
             <code className="keys-secret" data-i18n-skip>
               {created.key}
             </code>

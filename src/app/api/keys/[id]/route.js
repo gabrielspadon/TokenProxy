@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
 import { pickLimits } from "@/lib/db/repos/apiKeysRepo.js";
+import { requireAdmin } from "@/lib/admin/guard.js";
+import { publicApiKey } from "@/lib/admin/publicApiKey.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const { id } = await params;
     const key = await getApiKeyById(id);
     if (!key) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-    return NextResponse.json({ key });
+    return NextResponse.json({ key: publicApiKey(key) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error fetching key:", error);
     return NextResponse.json({ error: "Failed to fetch key" }, { status: 500 });
@@ -19,6 +23,8 @@ export async function GET(request, { params }) {
 
 // PUT /api/keys/[id] - Update key
 export async function PUT(request, { params }) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const { id } = await params;
     const body = await request.json();
@@ -38,7 +44,7 @@ export async function PUT(request, { params }) {
 
     const updated = await updateApiKey(id, updateData);
 
-    return NextResponse.json({ key: updated });
+    return NextResponse.json({ key: publicApiKey(updated) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.log("Error updating key:", error);
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });
@@ -47,6 +53,8 @@ export async function PUT(request, { params }) {
 
 // DELETE /api/keys/[id] - Delete API key
 export async function DELETE(request, { params }) {
+  const denied = await requireAdmin(request);
+  if (denied) return denied;
   try {
     const { id } = await params;
 
