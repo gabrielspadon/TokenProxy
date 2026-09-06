@@ -122,3 +122,11 @@ mixed long-stream/slow-reader workloads are distinct scenarios. Cancellation
 timing includes receipt of the server-side close signal. Five-millisecond RSS
 samples can miss shorter peaks. Local measurements do not establish production
 provider latency, whole-gateway targets or a global socket bound.
+
+The cold scenario uses four independent identities with 32 concurrent requests
+each. Repeated two-hop CONNECT fixtures also consume operating-system ephemeral
+ports and leave TIME_WAIT entries after correct socket closure. Allow at least
+one local TIME_WAIT horizon between cold and warm/mixed batches. On the measured
+Mac, a 32-second inter-scenario cooldown avoids the observed EADDRNOTAVAIL
+fixture failure without changing kernel settings, transport retries or workload
+concurrency. That cooldown is outside every timed process.

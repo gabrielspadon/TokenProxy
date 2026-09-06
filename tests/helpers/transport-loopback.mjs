@@ -6,11 +6,11 @@ import { once } from "node:events";
 // and are routed only to this fixture's origin, never resolved or contacted.
 export async function createTransportLoopback() {
   const sockets = new Set(), active = new Set();
-  const stats = { connects: 0, requests: 0, closedBodies: 0, bulkWritten: 0, authorities: [], proxyAuth: [] };
+  const stats = { connects: 0, requests: 0, closedBodies: 0, closedBulkBodies: 0, bulkWritten: 0, authorities: [], proxyAuth: [] };
   const bulkBytes = 64 * 1024 * 1024, block = Buffer.alloc(64 * 1024, 120);
   const track = socket => { sockets.add(socket); socket.once("close", () => sockets.delete(socket)); };
   const origin = http.createServer((req, res) => {
-    stats.requests++; active.add(res); res.once("close", () => { active.delete(res); stats.closedBodies++; });
+    stats.requests++; active.add(res); res.once("close", () => { active.delete(res); stats.closedBodies++; if (req.url === "/bulk") stats.closedBulkBodies++; });
     res.setHeader("x-fixture-host", req.headers.host);
     if (req.url === "/long") { res.writeHead(200); res.write("anchor"); return; }
     if (req.url === "/bulk") {

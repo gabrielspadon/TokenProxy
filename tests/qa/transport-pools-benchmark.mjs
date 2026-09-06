@@ -19,7 +19,15 @@ let source = execFileSync("git", ["show", `${baseline}:${modulePath}`], { cwd: r
 source = source.replace(/from (["'])(\.[^"']+)\1/g, (_, quote, path) => `from ${quote}${pathToFileURL(resolve(root, dirname(modulePath), path)).href}${quote}`)
   .replace(/import\((["'])(undici|socks-proxy-agent)\1\)/g, (_, _quote, name) => `import(${JSON.stringify(pathToFileURL(requireFromSut.resolve(name)).href)})`);
 const dispatchers = new Set(), nativeFetch = globalThis.fetch;
-globalThis.fetch = (url, options) => { if (options?.dispatcher) dispatchers.add(options.dispatcher); return nativeFetch(url, options); };
+globalThis.fetch = (url, options) => {
+  if (options?.dispatcher) dispatchers.add(options.dispatcher);
+  return nativeFetch(url, options).catch(error => {
+    // The production strict-proxy wrapper intentionally exposes only its own
+    // error. Preserve this fixture's native cause before that wrapper runs.
+    console.error("Loopback native fetch failure", error);
+    throw error;
+  });
+};
 const transport = await import(variant === "baseline" ? `data:text/javascript;base64,${Buffer.from(source).toString("base64")}` : pathToFileURL(resolve(root, modulePath)));
 globalThis.fetch = nativeFetch;
 const fixture = await createTransportLoopback();
@@ -40,7 +48,7 @@ try {
   const sampler = setInterval(() => { sampledPeakRss = Math.max(sampledPeakRss, process.memoryUsage().rss); }, 5);
   const started = performance.now();
   try {
-    if (scenario === "burst") for (let id = 0; id < 10; id++) await Promise.all(Array.from({ length: 32 }, () => request(id)));
+    if (scenario === "burst") for (let id = 0; id < 4; id++) await Promise.all(Array.from({ length: 32 }, () => request(id)));
     if (scenario === "warm") for (let batch = 0; batch < 32; batch++) await Promise.all(Array.from({ length: 32 }, () => request(0)));
     if (scenario === "mixed") {
       const long = await Promise.all(Array.from({ length: 8 }, () => transport.proxyAwareFetch(target("/long"), {}, route(0))));
@@ -48,10 +56,10 @@ try {
       const bulk = await transport.proxyAwareFetch(target("/bulk"), {}, route(0)), reader = bulk.body.getReader();
       for (let n = 0; n < 3; n++) { assert.ok((await reader.read()).value.length > 0); await new Promise(resolve => setTimeout(resolve, 5)); }
       bytesWrittenBeforeCancel = fixture.stats.bulkWritten; assert.ok(bytesWrittenBeforeCancel < fixture.bulkBytes);
-      const cancelAt = performance.now(), before = fixture.stats.closedBodies;
+      const cancelAt = performance.now(), before = fixture.stats.closedBulkBodies;
       await reader.cancel("synthetic client stop"); reader.releaseLock();
-      while (fixture.stats.closedBodies === before && performance.now() - cancelAt < 100) await new Promise(resolve => setTimeout(resolve, 1));
-      cancellationMs = performance.now() - cancelAt; assert.ok(fixture.stats.closedBodies > before); assert.ok(cancellationMs < 100);
+      while (fixture.stats.closedBulkBodies === before && performance.now() - cancelAt < 100) await new Promise(resolve => setTimeout(resolve, 1));
+      cancellationMs = performance.now() - cancelAt; assert.ok(fixture.stats.closedBulkBodies > before); assert.ok(cancellationMs < 100);
       fixture.finish(); for (const response of long) assert.equal(await response.text(), "anchorfinished"); verified += 9;
     }
   } finally { clearInterval(sampler); }

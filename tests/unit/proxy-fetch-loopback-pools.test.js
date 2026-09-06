@@ -41,8 +41,8 @@ describe("actual loopback proxy pool lifecycle", () => {
     const reader = response.body.getReader();
     for (let n = 0; n < 3; n++) { expect((await reader.read()).value.length).toBeGreaterThan(0); await new Promise(resolve => setTimeout(resolve, 5)); }
     expect(fixture.stats.bulkWritten).toBeLessThan(fixture.bulkBytes);
-    const start = performance.now(); await reader.cancel("client stopped");
-    await vi.waitFor(() => expect(fixture.stats.closedBodies).toBe(1), { interval: 5 });
+    const start = performance.now(); await reader.cancel("client stopped"); reader.releaseLock();
+    await vi.waitFor(() => expect(fixture.stats.closedBulkBodies).toBe(1), { interval: 5 });
     expect(performance.now() - start).toBeLessThan(100);
   });
 
