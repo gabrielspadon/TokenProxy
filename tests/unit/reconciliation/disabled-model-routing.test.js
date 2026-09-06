@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({ connections: [], settings: {}, policyUnreadable: false }));
-const core = vi.hoisted(() => ({ handleChatCore: vi.fn() }));
+const core = vi.hoisted(() => ({ handleChatCore: vi.fn(), handleEmbeddingsCore: vi.fn(), handleRerankCore: vi.fn() }));
 const quota = vi.hoisted(() => ({ evaluateQuota: vi.fn(async () => ({ paused: false })) }));
 vi.mock('@/lib/localDb', async (original) => ({
   ...await original(),
@@ -28,13 +28,15 @@ vi.mock('@/sse/services/tokenRefresh.js', () => ({
   updateProviderCredentials: vi.fn(async () => {}),
 }));
 vi.mock('open-sse/handlers/chatCore.js', () => core);
+vi.mock('open-sse/handlers/embeddingsCore.js', () => core);
+vi.mock('open-sse/handlers/rerankCore.js', () => core);
 vi.mock('open-sse/index.js', () => ({}));
 vi.mock('@/sse/utils/logger.js', () => ({
-  debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), maskKey: vi.fn(() => 'test-key'),
+  debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), request: vi.fn(), maskKey: vi.fn(() => 'test-key'),
 }));
 
 const MODEL = 'claude-fable-5';
-let adapter, db, api, auth, models, chat;
+let adapter, db, api, auth, models, chat, embeddings, rerank;
 const account = (id, provider = 'claude') => ({
   id, provider, name: id, isActive: true, authType: 'apikey', apiKey: 'fake-offline-key',
   maxConcurrent: 4, providerSpecificData: {},
@@ -70,26 +72,28 @@ beforeAll(async () => {
   auth = await import('@/sse/services/auth.js');
   models = await import('@/sse/services/model.js');
   ({ handleChat: chat } = await import('@/sse/handlers/chat.js'));
+  ({ handleEmbeddings: embeddings } = await import('@/sse/handlers/embeddings.js'));
+  ({ handleRerank: rerank } = await import('@/sse/handlers/rerank.js'));
 });
 beforeEach(async () => {
   adapter.run('DELETE FROM kv WHERE scope IN (?, ?)', ['disabledModels', 'modelAliases']);
   adapter.run('DELETE FROM sessionAffinity');
   adapter.run('DELETE FROM accountSwitches');
   adapter.run('DELETE FROM providerNodes');
+  adapter.run('DELETE FROM combos');
   const { invalidateDisabledModelsCache } = await import('@/lib/db/repos/disabledModelsRepo.js');
   invalidateDisabledModelsCache();
   state.connections = [account('account-a'), account('account-b')];
   state.settings = {};
   state.policyUnreadable = false;
   vi.clearAllMocks();
-  core.handleChatCore.mockImplementation(async ({ modelInfo }) => ({
+  for (const handler of Object.values(core)) handler.mockImplementation(async ({ modelInfo }) => ({
     success: true,
     response: new Response(JSON.stringify({ model: modelInfo.model, choices: [{ message: { content: 'offline' } }] }), {
       headers: { 'content-type': 'application/json' },
     }),
   }));
 });
-afterAll(() => { adapter?.close?.(); });
 
 async function send(handler, model, headers = {}) {
   const response = await handler(new Request('http://localhost/v1/chat/completions', {
@@ -185,6 +189,98 @@ describe('operator edits preserve equivalent persisted scopes', () => {
     });
   });
 });
+
+describe('resolved physical models precede account admission', () => {
+  it.each(['chat', 'embeddings', 'rerank'])('keeps an explicit bare alias on its exact permitted model in %s', async (kind) => {
+    await db.setModelAlias('my-fable-alias', `cc/${MODEL}`);
+    state.connections[0].defaultModel = 'claude-opus-5';
+    state.connections[1].defaultModel = 'claude-opus-5';
+    for (const c of state.connections) c.providerSpecificData.enabledModels = [MODEL];
+    await disable('cc', ['claude-opus-5']);
+    await disable('claude', [MODEL], 'account-a');
+    const handler = { chat, embeddings, rerank }[kind];
+    const captured = { chat: core.handleChatCore, embeddings: core.handleEmbeddingsCore, rerank: core.handleRerankCore }[kind];
+    expect((await send(handler, 'my-fable-alias')).status).toBe(200);
+    expect(captured.mock.calls[0][0]).toMatchObject({
+      modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: 'account-b' },
+    });
+    expect(quota.evaluateQuota.mock.calls.flat().map((c) => c.id)).toEqual(['account-b']);
+    expect(adapter.all('SELECT DISTINCT model FROM sessionAffinity')).toEqual([{ model: MODEL }]);
+  });
+
+  it('keeps a healthy bare-model pin and physical model when a connection default changes', async () => {
+    expect((await send(chat, MODEL)).status).toBe(200);
+    const first = core.handleChatCore.mock.calls[0][0];
+    state.connections.find((c) => c.id === first.credentials.connectionId).defaultModel = 'claude-opus-5';
+    expect((await send(chat, MODEL)).status).toBe(200);
+    expect(core.handleChatCore.mock.calls[1][0]).toMatchObject({
+      modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: first.credentials.connectionId },
+    });
+  });
+
+  it('resolves a bare auto default before checking disabled accounts and pinning', async () => {
+    await db.setModelAlias('auto', 'claude/auto');
+    for (const c of state.connections) {
+      c.defaultModel = MODEL;
+      c.providerSpecificData.enabledModels = [MODEL];
+    }
+    await disable('cc', [MODEL], 'account-a');
+    expect((await send(chat, 'auto')).status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0]).toMatchObject({
+      modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: 'account-b' },
+    });
+    expect(adapter.all('SELECT DISTINCT model FROM sessionAffinity')).toEqual([{ model: MODEL }]);
+  });
+
+  it('refuses ambiguous bare defaults before account admission', async () => {
+    await db.setModelAlias('auto', 'claude/auto');
+    state.connections[0].defaultModel = MODEL;
+    state.connections[1].defaultModel = 'claude-opus-5';
+    const response = await send(chat, 'auto');
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.message).toMatch(/explicit model/i);
+    expect(quota.evaluateQuota).not.toHaveBeenCalled();
+    expect(core.handleChatCore).not.toHaveBeenCalled();
+    expect(adapter.all('SELECT model FROM sessionAffinity')).toEqual([]);
+  });
+
+  it('uses a strict account default before admission without switching accounts', async () => {
+    await db.setModelAlias('auto', 'claude/auto');
+    state.connections[0].defaultModel = MODEL;
+    state.connections[1].defaultModel = 'claude-opus-5';
+    state.connections[0].providerSpecificData.enabledModels = [MODEL];
+    expect((await send(chat, 'auto', { 'x-connection-id': 'account-a' })).status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0]).toMatchObject({
+      modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: 'account-a' },
+    });
+    await disable('cc', [MODEL], 'account-a');
+    expect((await send(chat, 'auto', { 'x-connection-id': 'account-a' })).status).toBe(404);
+    expect(core.handleChatCore).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['chat', 'embeddings', 'rerank'])('preserves an explicitly prefixed native auto model in %s', async (kind) => {
+    for (const c of state.connections) c.defaultModel = MODEL;
+    const handler = { chat, embeddings, rerank }[kind];
+    const captured = { chat: core.handleChatCore, embeddings: core.handleEmbeddingsCore, rerank: core.handleRerankCore }[kind];
+    expect((await send(handler, 'claude/auto')).status).toBe(200);
+    expect(captured.mock.calls[0][0].modelInfo).toEqual({ provider: 'claude', model: 'auto' });
+    expect(adapter.all('SELECT DISTINCT model FROM sessionAffinity')).toEqual([{ model: 'auto' }]);
+  });
+
+  it('preserves an operator combo named auto before looking for defaults', async () => {
+    await db.createCombo({ name: 'auto', models: [`claude/${MODEL}`] });
+    expect((await send(chat, 'auto')).status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0].modelInfo).toEqual({ provider: 'claude', model: MODEL });
+  });
+
+  it('resolves a bare default alias only when all active defaults agree', async () => {
+    await db.setModelAlias('default', 'claude/default');
+    for (const c of state.connections) c.defaultModel = MODEL;
+    expect((await send(chat, 'default')).status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0].modelInfo).toEqual({ provider: 'claude', model: MODEL });
+  });
+});
+afterAll(() => { adapter?.close?.(); });
 
 describe('disabled model policy reaches real account selection', () => {
   it.each(['cc', 'claude'])('enforces an account disable written under %s for either provider spelling', async (alias) => {

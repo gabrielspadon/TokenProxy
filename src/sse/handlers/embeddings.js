@@ -10,11 +10,12 @@ import { releaseAccountLease } from "../services/accountLeaseRegistry.js";
 import { resolveClientApiKey } from "@/lib/auth/clientApiKey";
 import { getSettings } from "@/lib/localDb";
 import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getComboModels } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { handleComboChat } from "open-sse/services/combo.js";
+import { resolveRequestModel } from '../services/requestModel.js';
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
@@ -96,7 +97,8 @@ export async function handleEmbeddings(request) {
   // combo name, which is the same signal handleChat keys off. Members then run
   // one at a time through the single-model path below, with the shared
   // fallback/round-robin strategy on top.
-  const resolved = await getModelInfo(modelStr);
+  const resolved = await resolveRequestModel(modelStr);
+  if (resolved.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, resolved.error);
   if (!resolved.provider) {
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
@@ -119,7 +121,8 @@ export async function handleEmbeddings(request) {
 }
 
 async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, resolved = null) {
-  const modelInfo = resolved || await getModelInfo(modelStr);
+  const modelInfo = resolved || await resolveRequestModel(modelStr);
+  if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
   if (!modelInfo.provider) {
     log.warn("EMBEDDINGS", "Invalid model format", { model: modelStr });
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
@@ -169,13 +172,10 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
       log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-      const effectiveModel = !modelStr.includes("/") && credentials.defaultModel
-        ? credentials.defaultModel
-        : model;
 
       const result = await handleEmbeddingsCore({
-        body: { ...body, model: `${provider}/${effectiveModel}` },
-        modelInfo: { provider, model: effectiveModel },
+        body: { ...body, model: `${provider}/${model}` },
+        modelInfo: { provider, model },
         credentials: refreshedCredentials,
         log,
         onCredentialsRefreshed: async (newCreds) => {

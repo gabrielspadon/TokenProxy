@@ -146,6 +146,9 @@ beforeEach(() => {
   quotaMocks.evaluateQuota.mockResolvedValue({ paused: false });
   modelMocks.getComboModels.mockResolvedValue(null);
   modelMocks.getModelInfo.mockResolvedValue({ provider: "minimax", model: "auto" });
+  settingsMocks.getProviderConnections.mockResolvedValue([{
+    id: 'connection-a', provider: 'minimax', isActive: true, defaultModel: 'MiniMax-M2.7',
+  }]);
   authMocks.getProviderCredentials.mockResolvedValue(selectedCredentials());
   authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false });
   coreMocks.handleChatCore.mockResolvedValue(success());
@@ -179,7 +182,7 @@ describe("connection default model routing (PR #474)", () => {
     expect(options.body.model).toBe("minimax/MiniMax-M2.7");
     expect(options.modelInfo).toEqual({ provider: "minimax", model: "MiniMax-M2.7" });
     expect(authMocks.getProviderCredentials).toHaveBeenCalledWith(
-      "minimax", expect.any(Set), "auto", expect.any(Object),
+      "minimax", expect.any(Set), "MiniMax-M2.7", expect.any(Object),
     );
   });
 
@@ -190,7 +193,7 @@ describe("connection default model routing (PR #474)", () => {
     const [options] = coreMocks.handleEmbeddingsCore.mock.calls[0];
     expect(options.body.model).toBe("minimax/MiniMax-M2.7");
     expect(options.modelInfo).toEqual({ provider: "minimax", model: "MiniMax-M2.7" });
-    expect(authMocks.getProviderCredentials).toHaveBeenCalledWith("minimax", expect.any(Set), "auto");
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledWith("minimax", expect.any(Set), "MiniMax-M2.7");
   });
 
   it.each([
@@ -235,7 +238,7 @@ describe("connection default model routing (PR #474)", () => {
     expect(core()).not.toHaveBeenCalled();
   });
 
-  it("keeps a failed bare alias keyed to the caller alias for account locking", async () => {
+  it("locks the physical model that failed after resolving a bare default", async () => {
     coreMocks.handleChatCore.mockResolvedValueOnce({
       success: false,
       status: 400,
@@ -247,7 +250,7 @@ describe("connection default model routing (PR #474)", () => {
 
     expect(response.status).toBe(400);
     expect(authMocks.markAccountUnavailable).toHaveBeenCalledWith(
-      "connection-a", 400, "unknown model", "minimax", "auto", undefined, null,
+      "connection-a", 400, "unknown model", "minimax", "MiniMax-M2.7", undefined, null,
       { rid: expect.stringMatching(/^[0-9a-f]{8}$/) },
     );
   });

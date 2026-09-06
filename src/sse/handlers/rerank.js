@@ -11,10 +11,11 @@ import { resolveClientApiKey } from "@/lib/auth/clientApiKey";
 import { getSettings } from "@/lib/localDb";
 import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
 import { isModelAllowed } from "@/lib/db/repos/apiKeysRepo.js";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getComboModels } from "../services/model.js";
 import { handleRerankCore } from "open-sse/handlers/rerankCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat } from "open-sse/services/combo.js";
+import { resolveRequestModel } from '../services/requestModel.js';
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
@@ -91,7 +92,8 @@ export async function handleRerank(request) {
   // Combo expansion, same signal handleEmbeddings keys off: getModelInfo answers
   // { provider: null } for a bare combo name, and the members then run one at a
   // time through the single-model path with the shared fallback strategy.
-  const resolved = await getModelInfo(modelStr);
+  const resolved = await resolveRequestModel(modelStr);
+  if (resolved.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, resolved.error);
   if (!resolved.provider) {
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
@@ -114,7 +116,8 @@ export async function handleRerank(request) {
 }
 
 async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolved = null) {
-  const modelInfo = resolved || await getModelInfo(modelStr);
+  const modelInfo = resolved || await resolveRequestModel(modelStr);
+  if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
   if (!modelInfo.provider) {
     log.warn("RERANK", "Invalid model format", { model: modelStr });
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
@@ -162,13 +165,10 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
       log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-      const effectiveModel = !modelStr.includes("/") && credentials.defaultModel
-        ? credentials.defaultModel
-        : model;
 
       const result = await handleRerankCore({
-        body: { ...body, model: `${provider}/${effectiveModel}` },
-        modelInfo: { provider, model: effectiveModel },
+        body: { ...body, model: `${provider}/${model}` },
+        modelInfo: { provider, model },
         credentials: refreshedCredentials,
         log,
         onCredentialsRefreshed: async (newCreds) => {

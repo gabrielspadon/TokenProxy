@@ -13,7 +13,7 @@ import { releaseAccountLease, releaseAccountLeaseOnResponse } from "../services/
 import { resolveClientApiKey } from "@/lib/auth/clientApiKey";
 import { getSettings } from "@/lib/localDb";
 import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
-import { getModelInfo, getComboModels, isModelDisabled } from "../services/model.js";
+import { getComboModels, isModelDisabled } from "../services/model.js";
 import { getReachableProviders } from "../services/auth.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL, parseHeadroomTimeoutMs } from "@/lib/headroom/detect";
@@ -22,6 +22,7 @@ import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { appendTokenSaverEvent } from "@/lib/tokenSaver/events.js";
 import { errorResponse, unavailableResponse, isRetryableStatus } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities, resolveComboMemberConnection, resolveComboTokenSaver } from "open-sse/services/combo.js";
+import { resolveRequestModel } from '../services/requestModel.js';
 import { AUTO_MODEL_IDS, resolveAutoModel } from "@/sse/services/autoRouter.js";
 import { detectAgentRole, applyAgentRoleGroup } from "open-sse/utils/agentRole.js";
 import { refuseDisallowedModel } from "@/sse/services/modelAccess.js";
@@ -698,7 +699,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Same request object handleChat saw, so readRid's memoised WeakMap hands
   // back the SAME rid every hop of a recursive chat call.
   const rid = requestRid(request);
-  const modelInfo = await getModelInfo(modelStr);
+  // An explicit connection also disambiguates a bare default before admission.
+  const pinnedConnectionId = comboChain
+    ? resolveComboMemberConnection(comboChain, modelStr, await getSettings())
+    : null;
+  const requestedConnectionId = request?.headers?.get(REQUEST_CONNECTION_HEADER) || null;
+  const modelInfo = await resolveRequestModel(modelStr, { preferredConnectionId: pinnedConnectionId || requestedConnectionId });
+  if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
@@ -811,18 +818,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // hold the credential state the retry needs.
   let requestReplayConnectionId = null;
   let requestReplayAttempted = false;
-  // Only a combo member can be pinned, so a plain request never pays the read.
-  const pinnedConnectionId = comboChain
-    ? resolveComboMemberConnection(comboChain, modelStr, await getSettings())
-    : null;
   if (pinnedConnectionId) {
     log.info("CHAT", `[${provider}/${model}] pinned to connection ${pinnedConnectionId.slice(0, 8)}`);
   }
-  // A caller may name the exact account this request must run on. The image and
-  // video handlers already read this header; chat did not, so a client holding
-  // per-account session state had no way to say which account it meant and its
-  // follow-up landed on whichever account selection happened to pick.
-  const requestedConnectionId = request?.headers?.get(REQUEST_CONNECTION_HEADER) || null;
   // Optional caller-supplied ceiling on how many accounts one request may burn.
   // Without it the loop rotates through the whole pool, which is right for a
   // background job and wrong for an interactive client that would rather see
@@ -944,9 +942,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
       // Account selection shown in the unified "▶" line (acc:...)
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-      const effectiveModel = !modelStr.includes("/") && credentials.defaultModel
-        ? credentials.defaultModel
-        : model;
 
       // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
       if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
@@ -987,8 +982,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // admission line and the request lines join on one grep.
         requestId: requestRid(request),
         contextTelemetry: { logicalRequestId: telemetryRequestId, attempt: ++upstreamAttempt },
-        body: { ...structuredClone(body), model: `${provider}/${effectiveModel}` },
-        modelInfo: { provider, model: effectiveModel },
+        body: { ...structuredClone(body), model: `${provider}/${model}` },
+        modelInfo: { provider, model },
         credentials: refreshedCredentials,
         callerSignal,
         log,
