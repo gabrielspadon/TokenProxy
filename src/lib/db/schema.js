@@ -8,8 +8,9 @@ import { CONFIG_VERSION_TABLES } from "./configVersionSchema.js";
 import { CONTEXT_EVIDENCE_TABLES, REQUEST_IDENTITY_COLUMNS, REQUEST_IDENTITY_INDEXES } from "./contextEvidenceSchema.js";
 import { API_KEY_BUDGET_COLUMNS, BUDGET_TABLES } from "./budgetSchema.js";
 import { INVESTIGATION_TABLES } from "./investigationSchema.js";
+import { SESSION_PIN_COLUMNS, SESSION_PIN_TABLES } from "./sessionPinSchema.js";
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -30,6 +31,7 @@ export const TABLES = {
   ...CONTEXT_EVIDENCE_TABLES,
   ...BUDGET_TABLES,
   ...INVESTIGATION_TABLES,
+  ...SESSION_PIN_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
@@ -345,6 +347,7 @@ export const TABLES = {
   // a session that re-pins on every boot is round-robin with extra steps.
   sessionAffinity: {
     columns: {
+      ...SESSION_PIN_COLUMNS,
       // Salted hash of the client session identity. Never the raw identity,
       // never a credential, never a prompt body (rule 8).
       sessionHash: "TEXT NOT NULL",
