@@ -91,6 +91,46 @@ const COOLDOWN = {
   short: 5 * 1000,
 };
 
+// Claude Code (2.1.263) carries a session-global latch: a 429 body containing
+// either phrase sets `longContext1mCreditsBlocked` and clamps EVERY later
+// request of that session to 200k, even on an account whose window is 1m. One
+// pooled account lacking long-context credits therefore poisons the client
+// session if its body is relayed. Two consequences, both keyed on this list:
+// checkFallbackError treats the 429 as (account, model) depletion and rotates
+// without a same-account retry, and buildErrorBody/unavailableResponse rewrite
+// the phrase out of any client-bound body. Matched case-insensitively.
+export const LONG_CONTEXT_DEPLETION_MARKERS = Object.freeze([
+  "extra usage is required for long context",
+  "usage credits are required for long context",
+]);
+
+// Long enough to clear SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS (chat.js) so the
+// loop moves to the next account instead of replaying on the depleted one.
+export const LONG_CONTEXT_DEPLETION_COOLDOWN_MS = COOLDOWN.long;
+
+// Client-facing substitute. Names the depletion without either latch phrase.
+export const LONG_CONTEXT_DEPLETION_MESSAGE =
+  "upstream account has no remaining quota for this request size";
+
+const LONG_CONTEXT_DEPLETION_RE = new RegExp(
+  LONG_CONTEXT_DEPLETION_MARKERS.map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  "gi",
+);
+
+/** True when an upstream error body carries a long-context credit refusal. */
+export function isLongContextDepletion(errorText) {
+  if (!errorText) return false;
+  const text = typeof errorText === "string" ? errorText : JSON.stringify(errorText);
+  LONG_CONTEXT_DEPLETION_RE.lastIndex = 0;
+  return typeof text === "string" && LONG_CONTEXT_DEPLETION_RE.test(text);
+}
+
+/** Replace every latch phrase in a client-bound message; other input passes through untouched. */
+export function scrubLongContextDepletion(message) {
+  if (typeof message !== "string") return message;
+  return message.replace(LONG_CONTEXT_DEPLETION_RE, LONG_CONTEXT_DEPLETION_MESSAGE);
+}
+
 /**
  * Unified error classification rules.
  * Checked top-to-bottom: text rules first (by order), then status rules.

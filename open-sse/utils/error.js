@@ -1,4 +1,9 @@
-import { ERROR_TYPES, DEFAULT_ERROR_MESSAGES, MAX_RATE_LIMIT_COOLDOWN_MS } from "../config/errorConfig.js";
+import {
+  ERROR_TYPES,
+  DEFAULT_ERROR_MESSAGES,
+  MAX_RATE_LIMIT_COOLDOWN_MS,
+  scrubLongContextDepletion,
+} from "../config/errorConfig.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { redactSecretsText } from "./redact.js";
 import { RID_HEADER } from "../../src/shared/observability/decide.js";
@@ -15,9 +20,13 @@ export function buildErrorBody(statusCode, message) {
       ? { type: "server_error", code: "internal_server_error" }
       : { type: "invalid_request_error", code: "" });
 
+  // Failure direction: a message carrying an upstream long-context credit
+  // refusal (LONG_CONTEXT_DEPLETION_MARKERS) used to be relayed verbatim and now
+  // takes the rewritten path. Status and headers are untouched, so a 429 keeps
+  // its Retry-After; only the latch phrase is replaced.
   return {
     error: {
-      message: message || DEFAULT_ERROR_MESSAGES[statusCode] || "An error occurred",
+      message: scrubLongContextDepletion(message) || DEFAULT_ERROR_MESSAGES[statusCode] || "An error occurred",
       type: errorInfo.type,
       code: errorInfo.code
     }
@@ -385,7 +394,10 @@ export function unavailableResponse(statusCode, message, retryAfter, retryAfterH
   // own headers: a revoked credential came back with no Retry-After and prose
   // promising it would recover on a timer, so an operator read a dead key as a
   // transient outage. A caller that must stop is told nothing about waiting.
-  const msg = mayAdvertiseWait && retryAfterHuman ? `${message} (${retryAfterHuman})` : message;
+  // Same rewrite as buildErrorBody: the pool's stored lastError may carry the
+  // latch phrase from the account that depleted first.
+  const scrubbed = scrubLongContextDepletion(message);
+  const msg = mayAdvertiseWait && retryAfterHuman ? `${scrubbed} (${retryAfterHuman})` : scrubbed;
   if (mayAdvertiseWait) {
     const secs = retryAfterSeconds({ at: retryAfter });
     if (secs !== null) headers["Retry-After"] = String(secs);

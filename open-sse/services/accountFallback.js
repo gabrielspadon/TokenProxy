@@ -1,4 +1,10 @@
-import { ERROR_RULES, BACKOFF_CONFIG, TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
+import {
+  ERROR_RULES,
+  BACKOFF_CONFIG,
+  TRANSIENT_COOLDOWN_MS,
+  LONG_CONTEXT_DEPLETION_COOLDOWN_MS,
+  isLongContextDepletion,
+} from "../config/errorConfig.js";
 
 // Envoy "request buffer limit exceeded" (HTTP 507): upstream could not buffer the
 // body for a retry — the request must be replayed on the same account, not locked.
@@ -108,6 +114,13 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
   // the same collision on model_not_found, which is the tell that this ordering
   // bites in practice. Decided before the loop so no body text can reach it.
   if (status === 429) {
+    // A long-context credit refusal is depletion of this (account, model), not
+    // a window: the 2s backoff below would replay the same account up to the
+    // retry limit and relock it almost immediately. A fixed long lock rotates
+    // at once and keeps the account out of selection for the model.
+    if (isLongContextDepletion(errorText)) {
+      return { shouldFallback: true, cooldownMs: LONG_CONTEXT_DEPLETION_COOLDOWN_MS };
+    }
     const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
     return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
   }
