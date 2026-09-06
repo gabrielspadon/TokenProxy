@@ -709,6 +709,7 @@ export async function getProviderCredentials(
           lastError: 'Account at capacity',
           lastErrorCode: null,
           clientErrorStatus: null,
+          mustWait: true,
         };
       }
 
@@ -826,6 +827,7 @@ export async function getProviderCredentials(
           // is not a rate limit, so it keeps the 503 the caller already reads.
           lastErrorCode: capacityWait ? null : HTTP_STATUS_RATE_LIMITED,
           clientErrorStatus: capacityWait ? null : HTTP_STATUS_RATE_LIMITED,
+          mustWait: capacityWait,
         };
       }
 

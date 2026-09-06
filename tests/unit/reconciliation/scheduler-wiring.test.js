@@ -830,6 +830,17 @@ describe('E1.1w: a mixed-shape pool still ranks, and never serves a depleted acc
 });
 
 describe('model entitlement and temporary pin recovery', () => {
+  it('marks capacity waits as terminal across model fallback boundaries', async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([
+      connection('alpha', { maxConcurrent: 1, snapshot: snapshot(90) }),
+      connection('beta', { maxConcurrent: 1, snapshot: snapshot(90) }),
+    ]);
+    const first = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    const wait = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    expect(wait).toMatchObject({ allRateLimited: true, mustWait: true });
+    expect(rows('SELECT connectionId FROM sessionAffinity')[0].connectionId).toBe(first.connectionId);
+    leases.releaseAccountLease(first.accountLease);
+  });
   it('skips an account whose configured model list excludes the requested model', async () => {
     dbMocks.getProviderConnections.mockResolvedValue([
       connection('alpha', { snapshot: snapshot(90), extra: { providerSpecificData: { enabledModels: ['claude-opus-5'] } } }),
