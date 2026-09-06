@@ -741,12 +741,13 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     try {
       const result = await handleSingleModel(bodyForAttempt(body), modelStr);
       if (result.headers.get("x-tokenproxy-replay-safe") === "false") {
-        return withComboTrackingHeaders(result, modelStr);
+        const terminal = withComboTrackingHeaders(result, modelStr);
+        if (!terminal.headers.has("x-should-retry")) terminal.headers.set("x-should-retry", "false");
+        return terminal;
       }
       
-      // Success (2xx) — but a 200 is not proof of a usable answer. A provider can
-      // open an SSE stream, send nothing but keepalives and close cleanly; that
-      // must fall through to the next model rather than be handed to the client.
+      // An accepted request can still be billable when its stream has no
+      // usable answer. Inspect it without dispatching a replacement generation.
       if (result.ok) {
         const { hasContent, body: replayBody, upstreamError } = await peekStreamForContent(result);
         if (hasContent) {
@@ -757,15 +758,12 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           return withComboTrackingHeaders(result, modelStr, replayBody || result.body);
         }
 
-        // The peek already refuses to treat an in-content upstream error as a
-        // usable answer, so fallback fired either way. What did not survive was
-        // WHY: a qoder `[qoder error 429: ...]` frame and a genuinely silent
-        // stream both reported "empty stream", so a combo that exhausted every
-        // member answered 503 with no trace of the rate limit that caused it
-        // (#1996).
+        // Preserve a typed upstream error instead of obscuring its cause with
+        // the empty-stream diagnosis. Neither outcome authorizes regeneration.
         const response = errorResponse(upstreamError?.status || 502,
           upstreamError?.reason || "Provider accepted the request but returned no usable content");
         response.headers.set("x-tokenproxy-replay-safe", "false");
+        response.headers.set("x-should-retry", "false");
         return withComboTrackingHeaders(response, modelStr);
       }
 
@@ -773,7 +771,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // response so outer abort handling cannot mistake it for a served combo.
       if (result.status === 499) return result;
       if (result.headers.get("x-tokenproxy-replay-safe") !== "true") {
-        return withComboTrackingHeaders(result, modelStr);
+        const terminal = withComboTrackingHeaders(result, modelStr);
+        terminal.headers.set("x-should-retry", "false");
+        return terminal;
       }
 
       // Extract error info from response
@@ -857,6 +857,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     } catch (error) {
       const response = errorResponse(502, error.message || "Provider attempt failed with an uncertain outcome");
       response.headers.set("x-tokenproxy-replay-safe", "false");
+      response.headers.set("x-should-retry", "false");
       return withComboTrackingHeaders(response);
     }
   }

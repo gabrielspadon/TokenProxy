@@ -70,9 +70,11 @@ export function readAttemptCeiling(request) {
   return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
 }
 
-function terminalAttemptResponse(response, cooldownMs = 0) {
+function terminalAttemptResponse(response, cooldownMs = 0, clientRetrySafe = false) {
   const headers = new Headers(response.headers);
   headers.set("x-tokenproxy-replay-safe", "false");
+  if (!clientRetrySafe) headers.set("x-should-retry", "false");
+  else if (!headers.has("x-should-retry")) headers.set("x-should-retry", "true");
   if (cooldownMs > 0 && isRetryableStatus(response.status) && !headers.has("retry-after")) {
     headers.set("retry-after", String(Math.max(1, Math.ceil(cooldownMs / 1000))));
   }
@@ -923,7 +925,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             credentials.retryAfter,
             credentials.retryAfterHuman,
           );
-          return credentials.mustWait ? terminalAttemptResponse(response) : rejectedAttemptResponse(response);
+          return credentials.mustWait ? terminalAttemptResponse(response, 0, true) : rejectedAttemptResponse(response);
         }
         if (excludeConnectionIds.size === 0) {
           log.warn("AUTH", `No active credentials for provider: ${provider}`);
@@ -1152,7 +1154,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       if (result.failureMetadata?.safeToReplay !== true || mustWait) {
         decide("UP", "no-replay", { rid, why: mustWait ? "account-cooldown" : "generation-outcome-uncertain" });
         leaseHandedOff = true;
-        return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
+        return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs, result.failureMetadata?.safeToReplay === true), accountLease);
       }
 
       if (shouldFallback) {

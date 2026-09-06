@@ -149,7 +149,7 @@ async function handleSingleModelImage(body, modelStr, {
         if (credentials?.allRateLimited) {
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) {
           return withReplaySafety(errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`), true);
@@ -191,7 +191,7 @@ async function handleSingleModelImage(body, modelStr, {
 
       if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response);
       const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
-      if (mustWait) return withReplaySafety(result.response, false, cooldownMs);
+      if (mustWait) return withReplaySafety(result.response, false, cooldownMs, true);
 
       if (shouldFallback) {
         excludeConnectionIds.add(credentials.connectionId);

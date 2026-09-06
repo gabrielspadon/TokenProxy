@@ -123,7 +123,7 @@ async function handleSingleModelStt(formData, modelStr) {
         if (credentials?.allRateLimited) {
           const msg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) return withReplaySafety(errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`), true);
         return withReplaySafety(errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable"), true);
@@ -137,7 +137,7 @@ async function handleSingleModelStt(formData, modelStr) {
 
       if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status, result.error));
       const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
-      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status, result.error), false, cooldownMs);
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status, result.error), false, cooldownMs, true);
       if (shouldFallback) {
         excludeConnectionIds.add(credentials.connectionId);
         lastError = result.error;

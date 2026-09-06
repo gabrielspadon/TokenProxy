@@ -34,6 +34,7 @@ describe.each(cases)('independent %s account replay boundary', (_name, invoke) =
     const response = await invoke();
     expect(response.status).toBe(503);
     expect(response.headers.get('retry-after')).toBe('2');
+    expect(response.headers.get('x-should-retry')).toBe('true');
     expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     expect(mocks.core).toHaveBeenCalledTimes(1);
   });
@@ -41,6 +42,7 @@ describe.each(cases)('independent %s account replay boundary', (_name, invoke) =
     mocks.core.mockResolvedValueOnce({ success: false, status: 502, error: 'partial', failureMetadata: { safeToReplay: false }, response: Response.json({ error: 'partial' }, { status: 502 }) }).mockResolvedValue({ success: true, response: Response.json({ data: [], text: 'duplicate' }) });
     const response = await invoke();
     expect(response.status).toBe(502);
+    expect(response.headers.get('x-should-retry')).toBe('false');
     expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     expect(mocks.core).toHaveBeenCalledTimes(1);
     expect(mocks.mark).not.toHaveBeenCalled();

@@ -40,6 +40,7 @@ describe('independent money boundary at the real chat coordinator', () => {
     expect(mocks.core).toHaveBeenCalledTimes(1);
     expect(mocks.credentials).toHaveBeenCalledTimes(1);
     expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(response.headers.get('x-should-retry')).toBe('false');
     await response.text();
   });
 
@@ -48,6 +49,7 @@ describe('independent money boundary at the real chat coordinator', () => {
     const response = await handleChat(request());
     expect(response.status).toBe(503);
     expect(mocks.core).toHaveBeenCalledTimes(1);
+    expect(response.headers.get('x-should-retry')).toBe('false');
     await response.text();
   });
 
@@ -85,6 +87,7 @@ describe('independent money boundary at the real chat coordinator', () => {
     const response = await handleChat(request());
     expect(response.status).toBe(status);
     expect(response.headers.get('retry-after')).toBe('1');
+    expect(response.headers.get('x-should-retry')).toBe('true');
     expect(mocks.core).toHaveBeenCalledTimes(1);
     expect(mocks.credentials).toHaveBeenCalledTimes(1);
     await response.text();
@@ -105,6 +108,7 @@ describe('independent money boundary at the real chat coordinator', () => {
     expect(response.status).toBe(502);
     expect(mocks.core).toHaveBeenCalledTimes(1);
     expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(response.headers.get('x-should-retry')).toBe('false');
     await response.text();
   });
 

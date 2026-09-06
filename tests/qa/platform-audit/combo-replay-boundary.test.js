@@ -10,6 +10,7 @@ describe('independent combo replay boundary', () => {
     const dispatch = vi.fn().mockResolvedValueOnce(Response.json({ error: 'uncertain' }, { status: 503 })).mockResolvedValue(Response.json({ choices: [{ message: { content: 'duplicate' } }] }));
     const response = await run(dispatch);
     expect(response.status).toBe(503);
+    expect(response.headers.get('x-should-retry')).toBe('false');
     expect(dispatch).toHaveBeenCalledTimes(1);
     await response.text();
   });
@@ -18,6 +19,7 @@ describe('independent combo replay boundary', () => {
     const dispatch = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(Response.json({ choices: [{ message: { content: 'duplicate' } }] }));
     const response = await run(dispatch);
     expect(response.status).toBe(status);
+    expect(response.headers.get('x-should-retry')).toBe('false');
     expect(dispatch).toHaveBeenCalledTimes(1);
     await response.text();
   });
@@ -27,6 +29,7 @@ describe('independent combo replay boundary', () => {
     const dispatch = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(Response.json({ choices: [{ message: { content: 'duplicate' } }] }));
     const response = await run(dispatch);
     expect(response.status).toBe(502);
+    expect(response.headers.get('x-should-retry')).toBe('false');
     expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     expect(dispatch).toHaveBeenCalledTimes(1);
     await response.text();
@@ -36,7 +39,19 @@ describe('independent combo replay boundary', () => {
     const dispatch = vi.fn().mockRejectedValueOnce(new Error('connection lost after write')).mockResolvedValue(Response.json({ choices: [{ message: { content: 'duplicate' } }] }));
     const response = await run(dispatch);
     expect(response.status).toBeGreaterThanOrEqual(500);
+    expect(response.headers.get('x-should-retry')).toBe('false');
     expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    await response.text();
+  });
+
+  it('preserves a certified client wait without rotating to another model', async () => {
+    const dispatch = vi.fn().mockResolvedValue(Response.json({ error: 'busy pin' }, { status: 503,
+      headers: { 'x-tokenproxy-replay-safe': 'false', 'x-should-retry': 'true', 'retry-after': '3' } }));
+    const response = await run(dispatch);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('x-should-retry')).toBe('true');
+    expect(response.headers.get('retry-after')).toBe('3');
     expect(dispatch).toHaveBeenCalledTimes(1);
     await response.text();
   });
