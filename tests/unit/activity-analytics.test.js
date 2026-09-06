@@ -69,6 +69,25 @@ describe('analytical workspace read contract', () => {
     expect(read().summary.maximumLatencyMs).toBe(90000000000);
     expect(read().summary).toMatchObject({p50LatencyMs:2000,p95LatencyMs:90000000000});
   });
+  it.each(['null','{"cached_tokens":-2,"cache_creation_input_tokens":0}','{"cached_tokens":"invalid","cache_creation_input_tokens":0}',
+    '{"cached_tokens":1e999,"cache_creation_input_tokens":0}'])('does not turn invalid cache quantities into uncached usage %s', (tokens) => {
+    native.prepare('UPDATE usageHistory SET tokens=? WHERE id=1').run(tokens);
+    const result=read({view:'economics',connectionId:'personal'});
+    expect(result.summary).toMatchObject({records:1,inputTokens:1000,cacheReadTokens:null,cacheReadSamples:0,uncachedInputTokens:null,
+      invalidTokenRows:1,missingTokenDetailRows:1,cacheReadFraction:null});
+    expect(result.items[0].cacheReadTokens).toBeNull();
+  });
+  it('preserves missing cache fields as unknown rather than zero', () => {
+    native.prepare('UPDATE usageHistory SET tokens=? WHERE id=1').run('{}');
+    expect(read({view:'economics',connectionId:'personal'}).summary).toMatchObject({cacheReadTokens:null,cacheWriteTokens:null,
+      uncachedInputTokens:null,invalidTokenRows:0,missingTokenDetailRows:1,cacheReadFraction:null});
+  });
+  it('sorts the complete filtered population before pagination and filters outcomes', () => {
+    expect(read({sortBy:'inputTokens',sortDirection:'desc',pageSize:1}).items[0].id).toBe('r1');
+    expect(read({sortBy:'inputTokens',sortDirection:'asc',pageSize:1,page:2}).items[0].id).toBe('r3');
+    expect(read({status:'failed'}).summary).toMatchObject({records:2,failed:2});
+    expect(read({status:'pending'}).items[0].id).toBe('r3');
+  });
   it('exposes inconsistent cache totals without negative uncached input or invented savings', () => {
     native.prepare('UPDATE requestStats SET cachedTokens=1500 WHERE id=?').run('r1');
     const result = read({connectionId:'personal'});
@@ -109,6 +128,7 @@ describe('analytical workspace read contract', () => {
     {start:'2026-09-07T00:00:00Z',end:'2026-09-06T00:00:00Z'},{provider:['claude']},{model:'x'.repeat(201)},
     {sql:'SELECT * FROM settings'},{operation:'anything'},
     {start:'2026-02-30T00:00:00Z'},
+    {start:'2026-09-06T12:00:00'}, {sortBy:'apiKey'},{sortDirection:'DESC;SELECT'},{status:'any'},
   ])('rejects unsupported queries before executing SQL %j', (query) => {
     expect(()=>validateActivityQuery({operation:'activity',...query})).toThrow(ActivityQueryError);
   });

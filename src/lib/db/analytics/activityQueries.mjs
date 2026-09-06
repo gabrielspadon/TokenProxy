@@ -1,13 +1,14 @@
 const MAX_POINTS = 720;
 const MINUTE = 60000;
 const GROUPS = new Set(['provider', 'model', 'account']);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize']);
+const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status']);
 
 export class ActivityQueryError extends Error {}
 
 function date(value, field) {
   if (value == null || value === '') return null;
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(value) || !Number.isFinite(Date.parse(value))) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) {
     throw new ActivityQueryError(`Invalid ${field} timestamp.`);
   }
   const [year, month, day] = value.slice(0,10).split('-').map(Number);
@@ -40,6 +41,11 @@ export function validateActivityQuery(query) {
   }
   result.page = integer(query.page, 1, 100000, 'page');
   result.pageSize = integer(query.pageSize, 50, 100, 'page size');
+  result.sortBy = query.sortBy ?? 'timestamp';
+  result.sortDirection = query.sortDirection ?? 'desc';
+  result.status = query.status ?? null;
+  if (!SORTS.has(result.sortBy) || !['asc','desc'].includes(result.sortDirection)) throw new ActivityQueryError('Invalid analytics sort.');
+  if (result.status !== null && !['succeeded','failed','pending'].includes(result.status)) throw new ActivityQueryError('Invalid analytics status.');
   return result;
 }
 
@@ -50,11 +56,15 @@ function filterFor(query) {
   }
   if (query.start) { clauses.push('timestamp>=?'); params.push(query.start); }
   if (query.end) { clauses.push('timestamp<?'); params.push(query.end); }
+  if (query.status === 'succeeded') clauses.push("status IN ('success','ok')");
+  if (query.status === 'failed') clauses.push("status IN ('error','aborted','cancelled')");
+  if (query.status === 'pending') clauses.push("status='pending'");
   return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
-const validNumber = (field) => `(typeof(${field}) IN ('integer','real') AND ${field}>=0)`;
-const quantity = (field) => `CASE WHEN ${validNumber(field)} THEN ${field} ELSE 0 END`;
+const validNumber = (field) => `(typeof(${field}) IN ('integer','real') AND ${field}>=0 AND ${field}<=1.7976931348623157e308)`;
+const validToken = (field) => `(${validNumber(field)} AND ${field}<=9007199254740991)`;
+const quantity = (field) => `CASE WHEN ${validToken(field)} THEN ${field} END`;
 const jsonQuantity = (field) => quantity(`json_extract(safeTokens,'$.${field}')`);
 
 function baseQuery(db, query) {
@@ -62,16 +72,20 @@ function baseQuery(db, query) {
   if (query.view === 'economics') {
     return { params, sql: `WITH filtered AS (
       SELECT id,timestamp,provider,model,connectionId,status,promptTokens,completionTokens,cost,
-        CASE WHEN json_valid(tokens) THEN tokens ELSE '{}' END AS safeTokens,
-        CASE WHEN tokens IS NULL OR NOT json_valid(tokens) THEN 1 ELSE 0 END AS missingTokenDetail
+        CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN tokens ELSE '{}' END ELSE '{}' END AS safeTokens,
+        CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN 0 ELSE 1 END ELSE 1 END AS invalidTokenDetail
       FROM usageHistory ${sql}
     ), quantities AS MATERIALIZED (
       SELECT id,timestamp,provider,model,connectionId,status,
         ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
         ${jsonQuantity('cached_tokens')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens')} AS cacheWrite,
         CASE WHEN ${validNumber('cost')} THEN cost END AS recordedCost,
-        CASE WHEN NOT ${validNumber('promptTokens')} OR NOT ${validNumber('completionTokens')} THEN 1 ELSE 0 END AS invalidTokens,
-        missingTokenDetail,NULL AS latencyMs,NULL AS ttftMs,NULL AS contextSessionId
+        CASE WHEN invalidTokenDetail=1 OR NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
+          OR (json_type(safeTokens,'$.cached_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")})
+          OR (json_type(safeTokens,'$.cache_creation_input_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")})
+          THEN 1 ELSE 0 END AS invalidTokens,
+        CASE WHEN NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")} OR NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")}
+          THEN 1 ELSE 0 END AS missingTokenDetail,NULL AS latencyMs,NULL AS ttftMs,NULL AS contextSessionId
       FROM filtered
     ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
       CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
@@ -83,8 +97,8 @@ function baseQuery(db, query) {
       ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
       ${quantity('cachedTokens')} AS cacheRead,${quantity('cacheCreationTokens')} AS cacheWrite,
       NULL AS recordedCost,
-      CASE WHEN NOT ${validNumber('promptTokens')} OR NOT ${validNumber('completionTokens')}
-        OR NOT ${validNumber('cachedTokens')} OR NOT ${validNumber('cacheCreationTokens')} THEN 1 ELSE 0 END AS invalidTokens,
+      CASE WHEN NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
+        OR NOT ${validToken('cachedTokens')} OR NOT ${validToken('cacheCreationTokens')} THEN 1 ELSE 0 END AS invalidTokens,
       0 AS missingTokenDetail,CASE WHEN ${validNumber('latencyTotal')} AND latencyTotal>0 THEN latencyTotal END AS latencyMs,
       CASE WHEN ${validNumber('latencyTtft')} AND latencyTtft>0 THEN latencyTtft END AS ttftMs,${contextId}
     FROM requestStats ${sql}
@@ -93,8 +107,12 @@ function baseQuery(db, query) {
 }
 
 const TOTALS = `COUNT(*) AS records,COALESCE(SUM(prompt),0) AS inputTokens,
-  COALESCE(SUM(uncachedInput),0) AS uncachedInputTokens,COALESCE(SUM(cacheRead),0) AS cacheReadTokens,
-  COALESCE(SUM(cacheWrite),0) AS cacheWriteTokens,COALESCE(SUM(output),0) AS outputTokens,
+  SUM(uncachedInput) AS uncachedInputTokens,SUM(cacheRead) AS cacheReadTokens,
+  SUM(cacheWrite) AS cacheWriteTokens,COALESCE(SUM(output),0) AS outputTokens,
+  COUNT(prompt) AS inputSamples,COUNT(output) AS outputSamples,COUNT(cacheRead) AS cacheReadSamples,
+  COUNT(cacheWrite) AS cacheWriteSamples,COUNT(uncachedInput) AS uncachedInputSamples,
+  SUM(CASE WHEN cacheRead IS NOT NULL THEN prompt END) AS cacheEligibleInputTokens,
+  SUM(CASE WHEN prompt IS NOT NULL THEN cacheRead END) AS cacheEligibleReadTokens,
   COALESCE(SUM(CASE WHEN status IN ('success','ok') THEN 1 ELSE 0 END),0) AS succeeded,
   COALESCE(SUM(CASE WHEN status IN ('error','aborted','cancelled') THEN 1 ELSE 0 END),0) AS failed,
   COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0) AS recordedPending,
@@ -109,7 +127,10 @@ const TOTALS = `COUNT(*) AS records,COALESCE(SUM(prompt),0) AS inputTokens,
   MAX(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS lastSeenAt`;
 
 function enrich(row) {
-  return { ...row, cacheReadFraction: row.inputTokens > 0 ? row.cacheReadTokens / row.inputTokens : null,
+  const overflowFields = Object.keys(row).filter((key) => typeof row[key] === 'number' && !Number.isFinite(row[key]));
+  for (const key of overflowFields) row[key] = null;
+  return { ...row, numericOverflowFields: overflowFields,
+    cacheReadFraction: row.cacheEligibleInputTokens > 0 ? row.cacheEligibleReadTokens / row.cacheEligibleInputTokens : null,
     otherStatusRows: row.records - row.succeeded - row.failed - row.recordedPending };
 }
 
@@ -151,7 +172,7 @@ export function readActivityAnalytics(db, input) {
   const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,prompt AS inputTokens,
     uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
     recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
-    FROM records ORDER BY timestamp DESC,id DESC LIMIT ? OFFSET ?`,
+    FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC LIMIT ? OFFSET ?`,
     [...base.params,query.pageSize,(query.page-1)*query.pageSize]);
   return {
     source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query,
@@ -162,7 +183,8 @@ export function readActivityAnalytics(db, input) {
     definitions: {
       inputTokens: 'Recorded cache-inclusive input. Historical token provenance was not retained; these are not invoice quantities.',
       recordedCostUsd: 'Model-rate estimate recorded by the application. It is not subscription spend or an invoice. Historical price basis was not retained; zero is ambiguous.',
-      cacheReadFraction: 'Recorded cache reads divided by cache-inclusive input. Missing historical cache detail cannot be distinguished from zero.',
+      cacheReadFraction: 'Recorded cache reads divided by cache-inclusive input only where both quantities are usable. Historical zero defaults may still represent unreported upstream fields.',
+      coverage: 'Token sums include only finite nonnegative quantities within the safe integer range. Per-quantity sample counts and invalid/missing detail rows expose incomplete decomposition.',
       recordedPending: 'Persisted pending statuses. They do not establish current in-flight requests.',
       latency: 'Positive recorded milliseconds, without silently deleting outliers. Inspect minimum, maximum and sample count before interpreting the mean.',
       percentiles: 'Nearest-rank p50 and p95 over positive recorded latency samples in the selected request population.',
