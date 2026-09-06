@@ -495,11 +495,6 @@ export default function SessionsPage() {
         <h2 id="h-gap">Not reported</h2>
         <ul className="bullets">
           <li>
-            The pin itself. No route reads the affinity table, so which account a session is pinned
-            to, when the pin was made, when it was last seen active and when it expires cannot be
-            shown. Only the switches between pins are readable.
-          </li>
-          <li>
             Whether a connection is being skipped because a quota window crossed its auto-pause
             threshold. A session pinned to such a connection still reads as healthy.
           </li>
