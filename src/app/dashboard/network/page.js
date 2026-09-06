@@ -7,6 +7,7 @@ import { Notice } from '@/shared/components/Notice';
 import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
+import { poolTestVerdict } from '@/shared/poolTestVerdict';
 import { fmtNum } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
 import './styles.css';
@@ -168,10 +169,7 @@ export default function NetworkPage() {
     const res = await call(`/api/proxy-pools/${encodeURIComponent(pool.id)}/test`, {
       method: 'POST',
     });
-    setTestResult({
-      id: pool.id,
-      ...(res.ok ? { tone: 'ok', title: 'Reachable.' } : refusal(res.status, res.body)),
-    });
+    setTestResult({ id: pool.id, ...poolTestVerdict(res, refusal) });
     pools.refresh();
   };
 
