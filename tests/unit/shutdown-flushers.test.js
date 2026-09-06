@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { pathToFileURL } from "node:url";
+
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -18,7 +18,7 @@ describe("shutdown flushers", () => {
   it("waits for priority groups and isolates failed flushers", async () => {
     directory = await mkdtemp(path.join(os.tmpdir(), "tokenproxy-shutdown-"));
     const marker = path.join(directory, "flushed");
-    const shutdownUrl = pathToFileURL(path.resolve("../src/lib/shutdown.js")).href;
+    const shutdownUrl = new URL("../../src/lib/shutdown.js", import.meta.url).href;
     const program = `
       import { appendFile, writeFile } from "node:fs/promises";
       import { registerShutdownFlusher } from ${JSON.stringify(shutdownUrl)};
@@ -47,8 +47,8 @@ describe("shutdown flushers", () => {
   it("runs application flushers before the SQLite adapter closes", async () => {
     directory = await mkdtemp(path.join(os.tmpdir(), "tokenproxy-shutdown-sqlite-"));
     const databaseFile = path.join(directory, "data.sqlite");
-    const adapterUrl = pathToFileURL(path.resolve("../src/lib/db/adapters/nodeSqliteAdapter.js")).href;
-    const shutdownUrl = pathToFileURL(path.resolve("../src/lib/shutdown.js")).href;
+    const adapterUrl = new URL("../../src/lib/db/adapters/nodeSqliteAdapter.js", import.meta.url).href;
+    const shutdownUrl = new URL("../../src/lib/shutdown.js", import.meta.url).href;
     const program = `
       const { createNodeSqliteAdapter } = await import(${JSON.stringify(adapterUrl)});
       const { registerShutdownFlusher } = await import(${JSON.stringify(shutdownUrl)});
@@ -74,7 +74,7 @@ describe("shutdown flushers", () => {
   it("flushes before an application-requested exit", async () => {
     directory = await mkdtemp(path.join(os.tmpdir(), "tokenproxy-shutdown-direct-"));
     const marker = path.join(directory, "flushed");
-    const shutdownUrl = pathToFileURL(path.resolve("../src/lib/shutdown.js")).href;
+    const shutdownUrl = new URL("../../src/lib/shutdown.js", import.meta.url).href;
     const program = `
       import { writeFile } from "node:fs/promises";
       import { registerShutdownFlusher, shutdownProcess } from ${JSON.stringify(shutdownUrl)};

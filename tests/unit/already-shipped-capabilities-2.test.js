@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -6,7 +7,7 @@ import { execFileSync } from "node:child_process";
 // assertion is the predicate that was used to verify the claim, so removing the
 // mechanism fails a test naming the issue it re-opens.
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
-const has = (p) => existsSync(new URL(`../../${p}`, import.meta.url).pathname);
+const has = (p) => existsSync(fileURLToPath(new URL(`../../${p}`, import.meta.url)));
 
 it("#2357 sends anthropic-version lowercase, so it cannot duplicate", () => {
   expect(read("open-sse/providers/registry/anthropic.js")).toContain('"anthropic-version"');
@@ -68,6 +69,6 @@ it("#1035 the container entrypoint is the wrapped server, not a bare next server
 it("#1136 fetches live model lists from providers that offer one", () => {
   const out = execFileSync("bash", ["-lc",
     "grep -rl modelsFetcher open-sse/providers/registry/*.js | wc -l"],
-    { cwd: new URL("../../", import.meta.url).pathname, encoding: "utf8" });
+    { cwd: fileURLToPath(new URL("../../", import.meta.url)), encoding: "utf8" });
   expect(Number(out.trim())).toBeGreaterThanOrEqual(10);
 });

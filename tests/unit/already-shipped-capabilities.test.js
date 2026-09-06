@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 
@@ -7,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 // re-opens. These are load-bearing assertions, not file-existence checks, except
 // where the ask itself was for a document.
 const read = (p) => readFileSync(new URL(`../../${p}`, import.meta.url), "utf8");
-const has = (p) => existsSync(new URL(`../../${p}`, import.meta.url).pathname);
+const has = (p) => existsSync(fileURLToPath(new URL(`../../${p}`, import.meta.url)));
 
 describe("New Models Discovery covers every provider (#3603)", () => {
   it("tracks seen models in a repo wired to a route and a dashboard control", () => {

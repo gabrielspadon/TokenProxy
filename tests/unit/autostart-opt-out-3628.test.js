@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 import childProcess from "node:child_process";
 
 const require_ = createRequire(import.meta.url);
-const MODULE_PATH = new URL("../../cli/src/cli/tray/autostart.js", import.meta.url).pathname;
+const MODULE_PATH = fileURLToPath(new URL("../../cli/src/cli/tray/autostart.js", import.meta.url));
 const cli = readFileSync(new URL("../../cli/cli.js", import.meta.url), "utf8");
 
 describe("autostart preserves a user's choice across Hide to Tray (#3628)", () => {

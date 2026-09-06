@@ -1,8 +1,9 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const serverPath = new URL("../../custom-server.js", import.meta.url).pathname;
+const serverPath = fileURLToPath(new URL("../../custom-server.js", import.meta.url));
 const src = readFileSync(serverPath, "utf8");
 
 // A launcher that redirects stdout to a pipe and never reads it fills the pipe
