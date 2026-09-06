@@ -60,7 +60,7 @@ export function trendOption(trend, colors, scope) {
   const points = trend?.points || [];
   const spansDates = points.length > 1 && points[0].bucketStart.slice(0,10) !== points.at(-1).bucketStart.slice(0,10);
   const data = (key) => points.map((point) => [Date.parse(point.bucketStart), finite(point[key]) ? point[key] : null]);
-  const grid = [0, 1, 2].map((i) => ({ left: 57, right: 22, top: 12 + i * 77, height: 53 }));
+  const grid = [0, 1, 2].map((i) => ({ left: 57, right: 22, top: 4 + i * 44, height: 26 }));
   const xAxis = grid.map((_, i) => ({ type: 'time', gridIndex: i,
     min: scope.start ? Date.parse(scope.start) : undefined,
     max: scope.end ? Date.parse(scope.end) : undefined,
@@ -68,7 +68,7 @@ export function trendOption(trend, colors, scope) {
     axisLine: { lineStyle: { color: '#dde3ec' } }, axisTick: { show: false },
     splitLine: { show: true, lineStyle: { color: '#eef1f6' } },
   }));
-  const yAxis = grid.map((_, i) => ({ type: 'value', gridIndex: i, splitNumber: 2,
+  const yAxis = grid.map((_, i) => ({ type: 'value', gridIndex: i, splitNumber: 1,
     axisLabel: { color: '#5b6980', fontSize: 13, formatter: (value) => quantity(value, true) },
     splitLine: { lineStyle: { color: '#edf0f5' } },
   }));

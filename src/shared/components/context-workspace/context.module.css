@@ -1,6 +1,6 @@
 .workspace { --context-muted: #5b6980; margin: 5px 26px 20px; color: #25334b; font-size: 13px; }
 .workspace :global(.mantine-Button-root) { font-size: 13px; }
-.coverage { position: relative; display: grid; grid-template-columns: minmax(190px,1.25fr) repeat(4,minmax(115px,1fr)); background: #fff; border: 1px solid #dce2ec; padding: 15px 18px 18px; gap: 18px; }
+.coverage { position: relative; display: grid; grid-template-columns: minmax(190px,1.25fr) repeat(4,minmax(115px,1fr)); background: #fff; border: 1px solid #dce2ec; padding: 10px 16px 13px; gap: 12px; }
 .coverageIntro h2 { font-size: 14px; font-weight: 500; margin: 0 0 5px; }
 .coverageIntro > span { color: var(--context-muted); font-size: 13px; }
 .coverageTotal,.coverageMetric { display: flex; flex-direction: column; gap: 5px; }
@@ -8,9 +8,11 @@
 .coverageMetric > span,.coverageTotal > span { color: var(--context-muted); display: flex; align-items: center; gap: 5px; }
 .coverageMetric i,.trackNote i,.trackLabels i { display: inline-block; width: 7px; height: 7px; border-radius: 1px; flex-shrink: 0; }
 .coverageBar { position: absolute; display: flex; height: 3px; bottom: 0; inset-inline: 0; background: #edf0f5; }
-.rejection { margin-top: 10px; padding: 9px 14px; }
-.rejection :global(.mantine-Alert-title) { margin-bottom: 3px; color: #8a3b12; }
-.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 16px; padding: 12px 16px; background: #fff; border: 1px solid #dce2ec; border-bottom: 0; }
+.rejection { margin-top: 8px; padding: 6px 12px; }
+.rejection :global(.mantine-Alert-body) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.rejection :global(.mantine-Alert-message) { flex: 1; min-width: 240px; }
+.rejection :global(.mantine-Alert-title) { margin-bottom: 0; color: #8a3b12; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 10px; padding: 8px 14px; background: #fff; border: 1px solid #dce2ec; border-bottom: 0; }
 .toolbar > div:first-child { display: flex; gap: 12px; align-items: baseline; }
 .toolbar h2,.sessionHeading h2 { font-weight: 500; font-size: 16px; margin: 0; }
 .toolbar span,.sessionHeading p { color: var(--context-muted); font-size: 13px; }
@@ -34,39 +36,41 @@
 .sessionTime { display: block; color: var(--context-muted); font-size: 13px; margin-top: 7px; }
 .identityFoot { margin: 0; padding: 10px 14px; color: var(--context-muted); font-size: 13px; line-height: 1.55; border-top: 1px solid #e3e8f1; }
 .sessionDetail { overflow: auto; min-width: 0; }
-.sessionHeading { padding: 15px 18px 9px; display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-.sessionHeading h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
+.sessionHeading { padding: 8px 14px 3px; display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.sessionHeading h2 { line-height: 1.25; display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
 .sessionHeading h2 > span { font-size: 13px; color: var(--context-muted); font-weight: 400; }
-.sessionHeading p { margin-top: 5px; max-width: 590px; line-height: 1.5; }
+.sessionHeading p { margin: 3px 0 0; max-width: 760px; line-height: 1.25; }
 .projectEdit { min-width: 130px; }
 .projectEdit form { min-width: 250px; max-width: 320px; }
-.sessionMeasures { display: grid; grid-template-columns: repeat(6,minmax(90px,1fr)); margin: 0 18px; padding: 11px 0 12px; gap: 12px; border-bottom: 1px solid #e1e6ef; }
-.sessionMeasures > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sessionMeasures { display: grid; grid-template-columns: repeat(6,minmax(90px,1fr)); margin: 0 14px; padding: 4px 0 6px; gap: 10px; border-bottom: 1px solid #e1e6ef; }
+.sessionMeasures > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.25; }
+.sessionMeasures > .tokenMeasure { display: grid; grid-template-columns: auto 1fr; align-content: start; align-items: baseline; gap: 1px 5px; }
+.tokenMeasure > span { grid-column: 1 / -1; }
 .sessionMeasures span,.sessionMeasures small { color: var(--context-muted); font-size: 13px; }
 .sessionMeasures span { font-size: 13px; }
-.sessionMeasures strong { font-size: 20px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.sessionMeasures strong { font-size: 20px; line-height: 1.1; font-weight: 500; font-variant-numeric: tabular-nums; }
 .sessionMeasures strong > small { font-size: 14px; font-weight: 400; }
-.tracks { padding: 14px 18px 0; }
+.tracks { padding: 7px 14px 0; }
 .trackHeading,.ledgerHead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .trackHeading h3,.ledgerHead h3,.measurementSection h3,.stageSection h3,.routing h3 { font-size: 14px; font-weight: 500; margin: 0; }
 .trackHeading > span,.ledgerHead > span { color: var(--context-muted); font-size: 13px; }
 .trackCanvas { display: grid; grid-template-columns: 125px minmax(0,1fr); gap: 5px; }
-.trackLabels { display: flex; flex-direction: column; padding-top: 18px; }
-.trackLabels > span { height: 77px; font-size: 13px; color: #4d5e77; }
+.trackLabels { display: flex; flex-direction: column; padding-top: 8px; }
+.trackLabels > span { height: 44px; line-height: 1.2; font-size: 13px; color: #4d5e77; }
 .trackLabels i { margin-right: 5px; }
-.trackLabels small { font-size: 13px; color: var(--context-muted); display: block; margin: 4px 0 0 12px; }
-.trackNote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; color: var(--context-muted); font-size: 13px; padding: 1px 0 8px; }
+.trackLabels small { font-size: 13px; color: var(--context-muted); display: block; margin: 2px 0 0 12px; }
+.trackNote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; color: var(--context-muted); font-size: 13px; padding: 0 0 3px; line-height: 1.25; }
 .trackNote > span:last-child { display: inline-flex; align-items: center; gap: 5px; }
-.bucketTable { border-bottom: 1px solid #e0e6ef; padding: 5px 0 10px; }
+.bucketTable { border-bottom: 1px solid #e0e6ef; padding: 2px 0 5px; }
 .bucketTable summary { width: fit-content; cursor: pointer; color: #475fab; font-size: 13px; }
 .bucketTable > div { max-height: 270px; overflow: auto; margin-top: 10px; }
-.ledgerHead { padding: 14px 18px 10px; }
+.ledgerHead { padding: 8px 14px 5px; }
 .tableScroll { min-height: 0; }
 .table { font-size: 13px; font-variant-numeric: tabular-nums; }
-.table th { background: #f4f6fa; color: var(--context-muted); font-weight: 500; font-size: 13px; white-space: nowrap; border-block: 1px solid #e3e8f0; padding: 8px 12px; }
-.table td { padding: 9px 12px; border-bottom: 1px solid #e9edf3; }
+.table th { background: #f4f6fa; color: var(--context-muted); font-weight: 500; font-size: 13px; white-space: nowrap; border-block: 1px solid #e3e8f0; padding: 6px 10px; }
+.table td { padding: 5px 10px; line-height: 1.25; border-bottom: 1px solid #e9edf3; }
 .table tr[data-selected] td { background: #edf1ff; }
-.table small { display: block; font-size: 13px; color: var(--context-muted); margin-top: 4px; }
+.table small { display: block; font-size: 13px; color: var(--context-muted); margin-top: 2px; }
 .routeCell { max-width: 195px; }
 .routeCell small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .attemptButton { display: block; width: 100%; color: #3a519e; text-align: start; }
