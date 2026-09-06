@@ -332,7 +332,9 @@ describe('PR A: strictProxy Propagation', () => {
 
     it('preserves the exact caller abort reason through strict proxy wrapping', async () => {
       const caller = new AbortController();
+      const started = Promise.withResolvers();
       const fakeFetch = vi.fn((_url, init) => new Promise((_resolve, reject) => {
+        started.resolve();
         const rejectAbort = () => reject(init.signal.reason);
         if (init.signal.aborted) rejectAbort();
         else init.signal.addEventListener('abort', rejectAbort, { once: true });
@@ -357,6 +359,7 @@ describe('PR A: strictProxy Propagation', () => {
           proxyOptions,
         );
         const reason = new DOMException('client left', 'AbortError');
+        await started.promise;
         caller.abort(reason);
 
         await expect(pending).rejects.toBe(reason);
