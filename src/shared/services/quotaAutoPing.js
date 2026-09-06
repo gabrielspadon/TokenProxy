@@ -1,5 +1,7 @@
 // Quota auto-ping scheduler: warms 5h windows by sending tiny opt-in requests right after reset.
 import 'open-sse/index.js';
+import { randomUUID } from 'node:crypto';
+import { retainQuotaUsage, recordQuotaCheckEvent } from '@/lib/db/repos/quotaHistoryRepo.js';
 
 import { getSettings, getProviderConnections, updateProviderConnection } from '@/lib/localDb';
 import * as localDb from '@/lib/localDb';
@@ -170,6 +172,7 @@ async function sendClaudePing(connection, providerConfig, proxyOptions, deps) {
       },
       proxyOptions
     );
+    await deps.onWarmResponse?.(res);
     if (res.ok) {
       if (i > 0) console.log(`[AutoPing] claude: ${candidates[0]} refused, pinged with ${model}`);
       return true;
@@ -312,6 +315,7 @@ async function sendCodexPing(connection, providerConfig, proxyOptions, deps) {
       stream: true,
     },
   });
+  await deps.onWarmResponse?.(response);
   if (!response.ok) {
     try {
       await response.body?.cancel?.();
@@ -372,6 +376,7 @@ async function sendAntigravityPing(connection, providerConfig, proxyOptions, dep
         },
       });
       if (!response) continue;
+      await deps.onWarmResponse?.(response, model);
 
       const status = response.status;
       await drainResponseBody(response);
@@ -392,6 +397,7 @@ async function sendAntigravityPing(connection, providerConfig, proxyOptions, dep
       }
       landed += 1;
     } catch (e) {
+      await deps.onWarmException?.(model);
       console.log(`[AutoPing] antigravity: ${model} ping errored: ${e.message}`);
     }
   }
@@ -464,6 +470,7 @@ async function sendGenericPing(connection, providerConfig, proxyOptions, deps) {
     },
   });
   if (!response) return false;
+  await deps.onWarmResponse?.(response);
   const status = response.status;
   await drainResponseBody(response);
   if (status >= 500) {
@@ -498,7 +505,7 @@ function shouldSkipAfterFailure(state, key, nowMs = Date.now()) {
   return nowMs - failedAt < cooldown;
 }
 
-async function markRateLimitedUntil(connection, resetAt, provider, deps) {
+async function markRateLimitedUntil(connection, resetAt, provider, deps, check) {
   if (connection.rateLimitedUntil === resetAt) return;
   try {
     await deps.updateProviderConnection(connection.id, { rateLimitedUntil: resetAt });
@@ -506,6 +513,7 @@ async function markRateLimitedUntil(connection, resetAt, provider, deps) {
       `[AutoPing] ${provider}:${connection.id}: quota exhausted, skipped until ${resetAt}`
     );
   } catch (e) {
+    await check?.('failed', { code: 'state_write_failed' });
     // Never fail a poll tick over bookkeeping; the next tick retries.
     console.warn(
       `[AutoPing] ${provider}:${connection.id}: could not record exhausted quota: ${e.message}`
@@ -558,12 +566,30 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
   if (allWarm && cachedReset && Date.now() < new Date(cachedReset).getTime() - C.refreshAheadMs)
     return;
 
+  const checkId = randomUUID();
+  let failureRecorded = false;
+  const check = async (eventType, fields = {}) => {
+    if (eventType === 'failed') failureRecorded = true;
+    try {
+      await deps.recordQuotaCheckEvent?.({ checkId, connectionId: conn.id, provider, eventType, ...fields });
+    } catch { console.warn('[QuotaHistory] check_event_write_failed'); }
+  };
+  await check('started', { scheduledFor: probeHold ? new Date(probeHold).toISOString() :
+    allWarm && cachedReset ? new Date(new Date(cachedReset).getTime() - C.refreshAheadMs).toISOString() : null,
+    resetAt: cachedReset || null });
+  try { return await performQuotaCheck(conn, provider, providerConfig, sendPingOverride, deps, state, check, cachedReset); }
+  catch (error) { if (!failureRecorded) await check('failed', { code: 'check_exception' }); throw error; }
+}
+
+async function performQuotaCheck(conn, provider, providerConfig, sendPingOverride, deps, state, check, cachedReset) {
+  const key = cacheKey(provider, conn.id);
   const proxyCfg = await deps.resolveConnectionProxyConfig(
     conn.providerSpecificData,
     snapshotOwner(conn, deps)
   );
   if (proxyCfg?.kind === 'required-unavailable') {
     recordFailure(state, key);
+    await check('failed', { code: 'required_proxy_unavailable' });
     console.warn(`[AutoPing] ${provider}:${conn.id}: required_proxy_unavailable`);
     return { code: 'required_proxy_unavailable', status: 503 };
   }
@@ -575,16 +601,20 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
     connection = r.connection;
   } catch (e) {
     recordFailure(state, key);
+    await check('failed', { code: 'credential_refresh_failed' });
     console.warn(`[AutoPing] ${provider}:${conn.id}: refresh failed: ${e.message}`);
     return;
   }
 
-  const usage = await deps.getUsageForProvider(connection, proxyOptions);
+  let usage;
+  try { usage = await deps.getUsageForProvider(connection, proxyOptions); }
+  catch (error) { await check('failed', { code: 'usage_exception' }); throw error; }
   // A usage reader that failed returns {message}/{expired} WITHOUT a quotas
   // object. Treating that as "every window absent" is what made a 429ing or
   // broken usage endpoint trigger a real ping: cold is a fact about the
   // account, not about our ability to read it.
   if (!usage || typeof usage.quotas !== 'object' || usage.quotas === null) {
+    await check('failed', { code: 'usage_unreadable' });
     recordFailure(state, key);
     console.warn(
       `[AutoPing] ${provider}:${conn.id}: usage unreadable` +
@@ -593,6 +623,10 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
     return;
   }
   const quotas = usage.quotas;
+  try { await deps.retainQuotaUsage?.(connection, usage); }
+  catch { console.warn('[QuotaHistory] observation_write_failed'); }
+  const observedAt = usage.quotaObservation?.observedAt ?? null;
+  await check('usage-read', { code: 'observed', observedAt });
 
   // TWO KINDS OF STATE, kept in two places on purpose.
   //
@@ -671,6 +705,11 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
     now: Date.now(),
     verifyAfterMs: C.warmVerifyAfterMs,
   });
+  const observedAfterWarm = scope => Number.isFinite(Date.parse(observedAt)) &&
+    Number.isFinite(Date.parse(planState[scope]?.lastWarmedAt)) &&
+    Date.parse(observedAt) > Date.parse(planState[scope].lastWarmedAt);
+  for (const scope of verdict.stillCold.filter(observedAfterWarm)) await check('still-cold', { scope, observedAt, code: 'verified' });
+  for (const scope of verdict.started.filter(observedAfterWarm)) await check('clock-running', { scope, observedAt, code: 'verified' });
   if (verdict.stillCold.length) {
     console.warn(
       `[AutoPing] ${provider}:${connection.id}: warmed but still cold:` +
@@ -690,6 +729,7 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
     try {
       await deps.updateProviderConnection(connection.id, { autoPingWindows: verdict.state });
     } catch (e) {
+      await check('failed', { code: 'state_write_failed' });
       console.warn(
         `[AutoPing] ${provider}:${connection.id}: could not persist warm state: ${e.message}`
       );
@@ -721,6 +761,14 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
       ? Date.now() + C.minWarmIntervalMs
       : 0;
   if (plan.nextResetAt) state.resetCache[key] = new Date(plan.nextResetAt).toISOString();
+  // The guard is a not-before deadline, not a prediction that a reset occurred
+  // or an exact execution time. The existing tick determines actual execution.
+  if (state.allRunning[key] && plan.nextResetAt) {
+    await check('scheduled', { code: 'reset-not-before', resetAt: new Date(plan.nextResetAt).toISOString(),
+      scheduledFor: new Date(plan.nextResetAt - C.refreshAheadMs).toISOString(), observedAt });
+  } else if (state.probeHold[key]) {
+    await check('scheduled', { code: 'probe-not-before', scheduledFor: new Date(state.probeHold[key]).toISOString(), observedAt });
+  }
 
   // The governing window is spent. The poller is the only thing that knows that
   // before a real request finds out the hard way (#1125), and `rateLimitedUntil`
@@ -729,7 +777,7 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
   // lapses on its own at reset.
   const governing = resolveQuotaEntry(quotas, providerConfig);
   if (governing && isQuotaExhausted(governing) && governing.resetAt) {
-    await markRateLimitedUntil(connection, governing.resetAt, provider, deps);
+    await markRateLimitedUntil(connection, governing.resetAt, provider, deps, check);
   } else if (
     governing &&
     !isQuotaExhausted(governing) &&
@@ -753,6 +801,7 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
           ` (was ${connection.rateLimitedUntil})`
       );
     } catch (e) {
+      await check('failed', { code: 'state_write_failed' });
       console.warn(
         `[AutoPing] ${provider}:${connection.id}: could not clear lifted lock: ${e.message}`
       );
@@ -762,13 +811,14 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
     providerConfig.skipWhenBlockingQuotaExhausted &&
     hasExhaustedBlockingQuota(quotas, providerConfig.quotaKey)
   ) {
+    await check('completed', { code: 'blocking_quota_exhausted', observedAt });
     return;
   }
 
-  // Nothing to warm writes NOTHING. The old scheduler's one durable write per
-  // connection per window was already the right budget; a per-tick write to
-  // record "still running" would be a write to learn nothing.
-  if (!plan.shouldWarm) return;
+  if (!plan.shouldWarm) {
+    await check('completed', { code: plan.reason === 'every-window-running' ? 'every-window-running' : 'warm-policy-held', observedAt });
+    return;
+  }
 
   const targets = plan.targets;
   console.log(
@@ -776,8 +826,19 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
   );
 
   const sendPing = sendPingOverride || sendGenericPing;
-  const ok = await sendPing(connection, providerConfig, proxyOptions, deps);
+  let ok;
+  const senderDeps = {
+    ...deps,
+    onWarmResponse: (response, scope = null) => check('warm-response', {
+      scope, code: Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599
+        ? `http_${response.status}` : 'response-status-unknown',
+    }),
+    onWarmException: scope => check('failed', { scope, code: 'warm_exception' }),
+  };
+  try { ok = await sendPing(connection, providerConfig, proxyOptions, senderDeps); }
+  catch (error) { await check('failed', { code: 'warm_exception' }); throw error; }
   if (!ok) {
+    await check('failed', { code: 'warm_rejected' });
     // Do not record a warm unless upstream took the tiny request.
     recordFailure(state, key);
     console.warn(
@@ -786,6 +847,7 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
     return;
   }
   clearFailure(state, key);
+  for (const scope of targets) await check('warm-recorded', { scope, code: 'scheduler-recorded', observedAt });
 
   const nowIso = new Date().toISOString();
   const nextState = recordWarm({
@@ -824,6 +886,7 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
       updatedAt: nowIso,
     });
   } catch (e) {
+    await check('failed', { code: 'state_write_failed' });
     // The ping was SPENT. Losing this write must not re-spend it: the mirror
     // above keeps the brake for this process, and the failure cooldown keeps a
     // dead DB from turning every tick into a token.
@@ -845,6 +908,8 @@ function createDefaultDeps() {
     proxyAwareFetch,
     getExecutor,
     getUsageForProvider,
+    retainQuotaUsage,
+    recordQuotaCheckEvent,
   };
 }
 
