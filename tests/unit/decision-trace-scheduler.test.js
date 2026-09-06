@@ -139,21 +139,16 @@ describe('selectAndReserve trace', () => {
     expect(decision.trace[0].verdict).toBe('win');
   });
 
-  it('names the one connection tried and refused before the walk succeeded', () => {
+  it('names the healthy pinned connection whose capacity requires a wait', () => {
     const accounts = [healthyA(), healthyB()];
     const registry = createLeaseRegistry({ capacityOf: () => 1 });
     registry.reserve(accounts[0].id); // a's only slot is already taken
-    // The pin is on the full account, so the ranker leads with it (rule 4 keeps
-    // a healthy pin, and load spreads NEW placements only) and the walk has a
-    // capacity skip to name. Without the pin the spread would put the free
-    // account first and there would be no skip at all, which is the fix
-    // working rather than this contract changing.
+    // A healthy pin at capacity waits instead of paying to warm another account.
     const decision = selectAndReserve(
       args({ accounts, registry, repos: fakeRepos({ pin: { connectionId: accounts[0].id } }) }),
     );
-    expect(decision.unavailable).toBeUndefined();
-    expect(decision.connection.id).toBe(accounts[1].id);
-    expect(decision.skipped).toEqual([`${accounts[0].id.slice(0, 8)}:capacity`]);
+    expect(decision.unavailable).toBe(true);
+    expect(decision.reason).toBe('at-capacity');
     const skipped = decision.trace.find((e) => e.verdict === 'skipped');
     expect(skipped.fields.alt).toEqual([`${accounts[0].id.slice(0, 8)}:capacity`]);
     expect(skipped.fields).not.toHaveProperty('more');

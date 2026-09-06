@@ -36,8 +36,6 @@ import {
   FREE_PROVIDERS,
   FREE_TIER_PROVIDERS,
 } from '@/shared/constants/providers.js';
-import { createHash } from 'node:crypto';
-import { resolveSessionIdentity } from 'open-sse/utils/sessionManager.js';
 import { readAllDrainDocs } from '@/lib/admin/state.js';
 import { evaluateQuota } from './quotaGuard.js';
 import { selectAndReserve } from './accountScheduler.js';
@@ -62,7 +60,9 @@ import { putWindows, getWindows } from '@/lib/db/repos/quotaWindowsRepo.js';
 import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaRanking.js';
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
-import { cachePrefixDigest } from '@/sse/services/cachePrefixDigest.js';
+import { resolveRoutingSessionHash } from './routingIdentity.js';
+import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
+import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 
 // Serialize account selection per canonical provider without blocking unrelated providers.
 const providerSelectionQueues = new Map();
@@ -84,76 +84,6 @@ const HTTP_STATUS_RATE_LIMITED = 429;
 // empty string keeps the row legible and keeps a modelless request from sharing
 // a pin with a request for a model literally named "".
 const MODEL_ANY = '*';
-
-/**
- * The HASH of this request's client session identity — never the raw id.
- *
- * open-sse/utils/sessionManager.js is the single session-identity authority in
- * this codebase, so `resolveSessionIdentity` resolves WHICH session this is and
- * nothing here invents a second scheme. What reaches the affinity table and the
- * switch receipt is sha256 of that id, truncated the same way sessionManager's
- * own `sha16` truncates, so rule 8 holds by construction: a raw session id, a
- * bearer token or a prompt body cannot be written even by mistake, because the
- * only value that leaves this function is a digest.
- *
- * A request that carries no session evidence at all still gets a stable key
- * from the provider node, which pins every anonymous caller of one provider
- * together. That is the honest reading: with no way to tell two callers apart,
- * claiming they are separate sessions would be a fabricated distinction.
- *
- * WHY THE IDENTITY IS RESOLVED TWICE. resolveSessionIdentity never reports "no
- * evidence"; with none it falls through to deriveSessionId(connectionId), and
- * selection has no connection yet by construction, so that arm returns
- * generateBinaryStyleId() — `crypto.randomUUID() + Date.now()`, a DIFFERENT
- * value on every call (sessionManager.js:45 and :81). Hashing that would give
- * every request its own pin: affinity could never hit, and sessionAffinity
- * would gain one dead row per request forever. A client-derived id (a header,
- * a prompt_cache_key, the assistant-text digest) is a pure function of the same
- * inputs, so it reproduces. Comparing two resolutions is therefore the exact
- * test for "did this come from the client", and it needs nothing from
- * sessionManager that is not already exported. An id that does not reproduce
- * carries no session information and is treated as anonymous.
- */
-function resolveRoutingSessionHash(options, providerId) {
-  let sessionId = null;
-  const headers = options?.clientHeaders || null;
-  const body = options?.clientBody || null;
-  if (headers || body) {
-    try {
-      const args = { headers, body, scope: providerId };
-      const first = resolveSessionIdentity(args);
-      // ephemeral is sessionManager's own "this id is disposable" flag (kiro).
-      if (
-        !first?.ephemeral &&
-        first?.sessionId &&
-        first.sessionId === resolveSessionIdentity(args)?.sessionId
-      ) {
-        sessionId = first.sessionId;
-      }
-    } catch {
-      // An identity resolution failure must not fail the request. Falling back
-      // to the provider node makes the session read as a shared anonymous one,
-      // which still ranks and still pins, rather than throwing inside selection.
-      sessionId = null;
-    }
-  }
-  // The CACHE PREFIX joins the key when the body carries one, because a Claude
-  // Code subagent INHERITS its parent's session uuid and would otherwise share
-  // the parent's single pin: one session with thirty agents collapsed onto one
-  // account (production, 2026-09-06: sel=pin-hit 3975 of 4000, five
-  // connections, top one 1702). Different agents carry different system blocks
-  // and tool sets, so they separate here; the five turns of ONE agent carry the
-  // same ones, so they keep one pin and the provider-side cache survives.
-  //
-  // Absent a breakpoint the digest is '' and NOTHING is appended, so the hash
-  // input stays byte-identical to what it was before this branch existed and
-  // non-caching traffic keeps its pin unchanged.
-  const prefixDigest = cachePrefixDigest(body);
-  return createHash('sha256')
-    .update(`${providerId}:${sessionId || 'anonymous'}${prefixDigest ? `:${prefixDigest}` : ''}`)
-    .digest('hex')
-    .slice(0, 32);
-}
 
 /**
  * Make an OPERATOR pin durable, the way selectAndReserve makes the scheduler's
@@ -304,17 +234,17 @@ const HEADROOM_RETRY_CEILING_MS = 60 * 1000;
  * evidence", which leaves the provider's own reset untouched, and it never
  * invents headroom from an absent, malformed or unclassifiable reading.
  *
- * Scoped sub-quota windows are already dropped by normalizeAccountWindows, so a
- * per-model branch at zero cannot speak for the whole connection here either.
+ * Only the requested model's scoped subquotas participate. An Opus reading
+ * cannot speak for a Sonnet request on the same account.
  */
-async function hasQuotaHeadroom(connectionId, nowMs = Date.now()) {
+async function hasQuotaHeadroom(connectionId, nowMs = Date.now(), model = null) {
   let windows;
   try {
     windows = await getWindows(connectionId);
   } catch {
     return null;
   }
-  const structural = normalizeAccountWindows(windows);
+  const structural = normalizeAccountWindows(windows, { model });
   if (!structural.ok || structural.blocked) return null;
   let readable = 0;
   for (const w of structural.windows) {
@@ -450,6 +380,7 @@ export async function getProviderCredentials(
   const currentQueue = providerSelectionQueues.get(providerId) || Promise.resolve();
   const { promise: nextQueue, resolve: releaseQueue } = Promise.withResolvers();
   providerSelectionQueues.set(providerId, nextQueue);
+  let pendingLease = null;
 
   try {
     await currentQueue;
@@ -554,6 +485,7 @@ export async function getProviderCredentials(
     const availableConnections = connections.filter((c) => {
       if (strictPreferredConnection && c.id !== preferredConnectionId) return false;
       if (excludeSet.has(c.id)) return false;
+      if (!accountSupportsModel(c, model)) return false;
       if (draining.has(c.id)) {
         drainExcluded.push(prefix8(c.id));
         return false;
@@ -582,6 +514,26 @@ export async function getProviderCredentials(
         lock: m.lock,
         ...(m.until ? { until: m.until } : {}),
       });
+    }
+
+    if (modelLocked.length && routingSessionHash) {
+      const repos = await createSchedulerRepos({ now: Date.now() });
+      const pin = repos.getPin({ sessionHash: routingSessionHash, model: model || MODEL_ANY });
+      const pinned = connections.find((c) => c.id === pin?.connectionId);
+      const failure = pinned && getActiveModelFailure(pinned, model);
+      const failureClass = failure && (pinned[failure.failureKey]?.failureClass
+        || classifyAccountFailure(failure.status, failure.message));
+      if (failure && (failureClass === 'rate' || failureClass === 'transient')
+          && !excludeSet.has(pinned.id) && !draining.has(pinned.id)
+          && accountSupportsModel(pinned, model) && pinned.id !== ignoreLockConn
+          && (!strictPreferredConnection || preferredConnectionId === pinned.id)) {
+        return {
+          allRateLimited: true, retryAfter: failure.until,
+          retryAfterHuman: formatRetryAfter(failure.until), lastError: failure.message,
+          lastErrorCode: failure.status, clientErrorStatus: failure.clientErrorStatus,
+          failureClass, mustWait: true,
+        };
+      }
     }
 
     // Filter out accounts paused due to low remaining quota (safety buffer).
@@ -727,6 +679,7 @@ export async function getProviderCredentials(
       // reservation here would let a pinned combo member over-admit while every
       // other path is gated.
       lease = leaseRegistry.reserve(connection.id);
+      pendingLease = lease;
       if (!lease) {
         // At capacity is a WAIT, not a failure (overlay-spec §4): entitlement
         // is free, the slot is not. Reported with a nonzero retry-after through
@@ -878,6 +831,7 @@ export async function getProviderCredentials(
 
       connection = decision.connection;
       lease = decision.lease;
+      pendingLease = lease;
       // The retired "selected (...)" INFO line is replaced by these: SEL.win
       // (or the ranking's degraded verdict), SEL.repin with rcpt=<receipt id>,
       // SEL.skipped for the slot walk. pin-hit is nominal and stays silent —
@@ -980,6 +934,9 @@ export async function getProviderCredentials(
       // Pass full connection for clearAccountError to read modelLock_* keys
       _connection: connection,
     };
+  } catch (error) {
+    if (pendingLease) leaseRegistry.release(pendingLease);
+    throw error;
   } finally {
     releaseQueue();
     if (providerSelectionQueues.get(providerId) === nextQueue) {
@@ -1079,15 +1036,13 @@ export async function markAccountUnavailable(
     ...fields,
   });
   const numStatus = Number(status);
-  const lockClass =
-    numStatus === 401 || numStatus === 403 || numStatus === 404
-      ? 'credential'
-      : numStatus === 429
-        ? 'quota'
-        : 'transient';
+  let lockClass = classifyAccountFailure(numStatus, errorText, failureMetadata);
   const connections = await getProviderConnections({ provider });
   const conn = connections.find((c) => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;
+  if (lockClass === 'rate' && await hasQuotaHeadroom(connectionId, Date.now(), model) === false) {
+    lockClass = 'quota';
+  }
 
   if (isCodexPermanentOAuthFailure(status, errorText, provider)) {
     const reason = describeProviderError(errorText);
@@ -1111,7 +1066,7 @@ export async function markAccountUnavailable(
         expect_reset: false,
       })
     );
-    return { shouldFallback: true, cooldownMs: 0 };
+    return { shouldFallback: true, cooldownMs: 0, failureClass: lockClass, retrySameAccount: false, mustWait: false };
   }
 
   // Qoder code 112 is an account-wide quota signal. A timed lock alone would
@@ -1119,6 +1074,7 @@ export async function markAccountUnavailable(
   // connection (what an operator would do manually) and let selection move to
   // the next Qoder account or the next combo fallback model.
   if (isQoderQuotaExhausted(status, errorText, provider)) {
+    lockClass = 'quota';
     const reason =
       typeof errorText === 'string' ? errorText.slice(0, 200) : 'Qoder quota exhausted (code 112)';
     await updateProviderConnection(connectionId, {
@@ -1131,7 +1087,7 @@ export async function markAccountUnavailable(
     });
     const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
     log.warn('AUTH', `${connName} disabled: Qoder quota exhausted [403/code 112]`);
-    return { shouldFallback: true, cooldownMs: 0 };
+    return { shouldFallback: true, cooldownMs: 0, failureClass: lockClass, retrySameAccount: false, mustWait: false };
   }
 
   // GitHub premium-request exhaustion is account-wide until the next UTC month.
@@ -1173,7 +1129,7 @@ export async function markAccountUnavailable(
         expect_reset: false,
       })
     );
-    return { shouldFallback: true, cooldownMs: 0 };
+    return { shouldFallback: true, cooldownMs: 0, failureClass: lockClass, retrySameAccount: false, mustWait: false };
   }
 
   // A request error belongs to the caller, so reset metadata must not turn it
@@ -1197,6 +1153,10 @@ export async function markAccountUnavailable(
     shouldFallback = true;
     cooldownMs = githubResetAtMs - Date.now();
     newBackoffLevel = 0;
+  } else if (lockClass === 'quota' && resetsAtMs && resetsAtMs > Date.now()) {
+    shouldFallback = true;
+    cooldownMs = resetsAtMs - Date.now();
+    newBackoffLevel = 0;
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     requestedMs = resetsAtMs - Date.now();
@@ -1204,7 +1164,7 @@ export async function markAccountUnavailable(
     // own snapshot may already contradict it. Checked only when the number is
     // long enough to matter, so the common short reset costs no read.
     if (numStatus === 429 && requestedMs > HEADROOM_RETRY_CEILING_MS) {
-      const headroom = await hasQuotaHeadroom(connectionId);
+      const headroom = await hasQuotaHeadroom(connectionId, Date.now(), model);
       if (headroom === true) appliedCapMs = Math.min(appliedCapMs, HEADROOM_RETRY_CEILING_MS);
     }
     cooldownMs = Math.min(requestedMs, appliedCapMs);
@@ -1238,6 +1198,8 @@ export async function markAccountUnavailable(
     unknownModelVerified: failureMetadata?.unknownModelVerified === true,
   });
 
+  failureUpdate[getModelFailureKey(lockModel)].failureClass = lockClass;
+
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
     ...failureUpdate,
@@ -1267,8 +1229,10 @@ export async function markAccountUnavailable(
       lockClass === 'credential'
         ? 'no-permanent-path-for-provider'
         : lockClass === 'quota'
-          ? 'retry-after'
-          : 'upstream-error';
+          ? 'usage-limit'
+          : lockClass === 'rate'
+            ? 'retry-after'
+            : 'upstream-error';
     decide(
       'LOCK',
       'applied',
@@ -1299,7 +1263,10 @@ export async function markAccountUnavailable(
     console.error(`❌ ${provider} [${status}]: ${reason}`);
   }
 
-  return { shouldFallback: true, cooldownMs };
+  return {
+    shouldFallback: true, cooldownMs, failureClass: lockClass,
+    retrySameAccount: false, mustWait: lockClass === 'rate' || lockClass === 'transient',
+  };
 }
 
 /**

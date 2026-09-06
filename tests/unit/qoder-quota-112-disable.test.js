@@ -41,7 +41,7 @@ describe("Qoder quota exhaustion (403/code 112)", () => {
       "qoder/ultimate",
     );
 
-    expect(result).toEqual({ shouldFallback: true, cooldownMs: 0 });
+    expect(result).toEqual({ shouldFallback: true, cooldownMs: 0, failureClass: 'quota', retrySameAccount: false, mustWait: false });
     expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
       "qoder-a",
       expect.objectContaining({

@@ -127,8 +127,8 @@ describe('rankAccounts trace: the gates', () => {
     const [entry] = result.trace;
     expect(entry.verdict).toBe('win');
     expect(entry.fields.win).toBe(true);
-    // `a`'s 5h window binds an hour out; `b`'s 7d window binds two days out.
-    expect(entry.fields.conn).toBe('conn_aaa');
+    // A known weekly deadline precedes missing weekly evidence.
+    expect(entry.fields.conn).toBe('conn_bbb');
     expect(entry.fields.key).toBe('reset-horizon');
   });
 

@@ -105,13 +105,14 @@ function toMs(value) {
  * `exhaustion`. Any doubt resolves to false, because mislabelling a switch as a
  * reset when it was not is worse than the reverse.
  */
-function restockedSincePin(pin, cohort, targetId, nowMs) {
+function restockedSincePin(pin, cohort, targetId, nowMs, model) {
   const pinnedAtMs = toMs(pin?.pinnedAt);
   if (pinnedAtMs === null || pinnedAtMs > nowMs) return false;
   try {
     const atPin = rankAccounts(cohort, {
       now: pinnedAtMs,
       previousPinId: pin?.connectionId ?? null,
+      model,
     });
     // A baseline with no evidence reads as "nothing was eligible back then",
     // which would make every account look restored. Refuse to label.
@@ -150,7 +151,7 @@ function restockedSincePin(pin, cohort, targetId, nowMs) {
  *   this session right now and the caller queues or fails over; it never means
  *   "silently pick something".
  */
-export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoad = null } = {}) {
+export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoad = null, model = null } = {}) {
   const unavailable = new Set(unavailableIds);
   const cohort = (Array.isArray(accounts) ? accounts : []).filter((a) => !unavailable.has(a?.id));
   const pinnedId = pin?.connectionId ?? null;
@@ -158,8 +159,14 @@ export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoa
   if (cohort.length === 0) return none('no-accounts');
 
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
-  const ranked = rankAccounts(cohort, { now: nowMs, previousPinId: pinnedId, activeLoad });
+  const ranked = rankAccounts(cohort, { now: nowMs, previousPinId: pinnedId, activeLoad, model });
   const winner = ranked.winner?.id ?? null;
+  const pinned = ranked.ranked.find((r) => r.id === pinnedId);
+  if (pinned?.hardBlocked) {
+    return winner
+      ? move(pinnedId, winner, TRIGGERS.UNAVAILABLE, 'pinned-entitlement-unavailable')
+      : none('no-eligible-account');
+  }
 
   // Checked before the degraded gate below, because stickiness to an account
   // that has left the cohort is not stickiness, it is routing to nothing.
@@ -219,7 +226,7 @@ export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoa
   // belongs — ahead of the next candidate when its own deadline comes first,
   // behind it when it does not.
   if (!winner) return none(ranked.reason || 'no-eligible-account');
-  const returning = restockedSincePin(pin, cohort, winner, nowMs);
+  const returning = restockedSincePin(pin, cohort, winner, nowMs, model);
   return move(
     pinnedId,
     winner,

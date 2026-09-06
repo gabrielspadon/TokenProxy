@@ -303,9 +303,8 @@ describe('reset-aware repin: the decision point is depletion, and earliest means
     ];
     const res = rankAccounts(mismatched, { now: NOW });
     expect(res.degraded).toBe(false);
-    // One binding window is the 5h at 5h; three binding window is the WEEKLY at
-    // 6d, because the longest horizon is the branch that constrains the plan.
-    expect(res.eligible.map((r) => r.id)).toEqual(['one', 'three']);
+    // Missing weekly evidence cannot invent an earlier weekly deadline.
+    expect(res.eligible.map((r) => r.id)).toEqual(['three', 'one']);
     const d = decideRepin({
       pin: { connectionId: 'three', pinnedAt: iso(0) },
       accounts: mismatched,

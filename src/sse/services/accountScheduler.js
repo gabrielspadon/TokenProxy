@@ -23,11 +23,8 @@
  * Neither rule is restated here.
  */
 
-import {
-  rankAccounts,
-  normalizeAccountWindows,
-  effectiveResetAt,
-} from '@/shared/utils/quotaRanking.js';
+import { rankAccounts, normalizeAccountWindows } from '@/shared/utils/quotaRanking.js';
+import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
 import { buildSwitchReceipt } from '@/shared/utils/switchReceipt.js';
 import { decideRepin, TRIGGERS } from '@/shared/utils/repinPolicy.js';
 
@@ -39,29 +36,35 @@ const RETRY_AFTER_SECONDS = 1;
 // src/lib/db/adapters/ (better-sqlite3, bun:sqlite, node:sqlite, sql.js all
 // take a sync fn). Nothing below awaits, which is what keeps the read of a
 // free slot and the taking of it indivisible.
-function runInTransaction(repos, fn) {
+function runInTransaction(repos, fn, rollbackReservation) {
   if (typeof repos?.transaction !== 'function') {
     throw new TypeError('selectAndReserve requires an injected repos.transaction(fn)');
   }
-  return repos.transaction(fn);
+  try {
+    return repos.transaction(fn);
+  } catch (error) {
+    // SQLite cannot roll back a process-local lease, including commit failures.
+    rollbackReservation();
+    throw error;
+  }
 }
 
 /**
- * The soonest projected reset across a candidate set, as an ISO string, or null
- * when no candidate carries a readable deadline. This is the honest answer to
- * "when should the caller come back" once every account is depleted; the
- * one-second admission floor is for a capacity wait, not for an empty pool.
+ * First time an account can clear ALL of its currently exhausted windows.
+ * A short window resetting while a monthly window stays empty cannot serve.
  */
-function earliestReset(candidates, nowMs) {
+function earliestReset(candidates, nowMs, model) {
   let soonest = null;
   for (const account of candidates) {
-    const norm = normalizeAccountWindows(account?.windows);
-    if (!norm.ok) continue;
+    if (!accountSupportsModel(account, model)) continue;
+    const norm = normalizeAccountWindows(account?.windows, { model });
+    if (!norm.ok || norm.blocked) continue;
+    let readyAt = null;
     for (const w of norm.windows) {
-      const at = effectiveResetAt(w.resetAt, w.horizonMs, nowMs);
-      if (at === null) continue;
-      if (soonest === null || at < soonest) soonest = at;
+      if (w.remaining > 0 || w.resetAt <= nowMs) continue;
+      readyAt = Math.max(readyAt ?? 0, w.resetAt);
     }
+    if (readyAt !== null && (soonest === null || readyAt < soonest)) soonest = readyAt;
   }
   return soonest === null ? null : new Date(soonest).toISOString();
 }
@@ -139,6 +142,7 @@ export function selectAndReserve({
     .filter((a) => a && typeof a.id === 'string' && a.id !== '')
     .map((a) => ({ ...a, windows: windowsFor(a) }));
 
+  let reservedLease = null;
   return runInTransaction(repos, () => {
     if (candidates.length === 0) {
       return {
@@ -173,19 +177,12 @@ export function selectAndReserve({
     // read ever shows up in a profile.
     const activeLoad = activeLoadFor(candidates, model, nowMs, registry, repos);
 
-    const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad });
+    const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad, model });
 
-    // Rule 4 (keep a healthy pin) AND rule 5 (atomically return to the
-    // earliest account that restored while a later one was serving) are
-    // decideRepin's job (repinPolicy.js) — "is the pin still eligible" can
-    // only express rule 4. Only decideRepin re-asks the ranker at the pin's
-    // own timestamp to tell a genuine reset apart from an account that was
-    // merely available all along, which is what keeps rule 5 from spraying a
-    // session across every account that ever edges ahead on ranking.
-    // The same activeLoad the ranker saw: the policy re-asks the ranker, and
-    // its INITIAL_PIN answer is what the slot walk below puts first, so a
-    // policy ranking without the load would undo the spread it just computed.
-    const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad });
+    // Pin health decides whether placement is allowed at all. Recovered accounts
+    // rejoin the order only when the old pin cannot serve. Healthy pins also
+    // survive capacity pressure, with a retry hint instead of a cache re-prime.
+    const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad, model });
     // The repin verdict as a trace entry, in the design's vocabulary. The
     // scheduler never prints: auth.js walks `trace` and calls decide().
     // pin-hit is NOMINAL (row 29: silent, carried to the caller for REQ sel=).
@@ -233,7 +230,7 @@ export function selectAndReserve({
       ? order.find((r) => r.id === decidedId) ?? ranked.find((r) => r.id === decidedId) ?? null
       : null;
     const preferred = decided
-      ? [decided, ...order.filter((r) => r.id !== decidedId)]
+      ? repin.action === 'keep' ? [decided] : [decided, ...order.filter((r) => r.id !== decidedId)]
       : order;
 
     if (preferred.length === 0) {
@@ -246,7 +243,7 @@ export function selectAndReserve({
         // Every account is out of headroom, and the ranker knows when the first
         // of them comes back. Handing that up is what lets the caller quote a
         // real reset instead of the one-second floor.
-        earliestResetAt: earliestReset(candidates, nowMs),
+        earliestResetAt: earliestReset(candidates, nowMs, model),
         trace: [
           ...(rankingTrace || []),
           ...repinTrace,
@@ -267,6 +264,7 @@ export function selectAndReserve({
         skipped.push(`${String(record.id).slice(0, 8)}:capacity`);
         continue;
       }
+      reservedLease = lease;
 
       const switched = previousPinId !== null && previousPinId !== record.id;
       const isFirstPin = previousPinId === null;
@@ -362,5 +360,7 @@ export function selectAndReserve({
         },
       ],
     };
+  }, () => {
+    if (reservedLease) registry.release(reservedLease);
   });
 }
