@@ -65,7 +65,7 @@ function baseQuery(db, query) {
         CASE WHEN json_valid(tokens) THEN tokens ELSE '{}' END AS safeTokens,
         CASE WHEN tokens IS NULL OR NOT json_valid(tokens) THEN 1 ELSE 0 END AS missingTokenDetail
       FROM usageHistory ${sql}
-    ), quantities AS (
+    ), quantities AS MATERIALIZED (
       SELECT id,timestamp,provider,model,connectionId,status,
         ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
         ${jsonQuantity('cached_tokens')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens')} AS cacheWrite,
