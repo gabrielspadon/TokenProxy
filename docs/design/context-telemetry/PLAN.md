@@ -12,15 +12,41 @@ Everything in `docs/design/DIRECTION-2.md` and the grammar in
 component, it is one that already exists under `src/shared/components/` or
 in `globals.css`, and the plan says so when it needs a new one.
 
-## 0. Substrate status at the time of writing
+## 0. Substrate status, reconciled
 
-`docs/design/context-telemetry/SUBSTRATE.md` did not exist when this plan
-was finalised. The inventory in section 1 was read from server source in
-this worktree, with `file:line` citations, and every "exists today" claim
-below is a claim against that source, not against the substrate document.
-When `SUBSTRATE.md` lands, section 1 is checked line by line against it and
-any disagreement is resolved in favour of the substrate document, because
-it is the factual one.
+`docs/design/context-telemetry/SUBSTRATE.md` has since landed (commit
+`2ef36721`), built from live queries against the running database rather
+than from source reading alone. It is the factual document and it wins
+every disagreement with this plan. Three corrections follow from it, and
+they are load-bearing.
+
+**A session key is not persisted anywhere.** Section 1 below reads the
+session key as resolvable at request time, which is true, but
+`requestStats` and `requestDetails` carry no session column at all
+(`SUBSTRATE.md` section 2, checked against the live `.schema`). The
+durable `sessionHash` exists only in `sessionAffinity` and
+`accountSwitches`, which are pin-state and switch-receipt tables never
+joined to token rows. Joining session to `connectionId` to `requestStats`
+returns rows fast and returns them wrong, because a connection is a shared
+account, not a conversation. **Nothing in sections 2 through 6 can be
+built until a session key column lands on `requestStats`, written at the
+call site in `chatCore.js` that already computes it.** That is work item 1
+in section 10 and it gates every screen.
+
+**Per-technique attribution has no SQL home.** The saver ledger this plan
+draws as its central artifact is computed live and written only to
+`DATA_DIR/token-saver/events.jsonl`, correlated to a session solely through
+the `ridSessions` Map, which evicts on TTL and on restart
+(`SUBSTRATE.md` section 4). There is no query to write for a per-technique
+rollup today. A durable home for those events, joinable to the new session
+column, is work item 1b.
+
+**`requestDetails` is empty by configuration, not by fault.** It holds zero
+rows live because `enableObservability` is false in the settings row.
+
+Section 1 below is retained as the request-time inventory it always was.
+Where it and `SUBSTRATE.md` differ on what *persists*, `SUBSTRATE.md` is
+correct.
 
 ## 1. What can be observed today, and the linkage question
 
@@ -567,6 +593,18 @@ choice, timing adjacency. The first two would need bodies this plan refuses
 to store; the last two are wrong often enough to erode trust in the certain
 cases.
 
+Both signals above are new recording, and neither is a config flip.
+`SUBSTRATE.md` section 7 ranks the cwd fragment last among five candidates
+precisely because every persistence path that touches raw body content
+(`redactAndTruncate` in `requestDetailsRepo.js`, the `token-saver` events
+allowlist at `events.js:19`) is built to strip exactly this. Storing
+`cwdHint` and `systemHash` is therefore a deliberate, narrowly-scoped
+exception to a standing redaction policy, and it ships only with the
+operator's explicit agreement to that exception. The mitigation this plan
+already carries is that the absolute path is never stored, only its last
+segment and a hash prefix; that is what makes the exception narrow, and it
+is stated to the operator rather than assumed.
+
 ### 5.2 The three states, as the operator meets them
 
 - Certain. `projectSource = "rule"`. A `cwdHint` matched a project rule.
@@ -628,16 +666,22 @@ written, not a new rule.
 
 ## 7. Stack and performance budget
 
-What renders. The ledger and the overview strip are one inline `<svg>`
-each, written as React elements, three `<rect>` per turn column plus one
-per lane bar and one per event mark. No `recharts`, whose stacked bar comes
-with a legend, a tooltip layer and a responsive container that fights the
-`.ruler` alignment, and no `@xyflow/react`, which is for graphs. Everything
-else is the existing `.measures`, `.rows`, `.panel`, `.spark`, `.ruler`,
+What renders is decided by `docs/design/STACK.md`, not here. This section
+previously ruled out `recharts` and `@xyflow/react` in favour of a
+hand-written inline `<svg>`, and that ruling is withdrawn: the operator's
+standing direction is that this surface is built on well-regarded installed
+frameworks rather than on drawing code written from scratch, and both
+libraries are already dependencies. The ledger is a `recharts` stacked bar
+and the routing view is an `@xyflow/react` graph unless `STACK.md` says
+otherwise, in which case `STACK.md` wins. Where a library's default chrome
+fights the `.ruler` alignment, the fix is to configure the library, not to
+replace it with hand-rolled geometry.
+
+Everything else is the existing `.measures`, `.rows`, `.panel`, `.ruler`,
 `Confirm`, `Measure`, `Freshness`, `Notice`, `usePoll`, `useEventStream`,
-`call`, `refusal`, `fmt*`. New CSS is one `styles.css` per screen, as the
-other screens do, adding the ledger's `<svg>` rules and the hatch pattern
-as an SVG `<pattern>` reusing the `--signal` stripe geometry.
+`call`, `refusal`, `fmt*`, with styling expressed through the stack's
+utilities and `@theme` tokens rather than a new bespoke `styles.css` per
+screen.
 
 Workers. None. Five hundred columns is a few thousand nodes and a single
 layout; measured against the existing `.spark` with 96 bars this is under
@@ -729,10 +773,17 @@ which is a real sequence.
   change and lets the operator judge.
 - It does not touch the existing `/dashboard/sessions` screen, which
   keeps pins and switch receipts; the ledger links into it.
-- It does not add a dependency. The ledger is SVG in React.
 
 ## 10. Build order
 
+0. **Gate, before anything on this list.** A session key column on
+   `requestStats`, written at the call site in `chatCore.js` that already
+   computes `sid`, plus a durable joinable home for the `token-saver`
+   events now confined to `events.jsonl`. Until both exist, no query joins
+   a token count to a conversation and no screen below can render a real
+   number (`SUBSTRATE.md` sections 2 and 4, and section 0 above). Storing
+   `cwdHint` and `systemHash` is a scoped exception to the standing
+   redaction policy and needs the operator's explicit agreement first.
 1. Server. `contextSessions` and `contextTurns` in `schema.js`, the write
    in `onReqSummary`, cwd and system hashing before the savers, the
    `settingChanges` append in the settings route, the `/api/context/*`
