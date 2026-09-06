@@ -17,6 +17,7 @@ export async function handleEmbeddingsCore({
   log,
   onCredentialsRefreshed,
   onRequestSuccess,
+  beforeDispatch,
 }) {
   const { provider, model } = modelInfo;
 
@@ -62,6 +63,7 @@ export async function handleEmbeddingsCore({
 
   let providerResponse;
   try {
+    if (beforeDispatch) await beforeDispatch({ body: requestBody });
     providerResponse = await fetch(url, {
       method: "POST",
       headers,
@@ -97,6 +99,7 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
+        if (beforeDispatch) await beforeDispatch({ body: requestBody });
         providerResponse = await fetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,

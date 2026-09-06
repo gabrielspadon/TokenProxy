@@ -1,5 +1,5 @@
 import "open-sse/index.js";
-import { randomUUID } from "node:crypto";
+import { getRequestIdentity } from "../services/requestIdentity.js";
 
 import {
   getProviderCredentials,
@@ -47,18 +47,6 @@ import { recordApiKeyDevice } from "@/sse/services/apiKeyDevices.js";
 const REQUEST_CONNECTION_HEADER = "x-connection-id";
 // The header a caller uses to cap how many accounts one request may spend.
 const REQUEST_MAX_ATTEMPTS_HEADER = "x-max-attempts";
-const logicalRequestIds = new WeakMap();
-
-function logicalRequestId(request) {
-  if (!request || typeof request !== "object") return randomUUID();
-  let id = logicalRequestIds.get(request);
-  if (!id) {
-    id = randomUUID();
-    logicalRequestIds.set(request, id);
-  }
-  return id;
-}
-
 /**
  * Read the caller's attempt ceiling. Anything that is not a positive safe
  * integer is no ceiling at all: a "0", a "-1" or a "many" must not be read as
@@ -809,8 +797,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // up to ACCOUNT_RETRY_LIMIT times before the loop excludes it and switches.
   const ACCOUNT_RETRY_LIMIT = 3;
   const failCountByConn = new Map();
-  let upstreamAttempt = 0;
-  const telemetryRequestId = logicalRequestId(request);
+  const requestIdentity = getRequestIdentity(request);
   let lastError = null;
   let lastStatus = null;
   // Envoy request-buffer overflow (507): retry the SAME account once — the
@@ -981,7 +968,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // Same Request object as handleChat saw, so this is the SAME rid: the
         // admission line and the request lines join on one grep.
         requestId: requestRid(request),
-        contextTelemetry: { logicalRequestId: telemetryRequestId, attempt: ++upstreamAttempt },
+        contextTelemetry: requestIdentity,
         body: { ...structuredClone(body), model: `${provider}/${model}` },
         modelInfo: { provider, model },
         credentials: refreshedCredentials,

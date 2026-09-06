@@ -2,6 +2,7 @@ import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage, clampReasoningTokens } from "../../utils/usageTracking.js";
+import { priceUsage, usageQuantityPresence } from "../../../src/lib/db/repos/usagePricing.js";
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -158,13 +159,13 @@ export function summarizeReasoning(translatedBody) {
   return undefined;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid, contextTelemetry }) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
   const outTokens = tokens.output_tokens ?? tokens.completion_tokens ?? 0;
 
-  if (inTokens === 0 && outTokens === 0) return;
+  if (inTokens === 0 && outTokens === 0 && priceUsage(tokens, null).costEvidence === null) return;
 
   if (!silent) {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -179,10 +180,12 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
 
-  saveRequestUsage({
+  return saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
     tokens: normalized,
+    usagePresence: usageQuantityPresence(tokens),
+    contextTelemetry,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
     apiKey: apiKey || undefined,

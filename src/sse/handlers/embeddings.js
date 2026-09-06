@@ -1,3 +1,5 @@
+import { getRequestIdentity } from "../services/requestIdentity.js";
+import { createUsageAttemptTracker } from "../services/usageAttempt.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -48,6 +50,7 @@ export async function handleEmbeddings(request) {
   }
 
   const url = new URL(request.url);
+  const identity = getRequestIdentity(request);
   const modelStr = body.model;
 
   log.request("POST", `${url.pathname} | ${modelStr}`);
@@ -108,7 +111,7 @@ export async function handleEmbeddings(request) {
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelEmbeddings(b, m, apiKey, url.pathname),
+        handleSingleModel: (b, m) => handleSingleModelEmbeddings(b, m, apiKey, url.pathname, null, identity),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -117,10 +120,10 @@ export async function handleEmbeddings(request) {
     }
   }
 
-  return handleSingleModelEmbeddings(body, modelStr, apiKey, url.pathname, resolved);
+  return handleSingleModelEmbeddings(body, modelStr, apiKey, url.pathname, resolved, identity);
 }
 
-async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, resolved = null) {
+async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, resolved = null, identity = getRequestIdentity(null)) {
   const modelInfo = resolved || await resolveRequestModel(modelStr);
   if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
   if (!modelInfo.provider) {
@@ -173,7 +176,9 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
+      const usageAttempt = createUsageAttemptTracker(identity, { provider, model, connectionId: credentials.connectionId }, credentials);
       const result = await handleEmbeddingsCore({
+        beforeDispatch: usageAttempt.beforeDispatch,
         body: { ...body, model: `${provider}/${model}` },
         modelInfo: { provider, model },
         credentials: refreshedCredentials,
@@ -188,12 +193,14 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
         }
-      });
+      }).catch(async (error) => { await usageAttempt.finish({ success: false }); throw error; });
+      await usageAttempt.finish(result);
 
       if (result.success) {
         const usage = exactEmbeddingUsage(result.usage);
         if (usage) {
-          saveRequestUsage({
+          await saveRequestUsage({
+            contextTelemetry: usageAttempt.contextTelemetry,
             provider,
             model,
             connectionId: credentials.connectionId,

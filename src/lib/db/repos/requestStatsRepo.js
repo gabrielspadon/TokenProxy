@@ -99,6 +99,7 @@ export async function saveRequestStats(detail) {
     const db = await getAdapter();
     const tokens = canonicalizeUsage(detail.tokens) || {};
     const latency = detail.latency || {};
+    const { persistUsagePricing } = await import("./usagePricing.js");
     db.transaction(() => {
     if (shouldIgnorePending(db.get(`SELECT status FROM requestStats WHERE id=?`, [detail.id]), detail)) return;
     db.run(
@@ -132,6 +133,14 @@ export async function saveRequestStats(detail) {
         latency.ttft || 0,
       ]
     );
+    const coverage = detail.contextTelemetry?.dispatchCoverage;
+    if (["physical-dispatch", "executor-invocation"].includes(coverage)) {
+      db.run(`UPDATE requestStats SET dispatchCoverage=? WHERE id=?`, [coverage, detail.id]);
+    }
+    const snapshot = detail.contextTelemetry?.pricingSnapshot;
+    const snapshotId = persistUsagePricing(db, snapshot);
+    if (snapshotId) db.run(`UPDATE requestStats SET rateSnapshotId=COALESCE(rateSnapshotId,?),
+      pricingCapturedAt=COALESCE(pricingCapturedAt,?) WHERE id=?`, [snapshotId, snapshot.capturedAt, detail.id]);
     try {
       db.transaction(() => saveContextMetrics(db, { ...detail, timestamp: detail.timestamp || new Date().toISOString() }));
     } catch {

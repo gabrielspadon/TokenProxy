@@ -55,8 +55,8 @@ describe("usageHistory row identity", () => {
 
   it("still completes a row that was written without its endpoint", async () => {
     const timestamp = new Date().toISOString();
-    await db.saveRequestUsage(entry("backfill", { timestamp }));
-    await db.saveRequestUsage(entry("backfill", { timestamp, endpoint: "/v1/messages" }));
+    await db.saveRequestUsage(entry("backfill", { timestamp, requestId: "exact-backfill-attempt" }));
+    await db.saveRequestUsage(entry("backfill", { timestamp, requestId: "exact-backfill-attempt", endpoint: "/v1/messages" }));
 
     const rows = await db.getUsageHistory({ provider: "backfill" });
     expect(rows.length).toBe(1);

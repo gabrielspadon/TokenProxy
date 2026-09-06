@@ -2,7 +2,7 @@ const MAX_POINTS = 720;
 const MINUTE = 60000;
 const GROUPS = new Set(['provider', 'model', 'account']);
 const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status']);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId']);
 
 export class ActivityQueryError extends Error {}
 
@@ -39,6 +39,13 @@ export function validateActivityQuery(query) {
     if (typeof value !== 'string' || value.length > 200 || /[\u0000-\u001f]/.test(value)) throw new ActivityQueryError('Invalid analytics filter.');
     result[key] = value;
   }
+  for (const key of ['requestId', 'logicalRequestId', 'projectId']) {
+    const value = query[key];
+    if (value == null || value === '') { result[key] = null; continue; }
+    if (typeof value !== 'string' || value.length > 128 || /[\u0000-\u001f]/.test(value)) throw new ActivityQueryError('Invalid attribution filter.');
+    result[key] = value;
+  }
+  result.sessionId = query.sessionId == null ? null : integer(query.sessionId, null, Number.MAX_SAFE_INTEGER, 'session');
   result.page = integer(query.page, 1, 100000, 'page');
   result.pageSize = integer(query.pageSize, 50, 100, 'page size');
   result.sortBy = query.sortBy ?? 'timestamp';
@@ -49,10 +56,15 @@ export function validateActivityQuery(query) {
   return result;
 }
 
-function filterFor(query) {
+function filterFor(query, columns) {
   const clauses = [], params = [];
   for (const column of ['provider', 'model', 'connectionId']) {
     if (query[column] !== null) { clauses.push(`${column}=?`); params.push(query[column]); }
+  }
+  for (const [key, column] of Object.entries({ requestId: query.view === 'activity' ? 'id' : 'requestId', logicalRequestId: 'logicalRequestId', sessionId: 'contextSessionId', projectId: 'projectId' })) {
+    if (query[key] === null) continue;
+    if (!columns.has(column)) { clauses.push('0'); continue; }
+    clauses.push(`${column}=?`); params.push(query[key]);
   }
   if (query.start) { clauses.push('timestamp>=?'); params.push(query.start); }
   if (query.end) { clauses.push('timestamp<?'); params.push(query.end); }
@@ -67,17 +79,24 @@ const validToken = (field) => `(${validNumber(field)} AND ${field}<=900719925474
 const quantity = (field) => `CASE WHEN ${validToken(field)} THEN ${field} END`;
 const jsonQuantity = (field) => quantity(`json_extract(safeTokens,'$.${field}')`);
 
+const ATTRIBUTION = ['dispatchCoverage','requestId','logicalRequestId','attempt','projectId','rateSnapshotId','pricingCapturedAt','costSource','costEvidence','usageSource','estimatedCostUsd','reportedCostUsd'];
 function baseQuery(db, query) {
-  const { sql, params } = filterFor(query);
+  const table = query.view === 'economics' ? 'usageHistory' : 'requestStats';
+  const columns = new Set(db.all(`PRAGMA table_info(${table})`, []).map((row) => row.name));
+  const { sql, params } = filterFor(query, columns);
+  const attribution = ATTRIBUTION.map((name) => name === 'requestId' && query.view === 'activity' ? 'id AS requestId'
+    : columns.has(name) ? name : `NULL AS ${name}`).join(',');
+  const contextId = columns.has('contextSessionId') ? 'contextSessionId' : 'NULL AS contextSessionId';
   if (query.view === 'economics') {
     return { params, sql: `WITH filtered AS (
-      SELECT id,timestamp,provider,model,connectionId,status,promptTokens,completionTokens,cost,
+      SELECT id,timestamp,provider,model,connectionId,status,promptTokens,completionTokens,cost,${attribution},${contextId},
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN tokens ELSE '{}' END ELSE '{}' END AS safeTokens,
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN 0 ELSE 1 END ELSE 1 END AS invalidTokenDetail
       FROM usageHistory ${sql}
     ), quantities AS MATERIALIZED (
-      SELECT id,timestamp,provider,model,connectionId,status,
-        ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
+      SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,
+        CASE WHEN json_extract(safeTokens,'$.input_tokens_present')=0 THEN NULL ELSE ${quantity('promptTokens')} END AS prompt,
+        CASE WHEN json_extract(safeTokens,'$.output_tokens_present')=0 THEN NULL ELSE ${quantity('completionTokens')} END AS output,
         ${jsonQuantity('cached_tokens')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens')} AS cacheWrite,
         CASE WHEN ${validNumber('cost')} THEN cost END AS recordedCost,
         CASE WHEN invalidTokenDetail=1 OR NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
@@ -85,15 +104,13 @@ function baseQuery(db, query) {
           OR (json_type(safeTokens,'$.cache_creation_input_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")})
           THEN 1 ELSE 0 END AS invalidTokens,
         CASE WHEN NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")} OR NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")}
-          THEN 1 ELSE 0 END AS missingTokenDetail,NULL AS latencyMs,NULL AS ttftMs,NULL AS contextSessionId
+          THEN 1 ELSE 0 END AS missingTokenDetail,NULL AS latencyMs,NULL AS ttftMs
       FROM filtered
     ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
       CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
   }
-  const columns = new Set(db.all('PRAGMA table_info(requestStats)', []).map((row) => row.name));
-  const contextId = columns.has('contextSessionId') ? 'contextSessionId' : 'NULL AS contextSessionId';
   return { params, sql: `WITH quantities AS (
-    SELECT id,timestamp,provider,model,connectionId,status,
+    SELECT id,timestamp,provider,model,connectionId,status,${attribution},
       ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
       ${quantity('cachedTokens')} AS cacheRead,${quantity('cacheCreationTokens')} AS cacheWrite,
       NULL AS recordedCost,
@@ -106,7 +123,20 @@ function baseQuery(db, query) {
     CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
 }
 
-const TOTALS = `COUNT(*) AS records,COALESCE(SUM(prompt),0) AS inputTokens,
+const TOTALS = `COUNT(*) AS records,COUNT(*) AS attempts,
+  COALESCE(SUM(CASE WHEN dispatchCoverage='physical-dispatch' THEN 1 ELSE 0 END),0) AS physicalDispatchRows,
+  COALESCE(SUM(CASE WHEN dispatchCoverage='executor-invocation' THEN 1 ELSE 0 END),0) AS executorInvocationRows,
+  COALESCE(SUM(CASE WHEN dispatchCoverage IS NULL THEN 1 ELSE 0 END),0) AS unknownDispatchRows,
+  COUNT(DISTINCT logicalRequestId) AS logicalRequests,
+  COALESCE(SUM(CASE WHEN logicalRequestId IS NULL THEN 1 ELSE 0 END),0) AS unattributedAttempts,
+  SUM(CASE WHEN ${validNumber('estimatedCostUsd')} THEN estimatedCostUsd END) AS estimatedCostUsd,
+  SUM(CASE WHEN ${validNumber('reportedCostUsd')} THEN reportedCostUsd END) AS reportedCostUsd,
+  COALESCE(SUM(CASE WHEN ${validNumber('estimatedCostUsd')} THEN 1 ELSE 0 END),0) AS estimatedCostSamples,
+  COALESCE(SUM(CASE WHEN ${validNumber('reportedCostUsd')} THEN 1 ELSE 0 END),0) AS reportedCostSamples,
+  COALESCE(SUM(CASE WHEN costSource='provider-confirmed' THEN 1 ELSE 0 END),0) AS confirmedCostRows,
+  COALESCE(SUM(CASE WHEN costSource IS NULL OR costSource='unknown' THEN 1 ELSE 0 END),0) AS unknownCostSourceRows,
+  COALESCE(SUM(CASE WHEN rateSnapshotId IS NOT NULL THEN 1 ELSE 0 END),0) AS rateSnapshotRows,
+COALESCE(SUM(prompt),0) AS inputTokens,
   SUM(uncachedInput) AS uncachedInputTokens,SUM(cacheRead) AS cacheReadTokens,
   SUM(cacheWrite) AS cacheWriteTokens,COALESCE(SUM(output),0) AS outputTokens,
   COUNT(prompt) AS inputSamples,COUNT(output) AS outputSamples,COUNT(cacheRead) AS cacheReadSamples,
@@ -125,6 +155,10 @@ const TOTALS = `COUNT(*) AS records,COALESCE(SUM(prompt),0) AS inputTokens,
   COUNT(latencyMs) AS latencySamples,AVG(ttftMs) AS averageTtftMs,COUNT(ttftMs) AS ttftSamples,
   MIN(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS firstSeenAt,
   MAX(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS lastSeenAt`;
+
+function parseObject(value) {
+  try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null; } catch { return null; }
+}
 
 function enrich(row) {
   const overflowFields = Object.keys(row).filter((key) => typeof row[key] === 'number' && !Number.isFinite(row[key]));
@@ -169,11 +203,18 @@ export function readActivityAnalytics(db, input) {
   const columns = groupColumns(query.groupBy);
   const groups = db.all(`${base.sql} SELECT ${columns.join(',')},${TOTALS} FROM records
     GROUP BY ${columns.join(',')} ORDER BY records DESC,${columns.join(',')} LIMIT 101`, base.params);
-  const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,prompt AS inputTokens,
+  const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},prompt AS inputTokens,
     uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
     recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
     FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC LIMIT ? OFFSET ?`,
     [...base.params,query.pageSize,(query.page-1)*query.pageSize]);
+  const snapshotIds = [...new Set(rows.map((row) => row.rateSnapshotId).filter(Boolean))];
+  const snapshots = snapshotIds.length ? db.all(`SELECT * FROM usageRateSnapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds) : [];
+  const snapshotMap = new Map(snapshots.map((r) => [r.id, { ...r, rates: parseObject(r.rates) }]));
+  for (const row of rows) {
+    row.costEvidence = parseObject(row.costEvidence);
+    row.rateSnapshot = snapshotMap.get(row.rateSnapshotId) || null;
+  }
   return {
     source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query,
     summary, series: series(db,base,query,summary), groups: groups.slice(0,100).map(enrich), groupsTruncated: groups.length > 100,
@@ -182,7 +223,10 @@ export function readActivityAnalytics(db, input) {
     units: { tokens: 'tokens', cost: 'USD', latency: 'ms', time: 'UTC' },
     definitions: {
       inputTokens: 'Recorded cache-inclusive input. Historical token provenance was not retained; these are not invoice quantities.',
-      recordedCostUsd: 'Model-rate estimate recorded by the application. It is not subscription spend or an invoice. Historical price basis was not retained; zero is ambiguous.',
+      recordedCostUsd: 'Recorded application estimate or explicitly USD-denominated provider report. Read costSource and both component amounts. It is not subscription spend or a confirmed charge. Historical price basis was not retained; zero is ambiguous.',
+      dispatchCoverage: 'physical-dispatch means the generation transport invoked the dispatch hook. executor-invocation may contain uninstrumented wire retries. Null means historical or unavailable coverage.',
+      attribution: 'requestId identifies one recorded attempt; dispatchCoverage distinguishes measured transport dispatches from executor invocations. logicalRequestId groups attempts from the same server request. Unattributed historical attempts are counted separately, never guessed. Distinct logical counts across groups or time buckets are not additive.',
+      pricing: 'Immutable captured rates and calculator version support application estimates. Only explicit context identities link sessions. Project IDs remain null until an actual project identity source exists.',
       cacheReadFraction: 'Recorded cache reads divided by cache-inclusive input only where both quantities are usable. Historical zero defaults may still represent unreported upstream fields.',
       coverage: 'Token sums include only finite nonnegative quantities within the safe integer range. Per-quantity sample counts and invalid/missing detail rows expose incomplete decomposition.',
       recordedPending: 'Persisted pending statuses. They do not establish current in-flight requests.',

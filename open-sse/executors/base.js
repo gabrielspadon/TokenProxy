@@ -242,6 +242,7 @@ export class BaseExecutor {
     log,
     proxyOptions = null, sourceFormat, targetFormat,
     connectTimeout = null,
+    beforeDispatch,
   }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
@@ -311,6 +312,7 @@ export class BaseExecutor {
           "FETCH",
           `${this.provider.toUpperCase()} → ${url} | model=${model} | body=${fmtBytes(bodyStr.length)} | connectTimeout=${deadline.timeoutMs}ms`,
         );
+        if (beforeDispatch) await beforeDispatch({ body: transformedBody });
         const response = await proxyAwareFetch(
           url,
           {

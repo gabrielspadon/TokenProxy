@@ -1,3 +1,5 @@
+import { getRequestIdentity } from "../services/requestIdentity.js";
+import { createUsageAttemptTracker } from "../services/usageAttempt.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -39,6 +41,7 @@ export async function handleRerank(request) {
   }
 
   const url = new URL(request.url);
+  const identity = getRequestIdentity(request);
   const modelStr = body.model;
 
   log.request("POST", `${url.pathname} | ${modelStr}`);
@@ -103,7 +106,7 @@ export async function handleRerank(request) {
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelRerank(b, m, apiKey, url.pathname),
+        handleSingleModel: (b, m) => handleSingleModelRerank(b, m, apiKey, url.pathname, null, identity),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -112,10 +115,10 @@ export async function handleRerank(request) {
     }
   }
 
-  return handleSingleModelRerank(body, modelStr, apiKey, url.pathname, resolved);
+  return handleSingleModelRerank(body, modelStr, apiKey, url.pathname, resolved, identity);
 }
 
-async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolved = null) {
+async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolved = null, identity = getRequestIdentity(null)) {
   const modelInfo = resolved || await resolveRequestModel(modelStr);
   if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
   if (!modelInfo.provider) {
@@ -166,7 +169,9 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
+      const usageAttempt = createUsageAttemptTracker(identity, { provider, model, connectionId: credentials.connectionId }, credentials);
       const result = await handleRerankCore({
+        beforeDispatch: usageAttempt.beforeDispatch,
         body: { ...body, model: `${provider}/${model}` },
         modelInfo: { provider, model },
         credentials: refreshedCredentials,
@@ -181,11 +186,13 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
         }
-      });
+      }).catch(async (error) => { await usageAttempt.finish({ success: false }); throw error; });
+      await usageAttempt.finish(result);
 
       if (result.success) {
         if (result.usage) {
-          saveRequestUsage({
+          await saveRequestUsage({
+            contextTelemetry: usageAttempt.contextTelemetry,
             provider,
             model,
             connectionId: credentials.connectionId,

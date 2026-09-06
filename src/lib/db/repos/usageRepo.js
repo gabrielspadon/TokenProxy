@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { getAdapter } from "../driver.js";
+import { captureUsagePricing, persistUsagePricing, priceUsage, usageQuantityPresence } from "./usagePricing.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 // periodCutoffIso gives the oldest timestamp a period includes,
 // or null for "all", which is an unbounded range. It lives in
@@ -268,23 +269,6 @@ async function ensureRingInitialized() {
   } catch {}
 }
 
-async function calculateCost(provider, model, tokens) {
-  if (!tokens) return 0;
-  try {
-    // Delegate the actual math to the single source of truth (avoids the two
-    // copies drifting apart — see open-sse/providers/pricing.js for the
-    // cache-inclusive prompt_tokens convention this assumes).
-    const { calculateCostFromTokens } = await import("open-sse/providers/pricing.js");
-    if (!provider || !model) return calculateCostFromTokens(tokens, null);
-    const { getPricingForModel } = await import("./pricingRepo.js");
-    const pricing = await getPricingForModel(provider, model);
-    return calculateCostFromTokens(tokens, pricing);
-  } catch (e) {
-    console.error("Error calculating cost:", e);
-    return 0;
-  }
-}
-
 export function trackPendingRequest(model, provider, connectionId, started, error = false) {
   const modelKey = provider ? `${model} (${provider})` : model;
   const timerKey = `${connectionId}|${modelKey}`;
@@ -508,17 +492,30 @@ export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
 
-    if (!entry.timestamp) entry.timestamp = new Date().toISOString();
+    entry = { ...entry, timestamp: entry.timestamp || new Date().toISOString() };
 
     // Cache read and cache write aliases normalize HERE, at the one boundary
     // every persistence path crosses — the chat handler, embeddings and rerank
     // alike — so the request row, the daily aggregate, the per-account bucket
     // and the cost below all read the same two canonical fields. canonicalizeUsage
     // is idempotent, so a caller that already normalized is not normalized twice.
+    const presence = entry.usagePresence || usageQuantityPresence(entry.tokens);
     if (entry.tokens && typeof entry.tokens === "object") {
       entry.tokens = canonicalizeUsage(entry.tokens) || entry.tokens;
+      entry.tokens.input_tokens_present = presence.input;
+      entry.tokens.output_tokens_present = presence.output;
     }
-    entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
+    const context = entry.contextTelemetry;
+    const requestId = context?.requestId || entry.requestId || null;
+    const snapshot = context?.pricingSnapshot || await captureUsagePricing(entry.provider, entry.model);
+    Object.assign(entry, priceUsage(entry.tokens, snapshot, presence.input && presence.output));
+    if (!entry.costEvidence && entry.estimatedCostUsd !== null) {
+      entry.costEvidence = { source: "application-rate-card", currency: "USD",
+        captureBoundary: context?.pricingSnapshot ? "before-dispatch" : "usage-recording" };
+    }
+    const logicalRequestId = context?.logicalRequestId || entry.logicalRequestId || null;
+    const attempt = context?.attempt ?? entry.attempt ?? null;
+    const usageSource = presence.input || presence.output ? (entry.tokens?.estimated === true ? "estimated" : "provider") : "missing";
 
     const tokens = entry.tokens || {};
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
@@ -529,48 +526,25 @@ export async function saveRequestUsage(entry) {
     // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
     db.transaction(() => {
-      // Back-fill only: a row written earlier without its endpoint is the same
-      // request arriving again with one, so complete it instead of inserting.
-      //
-      // The match is deliberately limited to endpoint-less rows. `timestamp` is
-      // an ISO string with millisecond resolution, so matching on the value
-      // tuple alone also swallows genuinely distinct requests that share a
-      // millisecond — same provider, model, connection and token counts. That is
-      // ordinary under parallel load and cost real usage rows plus their
-      // totalRequestsLifetime increments.
-      const backfill = entry.endpoint
-        ? db.get(
-          `SELECT id FROM usageHistory
-           WHERE timestamp = ?
-             AND COALESCE(provider, '') = COALESCE(?, '')
-             AND COALESCE(model, '') = COALESCE(?, '')
-             AND COALESCE(connectionId, '') = COALESCE(?, '')
-             AND COALESCE(apiKey, '') = COALESCE(?, '')
-             AND promptTokens = ?
-             AND completionTokens = ?
-             AND COALESCE(endpoint, '') = ''
-           ORDER BY id DESC LIMIT 1`,
-          [
-            entry.timestamp, entry.provider || null, entry.model || null,
-            entry.connectionId || null, entry.apiKey || null,
-            promptTokens, completionTokens,
-          ]
-        )
-        : null;
-
-      if (backfill) {
-        db.run(`UPDATE usageHistory SET endpoint = ? WHERE id = ?`, [entry.endpoint, backfill.id]);
+      // Only an exact recorded attempt may complete an existing row. Similar
+      // timestamps, models and counts are never evidence of request identity.
+      const existing = requestId ? db.get(`SELECT id FROM usageHistory WHERE requestId=?`, [requestId]) : null;
+      if (existing) {
+        if (entry.endpoint) db.run(`UPDATE usageHistory SET endpoint=COALESCE(NULLIF(endpoint,''),?) WHERE id=?`, [entry.endpoint, existing.id]);
         return;
       }
-
+      const rateSnapshotId = persistUsagePricing(db, snapshot);
+      const session = requestId && context?.identitySource === "explicit" ? db.get(`SELECT r.contextSessionId FROM requestStats r
+        JOIN contextSessions s ON s.id=r.contextSessionId WHERE r.id=? AND s.identitySource='explicit' AND s.sessionHash=?`, [requestId, context.sessionHash]) : null;
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
-          promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({ requestedModel: entry.requestedModel || null, reasoningEffort: entry.reasoningEffort || null }),
-        ]
+        `INSERT INTO usageHistory(timestamp,provider,model,connectionId,apiKey,endpoint,promptTokens,completionTokens,cost,status,tokens,meta,
+          requestId,logicalRequestId,attempt,contextSessionId,projectId,rateSnapshotId,pricingCapturedAt,costSource,costEvidence,usageSource,estimatedCostUsd,reportedCostUsd,dispatchCoverage)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [entry.timestamp, entry.provider || null, entry.model || null, entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
+          promptTokens, completionTokens, entry.cost, entry.status || "ok", stringifyJson(tokens),
+          stringifyJson({ requestedModel: entry.requestedModel || null, reasoningEffort: entry.reasoningEffort || null }),
+          requestId, logicalRequestId, attempt, session?.contextSessionId ?? null, null, rateSnapshotId, snapshot.capturedAt,
+          entry.costSource, entry.costEvidence ? stringifyJson(entry.costEvidence) : null, usageSource, entry.estimatedCostUsd, entry.reportedCostUsd, ["physical-dispatch", "executor-invocation"].includes(context?.dispatchCoverage) ? context.dispatchCoverage : null]
       );
 
       const dateKey = getLocalDateKey(entry.timestamp);

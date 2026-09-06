@@ -622,7 +622,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid });
+    saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid });
     // The one nominal per-request line (doc §3.3/3.4): success is REQ.ok,
     // an aborted/interrupted completion is REQ.failed — exactly one, never both.
     if (usage?.estimated) decide("STREAM", "usage-estimated", { rid, conn: connPrefix(), why: "provider-omitted-usage" });
@@ -678,7 +678,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     });
 
     if (hasValidUsage(tokens)) {
-      saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: "STREAM USAGE (interrupted)", silent: true });
+      saveUsageStats({ contextTelemetry, provider, model, tokens, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: "STREAM USAGE (interrupted)", silent: true });
     }
     if (log?.line) log.line(reqTag, "✗", `INTERRUPTED ${reason || "unknown"}`);
     reqSummary("failed", { ...saverFields, rid,

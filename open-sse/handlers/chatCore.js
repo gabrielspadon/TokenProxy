@@ -1,4 +1,4 @@
-import { createContextTelemetry, recordContextAttempt } from "./chatCore/contextTelemetry.js";
+import { createContextTelemetry, recordContextAttempt, nextContextAttempt } from "./chatCore/contextTelemetry.js";
 import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
 import { resolveUpstreamRoute } from "./chatCore/upstreamRoute.js";
@@ -1399,8 +1399,9 @@ export async function handleChatCore({
   }
   if (saverFields.ce !== undefined) saverMeta.ce = saverFields.ce;
   if (compactHint) saverMeta.compactHint = true;
-  const contextTelemetry = createContextTelemetry({
+  let contextTelemetry = createContextTelemetry({
     ...contextIdentity, sessionHash: credentials?.sessionHash, sessionIdentitySource: credentials?.sessionIdentitySource,
+    dispatchCoverage: "executor-invocation",
     timestamp: new Date(requestStartTime).toISOString(),
     requestedModel: clientRawRequest?.body?.model || body.model,
     clientTool, inputEstimate, messageCount, toolCount,
@@ -1706,8 +1707,18 @@ export async function handleChatCore({
     reqSummary("failed", { rid, conn: connPrefix, status: HTTP_STATUS.BAD_GATEWAY, why: "transport", ...saverFields });
     return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, { safeToReplay: false }, rid), saverMeta);
   };
+  const executeAttempt = (args) => {
+    let dispatches = 0;
+    return executor.execute({ ...args, beforeDispatch: async () => {
+      if (dispatches++ > 0) {
+        contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime });
+      }
+      contextTelemetry.dispatchCoverage = "physical-dispatch";
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+    } });
+  };
   try {
-    const result = await executor.execute({
+    const result = await executeAttempt({
       model,
       body: translatedBody,
       stream,
@@ -1770,7 +1781,8 @@ export async function handleChatCore({
           }
         }
         try {
-          const retryResult = await executor.execute({
+          contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
+          const retryResult = await executeAttempt({
             model,
             body: translatedBody,
             stream,
@@ -1854,7 +1866,8 @@ export async function handleChatCore({
           `Stripped body sent. Fields blocked: ${rejectedOn400.join(", ")}`,
         );
         try {
-          const retryResult = await executor.execute({
+          contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
+          const retryResult = await executeAttempt({
             model,
             body: stripped,
             stream,

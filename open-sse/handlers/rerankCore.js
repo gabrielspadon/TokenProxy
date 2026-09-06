@@ -90,6 +90,7 @@ export async function handleRerankCore({
   log,
   onCredentialsRefreshed,
   onRequestSuccess,
+  beforeDispatch,
 }) {
   const { provider, model } = modelInfo;
 
@@ -143,6 +144,7 @@ export async function handleRerankCore({
 
   let providerResponse;
   try {
+    if (beforeDispatch) await beforeDispatch({ body: requestBody });
     providerResponse = await fetch(cfg.url, {
       method: "POST",
       headers: headers(),
@@ -174,6 +176,7 @@ export async function handleRerankCore({
       Object.assign(credentials, newCredentials);
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
       try {
+        if (beforeDispatch) await beforeDispatch({ body: requestBody });
         providerResponse = await fetch(cfg.url, {
           method: "POST",
           headers: headers(),
