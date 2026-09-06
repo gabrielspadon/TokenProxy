@@ -52,6 +52,13 @@ import {
   startZedProxy,
   stopZedProxy,
 } from '@/lib/oauth/utils/server';
+import {
+  CODEX_CONFIG,
+  DEVIN_CONFIG,
+  TRAE_CONFIG,
+  WINDSURF_CONFIG,
+  ZED_HOSTED_CONFIG,
+} from '@/lib/oauth/constants/oauth';
 
 async function get(port, path, headers = {}) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers });
@@ -334,5 +341,291 @@ describe('Zed proxy (RSA native-app, preferred port with EADDRINUSE fallback)', 
     const { status, body } = await get(port, '/?state=z2&access_token=enc&user_id=u1');
     expect(status).toBe(200);
     expect(body).toMatch(/Authentication Successful/);
+  });
+});
+
+// ── Edge coverage: already-running fast paths, listen errors, Mode A error
+// branches, state-mismatch reads, idle timeouts (fired via fake timers). Lives
+// in this file because the fixed ports (1455, 56121, 59653) cannot be bound by
+// two parallel vitest workers at once.
+
+const XAI_PORT = 56121; // hardcoded in the SUT, not exported from config
+
+async function getClose(port, path, headers = {}) {
+  // Connection: close — undici's keep-alive pool otherwise reuses a dead
+  // socket across the stop/start cycles on the fixed-port proxies.
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    headers: { Connection: 'close', ...headers },
+    redirect: 'manual',
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+// Start a proxy under fake timers so its idle timeout is captured, fire it,
+// then prove the server actually closed (connection refused).
+async function fireIdleTimeout(startFn, timeoutMs) {
+  vi.useFakeTimers({ toFake: ['setTimeout'] });
+  const started = await startFn();
+  await vi.advanceTimersByTimeAsync(timeoutMs + 1);
+  vi.useRealTimers();
+  return started;
+}
+
+beforeEach(() => {
+  exchangeTokens.mockReset();
+  createProviderConnection.mockReset();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  stopCodexProxy();
+  stopXaiProxy();
+  stopTraeProxy();
+  stopWindsurfProxy();
+  stopDevinProxy();
+  stopZedProxy();
+  clearTraeSession();
+  clearWindsurfSession();
+  clearDevinSession();
+  clearZedSession();
+});
+
+describe('startLocalServer listen errors', () => {
+  it('rejects with the raw error for a non-EADDRINUSE failure (privileged port)', async () => {
+    await expect(startLocalServer(() => {}, 80)).rejects.toThrow(/EACCES|EPERM/);
+  });
+});
+
+describe.each([
+  {
+    name: 'Codex',
+    register: registerCodexSession,
+    getStatus: getCodexSessionStatus,
+    start: startCodexProxy,
+    stop: stopCodexProxy,
+    port: CODEX_CONFIG.fixedPort,
+    timeoutMs: 300000,
+  },
+  {
+    name: 'Xai',
+    register: registerXaiSession,
+    getStatus: getXaiSessionStatus,
+    start: startXaiProxy,
+    stop: stopXaiProxy,
+    port: XAI_PORT,
+    timeoutMs: 300000,
+  },
+])('$name fixed-port proxy edges', ({ register, getStatus, start, stop, port, timeoutMs }) => {
+  afterEach(() => stop());
+
+  it('resolves immediately when the proxy is already running', async () => {
+    await start(4321);
+    expect(await start(4321)).toEqual({ success: true });
+  });
+
+  it('reports port_busy when the fixed port is already bound', async () => {
+    const blocker = await startLocalServer(() => {}, port);
+    expect(await start(4321)).toEqual({ success: false, reason: 'port_busy' });
+    blocker.close();
+  });
+
+  it('Mode A surfaces the provider error param via error_description', async () => {
+    register({ state: 'err1', codeVerifier: 'v', redirectUri: 'http://x' });
+    await start(4321);
+    const { status, body } = await getClose(
+      port,
+      '/callback?state=err1&error=access_denied&error_description=user%20denied'
+    );
+    expect(status).toBe(200);
+    expect(body).toMatch(/user denied/);
+    expect(getStatus('err1')).toMatchObject({ status: 'error', error: 'user denied' });
+  });
+
+  it('Mode A fails when no authorization code arrives', async () => {
+    register({ state: 'err2', codeVerifier: 'v', redirectUri: 'http://x' });
+    await start(4321);
+    const { body } = await getClose(port, '/callback?state=err2');
+    expect(body).toMatch(/No authorization code received/);
+    expect(getStatus('err2')).toMatchObject({ status: 'error' });
+  });
+
+  it('idle timeout closes the proxy', async () => {
+    await fireIdleTimeout(() => start(4321), timeoutMs);
+    await expect(fetch(`http://127.0.0.1:${port}/callback`)).rejects.toThrow();
+  });
+});
+
+describe.each([
+  {
+    name: 'Trae',
+    register: registerTraeSession,
+    getStatus: getTraeSessionStatus,
+    clear: clearTraeSession,
+    start: () => startTraeProxy(),
+    callbackPath: TRAE_CONFIG.callbackPath,
+    timeoutMs: TRAE_CONFIG.oauthTimeoutMs,
+  },
+  {
+    name: 'Windsurf',
+    register: registerWindsurfSession,
+    getStatus: getWindsurfSessionStatus,
+    clear: clearWindsurfSession,
+    start: () => startWindsurfProxy(),
+    callbackPath: WINDSURF_CONFIG.callbackPath,
+    timeoutMs: WINDSURF_CONFIG.oauthTimeoutMs,
+  },
+])(
+  '$name dynamic-port proxy edges',
+  ({ name, register, getStatus, clear, start, callbackPath, timeoutMs }) => {
+    it('getStatus returns null on a state mismatch, and clear is state-scoped', () => {
+      register({ state: 'right' });
+      expect(getStatus('wrong')).toBeNull();
+      expect(getStatus('right')).toMatchObject({ status: 'pending' });
+      clear('right');
+    });
+
+    it('resolves the same callbackUrl when already running', async () => {
+      const first = await start();
+      const second = await start();
+      expect(second).toEqual(first);
+      expect(second.callbackUrl).toBe(`http://127.0.0.1:${second.port}${callbackPath}`);
+    });
+
+    it('404s an unknown path', async () => {
+      const { port } = await start();
+      const { status } = await getClose(port, '/definitely-not-the-callback');
+      expect(status).toBe(404);
+    });
+
+    it('renders failure and records the error when the exchange rejects', async () => {
+      register({ state: 'ex1' });
+      exchangeTokens.mockRejectedValue(new Error(`${name} exchange blew up`));
+      const { port } = await start();
+      const { status, body } = await getClose(port, `${callbackPath}?state=ex1&code=abc`);
+      expect(status).toBe(200);
+      expect(body).toMatch(/Authentication Failed/);
+      expect(getStatus('ex1')).toMatchObject({
+        status: 'error',
+        error: `${name} exchange blew up`,
+      });
+      clear('ex1');
+    });
+
+    it('idle timeout closes the proxy', async () => {
+      const { port } = await fireIdleTimeout(start, timeoutMs);
+      await expect(fetch(`http://127.0.0.1:${port}${callbackPath}`)).rejects.toThrow();
+    });
+  }
+);
+
+describe('Devin proxy edges', () => {
+  it('getStatus returns null on a state mismatch', () => {
+    registerDevinSession({ state: 'd-right', codeVerifier: 'v' });
+    expect(getDevinSessionStatus('d-wrong')).toBeNull();
+    clearDevinSession('d-right');
+  });
+
+  it('resolves the fixed-port callbackUrl when already running', async () => {
+    const first = await startDevinProxy();
+    const second = await startDevinProxy();
+    expect(second.success).toBe(true);
+    expect(second.callbackUrl).toBe(
+      `http://127.0.0.1:${DEVIN_CONFIG.callbackPort}${DEVIN_CONFIG.callbackPath}`
+    );
+    expect(second.port).toBe(first.port);
+  });
+
+  it('404s an unknown path and reports no active session as text', async () => {
+    const { port } = await startDevinProxy();
+    expect((await getClose(port, '/nope')).status).toBe(404);
+    const { status, body } = await getClose(port, DEVIN_CONFIG.callbackPath);
+    expect(status).toBe(200);
+    expect(body).toMatch(/No active Devin login session/);
+  });
+
+  it('rejects a cross-origin callback with 403', async () => {
+    registerDevinSession({ state: 'd1', codeVerifier: 'v' });
+    const { port } = await startDevinProxy();
+    const { status, body } = await getClose(port, `${DEVIN_CONFIG.callbackPath}?state=d1`, {
+      Origin: 'https://evil.example',
+    });
+    expect(status).toBe(403);
+    expect(body).toMatch(/Cross-origin/);
+  });
+
+  it('reports the fixed port as busy when already bound elsewhere', async () => {
+    const blocker = await startLocalServer(() => {}, DEVIN_CONFIG.callbackPort);
+    const res = await startDevinProxy();
+    expect(res.success).toBe(false);
+    expect(res.reason).toContain(String(DEVIN_CONFIG.callbackPort));
+    blocker.close();
+  });
+
+  it('idle timeout closes the proxy', async () => {
+    const { port } = await fireIdleTimeout(() => startDevinProxy(), DEVIN_CONFIG.oauthTimeoutMs);
+    await expect(fetch(`http://127.0.0.1:${port}${DEVIN_CONFIG.callbackPath}`)).rejects.toThrow();
+  });
+});
+
+describe('Zed proxy edges', () => {
+  it('getStatus returns null on a state mismatch', () => {
+    registerZedSession({ state: 'z-right', codeVerifier: 'k' });
+    expect(getZedSessionStatus('z-wrong')).toBeNull();
+    clearZedSession('z-right');
+  });
+
+  it('resolves the same callbackUrl when already running', async () => {
+    const first = await startZedProxy(0);
+    const second = await startZedProxy(0);
+    expect(second).toEqual(first);
+  });
+
+  it('404s an unknown path, reports no session, and rejects cross-origin', async () => {
+    const { port } = await startZedProxy(0);
+    expect((await getClose(port, '/nope')).status).toBe(404);
+    const noSession = await getClose(port, '/?state=x');
+    expect(noSession.body).toMatch(/No active Zed login session/);
+    registerZedSession({ state: 'z1', codeVerifier: 'k' });
+    const cross = await getClose(port, '/?state=z1', { Origin: 'https://evil.example' });
+    expect(cross.status).toBe(403);
+    expect(cross.body).toMatch(/Cross-origin/);
+  });
+
+  it('renders failure and records the error when the exchange rejects', async () => {
+    registerZedSession({ state: 'z2', codeVerifier: 'k' });
+    exchangeTokens.mockRejectedValue(new Error('zed decrypt failed'));
+    const { port } = await startZedProxy(0);
+    const { status, body } = await getClose(port, '/?state=z2&access_token=enc');
+    expect(status).toBe(200);
+    expect(body).toMatch(/Authentication Failed/);
+    expect(getZedSessionStatus('z2')).toMatchObject({
+      status: 'error',
+      error: 'zed decrypt failed',
+    });
+  });
+
+  it('fails outright on a non-EADDRINUSE listen error (privileged port)', async () => {
+    const res = await startZedProxy(80);
+    expect(res.success).toBe(false);
+    expect(res.reason).toMatch(/EACCES|EPERM|listen/);
+  });
+
+  it('idle timeout closes the proxy on the normal listen path', async () => {
+    const { port } = await fireIdleTimeout(
+      () => startZedProxy(0),
+      ZED_HOSTED_CONFIG.oauthTimeoutMs
+    );
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
+  });
+
+  it('idle timeout closes the proxy on the EADDRINUSE fallback path too', async () => {
+    const blocker = await startLocalServer(() => {}, 42017);
+    const { port } = await fireIdleTimeout(
+      () => startZedProxy(42017),
+      ZED_HOSTED_CONFIG.oauthTimeoutMs
+    );
+    expect(port).not.toBe(42017);
+    await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
+    blocker.close();
   });
 });
