@@ -98,9 +98,12 @@ export async function handleImageGenerationCore({
       if (error?.name === "AbortError") {
         return createErrorResult(499, "Request aborted");
       }
-      const errMsg = formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
+      const rejected = error?.failureMetadata?.safeToReplay === true
+        && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599;
+      const status = rejected ? error.status : HTTP_STATUS.BAD_GATEWAY;
+      const errMsg = formatProviderError(error, status);
       log?.debug?.("IMAGE", `Executor error: ${errMsg}`);
-      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+      return createErrorResult(status, errMsg, null, { safeToReplay: rejected });
     }
   }
 

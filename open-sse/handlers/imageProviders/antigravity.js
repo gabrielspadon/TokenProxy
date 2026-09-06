@@ -68,7 +68,10 @@ export default {
 
     if (!result.response.ok) {
       const text = await result.response.text();
-      throw new Error(text || `HTTP ${result.response.status}`);
+      const error = new Error(text || `HTTP ${result.response.status}`);
+      error.status = result.response.status;
+      error.failureMetadata = { safeToReplay: true };
+      throw error;
     }
 
     return result.response.json();

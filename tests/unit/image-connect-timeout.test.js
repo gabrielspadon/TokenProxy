@@ -106,7 +106,7 @@ describe("image connect timeout propagation", () => {
       "antigravity/gemini-3.1-flash-image-b",
     ]);
     mocks.execute
-      .mockRejectedValueOnce(new ConnectTimeoutError(8000))
+      .mockResolvedValueOnce({ response: Response.json({ error: { message: 'Explicit upstream rejection' } }, { status: 503 }) })
       .mockResolvedValueOnce(imageSuccess("c2Vjb25k"));
 
     const pending = handleImageGeneration(request("image-combo"));
@@ -146,18 +146,26 @@ describe("image connect timeout propagation", () => {
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
   });
 
-  it("maps a typed timeout to 502 and enters the existing account fallback path", async () => {
+  it("maps an uncertain response-header timeout to 502 without replay or account rotation", async () => {
     mocks.execute.mockRejectedValue(new ConnectTimeoutError(8000));
 
     const response = await handleImageGeneration(request());
 
     expect(response.status).toBe(502);
-    expect(mocks.markAccountUnavailable).toHaveBeenCalledWith(
-      "connection-1",
-      502,
-      expect.stringContaining("Upstream response headers exceeded 8000ms"),
-      "antigravity",
-      "gemini-3.1-flash-image",
-    );
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+  });
+
+  it("stops an image combo after an uncertain response-header timeout", async () => {
+    mocks.getComboModels.mockResolvedValue([
+      'antigravity/gemini-3.1-flash-image-a',
+      'antigravity/gemini-3.1-flash-image-b',
+    ]);
+    mocks.execute.mockRejectedValueOnce(new ConnectTimeoutError(8000)).mockResolvedValue(imageSuccess());
+    const response = await handleImageGeneration(request('image-combo'));
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 });

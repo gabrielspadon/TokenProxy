@@ -857,7 +857,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     } catch (error) {
       const response = errorResponse(502, error.message || "Provider attempt failed with an uncertain outcome");
       response.headers.set("x-tokenproxy-replay-safe", "false");
-      return withComboTrackingHeaders(response, modelStr);
+      return withComboTrackingHeaders(response);
     }
   }
 

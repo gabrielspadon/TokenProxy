@@ -1101,7 +1101,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         }
         const reason = peeked.upstreamError?.reason || "provider returned an empty stream";
         lastError = reason;
-        lastStatus = peeked.upstreamError?.status || HTTP_STATUS.SERVICE_UNAVAILABLE;
+        lastStatus = peeked.upstreamError?.status || HTTP_STATUS.BAD_GATEWAY;
         log.warn("CHAT", `ACC:${credentials.connectionName} accepted generation ended without usable content`);
         decide("UP", "no-replay", { rid, why: "accepted-empty-generation" });
         await markAccountUnavailable(
