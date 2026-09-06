@@ -3,6 +3,7 @@
 .intro h3 { font-size: 14px; font-weight: 600; margin: 0; }
 .intro p, .note { color: #5e6b82; font-size: 13px; line-height: 1.5; margin: 4px 0 10px; max-width: 100ch; }
 .tableScroll { overflow-x: auto; max-width: 100%; }
+.tableScroll:focus-visible { outline: 2px solid #455bca; outline-offset: -2px; }
 .table { font-size: 13px; min-width: 600px; }
 .table caption { text-align: left; caption-side: top; color: #43536c; font-size: 13px; padding: 7px 8px; background: #f3f5f8; }
 .table th { font-size: 13px; color: #43536c; font-weight: 500; text-align: left; }

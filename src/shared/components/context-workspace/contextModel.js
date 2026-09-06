@@ -65,7 +65,7 @@ export function trendOption(trend, colors, scope) {
   const xAxis = grid.map((_, i) => ({ type: 'time', gridIndex: i,
     min: scope.start ? Date.parse(scope.start) : undefined,
     max: scope.end ? Date.parse(scope.end) : undefined,
-    axisLabel: { show: i === 2, color: '#5b6980', fontSize: 13, formatter: (value) => spansDates ? utc(value).slice(5,16) : utc(value, true) },
+    axisLabel: { show: i === 2, hideOverlap: true, color: '#5b6980', fontSize: 13, formatter: (value) => spansDates ? utc(value).slice(5,16) : utc(value, true) },
     axisLine: { lineStyle: { color: '#dde3ec' } }, axisTick: { show: false },
     splitLine: { show: true, lineStyle: { color: '#eef1f6' } },
   }));
