@@ -56,13 +56,31 @@ export async function getSessionPinAction(id) {
   if (!action) throw new PinControlError('action_not_found', 404);
   return publicAction(action);
 }
-export async function listSessionPins({ limit = 25, before } = {}, { now } = {}) {
+const exactFilter = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max;
+const canonicalIso = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+export async function listSessionPins({ limit = 25, before, provider, connectionId, model, lastSeenFrom, lastSeenTo } = {}, { now } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new PinControlError('invalid_limit');
+  if (provider !== undefined && !exactFilter(provider, 64)) throw new PinControlError('invalid_filter');
+  if (connectionId !== undefined && !exactFilter(connectionId, 128)) throw new PinControlError('invalid_filter');
+  if (model !== undefined && !exactFilter(model, 512)) throw new PinControlError('invalid_filter');
+  if (lastSeenFrom !== undefined && !canonicalIso(lastSeenFrom)) throw new PinControlError('invalid_filter');
+  if (lastSeenTo !== undefined && !canonicalIso(lastSeenTo)) throw new PinControlError('invalid_filter');
   const cursor = before ? decodePinId(before) : null, db = await getAdapter();
+  // Scope filters narrow the set BEFORE the cursor pages it, so a cursor pages
+  // within the same filtered set. The range filters read recorded lastSeenAt.
+  const where = [
+    ...(provider !== undefined ? ['c.provider = ?'] : []),
+    ...(connectionId !== undefined ? ['p.connectionId = ?'] : []),
+    ...(model !== undefined ? ['p.model = ?'] : []),
+    ...(lastSeenFrom !== undefined ? ['p.lastSeenAt >= ?'] : []),
+    ...(lastSeenTo !== undefined ? ['p.lastSeenAt <= ?'] : []),
+    ...(cursor ? ['(p.sessionHash > ? OR (p.sessionHash = ? AND p.model > ?))'] : []),
+  ];
+  const filterParams = [provider, connectionId, model, lastSeenFrom, lastSeenTo].filter(v => v !== undefined);
   // Primary-key pagination is independent of sliding lastSeenAt and expiry.
   const rows = db.all(`SELECT p.*, c.provider FROM sessionAffinity p LEFT JOIN providerConnections c ON c.id=p.connectionId
-    ${cursor ? 'WHERE (p.sessionHash > ? OR (p.sessionHash = ? AND p.model > ?))' : ''}
-    ORDER BY p.sessionHash, p.model LIMIT ?`, [...(cursor ? [cursor.sessionHash, cursor.sessionHash, cursor.model] : []), limit + 1]);
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+    ORDER BY p.sessionHash, p.model LIMIT ?`, [...filterParams, ...(cursor ? [cursor.sessionHash, cursor.sessionHash, cursor.model] : []), limit + 1]);
   const observedAt = iso(now);
   const pins = rows.slice(0, limit).map(row => {
     const session = db.get("SELECT id, identitySource FROM contextSessions WHERE sessionHash=? AND identitySource IN ('explicit','inferred','routing')", [row.sessionHash]);

@@ -28,13 +28,15 @@ async function handle(request, context) {
   const denied = await requireAdmin(request); if (denied) return denied;
   try {
     const path = (await context?.params)?.path || [], query = new URL(request.url).searchParams;
-    if ([...query.keys()].some(k => !['limit', 'before'].includes(k) || query.getAll(k).length !== 1)
+    const listFilters = ['provider', 'connectionId', 'model', 'lastSeenFrom', 'lastSeenTo'];
+    if ([...query.keys()].some(k => !['limit', 'before', ...listFilters].includes(k) || query.getAll(k).length !== 1)
       || ((path.length || request.method !== 'GET') && [...query.keys()].length)) throw new PinControlError('invalid_query');
     if (!path.length && request.method === 'GET') {
       if (query.has('before') && !query.get('before')) throw new PinControlError('invalid_cursor');
       if (query.has('limit') && !/^[1-9]\d?$/.test(query.get('limit'))) throw new PinControlError('invalid_limit');
       return adminJson(await listSessionPins({ ...(query.has('limit') ? { limit: Number(query.get('limit')) } : {}),
-        ...(query.has('before') ? { before: query.get('before') } : {}) }));
+        ...(query.has('before') ? { before: query.get('before') } : {}),
+        ...Object.fromEntries(listFilters.filter(k => query.has(k)).map(k => [k, query.get(k)])) }));
     }
     if (path.length === 2 && path[0] === 'actions' && request.method === 'GET') return adminJson(await getSessionPinAction(path[1]));
     if (path.length === 1 && path[0] === 'preview' && request.method === 'POST') return adminJson(await previewPinChange(await bodyOf(request, ['id', 'pinId', 'expectedRevision', 'action', 'targetConnectionId', 'deadline'])));

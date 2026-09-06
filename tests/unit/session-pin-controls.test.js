@@ -247,8 +247,29 @@ it.each([[false, false, true, 401], [false, true, true, 403], [true, false, fals
   expect((await request(['preview'], 'malformed private body')).status).toBe(expected);
   expect(db.get('SELECT total_changes() AS n').n).toBe(changes);
 });
-it.each(['?limit=0', '?limit=51', '?limit=1&limit=2', '?unknown=1', '?before=bad'])('bounds list query %s', async query => {
+it.each(['?limit=0', '?limit=51', '?limit=1&limit=2', '?unknown=1', '?before=bad',
+  '?provider=claude&provider=claude', '?provider=', '?connectionId=', '?model=', '?model=' + 'm'.repeat(513),
+  '?lastSeenFrom=yesterday', '?lastSeenTo=2026-09-06', '?lastSeenFrom=' + encodeURIComponent(new Date(now).toISOString()) + '&lastSeenFrom=' + encodeURIComponent(new Date(now).toISOString())])('bounds list query %s', async query => {
   expect((await request([], undefined, query)).status).toBe(400);
+});
+it('scoped filters narrow the list before pagination and keep the cursor stable', async () => {
+  await setPin('d'.repeat(64), model, b.id, { now: new Date(now + 5000) });
+  await setPin('e'.repeat(64), 'other-model', a.id, { now: new Date(now + 10000) });
+  const c = await createProviderConnection({ provider: 'openai', authType: 'api', name: 'Other provider', apiKey: 'unrelated-secret-test-only', isActive: true });
+  await setPin('f'.repeat(64), model, c.id, { now: new Date(now + 15000) });
+  expect((await request([], undefined, '?provider=claude')).body.pins.map(p => p.connectionId).sort()).toEqual([a.id, a.id, b.id].sort());
+  expect((await request([], undefined, `?connectionId=${b.id}`)).body.pins.map(p => p.connectionId)).toEqual([b.id]);
+  expect((await request([], undefined, '?model=other-model')).body.pins.map(p => p.model)).toEqual(['other-model']);
+  const fromTo = `?lastSeenFrom=${encodeURIComponent(new Date(now + 5000).toISOString())}&lastSeenTo=${encodeURIComponent(new Date(now + 10000).toISOString())}`;
+  expect((await request([], undefined, fromTo)).body.pins.map(p => p.lastSeenAt).sort()).toEqual([new Date(now + 5000).toISOString(), new Date(now + 10000).toISOString()]);
+  const first = await request([], undefined, '?provider=claude&limit=2');
+  expect(first.body.pins).toHaveLength(2); expect(first.body.next).toBeTruthy();
+  const second = await request([], undefined, `?provider=claude&limit=2&before=${encodeURIComponent(first.body.next)}`);
+  expect(second.body.pins).toHaveLength(1);
+  expect(second.body.next).toBeNull();
+  const ids = [...first.body.pins, ...second.body.pins].map(p => p.id);
+  expect(new Set(ids).size).toBe(3);
+  expect([...first.body.pins, ...second.body.pins].every(p => p.provider === 'claude')).toBe(true);
 });
 it('bounds and sanitizes malformed mutation bodies', async () => {
   expect((await request(['preview'], 'x'.repeat(32769))).status).toBe(413);
