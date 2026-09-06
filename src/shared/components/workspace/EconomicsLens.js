@@ -12,6 +12,7 @@ import {
   formatTokens, groupFilters, groupKey, groupName, measuredTokens, qualityNotes, recordTime,
 } from './economics';
 import styles from './EconomicsLens.module.css';
+import { EconomicsTrend } from './EconomicsTimeChart';
 
 const EMPTY = [];
 const DEFAULT_SORTING = { id: 'timestamp', desc: true };
@@ -305,6 +306,7 @@ export default function EconomicsLens({
   ledgerData, ledgerLoading = false, ledgerError, selectedGroup, onGroupSelect,
   onPageChange, onInspect, accounts = EMPTY, ledgerSorting = DEFAULT_SORTING, onLedgerSortingChange,
   ledgerStatus = 'all', onLedgerStatusChange,
+  onTimeRangeChange,
 }) {
   const summary = data?.summary;
   return (
@@ -324,6 +326,7 @@ export default function EconomicsLens({
             <span>{formatCount(summary.costSamples)} cost samples / {formatCount(summary.records)} records</span>
             <span>{formatCount(summary.zeroCostRows)} zero-cost records</span></div>
           <QualityNotice row={summary} />
+          <EconomicsTrend data={data} onTimeRangeChange={onTimeRangeChange} />
           {summary.records ? <GroupBook key={groupBy} data={data} groupBy={groupBy} accounts={accounts} selectedGroup={selectedGroup}
             onGroupSelect={onGroupSelect} onInspect={onInspect} />
             : <div className={styles.empty}>No economics records match this scope. Expand the period or clear a filter.</div>}

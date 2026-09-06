@@ -3,11 +3,11 @@ const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFra
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
 
 export const TOKEN_COLUMNS = [
-  { id: 'inputTokens', samples: 'inputSamples', label: 'Input', detail: 'Cache inclusive', color: '#4d5bb5' },
-  { id: 'uncachedInputTokens', samples: 'uncachedInputSamples', label: 'Uncached', detail: 'Derived input', color: '#657391' },
-  { id: 'cacheReadTokens', samples: 'cacheReadSamples', label: 'Cache read', detail: 'Recorded tokens', color: '#168a82' },
-  { id: 'cacheWriteTokens', samples: 'cacheWriteSamples', label: 'Cache write', detail: 'Recorded tokens', color: '#b47d32' },
-  { id: 'outputTokens', samples: 'outputSamples', label: 'Output', detail: 'Recorded tokens', color: '#8a63b7' },
+  { id: 'inputTokens', samples: 'inputSamples', label: 'Input', detail: 'Cache inclusive', color: METRIC_COLORS.selected },
+  { id: 'uncachedInputTokens', samples: 'uncachedInputSamples', label: 'Uncached', detail: 'Derived input', color: METRIC_COLORS.input },
+  { id: 'cacheReadTokens', samples: 'cacheReadSamples', label: 'Cache read', detail: 'Recorded tokens', color: METRIC_COLORS.cacheRead },
+  { id: 'cacheWriteTokens', samples: 'cacheWriteSamples', label: 'Cache write', detail: 'Recorded tokens', color: METRIC_COLORS.cacheWrite },
+  { id: 'outputTokens', samples: 'outputSamples', label: 'Output', detail: 'Recorded tokens', color: METRIC_COLORS.output },
 ];
 
 export const formatCount = (value) => Number.isFinite(value) ? integer.format(value) : 'Unknown';
@@ -27,7 +27,7 @@ export function groupName(group, groupBy, accounts = []) {
   if (groupBy === 'model') return group.model || 'Unspecified model';
   if (groupBy === 'account') {
     const account = accounts.find((item) => (item.id ?? item.connectionId) === group.connectionId);
-    return account?.name || account?.label || account?.connectionName
+    return account?.displayName || account?.name || account?.label || account?.connectionName
       || (group.connectionId ? `Historical account ${String(group.connectionId).slice(0, 8)}` : 'Unassigned account');
   }
   return group.provider || 'Unspecified provider';
@@ -78,3 +78,4 @@ export function recordTime(value, full = false) {
   if (!Number.isFinite(date.getTime())) return 'Invalid timestamp';
   return full ? date.toISOString() : `${date.toISOString().slice(5, 10)} ${date.toISOString().slice(11, 19)}`;
 }
+import { METRIC_COLORS } from '../../workspace/metricColors';

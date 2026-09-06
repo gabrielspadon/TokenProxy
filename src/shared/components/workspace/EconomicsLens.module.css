@@ -39,8 +39,8 @@
 .table { table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .table th { background: #f2f5f9; color: #485a73; font-weight: 500; text-align: left; position: sticky !important; top: 0; z-index: 4 !important; border-bottom: 1px solid #cfd7e3; }
 .table th[style*="inset-inline-start"] { z-index: 5 !important; }
-.table th, .table td { padding: 11px 12px; vertical-align: middle; }
-.table td { border-bottom: 1px solid #e9edf2; background: var(--econ-surface); height: 59px; }
+.table th, .table td { padding: 5px 12px; vertical-align: middle; }
+.table td { border-bottom: 1px solid #e9edf2; background: var(--econ-surface); height: 38px; }
 .table th:first-child, .table td:first-child { padding-inline-start: 17px; }
 .table tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover td { background: #f5f7fb; }
@@ -60,7 +60,7 @@
 .identity small, .recordIdentity small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--econ-muted); font-size: 13px; margin-top: 3px; }
 .identity :global(.provider-mark) { width: 25px; height: 25px; }
 .identity :global(.provider-mark img) { width: 21px; height: 21px; }
-.quantity { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.quantity { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .rail { display: block; height: 3px; width: 100%; background: #e8edf4; }
 .rail > span { display: block; height: 3px; }
 .estimate { display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
@@ -107,6 +107,10 @@
 .costFact dd { font-size: 17px; font-weight: 500; }
 .detail .quality { margin: 15px 0; }
 .detailNote, .detailHint { font-size: 13px; color: #5a687d; line-height: 1.6; margin: 15px 0 0; }
+.trend { padding: 4px 24px 10px; border-bottom: 1px solid var(--econ-rule); }
+.trendTools { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--econ-muted); margin-bottom: 8px; }
+.trendData { overflow: auto; padding-bottom: 10px; }
+.trendData small { display: block; color: var(--econ-muted); font-size: 13px; }
 @media (max-width: 650px) {
   .heading, .provenance, .scopeTotal, .pagination, .comparison { padding-inline: 16px; }
   .bookTools, .ledger > .sectionHeader, .tableNote { padding-inline: 16px; }
