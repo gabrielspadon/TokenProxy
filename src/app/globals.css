@@ -318,3 +318,80 @@
   .panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr)); gap: 16px; align-items: start; }
   .panel-grid > .panel + .panel { margin-block-start: 0; }
 }
+
+/* ---- pass-3: hierarchy. The pass-2 surface read as a specification rather
+   than an instrument, because every element had the same weight: measures were
+   body-sized text in an undifferentiated grid, the rail was a list of words,
+   and no element on the page was allowed to be the loud one. The routing panel
+   in routing.css is now that element; these rules stop everything else from
+   competing with it while giving the numbers the weight a reading instrument
+   needs. Additive; nothing above is edited. ---- */
+@layer components {
+  /* Measures become read-at-a-glance figures. The grid gains a rule between
+     cells so the block reads as an instrument row, not floating text. */
+  .measures { gap: 0; border-block: 1px solid var(--rule); }
+  .measure {
+    padding: 14px 20px 14px 0;
+    border-inline-end: 1px solid var(--rule);
+    justify-content: start;
+  }
+  [dir="rtl"] .measure { padding: 14px 0 14px 20px; border-inline-end: 0; border-inline-start: 1px solid var(--rule); }
+  .measure:last-child { border-inline-end: 0; }
+  [dir="rtl"] .measure:last-child { border-inline-start: 0; }
+  .measure .label { font-size: var(--t-12); letter-spacing: 0.01em; }
+  .measure .value { font-size: var(--t-24); letter-spacing: -0.015em; }
+  .measure.big .value { font-size: var(--t-30); color: var(--signal-deep); }
+  .measure .value.unreported { font-size: var(--t-15); font-family: var(--sans); }
+
+  /* Section headings get a hairline so the page has visible joints instead of
+     relying on vertical space alone to separate one topic from the next. */
+  section > h2, section > .screen-head > h2 {
+    padding-block-end: 6px;
+    border-block-end: 1px solid var(--rule);
+  }
+  section > .screen-head { border-block-end: 1px solid var(--rule); padding-block-end: 6px; gap: 8px 16px; }
+  section > .screen-head > h2 { border-block-end: 0; padding-block-end: 0; }
+
+  /* The rail. A flat word list gave the product no identity at the one place
+     every screen shows. The brand sits on the signal ground, and the current
+     item is a filled chip rather than a faint tint. */
+  .rail-head .brand {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 4px 10px; border-radius: var(--radius);
+    background: var(--signal-deep); color: #ffffff;
+    letter-spacing: -0.01em;
+  }
+  .rail-head .brand::before {
+    content: ""; width: 8px; height: 8px; border-radius: 2px;
+    background: var(--wire); transform: rotate(45deg); flex: none;
+  }
+  .nav-list a[aria-current="page"] {
+    background: var(--signal-wash);
+    box-shadow: inset 2px 0 0 var(--signal-deep);
+    color: var(--signal-deep);
+  }
+  [dir="rtl"] .nav-list a[aria-current="page"] { box-shadow: inset -2px 0 0 var(--signal-deep); }
+
+  /* An empty section was costing as much vertical space as a full one, so a
+     screen with three of them read as mostly nothing. The empty state gets the
+     inset rule that marks it as a placeholder and stops claiming a full block. */
+  .empty {
+    padding: 10px 0 10px 14px;
+    border-inline-start: 2px solid var(--rule);
+    max-width: 60ch;
+  }
+  [dir="rtl"] .empty { padding: 10px 14px 10px 0; border-inline-start: 0; border-inline-end: 2px solid var(--rule); }
+  section + section { margin-block-start: 24px; }
+
+  /* The menu button is a phone control. `@layer layout` already hid it at
+     1024px, but `.button` in this later layer re-declares `display` and wins on
+     layer order, so it was showing beside the brand on a 1440 desktop. The hide
+     has to live in the same layer as the rule that revived it. */
+  @media (min-width: 1024px) { .menu-button { display: none; } }
+
+  /* The strap is the always-on instrument strip, so it reads as one. */
+  .strap { background: var(--ink); color: #b7c4cf; border-block-end-color: var(--ink); }
+  .strap .cell .fig { color: #ffffff; }
+  .strap .fresh[data-state="live"] { color: var(--wire); }
+  .strap .fresh[data-state="live"]::before { background: var(--wire); }
+}

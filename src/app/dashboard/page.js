@@ -11,6 +11,8 @@ import { Ruler } from '@/shared/components/Ruler';
 import { refusal } from '@/shared/refusal';
 import { fmtDuration, fmtNum, fmtPct, fmtRelative, fmtUnit, fmtUsd } from '@/shared/format';
 import { TONE, WORDS as STATUS } from '@/shared/status';
+import { RouteMap } from './RouteMap';
+import './routing.css';
 
 const HORIZON_MS = 6 * 3600 * 1000;
 const WORDS = {
@@ -47,13 +49,6 @@ export default function NowPage() {
   const fresh = state.data?.freshness;
   const conns = useMemo(() => detail.data?.checks?.connections || [], [detail.data]);
   const db = detail.data?.checks?.database;
-  const sessions = usage?.activeSessions || [];
-  const active = sessions.filter((s) => s.status === 'active');
-  const byProvider = useMemo(() => {
-    const out = new Map();
-    for (const s of active) out.set(s.provider, (out.get(s.provider) || 0) + 1);
-    return [...out.entries()].sort((a, b) => b[1] - a[1]);
-  }, [active]);
   const windows = useMemo(() => {
     const names = new Map(conns.map((c) => [c.connectionId, c.displayName]));
     return (quota.data?.snapshots || []).flatMap((s) =>
@@ -72,6 +67,8 @@ export default function NowPage() {
         <h1>Now</h1>
         <Freshness status={stream.status} lastDataAt={receivedAt} />
       </div>
+
+      <RouteMap usage={usage} conns={conns} stream={stream} receivedAt={receivedAt} now={now} />
 
       <section aria-labelledby="h-gateway">
         <h2 id="h-gateway">Gateway</h2>
@@ -203,52 +200,6 @@ export default function NowPage() {
           <p className="caption">
             Some measures cannot be answered from what the gateway records. Each says why.
           </p>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-sessions">
-        <h2 id="h-sessions">Sessions in flight</h2>
-        {stream.status === 'stale' ? (
-          <Notice
-            tone="warn"
-            title="The usage stream stopped."
-            next="Counts below are from the last frame received. Reconnecting in the background."
-          />
-        ) : null}
-        {!usage && stream.status !== 'stale' ? (
-          <p className="skeleton">Waiting for the first frame</p>
-        ) : null}
-        {usage && active.length === 0 ? (
-          <p className="empty">No request is in flight right now.</p>
-        ) : null}
-        {active.length ? (
-          <div className="rows">
-            <div className="row" style={{ gridTemplateColumns: '1fr auto' }}>
-              <span className="who">
-                <span className="name">Active requests</span>
-              </span>
-              <span className="value" data-i18n-skip>
-                {fmtNum(active.length)}
-              </span>
-            </div>
-            {byProvider.map(([p, n]) => (
-              <div key={p} className="row" style={{ gridTemplateColumns: '1fr auto' }}>
-                <span className="who">
-                  <span className="name" data-i18n-skip>
-                    {p}
-                  </span>
-                </span>
-                <span data-i18n-skip>{fmtNum(n)}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {usage?.errorProvider ? (
-          <Notice
-            tone="warn"
-            title="A provider is returning errors."
-            detail={usage.errorProvider}
-          />
         ) : null}
       </section>
 
