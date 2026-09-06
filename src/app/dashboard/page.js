@@ -880,9 +880,13 @@ export default function CapacityPage() {
                           key={row.original.connectionId}
                           data-selected={
                             selectedAccountId === row.original.connectionId ||
+                            undefined
+                          }
+                          data-compared={
                             comparisonIds.includes(row.original.connectionId) ||
                             undefined
                           }
+                          aria-current={selectedAccountId === row.original.connectionId ? 'true' : undefined}
                         >
                           {row.getAllCells().map((cell) => (
                             <Table.Td key={cell.id}>

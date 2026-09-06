@@ -122,11 +122,26 @@
 .accountTable th:nth-child(7) {
   width: 17%;
 }
+.accountTable tr[data-compared] td {
+  background: #f6f8fd;
+}
 .accountTable tr[data-selected] td {
   background: #edf1fe;
 }
 .accountTable tr[data-selected] td:first-child {
-  box-shadow: inset 2px 0 #5f75d6;
+  position: relative;
+}
+.accountTable tr[data-selected] td:first-child::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 4px;
+  background: #455bca;
+}
+.accountTable tr[data-selected] .accountCell {
+  color: #293d8f;
+  font-weight: 600;
 }
 .sortButton {
   font-size: 13px;
