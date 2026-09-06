@@ -264,7 +264,7 @@ function RequestLedger({ data, loading, error, selectedGroup, groupBy, accounts,
       <div className={styles.pagination}>
         <div>{formatCount(first)}–{formatCount(last)} of {formatCount(pagination?.totalItems ?? 0)} records<small>Sorting and status filters apply to the complete contributing ledger.</small></div>
         {pagination?.totalPages > 1 ? <Pagination size="sm" value={pagination.page} total={pagination.totalPages} onChange={onPageChange}
-          disabled={loading || !onPageChange} siblings={1} boundaries={1} getItemProps={(page) => ({ 'aria-label': `Request ledger page ${page}` })} /> : null}
+          disabled={loading || !onPageChange} siblings={1} boundaries={1} getControlProps={(control) => ({ 'aria-label': `${control} request ledger page` })} getItemProps={(page) => ({ 'aria-label': `Request ledger page ${page}` })} /> : null}
       </div>
     </section>
   );

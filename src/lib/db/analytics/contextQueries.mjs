@@ -124,7 +124,7 @@ export function readContextOverview(db, f = {}, retainedDays = 45) {
   return { ...common, sessions, pagination: p, projects, stages: stageSummary(db,filter), dimensions: dimensions(db,filter) };
 }
 
-function publicTurn(row) {
+export function publicTurn(row) {
   const provider = row.usageSource === "provider";
   return { id: row.id, timestamp: row.timestamp, status: row.status, logicalRequestId: row.logicalRequestId, attempt: row.attempt,
     explicitIdentity: Object.fromEntries(["clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "clientIdentitySource"].map((key) => [key, row[key] ?? null])),

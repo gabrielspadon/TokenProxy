@@ -2,7 +2,7 @@ const MAX_POINTS = 720;
 const MINUTE = 60000;
 const GROUPS = new Set(['provider', 'model', 'account']);
 const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId']);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId']);
 
 export class ActivityQueryError extends Error {}
 
@@ -45,6 +45,8 @@ export function validateActivityQuery(query) {
     if (typeof value !== 'string' || value.length > 128 || /[\u0000-\u001f]/.test(value)) throw new ActivityQueryError('Invalid attribution filter.');
     result[key] = value;
   }
+  result.recordId = query.recordId == null ? null : integer(query.recordId, null, Number.MAX_SAFE_INTEGER, 'ledger record');
+  if (result.recordId !== null && view !== 'economics') throw new ActivityQueryError('recordId is a completion-ledger identity.');
   result.sessionId = query.sessionId == null ? null : integer(query.sessionId, null, Number.MAX_SAFE_INTEGER, 'session');
   result.page = integer(query.page, 1, 100000, 'page');
   result.pageSize = integer(query.pageSize, 50, 100, 'page size');
@@ -58,6 +60,7 @@ export function validateActivityQuery(query) {
 
 function filterFor(query, columns) {
   const clauses = [], params = [];
+  if (query.recordId != null) { clauses.push('id=?'); params.push(query.recordId); }
   for (const column of ['provider', 'model', 'connectionId']) {
     if (query[column] !== null) { clauses.push(`${column}=?`); params.push(query[column]); }
   }
@@ -203,18 +206,7 @@ export function readActivityAnalytics(db, input) {
   const columns = groupColumns(query.groupBy);
   const groups = db.all(`${base.sql} SELECT ${columns.join(',')},${TOTALS} FROM records
     GROUP BY ${columns.join(',')} ORDER BY records DESC,${columns.join(',')} LIMIT 101`, base.params);
-  const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},prompt AS inputTokens,
-    uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
-    recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
-    FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC LIMIT ? OFFSET ?`,
-    [...base.params,query.pageSize,(query.page-1)*query.pageSize]);
-  const snapshotIds = [...new Set(rows.map((row) => row.rateSnapshotId).filter(Boolean))];
-  const snapshots = snapshotIds.length ? db.all(`SELECT * FROM usageRateSnapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds) : [];
-  const snapshotMap = new Map(snapshots.map((r) => [r.id, { ...r, rates: parseObject(r.rates) }]));
-  for (const row of rows) {
-    row.costEvidence = parseObject(row.costEvidence);
-    row.rateSnapshot = snapshotMap.get(row.rateSnapshotId) || null;
-  }
+  const rows = readActivityItems(db,query,base,query.pageSize,(query.page-1)*query.pageSize);
   return {
     source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query,
     summary, series: series(db,base,query,summary), groups: groups.slice(0,100).map(enrich), groupsTruncated: groups.length > 100,
@@ -236,4 +228,28 @@ export function readActivityAnalytics(db, input) {
       range: 'Start inclusive and end exclusive. Series buckets aggregate recorded events, not continuous utilization.',
     },
   };
+}
+
+function readActivityItems(db,query,base,limit,offset=0) {
+  const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},prompt AS inputTokens,
+    uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
+    recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
+    FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC LIMIT ? OFFSET ?`,
+    [...base.params,limit,offset]);
+  const snapshotIds = [...new Set(rows.map((row) => row.rateSnapshotId).filter(Boolean))];
+  const snapshots = snapshotIds.length ? db.all(`SELECT * FROM usageRateSnapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds) : [];
+  const snapshotMap = new Map(snapshots.map((r) => [r.id, { ...r, rates: parseObject(r.rates) }]));
+  for (const row of rows) {
+    row.costEvidence = parseObject(row.costEvidence);
+    row.rateSnapshot = snapshotMap.get(row.rateSnapshotId) || null;
+  }
+  return rows;
+}
+
+export function readActivityEvidence(db,input,maxRecords=5000) {
+  const query = validateActivityQuery(input);
+  const base = baseQuery(db,query);
+  const coverage = enrich(db.get(`${base.sql} SELECT ${TOTALS} FROM records`,base.params));
+  if (coverage.records > maxRecords) return { exceeded: true, totalRecords: coverage.records, coverage };
+  return { source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query, coverage, totalRecords: coverage.records, items: readActivityItems(db,query,base,maxRecords) };
 }

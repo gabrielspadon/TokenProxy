@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import { readFile,mkdir,writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { chromium } from 'playwright';
+import AxeBuilder from '@axe-core/playwright';
+const base=process.env.E2E_BASE||'http://127.0.0.1:20310';
+assert.equal(new URL(base).hostname,'127.0.0.1');assert(process.env.TOKENPROXY_PRIVATE_PREVIEW&&process.env.EVIDENCE_DIR);
+const auth=JSON.parse(await readFile(path.join(process.env.TOKENPROXY_PRIVATE_PREVIEW,'preview-auth.json'))),output=process.env.EVIDENCE_DIR;
+await mkdir(output,{recursive:true});const browser=await chromium.launch(),context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,reducedMotion:'reduce'}),page=await context.newPage();
+const report={fixture:'private sanitized historical copy',checks:[],errors:[]};page.on('pageerror',error=>report.errors.push(error.message));
+const savedName=`Snapshot investigation ${Date.now()}`;
+const modal=page.getByRole('dialog',{name:'Saved investigations',exact:true});
+async function openSaved(){await page.getByRole('button',{name:'Saved investigations',exact:true}).click();await modal.waitFor();}
+async function provider(name){await page.getByRole('combobox',{name:'Provider filter',exact:true}).click();await page.getByRole('option',{name,exact:true}).click();}
+try{
+  const login=await page.request.post(`${base}/api/auth/login`,{data:{password:auth.initialPassword}});assert.equal(login.status(),200);assert.equal(login.headers()['x-tokenproxy-preview'],'historical-snapshot');
+  for(const [method,url] of [['post','/v1/chat/completions'],['put','/api/settings'],['post','/api/admin/investigations/invalid-child']])assert.equal((await page.request[method](`${base}${url}`,{data:{}})).status(),403);
+  await page.goto(`${base}/dashboard`);const book=page.getByRole('table',{name:'Configured account capacity'});await book.waitFor();
+  await provider('Codex');await page.waitForFunction(()=>document.querySelector('table[aria-label="Configured account capacity"] tbody')?.rows.length===2);
+  await book.getByRole('checkbox').nth(0).check();await book.getByRole('checkbox').nth(1).check();
+  await book.locator('tbody tr').first().getByRole('button').first().click();
+  const selection=page.getByLabel('Retained evidence selection');await selection.getByText(/account ·/).waitFor();
+  await page.screenshot({path:path.join(output,'capacity-selected-1440.png'),fullPage:true});
+  await openSaved();await modal.getByRole('textbox',{name:'Name',exact:true}).fill(savedName);
+  const creating=page.waitForResponse(response=>response.url().endsWith('/api/admin/investigations')&&response.request().method()==='POST');
+  await modal.getByRole('button',{name:'Save new entry',exact:true}).click();const createdResponse=await creating;assert.equal(createdResponse.status(),200);const entry=await createdResponse.json();
+  assert.equal(entry.definition.comparisonIds.length,2);assert.equal(entry.definition.scope.provider,'codex');assert.equal(entry.definition.selection.kind,'account');
+  await modal.getByText(/saved as version 1/).waitFor();await page.screenshot({path:path.join(output,'saved-modal-1440.png'),fullPage:true});
+  await page.reload();await book.waitFor();await openSaved();await modal.getByRole('button',{name:`Restore ${savedName}`,exact:true}).click();
+  await selection.getByText(`account · ${entry.definition.selection.id}`,{exact:true}).waitFor();assert.equal(await page.getByRole('combobox',{name:'Provider filter',exact:true}).inputValue(),'Codex');
+  assert.equal(await book.getByRole('checkbox',{checked:true}).count(),2);
+  report.checks.push({saveReloadRestore:true,exactAccount:entry.definition.selection.id,comparisonAccounts:2});
+  await page.getByRole('link',{name:'Economics',exact:true}).click();await page.getByRole('heading',{name:'Economics',exact:true}).waitFor();assert((await selection.textContent()).includes(entry.definition.selection.id));
+  await provider('Claude');await selection.getByText('Excluded by current scope',{exact:true}).waitFor();report.checks.push({selectionAcrossLenses:true,excludedWithoutReplacement:true});
+  const changed=await page.request.put(`${base}/api/admin/investigations/${entry.id}`,{data:{name:'Second operator view',kind:entry.kind,definition:entry.definition,version:1}});assert.equal(changed.status(),200);
+  await openSaved();const conflict=page.waitForResponse(response=>response.url().endsWith(`/investigations/${entry.id}`)&&response.request().method()==='PUT');await modal.getByRole('button',{name:'Update version 1',exact:true}).click();assert.equal((await conflict).status(),409);
+  await modal.getByText('Another view changed this entry',{exact:true}).waitFor();await page.screenshot({path:path.join(output,'version-conflict.png'),fullPage:true});
+  await modal.getByRole('button',{name:'Reload saved version',exact:true}).click();await modal.getByRole('button',{name:'Update version 2',exact:true}).waitFor();
+  const countBefore=(await (await page.request.get(`${base}/api/admin/investigations`)).json()).items.length;
+  await page.route('**/api/admin/investigations',async route=>route.request().method()==='POST'?route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Synthetic offline persistence fixture',code:'state_unavailable'})}):route.continue());
+  await modal.getByRole('button',{name:'Save new entry',exact:true}).click();await modal.getByText('Synthetic offline persistence fixture',{exact:true}).waitFor();
+  assert.equal((await (await page.request.get(`${base}/api/admin/investigations`)).json()).items.length,countBefore);await page.unroute('**/api/admin/investigations');report.checks.push({optimisticConflict:true,failedSavePreservesStoredCount:true});
+  await page.getByRole('button',{name:'Close saved investigations',exact:true}).click();
+  await page.getByRole('button',{name:'Export evidence',exact:true}).click();const exportModal=page.getByRole('dialog',{name:'Export recorded evidence',exact:true});
+  const downloaded=page.waitForEvent('download');await exportModal.getByRole('button',{name:'Download JSON evidence',exact:true}).click();const download=await downloaded;
+  const payload=JSON.parse(await readFile(await download.path(),'utf8'));assert.equal(payload.manifest.returnedRecords,1);assert.equal(payload.items[0].id,entry.definition.selection.id);assert.equal(payload.manifest.mode,'selected');assert.equal(payload.manifest.complete,true);assert(payload.freshness.snapshotStartedAt);assert(!JSON.stringify(payload).includes(auth.initialPassword));
+  await writeFile(path.join(output,'selected-evidence.json'),JSON.stringify(payload,null,2));await page.screenshot({path:path.join(output,'export-complete.png'),fullPage:true});report.checks.push({downloadedExactSelection:true,completeManifest:true,source:payload.manifest.source});
+  await page.getByRole('button',{name:'Close evidence export',exact:true}).click();
+  const refused=await page.request.post(`${base}/api/admin/investigations/export`,{data:{mode:'population',definition:{...entry.definition,lens:'economics',selection:null,scope:{period:'all',start:null,end:null,provider:null,model:null,connectionId:null}}}});assert.equal(refused.status(),413);assert.equal((await refused.json()).totalRecords,76015);report.checks.push({oversizedPopulationRefused:true,completePopulation:76015});
+  await page.setViewportSize({width:1920,height:1080});await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:path.join(output,'retained-selection-1920.png'),fullPage:true});
+  const violations=(await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations;report.accessibility=violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}));assert.deepEqual(report.accessibility,[]);
+  await page.setViewportSize({width:390,height:844});await openSaved();await page.screenshot({path:path.join(output,'saved-mobile.png'),fullPage:true});
+  report.mobileOverflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(report.mobileOverflow,false);assert.equal(await modal.evaluate(node=>node.getBoundingClientRect().right<=innerWidth),true);
+  report.mobileAccessibility=(await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)}));assert.deepEqual(report.mobileAccessibility,[]);assert.deepEqual(report.errors,[]);
+}catch(error){report.failure=error.message;await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});throw error;}
+finally{await writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));await browser.close();}

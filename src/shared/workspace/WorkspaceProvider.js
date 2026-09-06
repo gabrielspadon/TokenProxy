@@ -1,17 +1,13 @@
 'use client';
 import { createContext, useCallback, useContext, useState } from 'react';
 import { useResource } from './useResource';
+import { INITIAL_SCOPE, validateDefinition, validateSelection } from '@/lib/db/analytics/investigationModel.mjs';
+export { INITIAL_SCOPE } from '@/lib/db/analytics/investigationModel.mjs';
 
 const WorkspaceContext = createContext(null);
 const EMPTY = [];
-export const INITIAL_SCOPE = {
-  period: 'all',
-  start: null,
-  end: null,
-  provider: null,
-  model: null,
-  connectionId: null,
-};
+const INITIAL_CONTEXT = { sessionId: null, page: 1, projectLabel: null, clientTool: null };
+const INITIAL_ECONOMICS = { groupBy:'provider', status:'all', sortBy:'timestamp', sortDirection:'desc', cohort:null };
 export function analyticsUrl(scope, view = 'activity', extra = {}) {
   const query = new URLSearchParams({ view, groupBy: 'account', pageSize: '50', ...extra });
   for (const key of ['start', 'end', 'provider', 'model', 'connectionId'])
@@ -21,8 +17,14 @@ export function analyticsUrl(scope, view = 'activity', extra = {}) {
 export function WorkspaceProvider({ children }) {
   const [scope, setScopeValue] = useState(INITIAL_SCOPE);
   const [snapshot, setSnapshot] = useState(null);
-  const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [selectedRecord, setSelectedRecordValue] = useState(null);
   const [comparisonIds, setComparisonIds] = useState([]);
+  const [contextView,setContextValue] = useState(INITIAL_CONTEXT);
+  const [economicsView,setEconomicsValue] = useState(INITIAL_ECONOMICS);
+  const [savedEntry,setSavedEntry] = useState(null);
+  const setSelectedRecord = useCallback((value) => setSelectedRecordValue(validateSelection(value)),[]);
+  const setContextView = useCallback((patch) => setContextValue((previous)=>({...previous,...patch})),[]);
+  const setEconomicsView = useCallback((patch) => setEconomicsValue((previous)=>({...previous,...patch})),[]);
   const observeSnapshot = useCallback(
     (next) =>
       setSnapshot((previous) =>
@@ -39,7 +41,12 @@ export function WorkspaceProvider({ children }) {
   const models = useResource('/api/admin/models', { onSnapshot: observeSnapshot });
   const activity = useResource(analyticsUrl(scope), { onSnapshot: observeSnapshot });
   const accounts = health.data?.checks?.connections || EMPTY;
-  const setScope = useCallback((patch) => setScopeValue((old) => ({ ...old, ...patch })), []);
+  const selectedAccountId = selectedRecord?.kind === 'account' ? selectedRecord.id : null;
+  const setSelectedAccountId = useCallback((id,windowScope=null) => {
+    const account = accounts.find((row)=>row.connectionId===id);
+    setSelectedRecord(id ? {kind:'account',id,connectionId:id,...(account?.provider ? {provider:account.provider} : {}),...(windowScope ? {windowScope} : {})} : null);
+  },[accounts,setSelectedRecord]);
+  const setScope = useCallback((patch) => {setScopeValue((old) => ({ ...old, ...patch }));setContextValue((old)=>({...old,page:1}));}, []);
   const refresh = () => {
     health.refresh();
     quota.refresh();
@@ -61,6 +68,24 @@ export function WorkspaceProvider({ children }) {
     setComparisonIds,
     refresh,
     observeSnapshot,
+    selectedRecord,
+    setSelectedRecord,
+    contextView,
+    setContextView,
+    economicsView,
+    setEconomicsView,
+    savedEntry,
+    setSavedEntry,
+    captureDefinition: (lens) => validateDefinition({schemaVersion:1,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
+    restoreInvestigation: (entry) => {
+      const definition = validateDefinition(entry.definition);
+      setScopeValue(definition.scope);
+      if (entry.kind !== 'filter-set') {
+        setSelectedRecordValue(definition.selection); setComparisonIds(definition.comparisonIds);
+        setContextValue(definition.context); setEconomicsValue(definition.economics);
+      }
+      setSavedEntry(entry);
+    },
   };
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

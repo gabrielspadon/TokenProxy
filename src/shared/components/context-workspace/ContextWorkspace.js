@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Alert, Badge, Button, Group, Loader, Select, TextInput, UnstyledButton } from '@mantine/core';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
@@ -62,32 +62,33 @@ function NoContext({ data, snapshot }) {
 }
 export function ContextWorkspace() {
   const workspace = useWorkspace();
-  const [sessionId, setSessionId] = useState(null);
-  const [turnId, setTurnId] = useState(null);
-  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace}
-    sessionId={sessionId} setSessionId={setSessionId} turnId={turnId} setTurnId={setTurnId} />;
+  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace} />;
 }
-function ContextScope({ workspace, sessionId, setSessionId, turnId, setTurnId }) {
-  const { scope, setScope, accounts, snapshot, observeSnapshot } = workspace;
+function ContextScope({ workspace }) {
+  const { scope, setScope, accounts, snapshot, observeSnapshot, contextView, setContextView, selectedRecord, setSelectedRecord } = workspace;
   const [page, setPage] = useState(1);
-  const [turnPage, setTurnPage] = useState(1);
-  const [projectLabel, setProjectLabel] = useState(null), [clientTool, setClientTool] = useState('');
-  const [clientDraft, setClientDraft] = useState('');
+  const {sessionId, page:turnPage, projectLabel, clientTool} = contextView;
+  const turnId = selectedRecord?.kind === 'context-attempt' ? selectedRecord.id : null;
+  const setSessionId = useCallback((id) => setContextView({sessionId:id}),[setContextView]);
+  const setTurnPage = (next) => setContextView({page:next});
+  const setProjectLabel = (next) => setContextView({projectLabel:next});
+  const setClientTool = (next) => setContextView({clientTool:next || null});
+  const [clientDraft, setClientDraft] = useState(clientTool || '');
   const filters = { projectLabel, clientTool };
   const overview = useResource(contextUrl(scope, { ...filters, page }), { onSnapshot: observeSnapshot });
   const data = overview.data;
   const sessions = data?.sessions || EMPTY;
-  const firstSessionId = sessions[0]?.id;
-  useEffect(() => {
-    if (firstSessionId !== undefined) setSessionId((selected) => selected ?? firstSessionId);
-  }, [firstSessionId, setSessionId]);
-  const selectedSessionId = sessionId ?? sessions[0]?.id;
+  const selectedSessionId = sessionId;
   const detail = useResource(selectedSessionId ? contextUrl(scope, { ...filters, page: turnPage, sessionId: selectedSessionId }) : null, { onSnapshot: observeSnapshot });
   const turns = detail.data?.turns || EMPTY;
-  const selectedTurn = turns.find((turn) => turn.id === turnId);
+  const selectedTurn = turns.find((turn) => String(turn.id) === String(turnId));
+  const setTurnId = useCallback((id) => {
+    const turn=turns.find((item)=>String(item.id)===String(id));
+    setSelectedRecord(turn ? {kind:'context-attempt',id:String(turn.id),sessionId:selectedSessionId,provider:turn.provider,model:turn.model,connectionId:turn.connectionId,timestamp:turn.timestamp} : null);
+  },[turns,selectedSessionId,setSelectedRecord]);
   const session = detail.data?.session;
   const accountName = (id) => accounts.find((account) => account.connectionId === id)?.displayName || id || 'Unknown account';
-  const selectSession = (id) => { setSessionId(id); setTurnPage(1); setTurnId(null); };
+  const selectSession = (id) => { setContextView({sessionId:id,page:1}); setSelectedRecord({kind:'context-session',id:String(id),sessionId:id}); };
   const changePage = (next) => { setPage(next); };
   const filterByProject = (value) => { setProjectLabel(value); changePage(1); };
   const columns = useMemo(() => [
@@ -111,7 +112,7 @@ function ContextScope({ workspace, sessionId, setSessionId, turnId, setTurnId })
         {!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="calc(100dvh - 412px)" detail={selectedTurn && <ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={detail.data} accounts={accounts} />}>
           <div className={styles.cohortGrid}>
             <aside className={styles.sessions} aria-label="Recorded session cohort"><div className={styles.sessionList}>{sessions.map((item) => <UnstyledButton key={item.id} className={styles.sessionButton} data-selected={item.id === selectedSessionId || undefined} aria-pressed={item.id === selectedSessionId} onClick={() => selectSession(item.id)}><div className={styles.sessionName}><strong>{item.projectLabel || 'Unlabeled session'}</strong><span>#{item.id}</span></div><div className={styles.sessionClient}>{item.clientTool || 'Unknown client'}<Badge size="xs" color="gray" variant="light">{IDENTITY[item.identitySource] || 'Unknown identity'}</Badge></div><div className={styles.sessionNumbers}><span>{quantity(item.requests)} requests <small>· {quantity(item.attempts)} attempts</small></span><span>{quantity(item.providerInputTokens, true)} input</span></div><time className={styles.sessionTime} dateTime={item.lastSeenAt}>{utc(item.lastSeenAt)} UTC</time></UnstyledButton>)}</div><Pager pagination={data?.pagination} onPage={changePage} label="Sessions" /><p className={styles.identityFoot}>Identity is not a count of agents. Inferred locality may combine separate callers. Project labels are operator assigned.</p></aside>
-            <div className={styles.sessionDetail}><ReadState resource={detail}>{session && <>
+            <div className={styles.sessionDetail}>{!selectedSessionId && <p className={styles.emptyInline}>Choose a recorded session to inspect its evidence.</p>}<ReadState resource={detail}>{session && <>
               <div className={styles.sessionHeading}><div><h2>{session.projectLabel || `Session #${session.id}`}<span>{IDENTITY[session.identitySource] || 'Identity source unknown'}</span></h2><p>{IDENTITY_NOTE[session.identitySource] || 'The identity source is not recorded.'}</p></div><ProjectEditor key={session.id} session={session} refresh={detail.refresh} overviewRefresh={refreshOverview} /></div>
               <SummaryMeasures summary={detail.data.summary} />
               {detail.data.summary?.attempts === 0 && <p className={styles.emptyInline}>Selected session #{session.id} has no attempts in this scope. The session selection is preserved.</p>}
@@ -119,7 +120,7 @@ function ContextScope({ workspace, sessionId, setSessionId, turnId, setTurnId })
               <ContextTracks trend={detail.data.trend} scope={scope} onScope={focusInterval} />
               <div className={styles.ledgerHead}><h3>Attempt ledger</h3><span>Chronological · token quantities except body change</span></div>
               {turns.length ? <ContextTable rows={turns} columns={columns} selectedId={turnId} label="Session request attempts" minWidth={1000} /> : <p className={styles.emptyInline}>No attempts on this page match the selected scope.</p>}
-              <Pager pagination={detail.data.pagination} onPage={(next) => { setTurnPage(next); setTurnId(null); }} label="Attempts" />
+              <Pager pagination={detail.data.pagination} onPage={(next) => setTurnPage(next)} label="Attempts" />
               <p className={styles.footnote}>Provider input is cache-inclusive. Cache read and write are reported separately, never added to it. Incomplete means a retained pending receipt, not a confirmed active generation.</p>
             </>}</ReadState></div>
           </div>

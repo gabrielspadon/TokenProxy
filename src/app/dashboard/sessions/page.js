@@ -13,6 +13,9 @@ import { fmtNum, fmtRelative, fmtTime } from '@/shared/format';
 import { TONE, WORDS as STATUS } from '@/shared/status';
 import { Icon } from '@/shared/components/Icon';
 import './styles.css';
+import { Button } from '@mantine/core';
+import { ScopeBar } from '@/shared/workspace/ScopeBar';
+import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 
 const HORIZON_MS = 6 * 3600 * 1000;
 const PAGE = 25;
@@ -86,12 +89,11 @@ function Evidence({ id, windows, names, now }) {
 // wire and is deliberately not read here, because it is the session identity
 // and this surface never renders one.
 function Receipt({ r, names, now }) {
+  const {setSelectedRecord}=useWorkspace();
   return (
     <div className="row sessions-row">
       <div className="who">
-        <span className="name" data-i18n-skip>
-          {fmtTime(r.timestamp)}
-        </span>
+        <Button variant="subtle" size="compact-sm" onClick={()=>setSelectedRecord({kind:'routing-switch',id:r.receiptId,model:r.model,connectionId:r.newConnectionId,fromConnectionId:r.oldConnectionId,...(Number.isFinite(Date.parse(r.timestamp))?{timestamp:new Date(r.timestamp).toISOString()}:{})})} aria-label={`Select routing receipt ${r.receiptId}`}>{fmtTime(r.timestamp)}</Button>
         <span className="sub" data-i18n-skip>
           {fmtRelative(r.timestamp, now)}
         </span>
@@ -244,6 +246,7 @@ export default function SessionsPage() {
         <Freshness status={stream.status} lastDataAt={receivedAt} />
       </div>
 
+      <ScopeBar />
       <div className="measures">
         <div className="measure big">
           <span className="label">In flight</span>

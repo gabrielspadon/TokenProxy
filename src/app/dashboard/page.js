@@ -542,7 +542,8 @@ export default function CapacityPage() {
     [query, setQuery] = useState(''),
     [stateFilter, setStateFilter] = useState(null),
     [comparing, setComparing] = useState(false);
-  const [selectedScope, setSelectedScope] = useState(null);
+  const [windowSelection, setSelectedScope] = useState(null);
+  const selectedScope=workspace.selectedRecord?.windowScope || windowSelection;
   const anchor = snapshot?.capturedAt
     ? Date.parse(snapshot.capturedAt)
     : quota.data?.asOf
@@ -598,7 +599,7 @@ export default function CapacityPage() {
   );
   const select = (id, windowScope = null) => {
     setSelectedScope(windowScope);
-    setSelectedAccountId(id);
+    setSelectedAccountId(id,windowScope);
     setComparing(false);
   };
   const columns = useMemo(

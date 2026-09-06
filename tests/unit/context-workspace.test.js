@@ -8,7 +8,15 @@ import { contextFixture } from '../fixtures/context-workspace.js';
 import { bucketScope, contextUrl, quantity, signedBytes, trendOption } from '../../src/shared/components/context-workspace/contextModel.js';
 
 const state = vi.hoisted(() => ({ workspace: null, chart: null }));
-vi.mock('@/shared/workspace/WorkspaceProvider', () => ({ useWorkspace: () => state.workspace }));
+vi.mock('@/shared/workspace/WorkspaceProvider', async () => {
+  const { useState,useCallback }=await import('react');
+  return {useWorkspace:()=>{
+    const [contextView,setContext]=useState(()=>({sessionId:state.workspace.initialSessionId ?? null,page:1,projectLabel:null,clientTool:null}));
+    const [selectedRecord,setSelectedRecord]=useState(null);
+    const setContextView=useCallback((patch)=>setContext(previous=>({...previous,...patch})),[]);
+    return {...state.workspace,contextView,setContextView,selectedRecord,setSelectedRecord};
+  }};
+});
 vi.mock('@/shared/workspace/ScopeBar', () => ({ ScopeBar: () => <div aria-label="Shared scope fixture" /> }));
 vi.mock('@/shared/workspace/ActivityBand', () => ({ ActivityBand: () => <div aria-label="Shared activity fixture" /> }));
 // Canvas drawing belongs to the shared wrapper. This suite exercises data and interaction contracts.
@@ -18,7 +26,7 @@ let container, root, fixture, fetchMock, router;
 const initialScope = { period: 'all', start: null, end: null, provider: null, model: null, connectionId: null };
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 async function flush() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); }
-async function render() { await act(async () => root.render(<RouterContext.Provider value={router}><MantineProvider env="test"><ContextWorkspace /></MantineProvider></RouterContext.Provider>)); await flush(); }
+async function render() { if(state.workspace.initialSessionId===undefined)state.workspace.initialSessionId=fixture.overview.sessions?.[0]?.id ?? null; await act(async () => root.render(<RouterContext.Provider value={router}><MantineProvider env="test"><ContextWorkspace /></MantineProvider></RouterContext.Provider>)); await flush(); }
 async function click(selector) { const element = container.querySelector(selector); expect(element).not.toBeNull(); await act(async () => element.click()); await flush(); }
 function button(text) { return [...container.querySelectorAll('button')].find((item) => item.textContent === text); }
 async function clickText(text) { const element = button(text); expect(element).toBeTruthy(); await act(async () => element.click()); await flush(); }
@@ -63,6 +71,14 @@ describe('Context projection contracts', () => {
 });
 
 describe('Context workspace', () => {
+  it('leaves the identity unselected until an operator chooses a session', async () => {
+    state.workspace.initialSessionId=null;
+    await render();
+    expect(container.querySelector('[aria-label="Recorded session cohort"]')).not.toBeNull();
+    expect(container.querySelector('[aria-pressed="true"]')).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/sessions/'))).toBe(false);
+    expect(state.chart).toBeNull();
+  });
   it('renders isolated SQLite writer and read-worker projections without inventing unavailable fields', async () => {
     expect(process.env.DATA_DIR).toContain('tokenproxy-test-file-');
     const { saveRequestStats } = await import('../../src/lib/db/repos/requestStatsRepo.js');
@@ -171,12 +187,12 @@ describe('Context workspace', () => {
     expect(fetchMock.mock.calls.at(-1)[0]).toContain('/sessions/7?page=1');
     expect(container.querySelector('[aria-pressed="true"]').textContent).toContain('Synthetic research');
   });
-  it('paginates attempts on the server and closes the previous request inspector', async () => {
+  it('paginates attempts on the server without replacing a still-returned selected identity', async () => {
     fixture.detail.pagination = { ...fixture.detail.pagination, totalItems: 26, totalPages: 2, hasNext: true };
     await render(); await click('[aria-label="Inspect attempt 101"]');
     await click('[aria-label="Next attempts page"]');
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/sessions/7?page=2'))).toBe(true);
-    expect(container.querySelector('[aria-label="Selection details"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Selection details"]')?.textContent).toContain('Request #101');
   });
   it('saves an operator label with a PATCH and exposes an authorization refusal', async () => {
     await render(); await clickText('Edit project label');

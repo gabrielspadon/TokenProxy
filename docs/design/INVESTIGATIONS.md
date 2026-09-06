@@ -1,0 +1,23 @@
+# Persistent investigations contract
+
+The existing workspace gains saved investigations, named filter sets and exact-record bookmarks. All entries belong to the installation's authenticated operator scope, not private individual-user accounts. The server fixes `ownerScope` to `installation-operator`; clients cannot supply or change it.
+
+## Saved definitions
+
+`GET /api/admin/investigations` returns `{items, ownerScope, limit:200}`. Each entry contains `{id,name,kind,definition,version,ownerScope,createdAt,updatedAt}`. The installation permits at most 200 entries, so the list is complete rather than silently paginated.
+
+`POST /api/admin/investigations` accepts `{name,kind,definition}`. `PUT /api/admin/investigations/[id]` additionally requires the last observed integer `version`. `DELETE` requires `{version}`. Conflicts return 409 `version_conflict`, missing records 404, malformed bodies 400, bodies over 32 KiB 413, and unavailable persistence 503. Authentication precedes reading or writing state; mutations retain the existing verified-loopback requirement. The existing SQLite adapter transaction makes version checks atomic.
+
+Names are plain strings of at most 80 characters. Definition schema 1 permits only a lens, fixed UTC scope, typed selected identity, up to 100 distinct comparison account IDs, Context page/client/project controls and Economics cohort/grouping/status/sort controls. Unknown keys, control characters and invalid IDs/options/dates are rejected. No raw row payloads, prompts, responses, credentials or session hashes are accepted. Filter sets restore scope while retaining current selected evidence. Other entry kinds restore their exact saved selection and comparison state. Restoring never substitutes another record when the original is missing or excluded.
+
+Typed selections are `account`, `context-session`, `context-attempt`, `economics-record`, `economics-group`, or `routing-switch`. Context selections require the exact numeric session ID. Ledger selections use numeric completion `recordId`, separately from server request IDs. Group identities encode grouping and provider/model/account dimensions. Optional identity metadata supplies scope-exclusion feedback; it is not evidence of a source link.
+
+## Evidence export
+
+`POST /api/admin/investigations/export` accepts `{mode:'selected'|'population'|'comparison',definition}` and executes a named read-only operation on the existing bounded analytics worker. Every export uses one SQLite read transaction and returns `{manifest,items,freshness}`. The manifest records the authenticated installation operator scope, source, exact definition, applied time bounds, returned/total count, missing identity coverage, units, omitted fields, completeness and declared limits. When downloaded through a private preview, the browser adds the observed isolation kind and original capture timestamp, separately from worker freshness. Source links are never inferred from timestamp or token similarity.
+
+Exact selected record exports ignore shared filters deliberately; this is stated before export and in the manifest. Selected Economics cohorts retain the fixed shared time and dimension scope, and conflicting dimensions are refused. Comparison exports read only the requested accounts and disclose missing/deleted members. Complete population exports apply shared filters and relevant lens controls across all matching records, independent of the visible page. Capacity offers exact accounts/comparisons; time-filtered populations belong to Economics, Context or routing.
+
+The initial synchronous download limit is 5000 primary records and 8 MiB. A larger result returns 413 and no partial file, with a request to narrow the scope. Context stage rows remain attached to their exact request IDs. Private identities, credentials, bodies and freeform error/reason payloads are excluded. Historical pending receipts are not live work; application model-rate estimates are not subscription bills.
+
+`GET /api/analytics?view=economics&recordId=<numeric>` is the additive exact legacy-ledger lookup. Existing `requestId`, `logicalRequestId`, `sessionId` and `projectId` filters keep their established meanings. Numeric completion IDs must never be substituted for request attribution.

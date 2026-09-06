@@ -11,13 +11,16 @@ import styles from '@/shared/workspace/workspace.module.css';
 
 export default function EconomicsPage() {
   const surface = useRef(null);
-  const { scope, setScope, accounts, observeSnapshot } = useWorkspace();
-  const [groupBy, setGroupBy] = useState('provider');
-  const [selected, setSelected] = useState(null);
-  const [inspection, setInspection] = useState(null);
+  const { scope, setScope, accounts, observeSnapshot, selectedRecord, setSelectedRecord, economicsView, setEconomicsView } = useWorkspace();
+  const groupBy=economicsView.groupBy;
+  const setGroupBy=(value)=>setEconomicsView({groupBy:value,cohort:null});
+  const selected=economicsView.cohort ? {groupBy,group:economicsView.cohort} : null;
+  const setSelected=(value)=>setEconomicsView({cohort:value?.group ? groupFilters(value.group,value.groupBy) : null});
   const [pageState, setPageState] = useState({ key: null, page: 1 });
-  const [sorting, setSorting] = useState({ id: 'timestamp', desc: true });
-  const [status, setStatus] = useState('all');
+  const sorting={id:economicsView.sortBy,desc:economicsView.sortDirection==='desc'};
+  const setSorting=(value)=>setEconomicsView({sortBy:value.id,sortDirection:value.desc?'desc':'asc'});
+  const status=economicsView.status;
+  const setStatus=(value)=>setEconomicsView({status:value});
   const scopeKey = analyticsUrl(scope, 'economics', { groupBy });
   const population = useResource(scopeKey, { onSnapshot: observeSnapshot });
   const retainedGroup = selected?.groupBy === groupBy ? selected.group : null;
@@ -33,15 +36,19 @@ export default function EconomicsPage() {
   const selectedGroup = compatible
     ? currentGroup || (population.loading ? retainedGroup : null)
     : null;
-  const inspected =
-    inspection?.value?.kind === 'economics-group' && currentGroup
-      ? { ...inspection.value, group: currentGroup }
-      : inspection?.value;
-  const previousScope = Boolean(
-    inspected &&
-      inspection.key !== scopeKey &&
-      !(inspected.kind === 'economics-group' && currentGroup)
-  );
+  const exactRecord=useResource(selectedRecord?.kind==='economics-record' ? analyticsUrl({},'economics',{recordId:selectedRecord.id}) : null,{onSnapshot:observeSnapshot});
+  const inspectedGroup=selectedRecord?.kind==='economics-group' ? population.data?.groups?.find((group)=>groupKey(group,selectedRecord.groupBy)===selectedRecord.id) : null;
+  const inspected=selectedRecord?.kind==='economics-record' && exactRecord.data?.items?.[0]
+    ? {kind:'economics-record',record:exactRecord.data.items[0]}
+    : selectedRecord?.kind==='economics-group' ? {kind:'economics-group',group:inspectedGroup || selectedRecord,groupBy:selectedRecord.groupBy} : null;
+  const previousScope=Boolean(selectedRecord?.kind==='economics-group' && !inspectedGroup);
+  const setInspection=(inspection)=>{
+    const value=inspection?.value;
+    if(!value) return setSelectedRecord(null);
+    const row=value.record || value.group;
+    setSelectedRecord({kind:value.kind,id:value.record?String(row.id):groupKey(row,value.groupBy),
+      ...(value.groupBy?{groupBy:value.groupBy}:{}),provider:row.provider,model:row.model,connectionId:row.connectionId,...(Number.isFinite(Date.parse(row.timestamp))?{timestamp:new Date(row.timestamp).toISOString()}:{})});
+  };
   const ledgerScope = { ...scope, ...(groupFilters(selectedGroup, groupBy) || {}) };
   const ledgerKey = `${analyticsUrl(ledgerScope, 'economics', { groupBy })}:${sorting.id}:${sorting.desc}:${status}`;
   const page = pageState.key === ledgerKey ? pageState.page : 1;
@@ -63,14 +70,14 @@ export default function EconomicsPage() {
         ? groupName(inspected.group, inspected.groupBy, accounts)
         : 'Economics details';
   useEffect(() => {
-    if (!inspection) return;
+    if (!selectedRecord || !selectedRecord.kind.startsWith('economics-')) return;
     const label =
-      inspection.value.kind === 'economics-record' ? 'Recorded requests' : 'Economics by cohort';
+      selectedRecord.kind === 'economics-record' ? 'Recorded requests' : 'Economics by cohort';
     const region = surface.current;
     const table = region?.querySelector(`table[aria-label="${label}"]`);
     if (region && table)
       region.scrollTop += table.getBoundingClientRect().top - region.getBoundingClientRect().top;
-  }, [inspection]);
+  }, [selectedRecord]);
   return (
     <>
       <div className={styles.lensHeading}>
@@ -80,6 +87,8 @@ export default function EconomicsPage() {
         </div>
       </div>
       <ScopeBar />
+      {selectedRecord?.kind==='economics-record' && exactRecord.error && <Alert color="red" mx={26}>Selected completion evidence could not be read. {exactRecord.error}</Alert>}
+      {selectedRecord?.kind==='economics-record' && exactRecord.data?.items?.length===0 && <Alert color="gray" mx={26}>The exact selected completion record is no longer retained. Its identity remains selected; no other record was substituted.</Alert>}
       <div style={{ marginInline: 26 }}>
         <SelectionDock
           open={Boolean(inspected)}

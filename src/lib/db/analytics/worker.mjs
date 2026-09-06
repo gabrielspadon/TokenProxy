@@ -5,13 +5,15 @@ import { validateActivityQuery, readActivityAnalytics } from "./activityQueries.
 import { validateQuotaHistoryQuery, readQuotaHistory, readQuotaHistorySummary } from "./quotaHistoryQueries.mjs";
 import { validateContextEventQuery, readContextEvents } from "./contextEvents.mjs";
 import { analyticsDiagnostic } from "./diagnostics.mjs";
+import { validateEvidenceQuery, readEvidence } from "./evidenceQueries.mjs";
 
 // The message boundary accepts named projections only, never SQL or a DB path.
 parentPort?.on("message", async ({ id, query }) => {
   let db;
   let phase = "validate";
   try {
-    const validated = query?.operation === "activity" ? validateActivityQuery(query)
+    const validated = query?.operation === "evidence" ? validateEvidenceQuery(query)
+      : query?.operation === "activity" ? validateActivityQuery(query)
       : query?.operation === "events" ? validateContextEventQuery(query)
       : query?.operation?.startsWith("quota-history") ? validateQuotaHistoryQuery(query) : validateAnalyticsQuery(query);
     phase = "open";
@@ -20,7 +22,8 @@ parentPort?.on("message", async ({ id, query }) => {
     phase = "snapshot";
     db.exec("BEGIN");
     phase = "query";
-    const result = validated.operation === "quota-history" ? readQuotaHistory(db, validated)
+    const result = validated.operation === "evidence" ? readEvidence(db,validated)
+      : validated.operation === "quota-history" ? readQuotaHistory(db, validated)
       : validated.operation === "quota-history-summary" ? readQuotaHistorySummary(db)
       : validated.operation === "activity" ? readActivityAnalytics(db, validated)
       : validated.operation === "events" ? readContextEvents(db, validated.filter)

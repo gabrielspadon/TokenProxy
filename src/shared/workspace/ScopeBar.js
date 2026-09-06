@@ -6,6 +6,7 @@ import { Icon } from '@/shared/components/Icon';
 import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
 import styles from './workspace.module.css';
+import { Investigations,SelectionEvidence } from './Investigations';
 
 const PERIODS = [
   { value: 'all', label: 'All retained history' },
@@ -35,6 +36,9 @@ export function ScopeBar() {
       value: account.connectionId,
       label: account.displayName || account.provider,
     }));
+  if(scope.provider && !providers.some((item)=>item.value===scope.provider))providers.push({value:scope.provider,label:`${scope.provider} · not configured`});
+  if(scope.connectionId && !accountOptions.some((item)=>item.value===scope.connectionId))accountOptions.push({value:scope.connectionId,label:`${scope.connectionId} · not in current accounts`});
+  if(scope.model && !modelOptions.includes(scope.model))modelOptions.push(scope.model);
   const changePeriod = (period) => {
     if (period === 'custom') {
       setCustomOpen(true);
@@ -66,7 +70,7 @@ export function ScopeBar() {
     setCustomOpen(false);
   };
   return (
-    <div className={styles.scope} aria-label="Shared analysis scope">
+    <><div className={styles.scope} aria-label="Shared analysis scope">
       <Select
         className={styles.periodSelect}
         aria-label="Time range"
@@ -124,7 +128,8 @@ export function ScopeBar() {
           Clear
         </Button>
       )}
-      <span className={styles.scopeSummary}>UTC · shared across analysis</span>
+      <Investigations />
+      <span className={styles.scopeSummary}>Shared UTC scope</span>
       <Tooltip label={snapshot ? 'Re-read the isolated snapshot' : 'Refresh observations'}>
         <ActionIcon
           variant="default"
@@ -170,6 +175,6 @@ export function ScopeBar() {
           </Group>
         </Stack>
       </Modal>
-    </div>
+    </div><SelectionEvidence /></>
   );
 }
