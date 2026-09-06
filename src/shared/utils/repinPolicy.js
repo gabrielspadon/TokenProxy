@@ -129,8 +129,13 @@ function restockedSincePin(pin, cohort, targetId, nowMs) {
  *   pin: {connectionId: string, pinnedAt?: string}|null,
  *   accounts: Array<{id: string, priority?: number, windows: Array<object>}>,
  *   now: number|Date,
- *   unavailableIds?: Iterable<string>
+ *   unavailableIds?: Iterable<string>,
+ *   activeLoad?: Map<string, {pins: number, inFlight: number}>|Record<string, object>|null
  * }} input
+ *   `activeLoad` is handed straight to rankAccounts, which reads it for a
+ *   NEW pin only (headroom floor, then live pins plus open leases). With an
+ *   existing pin the ranker ignores it, so nothing below moves a session
+ *   because its account got busy.
  *   `unavailableIds` carries what quota windows cannot show — a drained
  *   account, an unhealthy connection, one that just failed for this model.
  *   Those accounts leave the cohort entirely rather than being ranked and
@@ -145,7 +150,7 @@ function restockedSincePin(pin, cohort, targetId, nowMs) {
  *   this session right now and the caller queues or fails over; it never means
  *   "silently pick something".
  */
-export function decideRepin({ pin, accounts, now, unavailableIds = [] } = {}) {
+export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoad = null } = {}) {
   const unavailable = new Set(unavailableIds);
   const cohort = (Array.isArray(accounts) ? accounts : []).filter((a) => !unavailable.has(a?.id));
   const pinnedId = pin?.connectionId ?? null;
@@ -153,7 +158,7 @@ export function decideRepin({ pin, accounts, now, unavailableIds = [] } = {}) {
   if (cohort.length === 0) return none('no-accounts');
 
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
-  const ranked = rankAccounts(cohort, { now: nowMs, previousPinId: pinnedId });
+  const ranked = rankAccounts(cohort, { now: nowMs, previousPinId: pinnedId, activeLoad });
   const winner = ranked.winner?.id ?? null;
 
   // Checked before the degraded gate below, because stickiness to an account

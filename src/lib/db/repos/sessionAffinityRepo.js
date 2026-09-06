@@ -102,6 +102,36 @@ export async function touchPin(sessionHash, model, { now = new Date() } = {}) {
   return res?.changes ?? 0;
 }
 
+// Live pins per connection for one model, the `pins` half of the scheduler's
+// activeLoad (quotaRanking.js loadOf). ONE grouped SELECT rather than a query
+// per candidate, because it runs inside selectAndReserve's transaction on
+// every fresh pin. A NULL expiresAt is a live pin here for the same reason it
+// survives the sweep below: "no TTL" means the pin ends only on exhaustion,
+// reset, drain or a model-specific failure, so it is still holding its account.
+// The statement is exported so schedulerRepos.js's synchronous facade issues
+// the identical SQL instead of a second reading of "live".
+export const ACTIVE_PINS_BY_CONNECTION_SQL =
+  `SELECT connectionId, COUNT(*) AS pins FROM sessionAffinity
+   WHERE model = ? AND (expiresAt IS NULL OR expiresAt > ?)
+   GROUP BY connectionId`;
+
+export function rowsToPinCounts(rows) {
+  const out = {};
+  for (const row of rows || []) {
+    if (typeof row?.connectionId !== 'string' || row.connectionId === '') continue;
+    const n = Number(row.pins);
+    if (Number.isFinite(n) && n > 0) out[row.connectionId] = n;
+  }
+  return out;
+}
+
+export async function countActivePins(model, { now = new Date() } = {}) {
+  if (!model) return {};
+  const nowIso = now instanceof Date ? now.toISOString() : String(now);
+  const db = await getAdapter();
+  return rowsToPinCounts(db.all(ACTIVE_PINS_BY_CONNECTION_SQL, [model, nowIso]));
+}
+
 // A NULL expiresAt is "no TTL" and must survive the sweep: those pins end only
 // on exhaustion, reset, drain or a model-specific failure. `expiresAt <= ?`
 // leaves NULL rows alone in SQL's three-valued logic, which is the behaviour

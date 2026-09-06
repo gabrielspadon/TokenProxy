@@ -31,6 +31,10 @@
 // exists to avoid.
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '@/lib/db/driver.js';
+import {
+  ACTIVE_PINS_BY_CONNECTION_SQL,
+  rowsToPinCounts,
+} from '@/lib/db/repos/sessionAffinityRepo.js';
 
 // HOW A PIN DIES. Nothing evicted sessionAffinity before this: both writers
 // wrote `expiresAt` NULL, so `sweepExpired` matched nothing and the live table
@@ -65,13 +69,14 @@ function livePin(row, nowIso) {
 }
 
 /**
- * Build the five-method surface `selectAndReserve` is documented to take.
+ * Build the six-method surface `selectAndReserve` is documented to take.
  *
  * @param {{now?: Date|number}} [options] - injected clock for the TTL check and
  *   for `lastSeenAt`, so a scheduling decision stays reproducible.
  * @returns {Promise<{transaction: Function, getPin: Function, setPin: Function,
- *   touchPin: Function, recordSwitch: Function}>} every method SYNCHRONOUS. The promise is the
- *   adapter resolution, and it is resolved before the transaction opens.
+ *   touchPin: Function, countActivePins: Function, recordSwitch: Function}>}
+ *   every method SYNCHRONOUS. The promise is the adapter resolution, and it is
+ *   resolved before the transaction opens.
  */
 export async function createSchedulerRepos({ now = Date.now() } = {}) {
   // The one await. Everything returned below is synchronous by construction.
@@ -138,6 +143,21 @@ export async function createSchedulerRepos({ now = Date.now() } = {}) {
         [seenAt, expiresAtIso, sessionHash, model]
       );
       return res?.changes ?? 0;
+    },
+
+    // Live pins per connection for `model`: connectionId -> count, zero rows
+    // absent. The `pins` half of the scheduler's activeLoad, read inside the
+    // transaction on a fresh pin only (accountScheduler.js), so two agents
+    // arriving together see each other's pin rather than both landing on the
+    // same idle account. Same SQL as sessionAffinityRepo.countActivePins.
+    countActivePins({ model, now } = {}) {
+      if (!model) return {};
+      const cutoff = now instanceof Date
+        ? now.toISOString()
+        : typeof now === 'number'
+          ? new Date(now).toISOString()
+          : typeof now === 'string' && now !== '' ? now : nowIso;
+      return rowsToPinCounts(db.all(ACTIVE_PINS_BY_CONNECTION_SQL, [model, cutoff]));
     },
 
     // Append-only, matching accountSwitchRepo.recordSwitch. The receipt arrives

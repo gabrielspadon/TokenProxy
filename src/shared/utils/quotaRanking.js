@@ -355,12 +355,58 @@ function priorityOf(account) {
   return Number.isFinite(p) ? p : Number.POSITIVE_INFINITY;
 }
 
+// HEADROOM FLOOR, new pins only. Every switch costs one full prompt-cache
+// write on the account the session lands on next, so a fresh agent must not be
+// placed on an account that is about to deplete and flap it straight back off.
+// An account is "under the floor" when ANY of its readable general windows has
+// less than this fraction of its limit left (the 5h window is the one that
+// actually flaps a Claude account, and it is rarely the binding one). Under the
+// floor is not ineligible: an existing pin keeps serving there (stickiness is
+// untouched) and it stays last-resort inventory for rotation.
+export const HEADROOM_FLOOR_FRACTION = 0.05;
+// Never below one unit, so a tiny limit still demands a real request's worth.
+export const HEADROOM_FLOOR_MIN_UNITS = 1;
+export function headroomFloorOf(limit) {
+  const l = Number(limit);
+  if (!Number.isFinite(l) || l <= 0) return HEADROOM_FLOOR_MIN_UNITS;
+  return Math.max(HEADROOM_FLOOR_MIN_UNITS, l * HEADROOM_FLOOR_FRACTION);
+}
+function hasHeadroom(orderable) {
+  return orderable.every((w) => w.effectiveRemaining >= headroomFloorOf(w.limit));
+}
+
+// ACTIVE LOAD, the spread key for a NEW pin. The reset keys below are a
+// function of quota evidence alone, so once affinity keys became per-agent
+// every fresh pin ranked the same account first and every agent landed on it:
+// one connection carried 102 of 103 requests into its upstream rate limit
+// while three connections with headroom sat idle, and because they never got
+// traffic they never gained evidence either. `activeLoad` is
+// connectionId -> {pins, inFlight}: live sessionAffinity rows for this model
+// plus open leases. It is read only when there is no previous pin. An existing
+// pin is stickiness's business (rules 4 and 5), and a settled agent must not
+// be moved off its provider-side cache because a neighbour got busy.
+function loadOf(activeLoad, id) {
+  if (!activeLoad) return 0;
+  const entry = activeLoad instanceof Map
+    ? activeLoad.get(id)
+    : Object.hasOwn(activeLoad, id) ? activeLoad[id] : undefined;
+  if (!entry || typeof entry !== 'object') return 0;
+  const pins = Number(entry.pins);
+  const inFlight = Number(entry.inFlight);
+  return (Number.isFinite(pins) && pins > 0 ? pins : 0)
+    + (Number.isFinite(inFlight) && inFlight > 0 ? inFlight : 0);
+}
+
 /**
  * Rank accounts for one provider node.
  *
  * @param {Array<{id: string, priority?: number, windows: Array<object>}>} accounts
- * @param {{now: number|Date, previousPinId?: string|null}} options
+ * @param {{now: number|Date, previousPinId?: string|null,
+ *   activeLoad?: Map<string, {pins: number, inFlight: number}>|Record<string, {pins: number, inFlight: number}>|null}} options
  *   `now` is REQUIRED and injected — this module never reads the clock.
+ *   `activeLoad` orders a NEW pin (previousPinId null) by headroom floor, then
+ *   live pins plus open leases, ahead of the evidence keys; an existing pin
+ *   ignores both and keeps the rule 4/5 comparator.
  * @returns {{
  *   ranked: Array<object>, eligible: Array<object>, ineligible: Array<object>,
  *   winner: object|null, degraded: boolean, reason: string|null
@@ -372,12 +418,25 @@ function priorityOf(account) {
  *   account is present in `ranked` either way, because a non-winning account
  *   stays failover inventory (§10) rather than being deactivated.
  */
-export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
+export function rankAccounts(accounts, { now, previousPinId = null, activeLoad = null } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
   if (!Number.isFinite(nowMs)) {
     throw new TypeError('rankAccounts requires an injected numeric or Date `now`');
   }
   const list = Array.isArray(accounts) ? accounts : [];
+  // Load spreads a NEW PLACEMENT. That is a session with no pin at all, and
+  // ALSO a pinned session whose own account has stopped being usable: rules 4
+  // and 5 keep a healthy pin where it is (decideRepin answers `keep` before it
+  // ever reads a winner), so the only thing the ordering decides for a pinned
+  // session is WHERE IT GOES ONCE IT MUST MOVE, and that is a fresh placement
+  // like any other. Leaving it out was a real hole rather than a test detail:
+  // ten agents depleting the same account would every one of them rank the
+  // same replacement first and rebuild the concentration one account over.
+  // `spreadByLoad` is resolved after `records` below, because usability is
+  // what it turns on; the comparator and the trace helpers only read it when
+  // they are called, which is after that point.
+  const hasLoad = activeLoad != null;
+  let spreadByLoad = hasLoad && previousPinId === null;
 
   // Trace helpers, built from the same records the ordering reads so the
   // printed line and the decision can never disagree. `id8` keeps a connection
@@ -386,7 +445,12 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
   const altToken = (r) => {
     const band = BAND_NAME[r.band] ?? 'unknown';
     const age = ageToken((r.windows || []).map((w) => w.observedAt), nowMs);
-    return `${id8(r.id)}:${band}${age ? `:${age}` : ''}`;
+    // Load prints only when there is some: an alt that decided a `load-spread`
+    // or `explore` always carries a nonzero one (the keys need a difference, and
+    // the winner is the lighter side), so `:l0` on every nominal line would be
+    // bytes spent to say nothing and would move the golden format capture.
+    const load = r.load > 0 ? `:l${r.load}` : '';
+    return `${id8(r.id)}:${band}${age ? `:${age}` : ''}${load}`;
   };
   // Which ordering key actually decided, named by replaying the comparator
   // against the runner-up. Reporting the key the sort USED, rather than the
@@ -398,6 +462,15 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
     // read is) are both the evidence axis, and the printed line has one name
     // for it. Minting a second enum would split a key the log format cannot
     // tell apart anyway.
+    // New pins only: the runner-up is under the headroom floor, or the winner
+    // was the lighter account. `explore` is the special case where the lighter
+    // account's evidence is WORSE than the runner-up's: it won because every
+    // better-evidenced account was already busy, which is the only way an idle
+    // account ever earns evidence.
+    if (spreadByLoad && a.headroom !== b.headroom) return 'headroom';
+    if (spreadByLoad && a.load !== b.load) {
+      return a.evidenceBand > b.evidenceBand || a.band > b.band ? 'explore' : 'load-spread';
+    }
     if (a.evidenceBand !== b.evidenceBand || a.band !== b.band) return 'evidence-band';
     if (a.bindingResetAt !== b.bindingResetAt) return 'reset-horizon';
     if (a.soonestResetAt !== b.soonestResetAt) return 'reset-horizon';
@@ -459,6 +532,8 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
         : structural.reason,
       unreadable,
       usable,
+      load: loadOf(activeLoad, account?.id),
+      headroom: hasHeadroom(orderable),
       evidenceBand: evidenceBandOf(orderable, unreadable),
       band: bandOf(orderable),
       // The subscription's main-quota deadline, and the nearest deadline of any
@@ -470,6 +545,14 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
         : Number.POSITIVE_INFINITY,
     };
   });
+
+  // A pinned account that is no longer usable makes this a fresh placement.
+  // Unknown pin id reads as absent, which is the previousPinId === null case
+  // already covered above.
+  if (hasLoad && previousPinId !== null) {
+    const pinned = records.find((r) => r.id === previousPinId);
+    spreadByLoad = pinned ? !pinned.usable : true;
+  }
 
   if (records.length === 0) {
     return {
@@ -484,6 +567,13 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
     const bp = b.id === previousPinId ? 0 : 1;
     return ap - bp || (a.priority - b.priority) || (a.index - b.index);
   };
+  // New pins only: above the headroom floor first, then the lighter account.
+  // Zero (no opinion) for an existing pin.
+  const byLoad = (a, b) => {
+    if (!spreadByLoad) return 0;
+    if (a.headroom !== b.headroom) return a.headroom ? -1 : 1;
+    return a.load - b.load;
+  };
 
   // Nothing anywhere carries a deadline, so there is no urgency to order by.
   // Previous-pin-then-priority is the §1 failure direction, and it is an
@@ -491,7 +581,7 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
   // with no readable window has nothing that could prove it depleted.
   const anyEvidence = records.some((r) => r.windows.length > 0);
   if (!anyEvidence) {
-    const ranked = [...records].sort(stickyThenDeclared);
+    const ranked = [...records].sort((a, b) => byLoad(a, b) || stickyThenDeclared(a, b));
     const eligible = ranked.filter((r) => r.usable);
     return {
       ranked,
@@ -519,6 +609,13 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
 
   // Ordering keys, in order:
   //   0. usable before depleted
+  //   0b. NEW PIN ONLY: headroom floor (every readable window above
+  //      HEADROOM_FLOOR_FRACTION of its limit) first, then active load (live
+  //      pins + open leases), lightest first. Sitting above the evidence keys
+  //      is what lets a worse-evidenced account win once every better one is
+  //      already carrying load (exploration); with a tie on both, the evidence
+  //      keys decide as before, so an idle fresh account still beats an idle
+  //      unknown one.
   //   1. evidence completeness (full read, partial read, no read)
   //   2. confidence band (rule 2: unknown never outranks fresh known evidence,
   //      but never goes offline either)
@@ -532,6 +629,8 @@ export function rankAccounts(accounts, { now, previousPinId = null } = {}) {
   //   7. original index, so the sort is total and therefore deterministic
   const ranked = [...records].sort((a, b) => {
     if (a.usable !== b.usable) return a.usable ? -1 : 1;
+    const spread = byLoad(a, b);
+    if (spread !== 0) return spread;
     if (a.evidenceBand !== b.evidenceBand) return a.evidenceBand - b.evidenceBand;
     if (a.band !== b.band) return a.band - b.band;
     if (a.bindingResetAt !== b.bindingResetAt) return a.bindingResetAt - b.bindingResetAt;

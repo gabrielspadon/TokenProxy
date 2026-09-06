@@ -14,6 +14,7 @@
  *   getPin({sessionHash, model})         -> {connectionId} | null
  *   setPin({sessionHash, model, connectionId, at})
  *   touchPin({sessionHash, model, at})   -> lastSeenAt on a reused pin
+ *   countActivePins({model, now})        -> {connectionId: livePins} for load spread
  *   recordSwitch(receipt)                -> persistence of rule 8's receipt
  * Everything else the scheduler needs is a parameter, because a scheduler that
  * reaches for state it was not handed is not reproducible from its inputs.
@@ -65,6 +66,27 @@ function earliestReset(candidates, nowMs) {
   return soonest === null ? null : new Date(soonest).toISOString();
 }
 
+// connectionId -> {pins, inFlight} for every candidate, the shape
+// rankAccounts's `activeLoad` takes. Fails open on a repos or registry that
+// cannot count: a missing method reads as zero on that axis, so the spread
+// degrades to the other axis rather than to a throw inside the transaction.
+function activeLoadFor(candidates, model, nowMs, registry, repos) {
+  const pins = typeof repos?.countActivePins === 'function'
+    ? repos.countActivePins({ model, now: nowMs }) ?? {}
+    : {};
+  const inFlightOf = typeof registry?.inFlight === 'function'
+    ? (id) => registry.inFlight(id)
+    : () => 0;
+  const load = new Map();
+  for (const { id } of candidates) {
+    load.set(id, {
+      pins: Object.hasOwn(pins, id) ? Number(pins[id]) || 0 : 0,
+      inFlight: Number(inFlightOf(id)) || 0,
+    });
+  }
+  return load;
+}
+
 /**
  * Select an account for one request and reserve a slot on it, atomically.
  *
@@ -81,7 +103,8 @@ function earliestReset(candidates, nowMs) {
  *   registry from createLeaseRegistry.
  * @param {object} input.repos - injected persistence (see module docstring).
  *   `touchPin` is optional: a caller that does not supply it loses only the
- *   liveness stamp, never the selection.
+ *   liveness stamp, never the selection. `countActivePins` is optional too: a
+ *   repos without it spreads new pins by open leases alone.
  * @returns {{connection: object, lease: object, receipt: object|null, reason: string}
  *   | {unavailable: true, retryAfter: number, reason: string}}
  */
@@ -132,7 +155,25 @@ export function selectAndReserve({
     const pin = typeof repos.getPin === 'function' ? repos.getPin({ sessionHash, model }) : null;
     const previousPinId = typeof pin?.connectionId === 'string' ? pin.connectionId : null;
 
-    const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId });
+    // Active load for every NEW PLACEMENT. The ranker orders on quota evidence,
+    // which every fresh pin reads identically, so per-agent affinity keys alone
+    // put every agent on the one best-evidenced account and drove it into its
+    // upstream rate limit while accounts with headroom idled. Live pins for
+    // this model come from the same transaction (a concurrent first pin is
+    // visible, not raced), open leases from the registry.
+    //
+    // Handed over unconditionally, because the ranker decides where it applies
+    // and the pinned case is not the same as the no-pin case: a HEALTHY pin
+    // ignores it entirely (moving a settled session would throw away the
+    // provider-side cache the pin exists to keep), while a pin whose account
+    // has gone unusable is a fresh placement and must spread, or every agent
+    // depleting together rebuilds the concentration one account over.
+    // ponytail: one grouped COUNT per request over a table bounded by live
+    // agents times models. Make it conditional on the pin's usability if that
+    // read ever shows up in a profile.
+    const activeLoad = activeLoadFor(candidates, model, nowMs, registry, repos);
+
+    const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad });
 
     // Rule 4 (keep a healthy pin) AND rule 5 (atomically return to the
     // earliest account that restored while a later one was serving) are
@@ -141,7 +182,10 @@ export function selectAndReserve({
     // own timestamp to tell a genuine reset apart from an account that was
     // merely available all along, which is what keeps rule 5 from spraying a
     // session across every account that ever edges ahead on ranking.
-    const repin = decideRepin({ pin, accounts: candidates, now: nowMs });
+    // The same activeLoad the ranker saw: the policy re-asks the ranker, and
+    // its INITIAL_PIN answer is what the slot walk below puts first, so a
+    // policy ranking without the load would undo the spread it just computed.
+    const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad });
     // The repin verdict as a trace entry, in the design's vocabulary. The
     // scheduler never prints: auth.js walks `trace` and calls decide().
     // pin-hit is NOMINAL (row 29: silent, carried to the caller for REQ sel=).
