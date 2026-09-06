@@ -400,6 +400,38 @@ export const PROVIDER_CAPABILITIES = {
       contextWindow: 1048576,
       maxOutput: 131072,
     },
+    // OpenRouter serves both of these at its own top_provider ceiling of
+    // 1048576, which the pattern and canonical tables understate as 1000000
+    // (a round number, not a measured one). The gap is not cosmetic: a client
+    // that trusts the listed window sizes its compaction threshold from it, so
+    // an understated window wastes 48576 tokens of a paid context on every
+    // long session. Verified against https://openrouter.ai/api/v1/models on
+    // 2026-09-06, where each row reads context_length 1310720 with
+    // top_provider.context_length 1048576; the routable ceiling is the
+    // provider's, so that is the figure here.
+    //
+    // A provider entry REPLACES pattern caps rather than merging over them
+    // (getStaticCapabilitiesForModel step 1), so every non-default capability
+    // the pattern would have supplied is restated. Dropping one silently
+    // reverts that capability to the floor.
+    "z-ai/glm-5.3-flash": {
+      vision: true,
+      pdf: true,
+      videoInput: true,
+      reasoning: true,
+      thinkingFormat: "zai",
+      thinkingEffortSupported: true,
+      thinkingCanDisable: false,
+      contextWindow: 1048576,
+      maxOutput: 131072,
+    },
+    "deepseek/deepseek-v4-flash-0731": {
+      reasoning: true,
+      thinkingFormat: "deepseek",
+      thinkingCanDisable: true,
+      contextWindow: 1048576,
+      maxOutput: 384000,
+    },
   },
     opencode: { "ox-alpha-free": OX_ALPHA_CAPABILITIES },
   oc: { "ox-alpha-free": OX_ALPHA_CAPABILITIES },
