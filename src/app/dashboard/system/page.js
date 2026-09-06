@@ -5,9 +5,10 @@ import './styles.css';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
+import { Icon } from '@/shared/components/Icon';
 import { Notice } from '@/shared/components/Notice';
 import { refusal } from '@/shared/refusal';
-import { fmtDuration, fmtTime, fmtUnit } from '@/shared/format';
+import { fmtDuration, fmtNum, fmtTime, fmtUnit } from '@/shared/format';
 import { TONE, WORDS } from '@/shared/status';
 
 function pollFresh(p) {
@@ -203,8 +204,46 @@ export default function SystemPage() {
         <Freshness status={pollFresh(health)} lastDataAt={health.goodAt} />
       </div>
 
+      {health.data || detail.data ? (
+        <div className="measures">
+          {health.data ? (
+            <div className="measure">
+              <span className="label">Uptime</span>
+              <span className="value" data-i18n-skip>
+                {fmtDuration(health.data.uptimeSeconds * 1000)}
+              </span>
+            </div>
+          ) : null}
+          {detail.data ? (
+            <div className="measure">
+              <span className="label">Checks</span>
+              <span className="value" data-i18n-skip>
+                {fmtNum(conns.length + 1)}
+              </span>
+            </div>
+          ) : null}
+          {rollup ? (
+            <div className="measure">
+              <span className="label">Overall</span>
+              <span className="value">{WORDS[rollup] || rollup}</span>
+            </div>
+          ) : null}
+          {db && db.latencyMs !== null && db.latencyMs !== undefined ? (
+            <div className="measure">
+              <span className="label">Database latency</span>
+              <span className="value" data-i18n-skip>
+                {fmtUnit(db.latencyMs, 'millisecond')}
+              </span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <section aria-labelledby="h-runtime">
-        <h2 id="h-runtime">Runtime</h2>
+        <h2 id="h-runtime">
+          <Icon name="i-system" />
+          Runtime
+        </h2>
         {health.error && !health.data ? <Notice {...refusal(health.status, health.error)} /> : null}
         <dl className="facts system-facts">
           <dt>Process</dt>
@@ -305,7 +344,10 @@ export default function SystemPage() {
 
       <section aria-labelledby="h-checks">
         <div className="screen-head">
-          <h2 id="h-checks">Health checks</h2>
+          <h2 id="h-checks">
+            <Icon name="i-now" />
+            Health checks
+          </h2>
           <Freshness status={pollFresh(detail)} lastDataAt={detail.goodAt} />
         </div>
         {detail.error && !detail.data ? <Notice {...refusal(detail.status, detail.error)} /> : null}
@@ -409,17 +451,20 @@ export default function SystemPage() {
         {done?.at === 'export' ? (
           <Notice tone={done.tone} title={done.title} next={done.next} />
         ) : null}
-        <div className="actions">
-          <button
-            type="button"
-            className="button"
-            onClick={() => {
-              setDone(null);
-              setOpen('export');
-            }}
-          >
-            Export a backup
-          </button>
+        <div className="panel">
+          <h3>Controls</h3>
+          <div className="verb-row">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setDone(null);
+                setOpen('export');
+              }}
+            >
+              Export a backup
+            </button>
+          </div>
         </div>
       </section>
 
@@ -437,17 +482,20 @@ export default function SystemPage() {
         {done?.at === 'import' ? (
           <Notice tone={done.tone} title={done.title} next={done.next} />
         ) : null}
-        <div className="actions">
-          <button
-            type="button"
-            className="button danger"
-            onClick={() => {
-              setDone(null);
-              setOpen('import');
-            }}
-          >
-            Import a database
-          </button>
+        <div className="panel" data-tone="danger">
+          <h3>Controls</h3>
+          <div className="verb-row">
+            <button
+              type="button"
+              className="button danger"
+              onClick={() => {
+                setDone(null);
+                setOpen('import');
+              }}
+            >
+              Import a database
+            </button>
+          </div>
         </div>
       </section>
 
@@ -471,17 +519,20 @@ export default function SystemPage() {
         {done?.at === 'update' ? (
           <Notice tone={done.tone} title={done.title} next={done.next} />
         ) : null}
-        <div className="actions">
-          <button
-            type="button"
-            className="button danger"
-            onClick={() => {
-              setDone(null);
-              setOpen('update');
-            }}
-          >
-            Update now
-          </button>
+        <div className="panel" data-tone="danger">
+          <h3>Controls</h3>
+          <div className="verb-row">
+            <button
+              type="button"
+              className="button danger"
+              onClick={() => {
+                setDone(null);
+                setOpen('update');
+              }}
+            >
+              Update now
+            </button>
+          </div>
         </div>
       </section>
 
@@ -494,22 +545,28 @@ export default function SystemPage() {
         {done?.at === 'shutdown' ? (
           <Notice tone={done.tone} title={done.title} next={done.next} />
         ) : null}
-        <div className="actions">
-          <button
-            type="button"
-            className="button danger"
-            onClick={() => {
-              setDone(null);
-              setOpen('shutdown');
-            }}
-          >
-            Shut down
-          </button>
+        <div className="panel" data-tone="danger">
+          <h3>Controls</h3>
+          <div className="verb-row">
+            <button
+              type="button"
+              className="button danger"
+              onClick={() => {
+                setDone(null);
+                setOpen('shutdown');
+              }}
+            >
+              Shut down
+            </button>
+          </div>
         </div>
       </section>
 
       <section aria-labelledby="h-gap">
-        <h2 id="h-gap">Not reported</h2>
+        <h2 id="h-gap">
+          <Icon name="i-alert" />
+          Not reported
+        </h2>
         <p>
           Two things the gateway acts on every time it routes reach no readable field, so this
           screen cannot show them.
