@@ -8,7 +8,10 @@ the existing callers.
 
 ## Runtime and dependency choice
 
-The project declares Node `>=20.9.0`. Version 3.1.1 declares Node `>=18.0.0`
+The parser comparison used the previously advertised Node `>=20.9.0` floor.
+The application now requires `>=20.18.1`, matching its existing Undici 7
+transport dependency. Parser-only qualification on 20.9.0 does not qualify that
+unsupported application runtime. Version 3.1.1 declares Node `>=18.0.0`
 and has no runtime dependencies. Version 4 requires Node `>=22.12`, so adopting
 it would narrow the project's runtime contract. The upstream release record
 shows 3.1.1 on 2026-08-10; this pin does not imply a guarantee of future

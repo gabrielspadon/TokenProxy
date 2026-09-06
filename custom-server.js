@@ -7,11 +7,10 @@ const { pathToFileURL } = require('url');
 
 const origCreate = http.createServer.bind(http);
 
-// Next 16 requires Node >=20.9.0. Below it the server still starts and then
-// answers 500 on a dashboard page with nothing naming the runtime as the cause,
-// which is how #2362 was reported. Refuse at boot instead, where the message can
-// be read. Kept in step with the engines floor in package.json and cli/package.json.
-const MIN_NODE_VERSION = '20.9.0';
+// Undici 7 requires Node >=20.18.1, above Next 16's >=20.9.0 requirement.
+// Refuse unsupported transport runtimes at boot rather than during a request.
+// Kept in step with package.json and cli/package.json.
+const MIN_NODE_VERSION = '20.18.1';
 
 function nodeBelowMinimum(current, minimum) {
   const parse = (v) => String(v).split('.').map((n) => parseInt(n, 10) || 0);
