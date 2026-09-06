@@ -31,6 +31,21 @@ export function register(from, to, requestFn, responseFn) {
   }
 }
 
+// Describes registered conversion edges without executing a translator.
+export function describeTranslationRoute(from, to, kind = "request") {
+  const registry = kind === "request" ? requestRegistry : kind === "response" ? responseRegistry : null;
+  if (!registry || !Object.values(FORMATS).includes(from) || !Object.values(FORMATS).includes(to)) {
+    return { supported: false, kind, mode: "unavailable", edges: [] };
+  }
+  if (from === to) return { supported: true, kind, mode: "passthrough", edges: [] };
+  if (registry.has(`${from}:${to}`)) return { supported: true, kind, mode: "direct", edges: [{ from, to }] };
+  const edges = [];
+  if (from !== FORMATS.OPENAI) edges.push({ from, to: FORMATS.OPENAI });
+  if (to !== FORMATS.OPENAI) edges.push({ from: FORMATS.OPENAI, to });
+  const missing = edges.filter(edge => !registry.has(`${edge.from}:${edge.to}`));
+  return { supported: missing.length === 0, kind, mode: missing.length ? "unavailable" : "pivot", edges, missing };
+}
+
 // No-op: translators self-register via the static imports at the bottom of this file.
 function ensureInitialized() {}
 
