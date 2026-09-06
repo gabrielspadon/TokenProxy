@@ -14,6 +14,9 @@ import * as detail from "@/app/api/keys/[id]/route.js";
 import { GET as devices } from "@/app/api/keys/devices/route.js";
 import { POST as reveal } from "@/app/api/keys/[id]/reveal/route.js";
 import { publicApiKey } from "@/lib/admin/publicApiKey.js";
+import { updateApiKey } from "@/lib/db/repos/apiKeysRepo.js";
+import { reserveBudget, markBudgetDispatched, markBudgetUncertain } from "@/lib/db/repos/budgetRepo.js";
+import { keyBudgetState } from "../../src/app/dashboard/keys/budget.js";
 
 let db, key;
 const request = (path = "/api/keys", method = "GET", body, headers = { "x-operator": "yes" }) => new Request(`http://localhost${path}`, {
@@ -84,4 +87,18 @@ it("reports a missing key without disclosing other credentials", async () => {
   const response = await reveal(request("/api/keys/missing/reveal", "POST"), { params: Promise.resolve({ id: "missing" }) });
   expect(response.status).toBe(404);
   expect(await response.text()).not.toContain(key.key);
+});
+
+it("refreshes exact held allowance after dispatch uncertainty without disclosing the key", async () => {
+  await updateApiKey(key.id, { maxCostUsd: 10, budgetPolicy: 'reserve-remaining' });
+  const requestId = 'c76e7779-ecfa-4050-8545-d7f8e41ef17c';
+  await reserveBudget({ apiKey: key.key, requestId, logicalRequestId: requestId, bounds: {}, dispatchCoverage: 'physical-dispatch' });
+  await markBudgetDispatched(requestId);
+  await markBudgetUncertain(requestId, 'fixture-interruption');
+  const response = await list.GET(request());
+  const body = await response.json(), row = body.keys[0];
+  expect(JSON.stringify(body)).not.toContain(key.key);
+  expect(row.budget).toMatchObject({ apiKeyId: key.id, policy: 'reserve-remaining', providerChargeConfirmed: false,
+    recorded: { costUsd: 0 }, outstanding: { requests: 1, uncertain: 1, costUsd: 10 } });
+  expect(keyBudgetState(row)).toMatchObject({ state: 'held', label: 'Allowance held' });
 });

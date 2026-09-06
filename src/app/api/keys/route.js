@@ -5,7 +5,7 @@ import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { getApiKeyDeviceCount } from "@/sse/services/apiKeyDevices.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { publicApiKey } from "@/lib/admin/publicApiKey.js";
-import { validateBudgetPolicy } from "@/lib/db/repos/budgetRepo.js";
+import { getApiKeyBudgetSummaries, validateBudgetPolicy } from "@/lib/db/repos/budgetRepo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,7 @@ export async function GET(request) {
     // ceiling is a number with nothing to compare it to (#3371). One grouped
     // query, not one per key.
     const totals = await getApiKeyUsageTotals();
+    const budgets = await getApiKeyBudgetSummaries();
     const zero = { promptTokens: 0, completionTokens: 0, costUsd: 0, requests: 0 };
     return NextResponse.json({
       // How many distinct clients are on the key right now, beside what it has
@@ -28,6 +29,7 @@ export async function GET(request) {
       keys: keys.map((k) => ({
         ...publicApiKey(k),
         usage: totals[k.key] || zero,
+        budget: budgets[k.id] ?? null,
         deviceCount: getApiKeyDeviceCount(k.key),
       })),
     }, { headers: { "Cache-Control": "no-store" } });
