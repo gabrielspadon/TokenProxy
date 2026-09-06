@@ -43,7 +43,7 @@ function systemRefusal(status, body, password = false) {
     };
   }
   const r = refusal(status, body);
-  return body?.message && !r.detail ? { ...r, detail: body.message } : r;
+  return body?.message && !body.error ? { ...r, detail: body.message } : r;
 }
 
 const BACKUP_HOLDS =
@@ -245,6 +245,14 @@ export default function SystemPage() {
           Runtime
         </h2>
         {health.error && !health.data ? <Notice {...refusal(health.status, health.error)} /> : null}
+        {version.error ? (
+          <>
+            <Notice {...systemRefusal(version.status, version.error)} />
+            <button type="button" className="button quiet" onClick={version.refresh} disabled={version.loading}>
+              Retry version read
+            </button>
+          </>
+        ) : null}
         <dl className="facts system-facts">
           <dt>Process</dt>
           <dd>
@@ -301,8 +309,10 @@ export default function SystemPage() {
               </span>
             ) : v ? (
               <Unreported why="The gateway reports no published version. The lookup either failed or updates are switched off for this install, and it reports both the same way." />
-            ) : (
+            ) : version.loading ? (
               <span className="skeleton">Reading</span>
+            ) : (
+              <span className="unreported">Not reported</span>
             )}
           </dd>
           <dt>Update</dt>
@@ -317,12 +327,14 @@ export default function SystemPage() {
               </span>
             ) : updateState === 'unknown' ? (
               <Unreported why="A failed lookup is not the same as being current, so this screen will not claim either." />
-            ) : (
+            ) : version.loading ? (
               <span className="skeleton">Reading</span>
+            ) : (
+              <span className="unreported">Not reported</span>
             )}
           </dd>
           <dt>Tray mode</dt>
-          <dd>{v ? v.isTrayMode ? 'On' : 'Off' : <span className="skeleton">Reading</span>}</dd>
+          <dd>{v ? v.isTrayMode ? 'On' : 'Off' : version.loading ? <span className="skeleton">Reading</span> : <span className="unreported">Not reported</span>}</dd>
           <dt>Restart after replacement</dt>
           <dd>
             <Unreported why="No route reports whether a supervisor is running, so whether a replacement restarts on its own or waits for a hand cannot be read from here." />

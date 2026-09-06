@@ -1,0 +1,112 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import AccessPage from '../../src/app/dashboard/access/page.js';
+import SystemPage from '../../src/app/dashboard/system/page.js';
+import { Confirm } from '../../src/shared/components/Confirm.js';
+
+let container, root, auth, probe, version, requests;
+const settings = { authMode: 'oidc', oidcIssuerUrl: 'https://identity.example', oidcClientId: 'test-client', oidcScopes: 'openid', requireLogin: true };
+const versionOk = { currentVersion: '1.0.0', latestVersion: '1.0.1', hasUpdate: true, isTrayMode: false, buildSha: null };
+const json = (body, status = 200) => Response.json(body, { status });
+async function mount(component) { await act(async () => root.render(component)); }
+async function click(text) {
+  const button = [...container.querySelectorAll('button')].find(e => e.textContent.trim() === text);
+  expect(button, `Missing button ${text}`).toBeDefined();
+  await act(async () => button.click());
+}
+function fact(label) { return [...container.querySelectorAll('.system-facts dt')].find(e => e.textContent === label)?.nextElementSibling.textContent; }
+function probeNotice() { return [...container.querySelectorAll('.notice')].at(-1); }
+
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  requests = [];
+  auth = { authenticated: true, requireLogin: true, authMode: 'oidc', ssoType: 'oidc', hasPassword: false, passwordSource: 'environment', oidcConfigured: true, samlConfigured: false, displayName: 'Test operator', loginMethod: 'Password' };
+  probe = { ok: true, discoveryOk: true, clientSecretTested: true, clientSecretValid: true, message: 'Client secret was accepted by the token endpoint.' };
+  version = () => json(versionOk);
+  vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+    requests.push({ url, method: options.method || 'GET', body: options.body });
+    if (url === '/api/auth/status') return json(auth);
+    if (url === '/api/settings') return json(settings);
+    if (url === '/api/auth/oidc/test' || url === '/api/auth/saml/test') return json(probe);
+    if (url === '/api/version') return version();
+    if (url === '/api/admin/health') return json({ uptimeSeconds: 10, generatedAt: '2026-09-06T00:00:00Z' });
+    if (url === '/api/admin/health/detail') return json({ status: 'ok', checks: { database: { driver: 'sqlite', latencyMs: 1 }, connections: [] } });
+    if (url === '/api/settings/require-login') return json({ requireLogin: true });
+    if (url === '/api/changelog') return new Response('A recorded change.');
+    throw new Error(`Unexpected offline fixture request ${url}`);
+  }));
+  container = document.createElement('div');document.body.appendChild(container);root = createRoot(container);
+});
+afterEach(() => { act(() => root.unmount());container.remove();vi.unstubAllGlobals(); });
+
+describe('Access uses the configuration check verdict and states its scope', () => {
+  it('renders HTTP 200 with ok=false as a rejection and preserves the provider reason', async () => {
+    probe = { ok: false, discoveryOk: true, clientSecretTested: true, clientSecretValid: false, error: 'Discovery loaded, but the client secret is not valid.' };
+    await mount(<AccessPage />);await click('Test without saving');
+    expect(probeNotice().dataset.tone).toBe('bad');
+    expect(probeNotice().textContent).toContain(probe.error);
+    expect(probeNotice().textContent).not.toContain('accepted this configuration');
+    expect(requests.filter(r => r.method !== 'GET')).toEqual([{ url: '/api/auth/oidc/test', method: 'POST', body: '{}' }]);
+  });
+  it.each([false, true])('does not infer acceptance when client-secret validity is unknown (tested=%s)', async tested => {
+    probe = { ok: true, discoveryOk: true, clientSecretTested: tested, clientSecretValid: null, message: 'Client secret validity was not established.' };
+    await mount(<AccessPage />);await click('Test without saving');
+    expect(probeNotice().dataset.tone).toBe('warn');
+    expect(probeNotice().textContent).toMatch(/not verified/i);
+  });
+  it('limits a positive OIDC result to discovery and the credential check, without claiming sign-in', async () => {
+    await mount(<AccessPage />);await click('Test without saving');
+    expect(probeNotice().dataset.tone).toBe('ok');
+    expect(probeNotice().textContent).toMatch(/discovery/i);
+    expect(probeNotice().textContent).toMatch(/sign-in.*not tested/i);
+  });
+  it.each([null, {}, { ok: true }, { ok: 'true', discoveryOk: true }])('does not show success for incomplete or malformed application evidence %j', async body => {
+    probe = body;await mount(<AccessPage />);await click('Test without saving');
+    expect(probeNotice().dataset.tone).not.toBe('ok');
+  });
+  it('identifies SAML success as a local format check without claiming provider acceptance', async () => {
+    auth = { ...auth, authMode: 'saml', ssoType: 'saml', samlConfigured: true };
+    probe = { ok: true, certValid: true, message: 'SAML 2.0 configuration verified successfully.' };
+    await mount(<AccessPage />);await click('Test without saving');
+    expect(probeNotice().dataset.tone).toBe('ok');
+    expect(probeNotice().textContent).toMatch(/local.*format/i);
+    expect(probeNotice().textContent).toMatch(/provider.*not contacted/i);
+    expect(container.textContent).not.toContain('A test contacts the provider');
+  });
+  it.each(['environment', null, undefined])('does not diagnose a public default password from an absent stored hash (%s)', async source => {
+    auth = { ...auth, authMode: 'password', passwordSource: source };await mount(<AccessPage />);
+    expect(container.textContent).not.toContain('This installation is still on its default password.');
+  });
+  it('still warns when the effective password source is the built-in default', async () => {
+    auth = { ...auth, passwordSource: 'default' };await mount(<AccessPage />);
+    expect(container.textContent).toContain('This installation is still on its default password.');
+  });
+});
+
+describe('System version read failures', () => {
+  it('ends all loading placeholders after HTTP 500, shows the reason, and retries only the version read', async () => {
+    version = () => json({ message: 'Version lookup unavailable in this runtime.' }, 500);await mount(<SystemPage />);
+    for (const label of ['Running version', 'Published version', 'Update', 'Tray mode']) expect(fact(label)).toContain('Not reported');
+    expect(container.textContent).toContain('Version lookup unavailable in this runtime.');
+    version = () => json(versionOk);await click('Retry version read');
+    expect(fact('Running version')).toContain('1.0.0');expect(fact('Published version')).toContain('1.0.1');expect(fact('Update')).toContain('Update available');
+    expect(requests.filter(r => r.method !== 'GET')).toEqual([]);expect(requests.filter(r => r.url === '/api/version')).toHaveLength(2);
+  });
+  it('ends loading and exposes a retry after an interrupted version read', async () => {
+    version = () => Promise.reject(new Error('connection ended'));await mount(<SystemPage />);
+    expect(fact('Published version')).not.toContain('Reading');expect(container.textContent).toContain('The gateway did not answer.');
+    expect([...container.querySelectorAll('button')].some(e => e.textContent === 'Retry version read')).toBe(true);
+  });
+});
+
+describe('Confirmation dialog identity', () => {
+  it('labels each confirmation with its own stable visible heading', async () => {
+    const render = busy => <><Confirm open={false} title="Disable account A" verb="Disable" busy={busy} /><Confirm open={false} title="Delete key B" verb="Delete" /></>;
+    await mount(render(false));const dialogs = [...container.querySelectorAll('dialog')];const labels = dialogs.map(d => d.getAttribute('aria-labelledby'));
+    expect(labels.every(Boolean)).toBe(true);expect(new Set(labels).size).toBe(2);
+    expect(labels.map(id => document.getElementById(id)?.textContent)).toEqual(['Disable account A', 'Delete key B']);
+    await mount(render(true));expect([...container.querySelectorAll('dialog')].map(d => d.getAttribute('aria-labelledby'))).toEqual(labels);
+  });
+});

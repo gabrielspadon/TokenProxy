@@ -9,7 +9,7 @@ const STATUS = {
   requireLogin: true, authMode: "password", ssoType: "oidc",
   oidcConfigured: false, oidcLoginLabel: "Sign in with OIDC",
   samlConfigured: false, samlLoginLabel: "Sign in with SAML SSO",
-  hasPassword: true, displayName: "Password user", loginMethod: "Password",
+  hasPassword: true, passwordSource: "stored", displayName: "Password user", loginMethod: "Password",
   authenticated: true, oidcName: null, oidcEmail: null, oidcLogin: false,
   samlName: null, samlEmail: null, samlLogin: false,
 };
@@ -29,8 +29,8 @@ const SETTINGS = {
 async function sealWrites(page) {
   await page.route("**/api/settings", (r) => (r.request().method() === "GET" ? r.fallback() : r.fulfill(json(200, SETTINGS))));
   await page.route("**/api/auth/reset-password", (r) => r.fulfill(json(200, { success: true })));
-  await page.route("**/api/auth/oidc/test", (r) => r.fulfill(json(200, { ok: true, message: "Discovery loaded." })));
-  await page.route("**/api/auth/saml/test", (r) => r.fulfill(json(200, { ok: true, message: "SAML 2.0 configuration verified successfully." })));
+  await page.route("**/api/auth/oidc/test", (r) => r.fulfill(json(200, { ok: true, discoveryOk: true, clientSecretTested: false, clientSecretValid: null, message: "Discovery loaded." })));
+  await page.route("**/api/auth/saml/test", (r) => r.fulfill(json(200, { ok: true, certValid: true, message: "SAML 2.0 configuration verified successfully." })));
 }
 
 test.beforeEach(async ({ page }) => {
@@ -133,7 +133,7 @@ test("the lockout rules read as facts, with the unreportable ones marked", async
 });
 
 test("a default password is called out and no password value is ever rendered", async ({ page }) => {
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, { ...STATUS, hasPassword: false })));
+  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, { ...STATUS, hasPassword: false, passwordSource: "default" })));
   await page.route("**/api/settings", (r) => (r.request().method() === "GET"
     ? r.fulfill(json(200, { ...SETTINGS, hasPassword: false }))
     : r.fulfill(json(200, SETTINGS))));

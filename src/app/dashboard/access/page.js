@@ -121,15 +121,34 @@ export default function AccessPage() {
       body: {},
     });
     setBusy(false);
-    setProbe(
-      res.ok
-        ? {
-            tone: 'ok',
-            title: 'The provider accepted this configuration.',
-            detail: res.body?.message,
-          }
-        : refusal(res.status, res.body)
-    );
+    if (!res.ok || res.body?.ok !== true) {
+      setProbe(refusal(res.status, res.body || { error: 'The check returned no configuration verdict.' }));
+    } else if (chosen === 'saml') {
+      setProbe({
+        tone: res.body.certValid === true ? 'ok' : 'warn',
+        title: res.body.certValid === true ? 'Local SAML format checks passed.' : 'The local SAML format check was not verified.',
+        next: 'The identity provider was not contacted. Sign-in was not tested.',
+        detail: res.body.message,
+      });
+    } else if (res.body.discoveryOk !== true) {
+      setProbe({ tone: 'warn', title: 'Provider discovery was not verified.', detail: res.body.message });
+    } else if (res.body.clientSecretTested === true && res.body.clientSecretValid === false) {
+      setProbe({ tone: 'bad', title: 'The provider rejected the client credentials.', detail: res.body.error || res.body.message });
+    } else if (res.body.clientSecretTested === true && res.body.clientSecretValid === true) {
+      setProbe({
+        tone: 'ok',
+        title: 'Provider discovery and the client credential check passed.',
+        next: 'Sign-in and redirect completion were not tested.',
+        detail: res.body.message,
+      });
+    } else {
+      setProbe({
+        tone: 'warn',
+        title: 'Provider discovery loaded; client credentials were not verified.',
+        next: 'Sign-in and redirect completion were not tested.',
+        detail: res.body.message,
+      });
+    }
   };
 
   const mismatch = pw.next !== '' && pw.repeat !== '' && pw.next !== pw.repeat;
@@ -183,7 +202,7 @@ export default function AccessPage() {
             </dd>
           </dl>
         ) : null}
-        {a && !a.hasPassword ? (
+        {a?.passwordSource === 'default' ? (
           <Notice
             tone="bad"
             title="This installation is still on its default password."
@@ -200,6 +219,8 @@ export default function AccessPage() {
         <dl className="facts access-facts">
           <dt>Stored password</dt>
           <dd>{a ? <Secret set={a.hasPassword} /> : <span className="skeleton">Reading</span>}</dd>
+          <dt>Password source</dt>
+          <dd>{a?.passwordSource === 'stored' ? 'Stored password' : a?.passwordSource === 'environment' ? 'Process configuration' : a?.passwordSource === 'default' ? 'Built-in default' : 'Not reported'}</dd>
         </dl>
         <p className="caption">A stored password is never readable back, here or anywhere else.</p>
         <div className="access-actions">
@@ -214,7 +235,7 @@ export default function AccessPage() {
             Change password
           </button>
           <button type="button" className="button quiet" onClick={() => setOpen('reset')}>
-            Reset to the default
+            Clear stored password
           </button>
         </div>
       </section>
@@ -395,8 +416,10 @@ export default function AccessPage() {
               />
             ) : null}
             <p className="caption">
-              A test contacts the provider and commits nothing. A stored client secret cannot be
-              cleared from here, only replaced.
+              {chosen === 'saml'
+                ? 'This checks the stored SAML format locally. It does not contact the identity provider or complete sign-in.'
+                : 'This reads provider discovery and checks stored client credentials when available. It does not complete sign-in.'}
+              {' '}Nothing is saved. A stored client secret cannot be cleared from here, only replaced.
             </p>
           </>
         ) : null}
@@ -577,12 +600,12 @@ export default function AccessPage() {
 
       <Confirm
         open={open === 'reset'}
-        title="Reset to the default"
-        verb="Reset to the default"
+        title="Clear stored password"
+        verb="Clear stored password"
         busy={busy}
         refusal={failure}
         requires="A request from the machine that runs the gateway, or the command-line token."
-        changes="The stored password is cleared. The next sign-in uses the default, and remote sign-in is refused again until a new password is set."
+        changes="The stored password is cleared. The next sign-in uses the process startup password, or the built-in default when none is configured. Remote sign-in is refused only for the built-in default."
         undo="None. The old password cannot be recovered."
         irreversible
         onClose={close}
@@ -591,7 +614,7 @@ export default function AccessPage() {
             '/api/auth/reset-password',
             {},
             'POST',
-            'Password reset to the default. Set a new one now.'
+            'Stored password cleared. Sign-in now uses the process startup password.'
           )
         }
       />

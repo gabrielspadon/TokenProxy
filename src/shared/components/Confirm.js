@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Notice } from "./Notice";
 
 // Every mutating action passes through here. It states what the action
@@ -7,6 +7,7 @@ import { Notice } from "./Notice";
 // A refusal stays in the dialog so the operator reads it where they acted.
 export function Confirm({ open, title, verb, requires, changes, undo, irreversible = false, busy = false, refusal, onConfirm, onClose, children }) {
   const ref = useRef(null);
+  const titleId = useId();
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
@@ -14,9 +15,9 @@ export function Confirm({ open, title, verb, requires, changes, undo, irreversib
     if (!open && d.open) d.close();
   }, [open]);
   return (
-    <dialog className="confirm" ref={ref} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
+    <dialog className="confirm" ref={ref} aria-labelledby={titleId} onClose={onClose} onCancel={(e) => { e.preventDefault(); onClose(); }}>
       <form method="dialog" onSubmit={(e) => { e.preventDefault(); onConfirm(); }}>
-        <h2>{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <dl className="facts">
           <dt>Requires</dt><dd>{requires}</dd>
           <dt>Changes</dt><dd>{changes}</dd>
