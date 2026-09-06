@@ -32,6 +32,23 @@ describe('Persistent operator workspaces',()=>{
     expect(validateSave({...input,kind:'filter-set'}).definition.context.baseline).toBeNull();
     for(const baseline of [{id:'x'},{id:'x',sessionId:0},{id:'x',sessionId:7,body:'private'}]) expect(()=>store.create({...input,definition:{...input.definition,context:{baseline}}})).toThrow();
   });
+  it('round trips version 3 evidence cohorts while preserving version 1 and 2 definitions',()=>{
+    const reference=`ctx1_${'a'.repeat(64)}`;
+    const economics={groupBy:'client-project',status:'all',sortBy:'timestamp',sortDirection:'desc',cohort:{projectRef:reference},groupSortBy:'records',groupSortDirection:'asc',costSource:'provider-reported',attemptKind:'additional'};
+    const v3=store.create(saved({definition:definition({schemaVersion:3,lens:'economics',economics})}));
+    expect(investigationStore(db).get(v3.id).definition.economics).toEqual(economics);
+    const v1=store.create(saved());
+    expect(store.get(v1.id).definition.economics).not.toHaveProperty('costSource');
+    const v2=store.create(saved({definition:definition({schemaVersion:2,lens:'context',selection:{kind:'context-attempt',id:'selected',sessionId:8},context:{baseline:{id:'baseline',sessionId:7}}})}));
+    expect(store.get(v2.id).definition.context.baseline).toEqual({id:'baseline',sessionId:7});
+    expect(store.get(v2.id).definition.economics).not.toHaveProperty('attemptKind');
+    const v2economics={groupBy:'provider',status:'all',sortBy:'timestamp',sortDirection:'desc',cohort:null};
+    for(const economicsPatch of [{groupBy:'client-project'},{cohort:{projectRef:reference}},{costSource:'provider-reported'}])
+      expect(()=>store.create(saved({definition:definition({schemaVersion:2,economics:{...v2economics,...economicsPatch}})}))).toThrow();
+    for(const cohort of [{projectRef:'raw'},{missing:'projectRef',projectRef:reference},{missing:'apiKey'},{sessionId:0}])
+      expect(()=>store.create(saved({definition:definition({schemaVersion:3,economics:{...economics,cohort}})}))).toThrow();
+    expect(()=>store.create(saved({definition:definition({schemaVersion:4})}))).toThrow(/version/);
+  });
   it('rejects lost updates and stale deletes without changing stored bytes',()=>{
     const row=store.create(saved());
     const updated=store.update(row.id,{...saved({name:'Second tab'}),version:1});
