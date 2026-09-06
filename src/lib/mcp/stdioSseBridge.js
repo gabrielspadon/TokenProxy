@@ -180,4 +180,26 @@ function isRunning(name) {
   return !!(entry?.proc && !entry.proc.killed && entry.proc.exitCode === null);
 }
 
-module.exports = { getOrSpawn, registerSession, unregisterSession, sendToChild, isRunning, findPlugin, killAllBridges };
+// Snapshot existing process handles only. Reading this function never creates
+// a bridge, executes a command, or exposes process environment/configuration.
+function getBridgeStatus() {
+  const store = globalThis[G_KEY];
+  const presets = LOCAL_STDIO_PLUGINS.map((plugin) => {
+    const entry = store?.get?.(plugin.name);
+    const running = Boolean(entry?.proc && !entry.proc.killed && entry.proc.exitCode === null);
+    return {
+      id: plugin.name, name: plugin.title || plugin.name, transport: "stdio",
+      configured: true, installation: "not-probed", running,
+      clients: entry?.sessions?.size || 0,
+      endpoint: `/api/mcp/${encodeURIComponent(plugin.name)}/sse`,
+      declaredToolCount: Array.isArray(plugin.toolNames) ? plugin.toolNames.length : 0,
+    };
+  });
+  return {
+    observedAt: new Date().toISOString(), scope: "local-process", presets,
+    summary: { presets: presets.length, running: presets.filter((p) => p.running).length, clients: presets.reduce((n,p) => n+p.clients,0) },
+    capabilities: { status: true, takeover: false, modelMapping: false },
+  };
+}
+
+module.exports = { getOrSpawn, registerSession, unregisterSession, sendToChild, isRunning, findPlugin, killAllBridges, getBridgeStatus };
