@@ -15,7 +15,7 @@ import { createRoutingCapture, validateSimulationInput, SimulationError, SIMULAT
 /** Read-only collector. Never imports credentials selection, quota refresh or executors. */
 export async function captureRoutingState({ input, sessionHash } = {}) {
   const request = validateSimulationInput(input);
-  if (sessionHash !== undefined && !/^[a-f0-9]{64}$/.test(sessionHash)) throw new SimulationError('invalid_session_hash');
+  if (sessionHash !== undefined && !/^[a-f0-9]{32,64}$/.test(sessionHash)) throw new SimulationError('invalid_session_hash');
   // The outer chat handler's virtual auto route and compatibility transforms
   // precede resolveRequestModel. A numeric request description cannot replay them.
   if (['auto', 'default'].includes(request.model) || AUTO_MODEL_IDS.has(request.model)) throw new SimulationError('unsupported_virtual_route', 422);

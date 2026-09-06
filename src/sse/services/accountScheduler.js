@@ -183,6 +183,7 @@ export function selectAndReserve({
   now,
   registry,
   repos,
+  pinActionId,
 } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
   if (!Number.isFinite(nowMs)) {
@@ -208,11 +209,16 @@ export function selectAndReserve({
 
   let reservedLease = null;
   return runInTransaction(repos, () => {
+    const pinAction = repos.getPendingPinAction?.({ sessionHash, model }) ?? null;
+    if (pinAction?.storageUnavailable || (pinActionId !== undefined && (pinAction?.id ?? null) !== pinActionId)) {
+      return { unavailable: true, mustWait: true, retryAfter: RETRY_AFTER_SECONDS, reason: 'pin-command-changed', trace: [] };
+    }
     if (candidates.length === 0) {
       return {
         unavailable: true,
         retryAfter: RETRY_AFTER_SECONDS,
         reason: 'no-accounts',
+        ...(pinAction ? { mustWait: true } : {}),
         trace: [{ cls: 'SEL', verdict: 'refused', fields: { why: 'no-accounts' } }],
       };
     }
@@ -242,7 +248,8 @@ export function selectAndReserve({
     const activeLoad = activeLoadFor(candidates, model, nowMs, registry, repos);
 
     const { degraded, rankReason, rankingTrace, repin, repinTrace, preferred } = planAccountSelection({
-      accounts: candidates, pin, activeLoad, model, now: nowMs,
+      accounts: pinAction ? candidates.filter(c => c.id === pinAction.targetConnectionId) : candidates,
+      pin: pinAction ? null : pin, activeLoad, model, now: nowMs,
     });
 
     if (preferred.length === 0) {
@@ -250,7 +257,8 @@ export function selectAndReserve({
       return {
         unavailable: true,
         retryAfter: RETRY_AFTER_SECONDS,
-        reason: `no-eligible-account${detail}`,
+        reason: pinAction ? 'operator-target-unavailable' : `no-eligible-account${detail}`,
+        ...(pinAction ? { mustWait: true } : {}),
         degraded,
         // Every account is out of headroom, and the ranker knows when the first
         // of them comes back. Handing that up is what lets the caller quote a
@@ -309,7 +317,7 @@ export function selectAndReserve({
           from: previousPinId,
           to: record.id,
           windows: record.account?.windows ?? [],
-          trigger: isFirstPin ? 'first-pin' : repin.trigger || TRIGGERS.EXHAUSTION,
+          trigger: pinAction ? 'operator-reassignment' : isFirstPin ? 'first-pin' : repin.trigger || TRIGGERS.EXHAUSTION,
           model,
           sessionHash,
           now: nowMs,
@@ -322,6 +330,8 @@ export function selectAndReserve({
           if (recorded?.id) receipt = { ...receipt, id: recorded.id };
         }
       }
+
+      if (pinAction) repos.completePinAction(pinAction);
 
       const skippedTrace = skipped.length
         ? [{
@@ -338,7 +348,7 @@ export function selectAndReserve({
         connection: record.account,
         lease,
         receipt,
-        reason: isFirstPin ? 'first-pin' : switched ? 'repin' : 'pinned',
+        reason: pinAction ? 'operator-reassignment' : isFirstPin ? 'first-pin' : switched ? 'repin' : 'pinned',
         repin,
         skipped,
         trace: [...(rankingTrace || []), ...repinTrace, ...skippedTrace],
@@ -352,6 +362,7 @@ export function selectAndReserve({
       unavailable: true,
       retryAfter: RETRY_AFTER_SECONDS,
       reason: 'at-capacity',
+      ...(pinAction ? { mustWait: true } : {}),
       trace: [
         ...(rankingTrace || []),
         ...repinTrace,

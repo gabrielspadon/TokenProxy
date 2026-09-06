@@ -38,7 +38,7 @@ import {
 } from '@/shared/constants/providers.js';
 import { readAllDrainDocs } from '@/lib/admin/state.js';
 import { evaluateQuota } from './quotaGuard.js';
-import { selectAndReserve } from './accountScheduler.js';
+import { selectAndReserve, planAccountSelection } from './accountScheduler.js';
 import { createSchedulerRepos } from './schedulerRepos.js';
 import {
   leaseRegistry,
@@ -115,27 +115,33 @@ const MODEL_ANY = '*';
  * answers to a question with one answer. The adapter is resolved BEFORE the
  * transaction opens, because db.transaction(fn) is synchronous.
  *
- * FAILURE DIRECTION. Affinity is a locality optimisation, never an admission
- * gate, and the lease is ALREADY held by the time this runs. A throw here would
- * escape getProviderCredentials with a reserved slot nobody downstream knows
- * about, which is the one leak this file otherwise guards against by hand. So a
- * failed write is logged and swallowed: the request proceeds on the account the
- * operator chose, and the session simply reads as new next time.
+ * A failed persistence step now returns a wait. A pending administrative
+ * command is an admission constraint; admitting without its durable receipt
+ * could lose an operator decision. The caller releases the held lease.
  */
-async function persistOperatorPin({ sessionHash, model, connection, windows, nowMs }) {
+async function persistOperatorPin({ sessionHash, model, connection, windows, nowMs, expectedPinAction }) {
   const connectionId = connection?.id;
   if (!sessionHash || !model || !connectionId) return null;
   const at = new Date(nowMs).toISOString();
   try {
     const repos = await createSchedulerRepos({ now: nowMs });
     return repos.transaction(() => {
+      const action = repos.getPendingPinAction?.({ sessionHash, model });
+      // Admission reads can await quota evidence. Recheck the command in the
+      // pin transaction so a concurrent clear or new command cannot be lost.
+      if (action?.storageUnavailable || (action && (!expectedPinAction || action.targetConnectionId !== connectionId))
+        || (expectedPinAction && action?.id !== expectedPinAction.id)) return { mustWait: true };
+      if (action) {
+        const plan = planAccountSelection({ accounts: [{ ...connection, windows: windows || [] }], pin: null, model, now: nowMs });
+        if (!plan.preferred.length) return { mustWait: true };
+      }
       const previousPinId = repos.getPin({ sessionHash, model })?.connectionId ?? null;
       if (previousPinId === connectionId) {
         repos.touchPin({ sessionHash, model, at });
         return { reason: 'pinned', receipt: null };
       }
       repos.setPin({ sessionHash, model, connectionId, at });
-      const trigger = previousPinId === null ? 'first-pin' : 'operator-pin';
+      const trigger = action ? 'operator-reassignment' : previousPinId === null ? 'first-pin' : 'operator-pin';
       const receipt = repos.recordSwitch(
         buildSwitchReceipt({
           from: previousPinId,
@@ -147,11 +153,12 @@ async function persistOperatorPin({ sessionHash, model, connection, windows, now
           now: nowMs,
         })
       );
+      if (action) repos.completePinAction(action);
       return { reason: trigger, receipt };
     });
   } catch (error) {
     log.warn('AUTH', `operator pin not persisted: ${error?.message || error}`);
-    return null;
+    return { mustWait: true };
   }
 }
 
@@ -371,8 +378,8 @@ export async function getProviderCredentials(
       : excludeConnectionIds
         ? new Set([excludeConnectionIds])
         : new Set();
-  const preferredConnectionId = options?.preferredConnectionId || null;
-  const strictPreferredConnection =
+  let preferredConnectionId = options?.preferredConnectionId || null;
+  let strictPreferredConnection =
     Boolean(preferredConnectionId) && options?.strictPreferredConnection === true;
   // Resolve aliases before queue acquisition so alias and canonical requests share one lock.
   const providerId = resolveProviderId(provider);
@@ -385,6 +392,20 @@ export async function getProviderCredentials(
 
   try {
     await currentQueue;
+    const commandRepos = isNoAuthProvider(providerId) ? null : await createSchedulerRepos({ now: Date.now() });
+    const pendingPinAction = commandRepos?.transaction(() => commandRepos.getPendingPinAction?.({
+      sessionHash: routingSessionHash, model: model || MODEL_ANY,
+    })) ?? null;
+    const commandWait = () => ({ allRateLimited: true, mustWait: true,
+      retryAfter: new Date(Date.now() + SCHEDULER_RETRY_AFTER_SECONDS * 1000).toISOString(),
+      retryAfterHuman: `${SCHEDULER_RETRY_AFTER_SECONDS}s`, lastError: 'Pending session reassignment cannot accept this request',
+      lastErrorCode: null, clientErrorStatus: null });
+    if (pendingPinAction) {
+      if (pendingPinAction.storageUnavailable) return commandWait();
+      if (preferredConnectionId && preferredConnectionId !== pendingPinAction.targetConnectionId) return commandWait();
+      preferredConnectionId = pendingPinAction.targetConnectionId;
+      strictPreferredConnection = true;
+    }
     // Read after queue acquisition so a completed operator write applies to
     // the next selection. A policy read failure must not admit a barred model.
     const disabledModels = model ? await getDisabledModels() : {};
@@ -464,6 +485,7 @@ export async function getProviderCredentials(
     );
 
     if (connections.length === 0) {
+      if (pendingPinAction) return commandWait();
       log.warn('AUTH', `No credentials for ${provider}`);
       return null;
     }
@@ -617,6 +639,7 @@ export async function getProviderCredentials(
     });
 
     if (routedConnections.length === 0) {
+      if (pendingPinAction) return commandWait();
       // Find earliest lock expiry across all connections for retry timing
       const lockCandidates = connections.filter((connection) =>
         (!strictPreferredConnection || connection.id === preferredConnectionId)
@@ -653,6 +676,7 @@ export async function getProviderCredentials(
     // The scheduler's verdict for the caller: REQ.ok sel= and path= read this
     // in a later wave (row 29's silent pin-hit reaches the caller here).
     let selection = null;
+    let commandProxy = null;
     // Pin to preferred connection if specified and available. This is an
     // OPERATOR pin (a combo member, a replay of the connection that just
     // failed), which is a different fact from the session pin the scheduler
@@ -675,6 +699,14 @@ export async function getProviderCredentials(
     }
 
     if (connection) {
+      if (pendingPinAction) {
+        const proxyData = connection.providerSpecificData || {};
+        commandProxy = await resolveConnectionProxyConfig(proxyData, {
+          persistPoolSnapshot: proxyData.proxyPoolId
+            ? pair => updateConnectionProxyPoolSnapshotIfBound(connection.id, proxyData.proxyPoolId, pair) : undefined,
+        });
+        if (commandProxy.kind !== 'usable') return commandWait();
+      }
       // An operator pin still takes a LEASE: rule 7's per-account ceiling is
       // about the account, not about how it was chosen, and skipping the
       // reservation here would let a pinned combo member over-admit while every
@@ -732,8 +764,14 @@ export async function getProviderCredentials(
         model: model || MODEL_ANY,
         connection,
         windows: windowsByConnection[connection.id],
-        nowMs,
+        nowMs: Date.now(),
+        expectedPinAction: pendingPinAction,
       });
+      if (pinned?.mustWait) {
+        leaseRegistry.release(lease);
+        pendingLease = null;
+        return commandWait();
+      }
       // Row 29: the operator pin is a real decision and says so.
       emit('SEL', 'operator-pinned', {
         conn: prefix8(connection.id),
@@ -762,15 +800,17 @@ export async function getProviderCredentials(
       // The adapter is resolved BEFORE selectAndReserve opens its transaction,
       // because db.transaction(fn) is synchronous (schedulerRepos.js).
       const sessionHash = routingSessionHash;
-      const repos = await createSchedulerRepos({ now: nowMs });
+      const selectionNowMs = Date.now();
+      const repos = await createSchedulerRepos({ now: selectionNowMs });
       const decision = selectAndReserve({
         sessionHash,
         model: model || MODEL_ANY,
         accounts: routedConnections,
         windows: windowsByConnection,
-        now: nowMs,
+        now: selectionNowMs,
         registry: leaseRegistry,
         repos,
+        pinActionId: pendingPinAction?.id ?? null,
       });
 
       // The scheduler's whole decision as trace entries: the ranking verdict,
@@ -828,7 +868,7 @@ export async function getProviderCredentials(
           // is not a rate limit, so it keeps the 503 the caller already reads.
           lastErrorCode: capacityWait ? null : HTTP_STATUS_RATE_LIMITED,
           clientErrorStatus: capacityWait ? null : HTTP_STATUS_RATE_LIMITED,
-          mustWait: capacityWait,
+          mustWait: capacityWait || decision.mustWait === true,
         };
       }
 
@@ -865,7 +905,7 @@ export async function getProviderCredentials(
 
     const connectionProxyData = connection.providerSpecificData || {};
     const expectedPoolId = connectionProxyData.proxyPoolId;
-    const resolvedProxy = await resolveConnectionProxyConfig(connectionProxyData, {
+    const resolvedProxy = commandProxy ?? await resolveConnectionProxyConfig(connectionProxyData, {
       persistPoolSnapshot: expectedPoolId
         ? (pair) => updateConnectionProxyPoolSnapshotIfBound(connection.id, expectedPoolId, pair)
         : undefined,
