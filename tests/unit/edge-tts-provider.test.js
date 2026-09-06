@@ -28,6 +28,20 @@ beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
 afterEach(() => vi.unstubAllGlobals());
 
 describe('synthesize', () => {
+  it('does not re-bootstrap or resend before an upstream Retry-After deadline',async()=>{
+    globalThis.fetch.mockResolvedValueOnce(translatorRes())
+      .mockResolvedValueOnce(new Response('rate limited',{status:429,headers:{'retry-after':'60'}}));
+    const {provider}=await loadProvider();
+    await expect(provider.synthesize('fixture','en-US-JennyNeural')).rejects.toThrow('429');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+  it.each(['x-tokenproxy-replay-safe','x-should-retry'])('does not regenerate when %s denies replay',async header=>{
+    globalThis.fetch.mockResolvedValueOnce(translatorRes())
+      .mockResolvedValueOnce(new Response('accepted outcome',{status:403,headers:{[header]:'false'}}));
+    const {provider}=await loadProvider();
+    await expect(provider.synthesize('fixture','en-US-JennyNeural')).rejects.toThrow('403');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
   it('scrapes the token, posts SSML with cookie, and returns base64 mp3', async () => {
     globalThis.fetch.mockResolvedValueOnce(translatorRes()).mockResolvedValueOnce(audioRes());
     const { provider } = await loadProvider();

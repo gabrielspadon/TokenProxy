@@ -1,3 +1,4 @@
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { getRequestIdentity } from "../services/requestIdentity.js";
 import { createUsageAttemptTracker } from "../services/usageAttempt.js";
 import {
@@ -156,7 +157,7 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
           log.warn("RERANK", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-          return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) {
           log.error("AUTH", `No credentials for provider: ${provider}`);
@@ -207,7 +208,9 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
         return result.response;
       }
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error));
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error), false, cooldownMs, true);
 
       if (shouldFallback) {
         log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
@@ -217,7 +220,7 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
         continue;
       }
 
-      return result.response;
+      return withReplaySafety(result.response, true);
     } finally {
       releaseAccountLease(accountLease);
     }

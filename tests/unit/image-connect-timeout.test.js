@@ -122,7 +122,7 @@ describe("image connect timeout propagation", () => {
       "antigravity/gemini-3.1-flash-image-b",
     ]);
     mocks.execute
-      .mockResolvedValueOnce({ response: Response.json({ error: { message: 'Explicit upstream rejection' } }, { status: 503 }) })
+      .mockResolvedValueOnce({ response: Response.json({ error: { message: 'Explicit upstream rejection' } }, { status: 503, headers: { 'x-tokenproxy-replay-safe': 'true' } }) })
       .mockResolvedValueOnce(imageSuccess("c2Vjb25k"));
 
     const pending = handleImageGeneration(request("image-combo"));
@@ -136,6 +136,14 @@ describe("image connect timeout propagation", () => {
       { providerOverride: 8000, globalTimeout: 15000 },
       { providerOverride: 8000, globalTimeout: 15000 },
     ]);
+  });
+  it('does not try the second combo member after an ambiguous image503',async()=>{
+    mocks.getComboModels.mockResolvedValue(['antigravity/gemini-3.1-flash-image-a','antigravity/gemini-3.1-flash-image-b']);
+    mocks.execute.mockResolvedValueOnce({response:Response.json({error:{message:'outcome unknown'}},{status:503})})
+      .mockResolvedValueOnce(imageSuccess());
+    const response=await handleImageGeneration(request('image-combo'));
+    expect(response.status).toBe(502);expect(response.headers.get('x-should-retry')).toBe('false');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 
   it("returns 499 for caller cancellation without disabling the account", async () => {

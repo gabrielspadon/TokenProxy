@@ -170,7 +170,7 @@ describe("search failure locks are scoped to websearch:<provider>", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     auth.markAccountUnavailable.mockResolvedValue({ shouldFallback: false });
-    core.handleSearchCore.mockResolvedValue({ success: false, status: 429, error: "rate limited", response: new Response("x", { status: 429 }) });
+    core.handleSearchCore.mockResolvedValue({ success: false, status: 429, error: "rate limited", failureMetadata: { safeToReplay: true }, response: new Response("x", { status: 429 }) });
   });
 
   it("reads and writes the lock under the same websearch-scoped key", async () => {

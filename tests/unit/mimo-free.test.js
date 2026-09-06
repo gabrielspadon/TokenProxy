@@ -233,6 +233,13 @@ describe("MimoFreeExecutor", () => {
     // bootstrap, chat(403), re-bootstrap, chat(200)
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
+  it.each(['x-tokenproxy-replay-safe','x-should-retry'])('does not re-bootstrap or resend when %s denies replay',async header=>{
+    fetchMock.mockResolvedValueOnce(jsonResponse({jwt:makeJwt(Math.floor(Date.now()/1000)+3600)}));
+    const upstream=new Response('accepted outcome',{status:403,headers:{[header]:'false'}});
+    fetchMock.mockResolvedValueOnce(upstream);
+    expect((await exec.execute({model:'mimo-auto',body:{messages:[{role:'user',content:'fixture'}]},stream:true,credentials:{}})).response).toBe(upstream);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("MiMo Free provider registration", () => {

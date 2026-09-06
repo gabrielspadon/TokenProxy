@@ -10,6 +10,8 @@
 import { buildSearchRequest } from "./callers.js";
 import { normalizeSearchResponse } from "./normalizers.js";
 import { handleChatSearch } from "./chatSearch.js";
+import { isReplaySafeRejection, withReplaySafety } from "../../utils/replaySafety.js";
+import { parseUpstreamError } from "../../utils/error.js";
 
 const GLOBAL_TIMEOUT_MS = 15000;
 const NON_RETRIABLE = new Set([400, 401, 403, 404]);
@@ -43,12 +45,14 @@ function jsonResponse(payload, status = 200) {
 }
 
 /** Wrap an error result with a Response object so the auth wrapper can return it directly. */
-function errorResult(status, error) {
+function errorResult(status, error, failureMetadata = { safeToReplay: false }, resetsAtMs = null) {
   return {
     success: false,
     status,
     error,
-    response: jsonResponse({ error: { message: error, code: status } }, status)
+    failureMetadata,
+    resetsAtMs,
+    response: withReplaySafety(jsonResponse({ error: { message: error, code: status } }, status), failureMetadata.safeToReplay)
   };
 }
 
@@ -103,9 +107,11 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
     const resp = await fetch(url, { ...init, headers: sanitizeHeaders(init.headers), signal: controller.signal });
     clearTimeout(timer);
     if (!resp.ok) {
-      const errText = await resp.text().catch(() => "");
+      const parsed = await parseUpstreamError(resp);
+      const errText = parsed.message;
       log?.error?.("SEARCH", `${provider.id} ${resp.status}: ${errText.slice(0, 200)}`);
-      return { success: false, status: resp.status, error: `${provider.id} returned ${resp.status}: ${errText.slice(0, 200)}` };
+      return { success: false, status: resp.status, error: `${provider.id} returned ${resp.status}: ${errText.slice(0, 200)}`,
+        failureMetadata: { safeToReplay: isReplaySafeRejection(resp) }, resetsAtMs: parsed.resetsAtMs };
     }
     const data = await resp.json();
     const normalized = normalizeSearchResponse(provider.id, data, params.query, params.searchType);
@@ -191,6 +197,8 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
   // 3. Failover within global timeout for retriable errors
   if (
     !NON_RETRIABLE.has(result.status || 0) &&
+    result.failureMetadata?.safeToReplay === true &&
+    !result.resetsAtMs &&
     Date.now() - globalStartTime < GLOBAL_TIMEOUT_MS &&
     provider.searchViaChat &&
     providerConfig
@@ -205,7 +213,8 @@ export async function handleSearchCore({ body, provider, providerConfig, credent
       log
     });
     if (fallback.success) return successResult(fallback.data);
+    result = fallback;
   }
 
-  return errorResult(result.status || 502, result.error || "Search failed");
+  return errorResult(result.status || 502, result.error || "Search failed", result.failureMetadata, result.resetsAtMs);
 }

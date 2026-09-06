@@ -97,6 +97,7 @@ const okCore = (usage = { total_tokens: 12 }) => ({
 });
 
 const failCore = (status, error = 'boom') => ({
+  failureMetadata: { safeToReplay: [400,401,402,403,404,405,413,415,422,429].includes(status) },
   success: false,
   status,
   error,

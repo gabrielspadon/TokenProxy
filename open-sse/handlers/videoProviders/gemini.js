@@ -1,4 +1,5 @@
-import { createErrorResult } from "../../utils/error.js";
+import { createErrorResult, extractRetryAfterDeadline } from "../../utils/error.js";
+import { isReplaySafeRejection } from "../../utils/replaySafety.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 
 /**
@@ -126,7 +127,8 @@ const geminiVideoAdapter = {
 
     const text = await upstream.text().catch(() => "");
     if (!upstream.ok) {
-      return createErrorResult(upstream.status, `[gemini] ${(text || `HTTP ${upstream.status}`).slice(0, 2000)}`);
+      return createErrorResult(upstream.status, `[gemini] ${(text || `HTTP ${upstream.status}`).slice(0, 2000)}`, extractRetryAfterDeadline(upstream),
+        { safeToReplay: isReplaySafeRejection(upstream) });
     }
     let operation;
     try {

@@ -1,3 +1,4 @@
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   getProviderCredentials,
@@ -176,7 +177,7 @@ export async function handleVideoCreate(request, action) {
         if (credentials?.allRateLimited) {
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return unavailableResponse(status, `[${provider}/${model || "video"}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model || "video"}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) {
           return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
@@ -215,9 +216,11 @@ export async function handleVideoCreate(request, action) {
       }
 
       // Record the failure (dashboard shows lastError/errorCode → user sees re-auth is needed)
-      const { shouldFallback } = await markAccountUnavailable(
-        credentials.connectionId, result.status, sanitizeSecrets(result.error, refreshedCredentials), provider, model
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error));
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(
+        credentials.connectionId, result.status, sanitizeSecrets(result.error, refreshedCredentials), provider, model, result.resetsAtMs, result.failureMetadata
       );
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error), false, cooldownMs, true);
 
       if (shouldFallback && CREATE_ROTATION_STATUSES.has(result.status)) {
         excludeConnectionIds.add(credentials.connectionId);
@@ -226,7 +229,7 @@ export async function handleVideoCreate(request, action) {
         continue;
       }
 
-      return result.response;
+      return withReplaySafety(result.response, true);
     } finally {
       releaseAccountLease(accountLease);
     }

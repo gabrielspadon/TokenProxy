@@ -6,6 +6,8 @@ import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.j
 import { getExecutor } from "../executors/index.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { discardResponseBody } from "../utils/discardResponseBody.js";
 
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
@@ -91,6 +93,7 @@ export async function handleEmbeddingsCore({
   const executor = getExecutor(provider);
   if (
     !executor?.noAuth &&
+    isReplaySafeRejection(providerResponse) &&
     (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
@@ -106,6 +109,7 @@ export async function handleEmbeddingsCore({
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
 
       try {
+        discardResponseBody(providerResponse);
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
         if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: retryUrl });
@@ -125,10 +129,10 @@ export async function handleEmbeddingsCore({
   }
 
   if (!providerResponse.ok) {
-    const { statusCode, message } = await parseUpstreamError(providerResponse);
+    const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("EMBEDDINGS", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg, null, { safeToReplay: true });
+    return createErrorResult(statusCode, errMsg, resetsAtMs, { safeToReplay: isReplaySafeRejection(providerResponse) });
   }
 
   let responseBody;

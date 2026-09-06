@@ -5,6 +5,8 @@ import { createErrorResult, parseUpstreamError, formatProviderError } from "../u
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { getExecutor } from "../executors/index.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { discardResponseBody } from "../utils/discardResponseBody.js";
 
 // The contract this endpoint speaks is Cohere's `POST /v2/rerank`
 // ({ model, query, documents, top_n } -> { results: [{ index, relevance_score }] }),
@@ -170,6 +172,7 @@ export async function handleRerankCore({
   const executor = getExecutor(provider);
   if (
     !executor?.noAuth &&
+    isReplaySafeRejection(providerResponse) &&
     (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
@@ -184,6 +187,7 @@ export async function handleRerankCore({
       Object.assign(credentials, newCredentials);
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
       try {
+        discardResponseBody(providerResponse);
         if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: cfg.url });
         providerResponse = await fetch(cfg.url, {
           method: "POST",
@@ -191,8 +195,10 @@ export async function handleRerankCore({
           body: serialized,
         });
     await notifyDispatchResponse(afterDispatch, providerResponse);
-      } catch {
+      } catch (error) {
+        if (error instanceof BudgetAdmissionError) return budgetErrorResult(error);
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
+        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || "Rerank retry failed", null, { safeToReplay: false });
       }
     } else {
       log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
@@ -200,10 +206,10 @@ export async function handleRerankCore({
   }
 
   if (!providerResponse.ok) {
-    const { statusCode, message } = await parseUpstreamError(providerResponse);
+    const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("RERANK", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg);
+    return createErrorResult(statusCode, errMsg, resetsAtMs, { safeToReplay: isReplaySafeRejection(providerResponse) });
   }
 
   let responseBody;

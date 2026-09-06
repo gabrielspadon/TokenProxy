@@ -874,6 +874,8 @@ describe("Ollama web fetch normalized response", () => {
       status: 429,
       code: "OLLAMA_UPSTREAM_ERROR",
       error: "quota unavailable",
+      failureMetadata: { safeToReplay: true },
+      resetsAtMs: null,
     });
   });
 
@@ -888,6 +890,8 @@ describe("Ollama web fetch normalized response", () => {
       status: 503,
       code: "OLLAMA_UPSTREAM_ERROR",
       error: "Ollama web fetch failed (HTTP 503)",
+      failureMetadata: { safeToReplay: false },
+      resetsAtMs: null,
     });
   });
 
@@ -904,6 +908,8 @@ describe("Ollama web fetch normalized response", () => {
       status: 500,
       code: "OLLAMA_UPSTREAM_ERROR",
       error: "Ollama web fetch failed (HTTP 500)",
+      failureMetadata: { safeToReplay: false },
+      resetsAtMs: null,
     });
     expect(cancel).toHaveBeenCalledTimes(1);
   });

@@ -5,6 +5,8 @@ import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { getExecutor } from "../executors/index.js";
 import { getImageAdapter } from "./imageProviders/index.js";
 import { urlToBase64 } from "./imageProviders/_base.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { discardResponseBody } from "../utils/discardResponseBody.js";
 
 function serializeRequestBody(requestBody) {
   if (typeof FormData !== "undefined" && requestBody instanceof FormData) return requestBody;
@@ -103,7 +105,7 @@ export async function handleImageGenerationCore({
       const status = rejected ? error.status : HTTP_STATUS.BAD_GATEWAY;
       const errMsg = formatProviderError(error, status);
       log?.debug?.("IMAGE", `Executor error: ${errMsg}`);
-      return createErrorResult(status, errMsg, null, { safeToReplay: rejected });
+      return createErrorResult(status, errMsg, error.resetsAtMs, { safeToReplay: rejected });
     }
   }
 
@@ -142,6 +144,7 @@ export async function handleImageGenerationCore({
   if (
     !executor?.noAuth &&
     !adapter.noAuth &&
+    isReplaySafeRejection(providerResponse) &&
     (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
@@ -157,6 +160,7 @@ export async function handleImageGenerationCore({
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
 
       try {
+        discardResponseBody(providerResponse);
         const retryBody = await adapter.buildBody(model, body);
         const retryHeaders = adapter.buildHeaders(credentials, retryBody, model, body);
         const retryUrl = adapter.buildUrl(model, credentials, body);
@@ -174,10 +178,10 @@ export async function handleImageGenerationCore({
   }
 
   if (!providerResponse.ok) {
-    const { statusCode, message } = await parseUpstreamError(providerResponse);
+    const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("IMAGE", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg, null, { safeToReplay: true });
+    return createErrorResult(statusCode, errMsg, resetsAtMs, { safeToReplay: isReplaySafeRejection(providerResponse) });
   }
 
   // Parse provider response — adapter may override (codex SSE / async polling / binary)

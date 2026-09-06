@@ -3,6 +3,8 @@
 import { nowSec, sizeToAspectRatio } from "./_base.js";
 import { getExecutor } from "../../executors/index.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
+import { parseUpstreamError } from "../../utils/error.js";
+import { isReplaySafeRejection } from "../../utils/replaySafety.js";
 
 // Convert image input (data URI or raw base64) to Gemini inlineData part
 function resolveImageInput(input) {
@@ -77,10 +79,11 @@ export default {
     });
 
     if (!result.response.ok) {
-      const text = await result.response.text();
+      const { message: text, resetsAtMs } = await parseUpstreamError(result.response);
       const error = new Error(text || `HTTP ${result.response.status}`);
       error.status = result.response.status;
-      error.failureMetadata = { safeToReplay: true };
+      error.failureMetadata = { safeToReplay: isReplaySafeRejection(result.response) };
+      error.resetsAtMs = resetsAtMs;
       throw error;
     }
 

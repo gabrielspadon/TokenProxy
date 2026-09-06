@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
-import { createErrorResult } from "../utils/error.js";
+import { createErrorResult, parseUpstreamError } from "../utils/error.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { discardResponseBody } from "../utils/discardResponseBody.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 
 // Build auth headers from sttConfig + token
@@ -26,11 +28,8 @@ function resolveAudioContentType(file) {
 }
 
 async function upstreamError(res) {
-  let txt = "";
-  try { txt = await res.text(); } catch {}
-  let msg = txt || `Upstream error (${res.status})`;
-  try { const j = JSON.parse(txt); msg = j?.error?.message || j?.error || j?.message || msg; } catch {}
-  return createErrorResult(res.status, typeof msg === "string" ? msg : JSON.stringify(msg), null, { safeToReplay: true });
+  const { statusCode, message, resetsAtMs } = await parseUpstreamError(res);
+  return createErrorResult(statusCode, message, resetsAtMs, { safeToReplay: isReplaySafeRejection(res) });
 }
 
 // Deepgram: raw binary POST + model query param
@@ -82,7 +81,7 @@ async function transcribeAssemblyAI(cfg, file, model, token, formData) {
   while (Date.now() - start < 120_000) {
     await new Promise((r) => setTimeout(r, 2000));
     const poll = await fetch(`${cfg.baseUrl}/${id}`, { headers: auth });
-    if (!poll.ok) continue;
+    if (!poll.ok) { discardResponseBody(poll); continue; }
     const r = await poll.json();
     if (r.status === "completed") return jsonResponse({ text: r.text || "" });
     if (r.status === "error") return createErrorResult(500, r.error || "AssemblyAI failed");

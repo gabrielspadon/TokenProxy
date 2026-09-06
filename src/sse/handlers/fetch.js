@@ -1,3 +1,4 @@
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   getProviderCredentials,
@@ -184,7 +185,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
       });
     }
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed");
+    return withReplaySafety(errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed"), result.failureMetadata?.safeToReplay);
   }
 
   // Credential + fallback loop
@@ -209,7 +210,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
           log.warn("FETCH", `[${providerId}] ${errorMsg} (${credentials.retryAfterHuman})`);
-          return unavailableResponse(status, `[${providerId}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${providerId}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) {
           log.error("AUTH", `No credentials for provider: ${providerId}`);
@@ -255,7 +256,9 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
         });
       }
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error));
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId, null, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error), false, cooldownMs, true);
 
       if (shouldFallback) {
         log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
@@ -265,7 +268,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
         continue;
       }
 
-      return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed");
+      return withReplaySafety(errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed"), result.failureMetadata?.safeToReplay);
     } finally {
       releaseAccountLease(accountLease);
     }

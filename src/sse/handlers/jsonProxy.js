@@ -1,3 +1,4 @@
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   clearAccountError,
@@ -104,7 +105,7 @@ export async function handleJsonProxy(request, kind) {
         if (credentials?.allRateLimited) {
           const message = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return unavailableResponse(status, `[${provider}/${model}] ${message}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${message}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
         return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
@@ -124,10 +125,12 @@ export async function handleJsonProxy(request, kind) {
       }
       if (result.clientAborted) return result.response;
 
-      const { shouldFallback } = await markAccountUnavailable(
-        credentials.connectionId, result.status, result.error, provider, model
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error));
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(
+        credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata
       );
-      if (!shouldFallback) return result.response;
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error), false, cooldownMs, true);
+      if (!shouldFallback) return withReplaySafety(result.response, true);
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
       lastStatus = result.status;

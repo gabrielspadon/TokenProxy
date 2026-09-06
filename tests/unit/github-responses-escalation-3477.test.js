@@ -27,6 +27,14 @@ afterEach(() => {
 });
 
 describe("GitHub Copilot /responses escalation cache (#3477)", () => {
+  it.each(['x-tokenproxy-replay-safe','x-should-retry'])('honors %s before changing the generation endpoint',async header=>{
+    const executor=new GithubExecutor();
+    const upstream=new Response(MODEL_NOT_SUPPORTED,{status:400,headers:{[header]:'false'}});
+    vi.spyOn(BaseExecutor.prototype,'execute').mockResolvedValue({response:upstream});
+    const responses=vi.spyOn(executor,'executeWithResponsesEndpoint');
+    expect((await executor.execute(options('gpt-5.2'))).response).toBe(upstream);
+    expect(responses).not.toHaveBeenCalled();
+  });
   it("does not pin a model to /responses when the escalation also fails", async () => {
     const executor = new GithubExecutor();
     const chat = vi
