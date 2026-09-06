@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runQuotaAutoPingTick } from '@/shared/services/quotaAutoPing';
 import { QUOTA_AUTOPING_CONFIG } from '@/shared/constants/config';
 import { filterAvailableAccounts } from 'open-sse/services/accountFallback.js';
+import claudeRegistry from 'open-sse/providers/registry/claude.js';
 
 // ANTI-REVERT GUARDS on the warming economics, on the real Claude config.
 // Three behaviors, each of which has independently regressed before:
@@ -147,7 +148,11 @@ describe('exhausted governing window: skipped until the reset timestamp, then re
     await runQuotaAutoPingTick(deps, state);
 
     expect(fetches.length).toBe(1); // the re-ping the reset was waiting for
-    expect(fetches[0].url).toContain('api.anthropic.com');
+    // The ping must hit the same provider host the registry routes to; derive
+    // the hostname from the registry rather than restating the endpoint.
+    expect(new URL(fetches[0].url).hostname).toBe(
+      new URL(claudeRegistry.transport.baseUrl).hostname
+    );
     expect(fetches[0].body.model).toBe(CLAUDE_CFG.pingModel);
     expect(fetches[0].body.max_tokens).toBe(CLAUDE_CFG.pingMaxTokens);
   });

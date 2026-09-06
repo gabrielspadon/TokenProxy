@@ -25,6 +25,7 @@ import { describe, it, expect } from 'vitest';
 import { distillToolSchemas } from '../../open-sse/utils/schemaDistiller.js';
 import { compressMessages } from '../../open-sse/rtk/index.js';
 import { injectCaveman } from '../../open-sse/rtk/caveman.js';
+import { CAVEMAN_PROMPTS, CAVEMAN_LEVELS } from '../../open-sse/rtk/cavemanPrompts.js';
 import { injectPonytail } from '../../open-sse/rtk/ponytail.js';
 import { anchorClaudeCache, countCacheAnchors } from '../../open-sse/translator/formats/claude.js';
 import { FORMATS } from '../../open-sse/translator/formats.js';
@@ -175,9 +176,9 @@ describe('invariant 2: nothing before an existing cache anchor moves', () => {
     const b = turnBody();
     injectCaveman(a, FORMATS.CLAUDE, 'full');
     injectCaveman(b, FORMATS.CLAUDE, 'full');
-    const idxA = a.system.findIndex(
-      (s) => s.text?.includes('Respond like terse caveman')
-    );
+    // Locate the injected block by the production prompt constant itself, so a
+    // reworded prompt cannot silently turn this into a vacuous -1 lookup.
+    const idxA = a.system.findIndex((s) => s.text?.includes(CAVEMAN_PROMPTS[CAVEMAN_LEVELS.FULL]));
     expect(idxA).toBeGreaterThanOrEqual(0);
     // anchored tail stays last, so the injected block sits before the anchor
     expect(a.system[a.system.length - 1].cache_control).toEqual(ANCHOR_1H);

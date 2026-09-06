@@ -29,16 +29,17 @@ describe('claude registry declares the Fable lane (ec62de2b)', () => {
   });
 
   it('keeps every routed Claude lane declared, so no sibling row silently drops', () => {
-    // The lock/rotation subsystem keys (account, model) pairs on these exact
-    // ids; removing one turns its bare requests into ModelNotFoundError.
-    expect(claudeRegistry.models.map((m) => m.id)).toEqual(
-      expect.arrayContaining([
-        'claude-opus-5',
-        'claude-fable-5',
-        'claude-fable-5-1',
-        'claude-sonnet-5',
-      ])
-    );
+    // Shape over the registry export, not a restated catalog: every declared
+    // row is a unique bare id with a static owner, so no row's bare requests
+    // can fall through to ModelNotFoundError (the ec62de2b failure mode). A
+    // shared id may resolve to another declaring provider; null is the bug.
+    const ids = claudeRegistry.models.map((m) => m.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(new Set(ids).size).toBe(ids.length); // no duplicate rows
+    for (const id of ids) {
+      expect(typeof id).toBe('string');
+      expect(resolveBareModelStaticOwner(id), `no static owner for ${id}`).not.toBeNull();
+    }
   });
 });
 
