@@ -27,5 +27,5 @@ export function completePinAction(db, action, nowIso) {
   if (!action) return;
   const after = db.get(PIN_SELECT, [action.sessionHash, action.model]);
   db.run("UPDATE sessionPinActions SET status='applied', reason='subsequent-selection', afterState=?, appliedAt=? WHERE id=? AND status='queued'",
-    [JSON.stringify(after), nowIso, action.id]);
+    [JSON.stringify(after ?? null), nowIso, action.id]);
 }
