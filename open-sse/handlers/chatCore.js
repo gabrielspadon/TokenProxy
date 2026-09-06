@@ -786,10 +786,10 @@ export async function handleChatCore({
     delete translatedBody.tools;
   }
 
-  // Token-saver byte ledger: whole-body per-stage deltas serialized once per
-  // stage boundary. Feeds REQ save=/save_tok=, the XFORM.saver-guard anomaly
+  // Token-saver byte ledger: whole-body per-stage deltas with serialization
+  // only at potentially changed boundaries. Feeds REQ save=/save_tok=, the XFORM.saver-guard anomaly
   // line, bytesSaved on the saver event rows, and the honest growth check.
-  // Off entirely when no saver will run, so a saver-free request pays nothing.
+  // Disabled stages retain explicit zero-delta rows without body serialization.
   // privacy runs under its own flag below (line ~758), independent of
   // tokenSaverEnabled, so its measurement must not depend on the token-saver
   // union either.
@@ -830,10 +830,14 @@ export async function handleChatCore({
   const pushPrefixNote = (note) => {
     if (prefixNotes.length < PREFIX_NOTES_MAX) prefixNotes.push(note);
   };
-  const saverPrev = { bytes: Buffer.byteLength(JSON.stringify(translatedBody)) };
+  const saverPrev = { bytes: toolsAfterBytes };
   const saverEntryBytes = saverPrev ? saverPrev.bytes : 0;
-  const measureSaverStage = (stage, ran) => {
-    const at = Buffer.byteLength(JSON.stringify(translatedBody));
+  const measureSaverStage = (stage, ran, measuredBytes) => {
+    // Every mutation between ledger boundaries belongs to a gated stage.
+    // A disabled stage retains its exact predecessor measurement and still
+    // contributes an explicit zero-delta row. The final serializer supplies
+    // its already-measured size so the ledger never serializes it twice.
+    const at = measuredBytes ?? (ran ? Buffer.byteLength(JSON.stringify(translatedBody)) : saverPrev.bytes);
     const measurement = { ran: Boolean(ran), stage, delta: at - saverPrev.bytes, in: saverPrev.bytes, out: at };
     contextStages.push(measurement);
     if (saverWillRun && at !== saverPrev.bytes) saverStages.push(measurement);
@@ -1113,7 +1117,7 @@ export async function handleChatCore({
   // client sent it, so the prompt prefix stays byte-identical turn to turn and
   // the provider's cache keeps hitting.
   const headroomDiagnostics = {};
-  const headroomPressure = headroomEnabled ? measurePrefixPressure() : null;
+  const headroomPressure = tokenSaverEnabled && headroomEnabled ? measurePrefixPressure() : null;
   const headroomStats = await compressWithHeadroom(translatedBody, {
     enabled: tokenSaverEnabled && headroomEnabled,
     allowLossy: headroomAllowLossy,
@@ -1353,16 +1357,16 @@ export async function handleChatCore({
   // growth reported honestly) plus the cache-epoch prefix this request shares
   // with its session's previous final pre-dispatch body. savers off -> silent.
   const saverFields = {};
-  // T-F2: the final pre-dispatch body is serialized ONCE, only when a
-  // consumer needs it (a saver ran, or ce tracking has a sid); the string
-  // feeds the stage ledger's final measure, the ce tracking and the x-tp-*
-  // response headers. With no saver and no sid, nothing is serialized.
+  // The complete stage ledger requires the final serialization even with
+  // optional savers disabled. Reuse its size for the final row and its string
+  // for cache-prefix and structural evidence consumers.
   let finalBodyBytes = null;
+  let finalSerialized = null;
   let compactHint = false;
   if (saverPrev || sid) {
-    const finalSerialized = JSON.stringify(translatedBody);
+    finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
-    measureSaverStage("final", true);
+    measureSaverStage("final", true, finalBodyBytes);
     if (contextScope) {
       const tracked = trackCacheEpoch(contextScope, finalSerialized);
       if (tracked) {
