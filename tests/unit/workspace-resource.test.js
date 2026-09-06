@@ -1,20 +1,23 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { useResource } from '../../src/shared/workspace/useResource';
 import { analyticsUrl } from '../../src/shared/workspace/WorkspaceProvider';
 
 let root, container, pending, current;
 function Probe({ url, onSnapshot, interval = 0 }) {
-  current = useResource(url, { onSnapshot, interval });
+  const resource = useResource(url, { onSnapshot, interval });
+  useEffect(() => {
+    current = resource;
+  }, [resource]);
   return (
     <div>
-      {current.loading
+      {resource.loading
         ? 'Loading'
-        : current.error
-          ? `Error ${current.error}`
-          : current.data?.label || 'Empty'}
+        : resource.error
+          ? `Error ${resource.error}`
+          : resource.data?.label || 'Empty'}
     </div>
   );
 }

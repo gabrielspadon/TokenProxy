@@ -24,6 +24,9 @@ export function useResource(url, { onSnapshot, interval = 0 } = {}) {
           onSnapshot?.({
             capturedAt: response.headers.get('x-tokenproxy-preview-captured-at'),
             isolated: true,
+            ...(response.headers.get('x-tokenproxy-preview-kind') === 'synthetic-fixture'
+              ? { kind: 'synthetic-fixture' }
+              : {}),
           });
         }
         const body = await response.json();

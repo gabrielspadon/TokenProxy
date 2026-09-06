@@ -41,6 +41,7 @@ const lensName = (item) => LABELS[item.href] || item.label;
 export function SnapshotNotice() {
   const { snapshot } = useWorkspace();
   if (!snapshot) return null;
+  const synthetic = snapshot.kind === 'synthetic-fixture';
   const captured = snapshot.capturedAt
     ? new Date(snapshot.capturedAt).toLocaleString('en-GB', {
         month: 'short',
@@ -51,11 +52,18 @@ export function SnapshotNotice() {
       })
     : 'Historical';
   return (
-    <Tooltip label="A private copy of recorded data. Outbound calls and operational changes are disabled. Persisted pending statuses are not live requests.">
+    <Tooltip
+      label={
+        synthetic
+          ? 'Synthetic test records in an isolated runtime. These are not production observations.'
+          : 'A private copy of recorded data. Outbound calls and operational changes are disabled. Persisted pending statuses are not live requests.'
+      }
+    >
       <span className={styles.snapshot}>
         <span className={styles.snapshotDot} />
-        Snapshot {captured}
-        {snapshot.capturedAt ? ' UTC' : ''}
+        {synthetic
+          ? 'Synthetic fixture'
+          : `Snapshot ${captured}${snapshot.capturedAt ? ' UTC' : ''}`}
         <span className={styles.isolation}>Isolated</span>
       </span>
     </Tooltip>
@@ -91,7 +99,7 @@ function WorkspaceShell({ children }) {
         Skip to content
       </a>
       <AppShell.Header className={styles.header}>
-        <Group gap="sm" h="100%" px={18} wrap="nowrap">
+        <Group gap="sm" h="100%" px={18} wrap="nowrap" className={styles.headerContent}>
           <Burger
             opened={mobileOpen}
             onClick={() => setMobileOpen(!mobileOpen)}
@@ -123,6 +131,7 @@ function WorkspaceShell({ children }) {
               color="gray"
               size="lg"
               aria-label="Workspace account and language"
+              className={styles.desktopPreferences}
               onClick={() => setPreferencesOpen(true)}
             >
               <Icon name="i-access" />
@@ -131,13 +140,31 @@ function WorkspaceShell({ children }) {
         </Group>
       </AppShell.Header>
       <AppShell.Navbar className={styles.navbar}>
+        <Button
+          hiddenFrom="md"
+          variant="subtle"
+          color="gray"
+          my="sm"
+          onClick={() => {
+            setMobileOpen(false);
+            setPreferencesOpen(true);
+          }}
+        >
+          Workspace account and language
+        </Button>
         <div className={styles.navIntro}>
           <span className={styles.workspaceOrb}>
             <Icon name="i-models" />
           </span>
           <div>
             <strong>Gateway workspace</strong>
-            <span>{snapshot ? 'Recorded environment' : 'Local environment'}</span>
+            <span>
+              {snapshot?.kind === 'synthetic-fixture'
+                ? 'Synthetic environment'
+                : snapshot
+                  ? 'Recorded environment'
+                  : 'Local environment'}
+            </span>
           </div>
         </div>
         <ScrollArea className={styles.navScroll}>
@@ -179,7 +206,13 @@ function WorkspaceShell({ children }) {
           >
             Find a control
           </Button>
-          <Text size="xs">{snapshot ? 'Private historical preview' : 'Operator workspace'}</Text>
+          <Text size="xs">
+            {snapshot?.kind === 'synthetic-fixture'
+              ? 'Synthetic preview'
+              : snapshot
+                ? 'Private historical preview'
+                : 'Operator workspace'}
+          </Text>
         </div>
       </AppShell.Navbar>
       <AppShell.Main className={styles.main}>

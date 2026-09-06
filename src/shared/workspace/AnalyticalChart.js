@@ -11,6 +11,7 @@ import {
   GridComponent,
   LegendComponent,
   TooltipComponent,
+  TitleComponent,
   VisualMapComponent,
   ToolboxComponent,
 } from 'echarts/components';
@@ -29,6 +30,7 @@ echarts.use([
   GridComponent,
   LegendComponent,
   TooltipComponent,
+  TitleComponent,
   VisualMapComponent,
   ToolboxComponent,
   CanvasRenderer,

@@ -26,6 +26,7 @@ import {
 } from '@tanstack/react-table';
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
 import { Icon } from '@/shared/components/Icon';
+import { QuotaSummary, WindowEvidence, orderQuotaWindows } from '@/shared/workspace/QuotaEvidence';
 import { ActivityBand } from '@/shared/workspace/ActivityBand';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
@@ -56,25 +57,10 @@ const timestamp = (value) =>
         timeZone: 'UTC',
       })
     : 'Unknown';
-function primaryWindow(windows, anchor) {
-  return [...windows].sort((a, b) => {
-    const first =
-      validDate(a.resetAt) && Date.parse(a.resetAt) >= anchor ? Date.parse(a.resetAt) : Infinity;
-    const second =
-      validDate(b.resetAt) && Date.parse(b.resetAt) >= anchor ? Date.parse(b.resetAt) : Infinity;
-    return first - second || (a.scope || '').localeCompare(b.scope || '');
-  })[0];
-}
-function quotaPercentage(window) {
-  const value = window?.percentage?.value;
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100
-    ? value
-    : null;
-}
 function State({ value }) {
   const state = {
-    healthy: ['teal', 'Healthy'],
-    degraded: ['orange', 'Degraded'],
+    healthy: ['teal', 'Reported healthy'],
+    degraded: ['orange', 'Reported degraded'],
     cooldown: ['orange', 'Cooldown'],
     drained: ['gray', 'Draining'],
     unqualified: ['gray', 'Unqualified'],
@@ -84,32 +70,6 @@ function State({ value }) {
       <i />
       {state[1]}
     </span>
-  );
-}
-function WindowEvidence({ window, count = 1 }) {
-  if (!window) return <span className={styles.unknown}>Not recorded</span>;
-  const percentage = quotaPercentage(window);
-  return (
-    <Tooltip
-      label={`${window.scope || 'Unspecified scope'}. ${percentage == null ? 'No comparable unit or retained percentage is recorded.' : 'Percentage retained in connection.lastQuotaSnapshot, independent of the quota-window quantity.'} ${count > 1 ? `${count} windows. Select the account to inspect each.` : ''}`}
-    >
-      <div className={styles.windowEvidence}>
-        <span>
-          {percentage == null ? 'Unknown headroom' : `${number(percentage)}% remaining`}
-          {count > 1 && <span className={styles.moreWindows}>+{count - 1}</span>}
-        </span>
-        {percentage == null ? (
-          <span className={styles.unknownScale} />
-        ) : (
-          <Progress
-            value={percentage}
-            color={window.percentage.freshness?.state === 'fresh' ? 'indigo' : 'gray'}
-            size={4}
-            radius={0}
-          />
-        )}
-      </div>
-    </Tooltip>
   );
 }
 function ResetDeadline({ window, anchor }) {
@@ -153,9 +113,21 @@ function TokenMeasure({ record }) {
         </span>
         {completeBreakdown ? (
           <Progress.Root size={4} radius={0}>
-            <Progress.Section value={Math.max(0, 100 - read - write)} color={METRIC_COLORS.input} />
-            <Progress.Section value={read} color={METRIC_COLORS.cacheRead} />
-            <Progress.Section value={write} color={METRIC_COLORS.cacheWrite} />
+            <Progress.Section
+              aria-label="Uncached share of recorded input"
+              value={Math.max(0, 100 - read - write)}
+              color={METRIC_COLORS.input}
+            />
+            <Progress.Section
+              aria-label="Cached read share of recorded input"
+              value={read}
+              color={METRIC_COLORS.cacheRead}
+            />
+            <Progress.Section
+              aria-label="Cache write share of recorded input"
+              value={write}
+              color={METRIC_COLORS.cacheWrite}
+            />
           </Progress.Root>
         ) : (
           <span className={styles.unknownScale} />
@@ -188,6 +160,7 @@ function ResetOverview({ windows, anchor, onSelect }) {
         axisLabel: {
           color: '#5e6d85',
           fontSize: 13,
+          hideOverlap: true,
           formatter: (value) =>
             new Date(value).toLocaleDateString('en-GB', {
               day: 'numeric',
@@ -264,12 +237,12 @@ function QuotaTable({ windows, anchor, selectedScope }) {
           <Table.Th>Reported scope</Table.Th>
           <Table.Th>Remaining evidence</Table.Th>
           <Table.Th>Reset deadline (UTC)</Table.Th>
-          <Table.Th>Observation (UTC)</Table.Th>
+          <Table.Th>Percentage observed (UTC)</Table.Th>
           <Table.Th>Basis</Table.Th>
         </Table.Tr>
       </Table.Thead>
       <Table.Tbody>
-        {windows.map((window) => (
+        {orderQuotaWindows(windows).map((window) => (
           <Table.Tr key={window.scope} bg={window.scope === selectedScope ? 'indigo.0' : undefined}>
             <Table.Td>{window.scope || 'Unspecified'}</Table.Td>
             <Table.Td>
@@ -278,7 +251,13 @@ function QuotaTable({ windows, anchor, selectedScope }) {
             <Table.Td>
               <ResetDeadline window={window} anchor={anchor} />
             </Table.Td>
-            <Table.Td>{timestamp(window.observedAt)}</Table.Td>
+            <Table.Td>
+              <Tooltip
+                label={`Quota quantity observed ${timestamp(window.observedAt)} UTC; percentage observation is independent.`}
+              >
+                <span className={styles.measured}>{timestamp(window.percentage?.observedAt)}</span>
+              </Tooltip>
+            </Table.Td>
             <Table.Td>
               {window.percentage
                 ? `Retained percentage · ${window.percentage.freshness?.state || 'unknown age'}`
@@ -325,8 +304,8 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
                 </dd>
                 <dt>Draining</dt>
                 <dd>{row.isDraining ? 'Yes' : 'No'}</dd>
-                <dt>Last qualification</dt>
-                <dd>{timestamp(row.lastQualifiedAt)}</dd>
+                <dt>Last status timestamp</dt>
+                <dd className={styles.measured}>{timestamp(row.lastQualifiedAt)}</dd>
               </dl>
               <Button mt="md" component={Link} href="/dashboard/connections" variant="light">
                 Manage connection
@@ -336,24 +315,26 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
               <h3>Recorded activity in the selected interval</h3>
               <dl className={shared.facts}>
                 <dt>Attempts</dt>
-                <dd>{number(record?.records)}</dd>
+                <dd className={styles.measured}>{number(record?.records)}</dd>
                 <dt>Failed</dt>
-                <dd>{number(record?.failed)}</dd>
+                <dd className={styles.measured}>{number(record?.failed)}</dd>
                 <dt>Input tokens, cache-inclusive</dt>
-                <dd>{number(record?.inputTokens)}</dd>
+                <dd className={styles.measured}>{number(record?.inputTokens)}</dd>
                 <dt>Cached reads</dt>
-                <dd>{number(record?.cacheReadTokens)}</dd>
+                <dd className={styles.measured}>{number(record?.cacheReadTokens)}</dd>
                 <dt>Cache writes</dt>
-                <dd>{number(record?.cacheWriteTokens)}</dd>
+                <dd className={styles.measured}>{number(record?.cacheWriteTokens)}</dd>
                 <dt>Output tokens</dt>
-                <dd>{number(record?.outputTokens)}</dd>
+                <dd className={styles.measured}>{number(record?.outputTokens)}</dd>
               </dl>
             </div>
             <div className={shared.detailSection}>
               <h3>Evidence and scope</h3>
               <Text size="sm" c="dimmed">
-                Recorded health and quota are observations, not a guarantee of upstream
-                availability. Historical token provenance was not retained.
+                Reported health is derived from persisted test status, errors and local gates. The
+                status timestamp can be a connection update when no test timestamp exists. It does
+                not establish model support or available quota. Historical token provenance was not
+                retained.
               </Text>
               {row.lastError && (
                 <Text mt="sm" size="sm" c="orange.8">
@@ -579,13 +560,13 @@ export default function CapacityPage() {
         return {
           ...account,
           windows,
-          primary: primaryWindow(windows, anchor),
+          primary: orderQuotaWindows(windows)[0],
           activity: record,
           records: record?.records ?? -1,
           inputTokens: record?.inputTokens ?? -1,
         };
       }),
-    [accounts, quota.data, activity.data, anchor]
+    [accounts, quota.data, activity.data]
   );
   const filteredRows = useMemo(
     () =>
@@ -655,6 +636,7 @@ export default function CapacityPage() {
             <UnstyledButton
               className={styles.accountCell}
               onClick={() => {
+                setSelectedScope(null);
                 setSelectedAccountId(row.original.connectionId);
                 setComparing(false);
               }}
@@ -667,8 +649,16 @@ export default function CapacityPage() {
       },
       {
         accessorKey: 'status',
-        header: snapshot ? 'Recorded state' : 'Routing state',
-        cell: ({ row }) => <State value={row.original.status} />,
+        header: 'Reported health',
+        cell: ({ row }) => (
+          <Tooltip
+            label={`Derived from stored test status, errors, cooldown and local controls. Not model support or quota availability. Status timestamp ${timestamp(row.original.lastQualifiedAt)} UTC may be a connection update.`}
+          >
+            <span>
+              <State value={row.original.status} />
+            </span>
+          </Tooltip>
+        ),
       },
       {
         accessorKey: 'records',
@@ -677,6 +667,7 @@ export default function CapacityPage() {
           <div className={styles.requestMeasure}>
             <span>{row.original.records >= 0 ? number(row.original.records) : '—'}</span>
             <Progress
+              aria-label={`Attempts relative to the busiest configured account (${number(maxRequests)})`}
               value={(Math.max(0, row.original.records) / maxRequests) * 100}
               color="#a5b3df"
               size={3}
@@ -692,21 +683,36 @@ export default function CapacityPage() {
       },
       {
         id: 'quota',
-        header: 'Remaining evidence',
+        header: (
+          <Tooltip label="Each retained percentage has its own scope. Longer explicitly reported durations appear first, followed by unknown durations. This display order is not an eligibility verdict.">
+            <span>Remaining by window ⓘ</span>
+          </Tooltip>
+        ),
         enableSorting: false,
         cell: ({ row }) => (
-          <WindowEvidence window={row.original.primary} count={row.original.windows.length} />
+          <QuotaSummary
+            windows={row.original.windows}
+            onInspect={(windowScope) => {
+              setSelectedScope(windowScope);
+              setSelectedAccountId(row.original.connectionId);
+              setComparing(false);
+            }}
+          />
         ),
       },
       {
         id: 'reset',
         accessorFn: (row) =>
           validDate(row.primary?.resetAt) ? Date.parse(row.primary.resetAt) : Infinity,
-        header: 'Reset deadline · UTC',
+        header: (
+          <Tooltip label="Stored reset for the first displayed window, ordered by longer reported duration first. Every window remains available in the account inspector.">
+            <span>First window reset · UTC</span>
+          </Tooltip>
+        ),
         cell: ({ row }) => <ResetDeadline window={row.original.primary} anchor={anchor} />,
       },
     ],
-    [comparisonIds, setComparisonIds, setSelectedAccountId, maxRequests, snapshot, anchor]
+    [comparisonIds, setComparisonIds, setSelectedAccountId, maxRequests, anchor]
   );
   const table = useTable({
     features: FEATURES,

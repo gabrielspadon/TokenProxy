@@ -18,11 +18,13 @@ export function usePoll(url, intervalMs) {
   useEffect(() => {
     if (!url) return undefined;
     let alive = true;
+    let historical = false;
     let timer;
     const controller = new AbortController();
     const run = async () => {
       try {
         const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+        historical = res.headers?.get('x-tokenproxy-preview') === 'historical-snapshot';
         const body = await res.json().catch(() => null);
         if (!alive) return;
         setR((s) => ({
@@ -45,7 +47,7 @@ export function usePoll(url, intervalMs) {
             at: Date.now(),
           }));
       }
-      if (alive && intervalMs) timer = setTimeout(run, intervalMs);
+      if (alive && intervalMs && !historical) timer = setTimeout(run, intervalMs);
     };
     run();
     return () => {

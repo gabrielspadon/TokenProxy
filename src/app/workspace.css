@@ -60,6 +60,13 @@ body {
   font-size: 18px;
   font-weight: 600;
 }
+.mantine-Input-input::placeholder {
+  color: #65728a;
+  opacity: 1;
+}
+.mantine-Badge-label {
+  font-size: 13px;
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

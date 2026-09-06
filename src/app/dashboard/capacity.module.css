@@ -74,6 +74,7 @@
   height: 100%;
 }
 .accountTable {
+  table-layout: fixed;
   font-size: 13px;
   white-space: nowrap;
   width: 100%;
@@ -104,19 +105,19 @@
   padding-inline: 13px 5px;
 }
 .accountTable th:nth-child(2) {
-  width: 300px;
+  width: 25%;
 }
 .accountTable th:nth-child(3) {
-  width: 11%;
+  width: 15%;
 }
 .accountTable th:nth-child(4) {
-  width: 10%;
+  width: 9%;
 }
 .accountTable th:nth-child(5) {
   width: 15%;
 }
 .accountTable th:nth-child(6) {
-  width: 17%;
+  width: 20%;
 }
 .accountTable th:nth-child(7) {
   width: 17%;
@@ -194,6 +195,7 @@
   background: #c4934a;
 }
 .requestMeasure {
+  font-family: var(--mono);
   width: 84px;
   text-align: end;
   display: flex;
@@ -201,6 +203,7 @@
   gap: 3px;
 }
 .tokenMeasure {
+  font-family: var(--mono);
   min-width: 135px;
   max-width: 180px;
 }
@@ -213,24 +216,6 @@
 .tokenMeasure small {
   font-size: 13px;
   color: #4f726b;
-}
-.windowEvidence {
-  min-width: 140px;
-  max-width: 240px;
-  font-size: 13px;
-}
-.windowEvidence > span {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 3px;
-}
-.moreWindows {
-  color: #5b6fa8;
-  background: #edf0f8;
-  font-size: 13px;
-  padding: 0 4px;
-  border-radius: 3px;
 }
 .unknown {
   font-size: 13px;
@@ -249,17 +234,22 @@
   );
 }
 .reset {
+  font-family: var(--mono);
   display: flex;
   flex-direction: row;
   gap: 5px;
   font-size: 13px;
+}
+.measured {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
 .reset > span:last-child {
   color: #5e6d85;
   font-size: 13px;
 }
 .reset > span[data-passed='true'] {
-  color: #986f39;
+  color: #8f632d;
 }
 .bookFoot {
   display: flex;
@@ -287,7 +277,7 @@
 .bookFoot a {
   color: #4c62b5;
   margin-inline-start: 5px;
-  text-decoration: none;
+  text-decoration: underline;
 }
 .quotaTable {
   font-size: 13px;

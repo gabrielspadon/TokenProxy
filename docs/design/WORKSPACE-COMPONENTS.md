@@ -16,8 +16,8 @@ Absolute timestamps are UTC ISO; start is inclusive and end exclusive.
 absolute bounds. Time presets anchor to the captured timestamp in snapshot mode.
 The current backend accepts one provider/account/model per filter. Account
 comparison is selection, not an unsupported comma-separated backend filter.
-`snapshot` is null in normal operation or `{isolated:true,capturedAt}` from the
-mandatory preview HTTP headers. Never hardcode a captured timestamp in source.
+`snapshot` is null in normal operation or `{isolated:true,capturedAt,kind?}` from the
+mandatory preview HTTP headers. The optional synthetic-fixture kind is labeled explicitly. Never hardcode a captured timestamp in source. Shared and legacy control reads stop recurring polling after a historical response; manual rereads remain available.
 `accounts` is the persisted health detail connection list. Its captured status is
 not an upstream service guarantee. Activity groups may include removed accounts.
 
@@ -58,3 +58,19 @@ usage. Economics uses the independent completion ledger and its recorded model
 rate estimate; zero cost is ambiguous. Cache quantities can exceed recorded input
 in old ledger rows. Display the API coverage warning and do not stack inconsistent
 rows as though they reconcile. The old snapshot has no context-session history.
+
+## Quota and Economics selection
+
+`QuotaSummary({windows,onInspect})` displays every retained percentage beside its
+reported scope. `orderQuotaWindows` puts known explicit durations first, longest
+to shortest, then unknown durations in scope order. This is a display order,
+not a new admission policy. Never derive entitlement from a legacy denominator.
+`WindowEvidence({window})` preserves unknown values and measured zero.
+
+The Economics route owns full-scope population and separately filtered ledger
+reads. Selecting a cohort retains the population comparison; record and cohort
+evidence can remain in the inspector across scope changes with an explicit
+previous-scope notice. A deliberate recent-activity action updates shared scope
+and requeries server buckets. Full-history charts keep their actual date range,
+including separated years and empty intervals. They do not zoom silently while
+showing an unrelated total.

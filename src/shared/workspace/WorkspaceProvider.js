@@ -26,7 +26,9 @@ export function WorkspaceProvider({ children }) {
   const observeSnapshot = useCallback(
     (next) =>
       setSnapshot((previous) =>
-        previous?.capturedAt === next.capturedAt && previous?.isolated === next.isolated
+        previous?.capturedAt === next.capturedAt &&
+        previous?.isolated === next.isolated &&
+        previous?.kind === next.kind
           ? previous
           : next
       ),
@@ -63,7 +65,10 @@ export function WorkspaceProvider({ children }) {
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 export function useWorkspace() {
-  const context = useContext(WorkspaceContext);
+  const context = useOptionalWorkspace();
   if (!context) throw new Error('Workspace components require WorkspaceProvider');
   return context;
+}
+export function useOptionalWorkspace() {
+  return useContext(WorkspaceContext);
 }

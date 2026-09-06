@@ -3,7 +3,7 @@
   --canvas: #f3f5f8;
   --border: #dce2ec;
   --text: #202d43;
-  --muted: #65728a;
+  --muted: #5e6b82;
   --accent: #455bca;
   color: var(--text);
 }
@@ -201,7 +201,7 @@
 }
 .scopeSummary {
   font-size: 13px;
-  color: #68758a;
+  color: #5e6b82;
   margin-inline-start: auto;
 }
 .activity {
@@ -233,7 +233,7 @@
 }
 .activitySummary p {
   font-size: 13px;
-  color: #68758a;
+  color: #5e6b82;
 }
 .activityChart {
   padding: 5px 0 0 20px;
@@ -268,7 +268,7 @@
   align-items: center;
   gap: 12px;
   font-size: 13px;
-  color: #68758a;
+  color: #5e6b82;
   padding: 12px 20px;
 }
 .activityFoot {
@@ -342,7 +342,7 @@
 }
 .detailSection h3 {
   font-size: 13px;
-  color: #65728a;
+  color: #5e6b82;
   font-weight: 500;
   margin-bottom: 12px;
 }
@@ -362,7 +362,7 @@
 }
 .emptyMessage {
   padding: 28px;
-  color: #65728a;
+  color: #5e6b82;
   font-size: 14px;
   text-align: center;
 }
@@ -394,6 +394,13 @@
   }
 }
 @media (max-width: 768px) {
+  .headerContent {
+    gap: 6px;
+    padding-inline: 12px;
+  }
+  .desktopPreferences {
+    display: none;
+  }
   .workspaceLabel,
   .headerDivider,
   .isolation {
@@ -457,4 +464,9 @@
     border-top: 1px solid var(--border);
     padding: 16px 0 0;
   }
+}
+
+.activityTotal {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
 }
