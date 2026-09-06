@@ -11,6 +11,7 @@ const GLYPHS = {
   'i-usage': 'monitoring',
   'i-shaping': 'tune',
   'i-translation': 'translate',
+  'i-compatibility': 'fact_check',
   'i-tools': 'build',
   'i-remote': 'computer',
   'i-notifications': 'chat',

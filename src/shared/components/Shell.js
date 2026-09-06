@@ -32,6 +32,7 @@ const SEARCH_TERMS = {
   '/dashboard/connections': 'provider account quota oauth credential',
   '/dashboard/models': 'model routing combo fallback eligibility',
   '/dashboard/shaping': 'cache saver compression token optimization memory risk',
+  '/dashboard/compatibility': 'translator fixture format conversion run evidence',
   '/dashboard/keys': 'endpoint api key credential',
   '/dashboard/usage': 'economics cost spend price statistics tokens requests latency',
 };
