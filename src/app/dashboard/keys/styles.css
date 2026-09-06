@@ -15,6 +15,12 @@
   .keys-ceiling { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .keys-ceiling .label { color: var(--slate); font-size: var(--t-13); }
   .keys-ceiling-value { font-weight: 500; }
+  .keys-budget-table { overflow-x: auto; max-width: 100%; }
+  .keys-budget-table table { width: 100%; border-collapse: collapse; font-size: var(--t-13); }
+  .keys-budget-table caption { text-align: start; color: var(--slate); padding-block: 8px; }
+  .keys-budget-table th, .keys-budget-table td { padding: 8px 12px; border-bottom: 1px solid var(--rule); text-align: end; white-space: nowrap; }
+  .keys-budget-table th:first-child { text-align: start; }
+  .keys-budget-table td { font-variant-numeric: tabular-nums; font-family: var(--font-mono, 'IBM Plex Mono', monospace); }
 
   /* A Decisions value is a whole translated sentence inside a .status badge.
      .status is inline-flex, so the sentence is one flex item sized at

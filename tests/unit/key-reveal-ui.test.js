@@ -71,3 +71,29 @@ it("shows a refused reveal beside its control without creating a credential", as
   expect(container.textContent).not.toContain(secret);
   expect(dialog.textContent).toContain("Operator credential required");
 });
+
+it("sends the selected protection policy only when the operator saves limits", async () => {
+  fixture.response = { ok: true, body: {} };
+  await act(async () => [...container.querySelectorAll("button")].find(el => el.textContent.trim().endsWith("Edit limits")).click());
+  const dialog = container.querySelector("dialog"), select = dialog.querySelector("select");
+  expect(select.value).toBe("reserve-remaining");
+  await act(async () => { select.value = "strict"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  expect(fixture.calls).toHaveLength(0);
+  expect(dialog.textContent).toContain("Existing reservations and uncertain outcomes stay held");
+  await submit(dialog);
+  expect(fixture.calls).toEqual([{ url: "/api/keys/fixture-key", method: "PUT", body: {
+    maxPromptTokens: null, maxCompletionTokens: null, maxCostUsd: null, allowedModels: null, budgetPolicy: "strict",
+  } }]);
+  expect(dialog.open).toBe(false);
+  expect(fixture.refresh).toHaveBeenCalled();
+});
+
+it("preserves the selected policy and refusal when saving fails", async () => {
+  fixture.response = { ok: false, status: 503, body: { error: "Storage unavailable" } };
+  await act(async () => [...container.querySelectorAll("button")].find(el => el.textContent.trim().endsWith("Edit limits")).click());
+  const dialog = container.querySelector("dialog");
+  await submit(dialog);
+  expect(dialog.open).toBe(true);
+  expect(dialog.querySelector("select").value).toBe("reserve-remaining");
+  expect(dialog.textContent).toContain("Storage unavailable");
+});

@@ -11,10 +11,9 @@ import { useAuthStatus } from '@/store/authStatus';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit, fmtUsd } from '@/shared/format';
+import { KeyBudget } from './KeyBudget';
+import { keyBudgetState } from './budget';
 import './styles.css';
-
-const STATE_WORD = { on: 'Active', off: 'Deactivated', expired: 'Expired', over: 'Over a ceiling' };
-const STATE_TONE = { on: 'ok', off: 'warn', expired: 'warn', over: 'bad' };
 
 // The three ceilings of §7, in the order the gateway checks them.
 const CEILINGS = [
@@ -46,10 +45,7 @@ function exceeded(k) {
 }
 
 function keyState(k) {
-  if (!k.isActive) return 'off';
-  if (k.isExpired) return 'expired';
-  if (exceeded(k)) return 'over';
-  return 'on';
+  return keyBudgetState(k).state;
 }
 
 function parseModels(text) {
@@ -65,42 +61,6 @@ function numberOrNull(text) {
   if (!t) return null;
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 ? n : null;
-}
-
-function Ceiling({ ceiling, limit, used }) {
-  if (limit == null) {
-    return (
-      <div className="keys-ceiling">
-        <span className="label">{ceiling.label}</span>
-        <span className="keys-ceiling-value">
-          <span className="unreported">No ceiling</span>
-        </span>
-        <span className="caption">
-          <span data-i18n-skip>{ceiling.render(used)}</span> <span>spent</span>
-        </span>
-      </div>
-    );
-  }
-  const over = used >= limit;
-  const frac = limit > 0 ? Math.min(1, used / limit) : 1;
-  return (
-    <div className="keys-ceiling">
-      <span className="label">{ceiling.label}</span>
-      <div
-        className="band"
-        data-level={over ? 'empty' : frac > 0.85 ? 'low' : undefined}
-        aria-hidden="true"
-      >
-        <span className="used" style={{ width: `${frac * 100}%` }} />
-      </div>
-      <span className="band-meta">
-        <span data-i18n-skip>
-          {ceiling.render(used)} / {ceiling.render(limit)}
-        </span>
-        {limit === 0 ? <span>Frozen at zero</span> : over ? <span>Over</span> : null}
-      </span>
-    </div>
-  );
 }
 
 function LimitFields({ form, set }) {
@@ -133,6 +93,17 @@ function LimitFields({ form, set }) {
         One model id per entry, separated by commas. A whole provider is written as its name
         followed by a slash and a star. Leave empty for every model.
       </p>
+      <label className="field">
+        <span>Budget protection</span>
+        <select className="input" value={form.budgetPolicy} onChange={event => set('budgetPolicy', event.target.value)}>
+          <option value="strict">Verified bounds</option>
+          <option value="reserve-remaining">Reserve remaining allowance</option>
+        </select>
+      </label>
+      <p className="caption">{form.budgetPolicy === 'strict'
+        ? 'A capped request is refused when its maximum use cannot be verified. Missing recorded usage also prevents admission for that resource.'
+        : 'An unknown-bound request holds the remaining allowance and prevents overlapping exposure. Actual usage can exceed the allowance. This is best-effort protection.'}
+        {' '}Policy changes apply to subsequent requests. Existing reservations and uncertain outcomes stay held. Recorded costs are estimates, not a provider invoice guarantee.</p>
     </>
   );
 }
@@ -144,6 +115,7 @@ const BLANK = {
   maxCompletionTokens: '',
   maxCostUsd: '',
   allowedModels: '',
+  budgetPolicy: 'strict',
 };
 
 export default function KeysPage() {
@@ -201,6 +173,7 @@ export default function KeysPage() {
             maxCompletionTokens: key.maxCompletionTokens ?? '',
             maxCostUsd: key.maxCostUsd ?? '',
             allowedModels: (key.allowedModels || []).join(', '),
+            budgetPolicy: key.budget?.policy || key.effectiveBudgetPolicy || 'reserve-remaining',
           }
         : BLANK
     );
@@ -212,6 +185,7 @@ export default function KeysPage() {
     maxCompletionTokens: numberOrNull(form.maxCompletionTokens),
     maxCostUsd: numberOrNull(form.maxCostUsd),
     allowedModels: parseModels(form.allowedModels),
+    budgetPolicy: form.budgetPolicy,
   });
 
   const run = async () => {
@@ -387,7 +361,7 @@ export default function KeysPage() {
         />
         <Measure
           big
-          label="Active"
+          label="Enabled"
           measure={keys.data ? { value: rows.filter((k) => keyState(k) === 'on').length } : null}
           render={fmtNum}
         />
@@ -439,6 +413,7 @@ export default function KeysPage() {
               </div>
               {rows.map((k) => {
                 const st = keyState(k);
+                const budgetState = keyBudgetState(k);
                 const hit = exceeded(k);
                 const on = picked.includes(k.id);
                 return (
@@ -483,8 +458,8 @@ export default function KeysPage() {
                       </span>
                     </span>
                     <span data-i18n-skip>{fmtNum(k.deviceCount || 0)}</span>
-                    <span className="status" data-tone={STATE_TONE[st]}>
-                      {STATE_WORD[st]}
+                    <span className="status" data-tone={budgetState.tone} data-state={st}>
+                      {budgetState.label}
                     </span>
                     <details className="keys-detail">
                       <summary>Details</summary>
@@ -492,19 +467,10 @@ export default function KeysPage() {
                         <Notice
                           tone="bad"
                           title="This key is over one of its own ceilings."
-                          next="It stops authenticating on its next use. Raise the ceiling or clear it to let the key run again."
+                          next="Generation is refused when its ceiling is reached. Authentication remains distinct from permission to dispatch a model request."
                         />
                       ) : null}
-                      <div className="keys-ceilings">
-                        {CEILINGS.map((c) => (
-                          <Ceiling
-                            key={c.field}
-                            ceiling={c}
-                            limit={k[c.field]}
-                            used={(k.usage || {})[c.used] || 0}
-                          />
-                        ))}
-                      </div>
+                      <KeyBudget record={k} />
                       <dl className="facts">
                         <dt>Requests</dt>
                         <dd data-i18n-skip>{fmtNum((k.usage || {}).requests || 0)}</dd>
