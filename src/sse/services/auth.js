@@ -63,6 +63,9 @@ import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
 import { resolveRoutingSessionIdentity } from './routingIdentity.js';
 import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
 import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
+import { getDisabledModels } from '@/lib/disabledModelsDb';
+import { isAccountModelDisabled } from '@/shared/utils/disabledModelPolicy.js';
+import { getProviderNodeById } from '@/lib/db/repos/nodesRepo.js';
 
 // Serialize account selection per canonical provider without blocking unrelated providers.
 const providerSelectionQueues = new Map();
@@ -382,9 +385,17 @@ export async function getProviderCredentials(
 
   try {
     await currentQueue;
+    // Read after queue acquisition so a completed operator write applies to
+    // the next selection. A policy read failure must not admit a barred model.
+    const disabledModels = model ? await getDisabledModels() : {};
+    const providerNode = Object.keys(disabledModels || {}).length ? await getProviderNodeById(providerId) : null;
+    const providerAliases = providerNode?.prefix ? [providerNode.prefix] : [];
+    const modelDisabled = (connection) =>
+      isAccountModelDisabled(disabledModels, providerId, model, connection?.id, providerAliases);
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (isNoAuthProvider(providerId)) {
+      if (isAccountModelDisabled(disabledModels, providerId, model)) return null;
       const settings = await getSettings();
       // A no-auth provider has no connection row to deactivate, so the operator
       // switch is the only way to bench it. Refuse here rather than in the
@@ -484,6 +495,10 @@ export async function getProviderCredentials(
       if (strictPreferredConnection && c.id !== preferredConnectionId) return false;
       if (excludeSet.has(c.id)) return false;
       if (!accountSupportsModel(c, model)) return false;
+      if (modelDisabled(c)) {
+        emit('SEL', 'skipped', { conn: prefix8(c.id), why: 'model-disabled' });
+        return false;
+      }
       if (draining.has(c.id)) {
         drainExcluded.push(prefix8(c.id));
         return false;
@@ -523,6 +538,7 @@ export async function getProviderCredentials(
         || classifyAccountFailure(failure.status, failure.message));
       if (failure && (failureClass === 'rate' || failureClass === 'transient')
           && !excludeSet.has(pinned.id) && !draining.has(pinned.id)
+          && !modelDisabled(pinned)
           && accountSupportsModel(pinned, model) && pinned.id !== ignoreLockConn
           && (!strictPreferredConnection || preferredConnectionId === pinned.id)) {
         return {
@@ -615,9 +631,9 @@ export async function getProviderCredentials(
 
     if (routedConnections.length === 0) {
       // Find earliest lock expiry across all connections for retry timing
-      const lockCandidates = strictPreferredConnection
-        ? connections.filter((connection) => connection.id === preferredConnectionId)
-        : connections;
+      const lockCandidates = connections.filter((connection) =>
+        (!strictPreferredConnection || connection.id === preferredConnectionId)
+        && !modelDisabled(connection));
       const lockedPairs = lockCandidates
         .map((connection) => ({ connection, failure: getActiveModelFailure(connection, model) }))
         .filter((entry) => entry.failure);

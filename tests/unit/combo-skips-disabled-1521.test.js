@@ -26,11 +26,9 @@ describe("a combo skips members the operator disabled (#1521)", () => {
     expect(await (await load())(models, "c")).toEqual(models);
   });
 
-  it("keeps every member rather than emptying the combo", async () => {
-    // A combo that starts answering "no models" because of an unrelated disable
-    // is a worse surprise than one that still works, and the warning names it.
+  it("does not resurrect disabled members when the entire combo is disabled", async () => {
     disabled = { ds: ["deepseek-v4-pro"] };
-    expect(await (await load())(["ds/deepseek-v4-pro"], "c")).toEqual(["ds/deepseek-v4-pro"]);
+    expect(await (await load())(["ds/deepseek-v4-pro"], "c")).toEqual([]);
   });
 
   it("matches the exact provider alias, not a prefix or a superstring", async () => {
@@ -39,10 +37,10 @@ describe("a combo skips members the operator disabled (#1521)", () => {
       .toEqual(["ds/deepseek-v4-pro", "cx/gpt-5.5"]);
   });
 
-  it("leaves a bare model name alone, having no alias to match", async () => {
+  it("resolves a bare model name before checking its provider policy", async () => {
     disabled = { ds: ["deepseek-v4-pro"] };
     expect(await (await load())(["deepseek-v4-pro", "cx/gpt-5.5"], "c"))
-      .toEqual(["deepseek-v4-pro", "cx/gpt-5.5"]);
+      .toEqual(["cx/gpt-5.5"]);
   });
 
   it("never fails a route because the disabled list is unreadable", async () => {

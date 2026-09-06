@@ -37,4 +37,8 @@ describe('pure disabled-model policy', () => {
     expect(disabled(null, 'cc', 'm', 'a')).toBe(false);
     expect(disabled({ cc: ['m'] }, 'cc', null, 'a')).toBe(false);
   });
+  it('accepts a verified custom provider prefix without changing the upstream model ID', () => {
+    expect(disabled({ 'corp::a': ['corp/vendor/model'] }, 'node-id', 'vendor/model', 'a', ['corp'])).toBe(true);
+    expect(disabled({ corp: ['m'], 'node-id::a': [] }, 'node-id', 'm', 'a', ['corp'])).toBe(false);
+  });
 });
