@@ -11,6 +11,21 @@ const tools = {
 };
 
 describe('independent compactor transaction preservation', () => {
+  it('finds deep error evidence when serialization succeeds, including cycles hidden by toJSON', () => {
+    for (const cyclic of [false, true]) {
+      const root = { toJSON: () => ({ description: 'opaque error payload' }) };
+      let tail = root;
+      for (let i = 0; i < 20_000; i++) { tail.next = {}; tail = tail.next; }
+      tail.is_error = true;
+      if (cyclic) tail.next = root;
+      const evidence = { role: 'user', content: root };
+      const recent = history();
+      const body = { messages: [...history(), evidence, ...recent] };
+      expect(compactContextWindow(body, options).compacted).toBe(true);
+      expect(body.messages.at(-recent.length - 1)).toBe(evidence);
+      expect(body.messages.slice(-recent.length)).toEqual(recent);
+    }
+  });
   it('leaves cyclic or deeply nested inputs unchanged without a traversal failure', () => {
     for (const cyclic of [false, true]) {
       const root = {};
