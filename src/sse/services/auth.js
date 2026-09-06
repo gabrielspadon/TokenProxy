@@ -65,7 +65,7 @@ import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js'
 import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 import { getDisabledModels } from '@/lib/disabledModelsDb';
 import { isAccountModelDisabled } from '@/shared/utils/disabledModelPolicy.js';
-import { getProviderNodeById } from '@/lib/db/repos/nodesRepo.js';
+import { getProviderNodes } from '@/lib/db/repos/nodesRepo.js';
 
 // Serialize account selection per canonical provider without blocking unrelated providers.
 const providerSelectionQueues = new Map();
@@ -388,14 +388,15 @@ export async function getProviderCredentials(
     // Read after queue acquisition so a completed operator write applies to
     // the next selection. A policy read failure must not admit a barred model.
     const disabledModels = model ? await getDisabledModels() : {};
-    const providerNode = Object.keys(disabledModels || {}).length ? await getProviderNodeById(providerId) : null;
+    const providerNodes = Object.keys(disabledModels || {}).length ? await getProviderNodes() : [];
+    const providerNode = providerNodes.find((node) => node.id === providerId);
     const providerAliases = providerNode?.prefix ? [providerNode.prefix] : [];
     const modelDisabled = (connection) =>
-      isAccountModelDisabled(disabledModels, providerId, model, connection?.id, providerAliases);
+      isAccountModelDisabled(disabledModels, providerId, model, connection?.id, providerAliases, providerNodes);
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (isNoAuthProvider(providerId)) {
-      if (isAccountModelDisabled(disabledModels, providerId, model)) return null;
+      if (isAccountModelDisabled(disabledModels, providerId, model, null, providerAliases, providerNodes)) return null;
       const settings = await getSettings();
       // A no-auth provider has no connection row to deactivate, so the operator
       // switch is the only way to bench it. Refuse here rather than in the

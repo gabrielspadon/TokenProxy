@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAccountModelDisabled as disabled } from '@/shared/utils/disabledModelPolicy.js';
+import { isAccountModelDisabled as disabled, resolveDisabledModelProvider } from '@/shared/utils/disabledModelPolicy.js';
 
 describe('pure disabled-model policy', () => {
   it.each(['cc', 'claude'])('resolves canonical and alias keys identically for %s', (provider) => {
@@ -40,5 +40,20 @@ describe('pure disabled-model policy', () => {
   it('accepts a verified custom provider prefix without changing the upstream model ID', () => {
     expect(disabled({ 'corp::a': ['corp/vendor/model'] }, 'node-id', 'vendor/model', 'a', ['corp'])).toBe(true);
     expect(disabled({ corp: ['m'], 'node-id::a': [] }, 'node-id', 'm', 'a', ['corp'])).toBe(false);
+  });
+  it('assigns a shadowed alias to its configured node without changing canonical provider ownership', () => {
+    const nodes = [{ id: 'node-id', type: 'openai-compatible', prefix: 'cc' }];
+    expect(disabled({ cc: ['m'] }, 'node-id', 'm', 'a', ['cc'], nodes)).toBe(true);
+    expect(disabled({ cc: ['m'] }, 'claude', 'm', 'a', [], nodes)).toBe(false);
+    expect(disabled({ claude: ['m'] }, 'node-id', 'm', 'a', ['cc'], nodes)).toBe(false);
+    expect(resolveDisabledModelProvider('cc', nodes)).toBe('node-id');
+    expect(resolveDisabledModelProvider('claude', nodes)).toBe('claude');
+  });
+  it('keeps direct canonical policy IDs distinct even when a node uses one as a route prefix', () => {
+    const nodes = [{ id: 'node-id', type: 'openai-compatible', prefix: 'claude' }];
+    expect(disabled({ claude: ['m'] }, 'node-id', 'm', 'a', ['claude'], nodes)).toBe(false);
+    expect(disabled({ 'node-id': ['claude/vendor/model'] }, 'node-id', 'vendor/model', 'a', ['claude'], nodes)).toBe(true);
+    expect(resolveDisabledModelProvider('claude', nodes)).toBe('claude');
+    expect(resolveDisabledModelProvider('node-id', nodes)).toBe('node-id');
   });
 });

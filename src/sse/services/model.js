@@ -17,7 +17,6 @@ import {
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { getFreeModelsForProvider } from "@/lib/db/repos/freeModelsRepo.js";
 import { isAccountModelDisabled } from "@/shared/utils/disabledModelPolicy.js";
-import { getProviderNodeById } from "@/lib/db/repos/nodesRepo.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -250,12 +249,13 @@ async function disabledForEveryAccount(modelStr, disabledModels) {
   try {
     const { provider, model } = await getModelInfo(modelStr);
     if (!provider || !model) return false; // combos and unknown virtual IDs
-    const providerNode = await getProviderNodeById(provider);
+    const providerNodes = await getProviderNodes();
+    const providerNode = providerNodes.find((node) => node.id === provider);
     const providerAliases = providerNode?.prefix ? [providerNode.prefix] : [];
     const connections = await getProviderConnections({ provider, isActive: true });
-    if (!connections.length) return isAccountModelDisabled(disabledModels, provider, model, null, providerAliases);
+    if (!connections.length) return isAccountModelDisabled(disabledModels, provider, model, null, providerAliases, providerNodes);
     return connections.every((connection) =>
-      isAccountModelDisabled(disabledModels, provider, model, connection.id, providerAliases));
+      isAccountModelDisabled(disabledModels, provider, model, connection.id, providerAliases, providerNodes));
   } catch {
     // Resolution/admission owns the final error. A failed preflight never
     // substitutes a model or fabricates a disabled verdict.

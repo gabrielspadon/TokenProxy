@@ -91,6 +91,101 @@ beforeEach(async () => {
 });
 afterAll(() => { adapter?.close?.(); });
 
+async function send(handler, model, headers = {}) {
+  const response = await handler(new Request('http://localhost/v1/chat/completions', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-session-id': 'exact-agent', ...headers },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Offline test' }], input: 'Offline test',
+      query: 'Offline test', documents: ['Offline document'], stream: false }),
+  }));
+  // Finish consuming the request as a client would, including lease release.
+  return new Response(await response.arrayBuffer(), { status: response.status, headers: response.headers });
+}
+
+describe('operator edits preserve equivalent persisted scopes', () => {
+  it('does not treat a malformed historical list as an explicit empty override', async () => {
+    await disable('cc', [MODEL]);
+    adapter.run('INSERT INTO kv(scope, key, value) VALUES (?, ?, ?)', ['disabledModels', 'claude::account-a', 'null']);
+    await disable('claude', ['claude-sonnet-5'], 'account-a');
+    expect(await db.getDisabledByProvider('claude', 'account-a')).toEqual([MODEL, 'claude-sonnet-5']);
+    expect(await select()).toBeNull();
+  });
+
+  it('keeps an inherited alias disable while adding another model through the canonical API', async () => {
+    await disable('cc', [MODEL]);
+    await disable('claude', ['claude-sonnet-5'], 'account-a');
+    expect(await db.getDisabledByProvider('cc', 'account-a')).toEqual([MODEL, 'claude-sonnet-5']);
+    expect(await db.getDisabledByProvider('claude', 'account-a')).toEqual([MODEL, 'claude-sonnet-5']);
+    const response = await send(chat, `cc/${MODEL}`);
+    expect(response.status).toBe(404);
+    expect(core.handleChatCore).not.toHaveBeenCalled();
+  });
+
+  it('reconciles conflicting legacy rows when enabling one account and leaves others disabled', async () => {
+    for (const [key, ids] of Object.entries({ cc: [MODEL], 'cc::account-a': [MODEL], 'claude::account-a': [] })) {
+      adapter.run('INSERT INTO kv(scope, key, value) VALUES (?, ?, ?)', ['disabledModels', key, JSON.stringify(ids)]);
+    }
+    await enable('claude', 'account-a');
+    const response = await send(chat, `cc/${MODEL}`);
+    expect(response.status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0]).toMatchObject({
+      modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: 'account-a' },
+    });
+    expect(await db.getDisabledByProvider('cc', 'account-b')).toEqual([MODEL]);
+    expect(await select('blocked', { preferredConnectionId: 'account-b', strictPreferredConnection: true })).toBeNull();
+  });
+
+  it('cannot repopulate an old cache across a completed concurrent operator write', async () => {
+    const repo = await import('@/lib/db/repos/disabledModelsRepo.js');
+    repo.invalidateDisabledModelsCache();
+    await Promise.all([repo.getDisabledModels(), repo.disableModels('cc', [MODEL])]);
+    expect(await models.isModelDisabled(`cc/${MODEL}`)).toBe(true);
+    expect(await select()).toBeNull();
+  });
+
+  it('keeps native slash IDs and synchronizes only the edited legacy scope', async () => {
+    await db.createProviderNode({ id: 'custom-node-id', type: 'openai-compatible', prefix: 'corp', name: 'Offline node' });
+    const values = { corp: ['vendor/model'], 'corp::account-a': ['vendor/model', 'second/model'],
+      'custom-node-id::account-a': [], 'corp::account-b': ['vendor/model'], other: ['vendor/model'] };
+    for (const [key, ids] of Object.entries(values)) {
+      adapter.run('INSERT INTO kv(scope, key, value) VALUES (?, ?, ?)', ['disabledModels', key, JSON.stringify(ids)]);
+    }
+    const query = new URLSearchParams({ providerAlias: 'custom-node-id', connectionId: 'account-a', id: 'corp/vendor/model' });
+    expect((await api.DELETE(new Request(`http://localhost/api/models/disabled?${query}`))).status).toBe(200);
+    const actual = Object.fromEntries(adapter.all('SELECT key, value FROM kv WHERE scope = ?', ['disabledModels'])
+      .map(({ key, value }) => [key, JSON.parse(value)]));
+    expect(actual).toEqual({ ...values, 'corp::account-a': ['second/model'], 'custom-node-id::account-a': ['second/model'] });
+    const read = new URLSearchParams({ providerAlias: 'corp', connectionId: 'account-a' });
+    expect(await (await api.GET(new Request(`http://localhost/api/models/disabled?${read}`))).json()).toEqual({ ids: ['second/model'] });
+  });
+
+  it('does not write a built-in disable into a configured node that shadows its alias', async () => {
+    await db.createProviderNode({ id: 'custom-node-id', type: 'openai-compatible', prefix: 'cc', name: 'Offline node' });
+    state.connections = [account('account-a'), account('node-account', 'custom-node-id')];
+    await disable('claude', [MODEL]);
+    expect(await models.isModelDisabled(`claude/${MODEL}`)).toBe(true);
+    expect(await models.isModelDisabled(`cc/${MODEL}`)).toBe(false);
+    const response = await send(chat, `cc/${MODEL}`);
+    expect(response.status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0]).toMatchObject({
+      modelInfo: { provider: 'custom-node-id', model: MODEL }, credentials: { connectionId: 'node-account' },
+    });
+  });
+
+  it('does not apply a configured node prefix disable to the built-in provider it shadows', async () => {
+    await db.createProviderNode({ id: 'custom-node-id', type: 'openai-compatible', prefix: 'cc', name: 'Offline node' });
+    state.connections = [account('account-a'), account('node-account', 'custom-node-id')];
+    await disable('cc', [MODEL]);
+    expect(await models.isModelDisabled(`cc/${MODEL}`)).toBe(true);
+    expect(await models.isModelDisabled(`claude/${MODEL}`)).toBe(false);
+    expect(await db.getDisabledByProvider('claude')).toEqual([]);
+    const response = await send(chat, `claude/${MODEL}`);
+    expect(response.status).toBe(200);
+    expect(core.handleChatCore.mock.calls[0][0]).toMatchObject({
+      modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: 'account-a' },
+    });
+  });
+});
+
 describe('disabled model policy reaches real account selection', () => {
   it.each(['cc', 'claude'])('enforces an account disable written under %s for either provider spelling', async (alias) => {
     await disable(alias, [MODEL], 'account-a');
