@@ -116,10 +116,11 @@ vi.mock("../../open-sse/utils/error.js", () => ({
     error: "Request aborted",
     response: Response.json({ error: { message: "Request aborted" } }, { status: 499 }),
   })),
-  createErrorResult: vi.fn((status, message) => ({
+  createErrorResult: vi.fn((status, message, _resetAt, failureMetadata) => ({
     success: false,
     status,
     error: message,
+    failureMetadata,
     response: Response.json({ error: { message } }, { status }),
   })),
   formatProviderError: vi.fn((error) => error.message),
@@ -341,13 +342,14 @@ describe("chat connect timeout propagation", () => {
     });
   });
 
-  it("retains the original 400 for an unrelated field-strip retry error", async () => {
+  it("forbids replay after a field-strip retry loses its transport outcome", async () => {
     mocks.execute.mockResolvedValueOnce(response(400)).mockRejectedValueOnce(new Error("socket closed"));
     await expect(handleChatCore(options({ body: { verbosity: "high" } }))).resolves.toMatchObject({
       success: false,
-      status: 400,
+      status: 502,
+      failureMetadata: { safeToReplay: false },
     });
-    expect(mocks.warn).toHaveBeenCalledWith("FIELDSTRIP", "Retry threw: socket closed");
+    expect(mocks.execute).toHaveBeenCalledTimes(2);
   });
 });
 

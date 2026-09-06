@@ -1979,10 +1979,9 @@ export async function handleChatCore({
             );
           }
         } catch (e) {
-          if (e.name === "AbortError" || isConnectTimeoutError(e)) {
-            return mapTransportError(e);
-          }
-          log?.warn?.("FIELDSTRIP", `Retry threw: ${provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : e.message}`);
+          // The retry may have reached generation even though its response was
+          // lost. The earlier 400 proves nothing about this later attempt.
+          return mapTransportError(e);
         }
       } else {
         log?.warn?.(

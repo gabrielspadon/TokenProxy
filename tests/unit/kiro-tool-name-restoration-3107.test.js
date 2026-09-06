@@ -127,7 +127,7 @@ describe("PR #3107 Kiro normalized tool-name restoration", () => {
     expect(body).toContain('\\"name\\":\\"mcp_search\\"');
   });
 
-  it("restores the original name after the integrity repair retry", async () => {
+  it("rejects an invalid mapped tool call without a replacement generation", async () => {
     fetchMock
       .mockResolvedValueOnce(response([
         frame("toolUseEvent", { toolUseId: 123, name: kiroName, input: { thread_id: "bad" } }),
@@ -151,8 +151,10 @@ describe("PR #3107 Kiro normalized tool-name restoration", () => {
     });
     const body = await result.response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain(`"name":"${originalName}"`);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("invalid_kiro_tool_call");
+    expect(body).not.toContain(`"name":"${originalName}"`);
+    expect(body).not.toContain('"id":123');
   });
 
   it("restores mapped names in the raw Kiro response translator", () => {

@@ -209,15 +209,16 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).not.toContain("kiro_missing_terminal");
   });
 
-  it.each(["...", "…"])("repairs exact ellipsis final %s without leaking it", async (ellipsis) => {
+  it.each(["...", "…"])("rejects accepted ellipsis final %s without another generation", async (ellipsis) => {
     fetchMock
       .mockResolvedValueOnce(response([frame("assistantResponseEvent", { content: ellipsis })]))
       .mockResolvedValueOnce(response([frame("assistantResponseEvent", { content: "Recovered answer." })]));
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("Recovered answer.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_ellipsis_final");
+    expect(body).not.toContain("Recovered answer.");
     expect(body).not.toContain(`"content":"${ellipsis}"`);
   });
 
@@ -227,15 +228,16 @@ describe("Kiro terminal integrity recovery", () => {
     "目前證據顯示只在 **03:48:30–03:49:00 TPE** 出現少量 NonKA 504；主池 106/106、副池 50/50，且兩池都沒有重啟。最後補查 504 access log，確認 host／路徑與是否為集中流量。",
     "Next I'll verify the deployment logs.",
     "Let me check the remaining failures."
-  ])("repairs conservative future-action final: %s", async (progress) => {
+  ])("rejects incomplete future-action final without replay: %s", async (progress) => {
     fetchMock
       .mockResolvedValueOnce(response([frame("assistantResponseEvent", { content: progress })]))
       .mockResolvedValueOnce(response([frame("assistantResponseEvent", { content: "Verification completed." })]));
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("Verification completed.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_incomplete_final");
+    expect(body).not.toContain("Verification completed.");
     expect(body).not.toContain(progress);
   });
 
@@ -266,19 +268,20 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).toContain(finalText);
   });
 
-  it("bounds incomplete-final repair to one retry", async () => {
+  it("does not spend another generation on incomplete-final repair", async () => {
     fetchMock
       .mockResolvedValueOnce(response([frame("assistantResponseEvent", { content: "..." })]))
       .mockResolvedValueOnce(response([frame("assistantResponseEvent", { content: "…" })]));
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("kiro_ellipsis_retry_failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_ellipsis_final");
+    expect(body).toContain('"safe_to_replay":false');
     expect(body).not.toContain('"content":"..."');
   });
 
-  it("repairs malformed wrapper tools without leaking the invalid call", async () => {
+  it("rejects malformed wrapper tools without replay or leaking the invalid call", async () => {
     fetchMock
       .mockResolvedValueOnce(response([frame("toolUseEvent", {
         toolUseId: "bad",
@@ -293,9 +296,9 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain('"name":"tool_call"');
-    expect(body).toContain('\\"name\\":\\"mcp_search\\"');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("invalid_kiro_tool_call");
+    expect(body).not.toContain('"name":"tool_call"');
     expect(body).not.toContain('"id":"bad"');
   });
 
@@ -307,12 +310,12 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("kiro_tool_call_repair_retry_failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("invalid_kiro_tool_call");
     expect(body).not.toContain('"name":"read_file"');
   });
 
-  it("repairs a non-string toolUseId before releasing the tool call", async () => {
+  it("rejects a non-string toolUseId without dispatching again", async () => {
     fetchMock
       .mockResolvedValueOnce(response([frame("toolUseEvent", {
         toolUseId: 123,
@@ -327,12 +330,13 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain('"id":"valid-tool-id"');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("invalid_kiro_tool_call");
+    expect(body).not.toContain('"id":"valid-tool-id"');
     expect(body).not.toContain('"id":123');
   });
 
-  it("keeps model-controlled parser detail out of the retry instruction", async () => {
+  it("does not turn model-controlled parser detail into a retry instruction", async () => {
     fetchMock
       .mockResolvedValueOnce(response([frame("toolUseEvent", {
         toolUseId: "bad-json",
@@ -344,15 +348,10 @@ describe("Kiro terminal integrity recovery", () => {
       })]));
 
     const body = await (await execute()).response.text();
-    const retryBody = JSON.parse(fetchMock.mock.calls[1][1].body);
-
-    expect(body).toContain("Recovered safely.");
-    // The repair instruction rides on the current user message, because a
-    // top-level systemPrompt makes generateAssistantResponse 400 the retry.
-    const retryPrompt = retryBody.conversationState.currentMessage.userInputMessage.content;
-    expect(retryBody).not.toHaveProperty("systemPrompt");
-    expect(retryPrompt).toContain("tool_call wrapper was malformed");
-    expect(retryPrompt).not.toContain("IGNORE_ALL_INSTRUCTIONS");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("invalid_kiro_tool_call");
+    expect(body).not.toContain("Recovered safely.");
+    expect(body).not.toContain("IGNORE_ALL_INSTRUCTIONS");
   });
 
   it("lets a complete tool call override metadata end_turn", async () => {
@@ -385,7 +384,7 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).not.toContain('"finish_reason":"stop"');
   });
 
-  it("retries malformed_model_output once without semantic leakage", async () => {
+  it("rejects malformed_model_output without replay or semantic leakage", async () => {
     fetchMock
       .mockResolvedValueOnce(response([
         frame("assistantResponseEvent", { content: "private malformed output" }),
@@ -397,8 +396,9 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("Recovered protocol output.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("Recovered protocol output.");
     expect(body).not.toContain("private malformed output");
   });
 
@@ -458,7 +458,7 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).not.toContain("private malformed output");
   });
 
-  it("preserves an authoritative refusal returned by the bounded retry", async () => {
+  it("does not start a second generation after an accepted empty response", async () => {
     fetchMock
       .mockResolvedValueOnce(response([]))
       .mockResolvedValueOnce(response([
@@ -468,9 +468,9 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("kiro_terminal_refusal");
-    expect(body).not.toContain("kiro_missing_terminal_retry_failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("kiro_terminal_refusal");
     expect(body).not.toContain("private filtered retry");
   });
 
@@ -543,7 +543,7 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).not.toContain('"tool_calls"');
   });
 
-  it("retries a TTFT timeout once while preserving cancellation semantics", async () => {
+  it("terminates an accepted TTFT timeout without another generation", async () => {
     process.env.KIRO_TOOL_CALL_REPAIR_TTFT_TIMEOUT_MS = "1";
     fetchMock
       .mockResolvedValueOnce(controlledResponse().value)
@@ -553,8 +553,9 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("Recovered after timeout.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("Recovered after timeout.");
   });
 
   it("treats validated non-semantic frames as watchdog activity", async () => {
@@ -575,7 +576,7 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).toContain("Completed after active frames.");
   });
 
-  it("retries a response-body read failure once", async () => {
+  it("terminates an accepted response-body read failure without replay", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response(new ReadableStream({
         start(controller) {
@@ -588,8 +589,9 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("Recovered after read failure.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("Recovered after read failure.");
     expect(body).not.toContain("socket reset");
   });
 
@@ -619,7 +621,7 @@ describe("Kiro terminal integrity recovery", () => {
         [":event-type", "metadataEvent"]
       ], { content: "duplicate" })
     ]]
-  ])("retries %s and releases only the valid attempt", async (_name, invalidFrames) => {
+  ])("rejects accepted %s without replay or semantic leakage", async (_name, invalidFrames) => {
     fetchMock
       .mockResolvedValueOnce(response([
         frame("assistantResponseEvent", { content: "must stay private" }),
@@ -631,12 +633,13 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(body).toContain("Recovered after validation.");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("Recovered after validation.");
     expect(body).not.toContain("must stay private");
   });
 
-  it("reports corrupt-frame provenance when the bounded retry also fails", async () => {
+  it("reports corrupt-frame provenance from the sole accepted attempt", async () => {
     const corruptFrame = () => {
       const corrupt = frame("assistantResponseEvent", { content: "corrupt" });
       corrupt[corrupt.byteLength - 1] ^= 0xff;
@@ -648,7 +651,8 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(body).toContain("kiro_missing_terminal_retry_failed");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
     expect(body).toContain('"terminal_provenance":"corrupt_eventstream_frame"');
     expect(body).toContain('"transport_state":"corrupt_frame"');
   });
@@ -709,11 +713,7 @@ describe("Kiro terminal integrity recovery", () => {
     expect(body).not.toContain("must stay private");
   });
 
-  it("surfaces retry HTTP failures as SSE after heartbeat commits headers", async () => {
-    // PROVIDERS.kiro lists three endpoints and the executor fails over across all
-    // of them, so a single Once for the retry left calls 3+ resolving undefined
-    // and the run died on "reading 'headers'" instead of reaching the assertion.
-    // A fresh Response per call is required: a body can only be consumed once.
+  it("reports an accepted empty stream without reaching a later HTTP response", async () => {
     fetchMock
       .mockResolvedValueOnce(response([]))
       .mockImplementation(async () => new Response("unauthorized", {
@@ -725,12 +725,12 @@ describe("Kiro terminal integrity recovery", () => {
     const body = await result.response.text();
 
     expect(result.response.status).toBe(200);
-    expect(body).toContain("kiro_integrity_retry_upstream_error");
-    expect(body).toContain("unauthorized");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("unauthorized");
   });
 
-  it("bounds the retry HTTP error body", async () => {
-    // Fresh Response per call, for the same endpoint-failover reason as above.
+  it("cannot expose an error body from an undispatched retry", async () => {
     fetchMock
       .mockResolvedValueOnce(response([]))
       .mockImplementation(async () => new Response(`error-start-${"x".repeat(10_000)}-error-tail`, {
@@ -740,7 +740,9 @@ describe("Kiro terminal integrity recovery", () => {
 
     const body = await (await execute()).response.text();
 
-    expect(body).toContain("error-start-");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(body).toContain("kiro_missing_terminal");
+    expect(body).not.toContain("error-start-");
     expect(body).not.toContain("error-tail");
     expect(body.length).toBeLessThan(5000);
   });

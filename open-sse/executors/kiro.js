@@ -40,11 +40,6 @@ const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   return value >>> 0;
 });
 
-const REPAIR_INSTRUCTIONS = Object.freeze({
-  tool: "Retry the previous response because its Kiro tool_call wrapper was malformed. If you use the wrapper tool named tool_call, its input must contain a non-empty name and an arguments field.",
-  ellipsis: "Retry the previous response because it ended with only an ellipsis. Return the complete final answer, not only ... or ….",
-  short_final: "Retry the previous response because its final only announced a future action. Complete the check now and return the result or a concrete blocker."
-});
 const SHORT_FUTURE_ACTION = /^(?:(?:(?:現在|接著|接下來|下一步)[，,:：\s]*(?:我(?:只)?(?:會|要|將|再)?\s*)?|我只再)(?:補|查|確認|驗證|追(?:查|蹤)?|繼續|檢查|測試)|我(?:會|要|將)(?:再|重新)?(?:補(?:齊|查)?|抓取|查(?:詢)?|確認|驗證|追(?:查|蹤)?|繼續|檢查|測試)|(?:(?:next|now|then)\b[\s,:-]*)?(?:i(?:'ll| will| am going to| need to)|let me)\s+(?:verify|check|confirm|validate|investigate|trace|continue|follow up|test)\b)/iu;
 // Keep this tied to the observed whole-response signature. Broader Chinese
 // result/progress heuristics create false positives for completed findings.
@@ -110,47 +105,6 @@ async function readWithTimeout(reader, signal, timeoutMs, message) {
     clearTimeout(timeout);
     signal?.removeEventListener?.("abort", abortHandler);
   }
-}
-
-async function readResponsePrefix(response, signal, maxBytes, timeoutMs) {
-  const reader = response?.body?.getReader?.();
-  if (!reader) return "";
-  const chunks = [];
-  let totalBytes = 0;
-  try {
-    while (totalBytes < maxBytes) {
-      const { done, value } = await readWithTimeout(
-        reader,
-        signal,
-        timeoutMs,
-        "Kiro retry error body stalled"
-      );
-      if (done) break;
-      const remaining = maxBytes - totalBytes;
-      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
-      chunks.push(chunk);
-      totalBytes += chunk.byteLength;
-      if (value.byteLength > remaining) break;
-    }
-  } finally {
-    await reader.cancel("bounded Kiro retry error body").catch(() => {});
-  }
-  return decoder.decode(concatChunks(chunks, totalBytes));
-}
-
-function appendRepairInstruction(body, kind) {
-  const repaired = structuredClone(body || {});
-  const instruction = REPAIR_INSTRUCTIONS[kind] || "Retry the previous incomplete Kiro response.";
-  // The retry goes back to generateAssistantResponse, which rejects a
-  // top-level systemPrompt outright, so the instruction rides on the current
-  // user message the same way the system prompt itself does. A body with no
-  // current message is one this executor cannot repair, and it retries plain.
-  const current = repaired.conversationState?.currentMessage?.userInputMessage;
-  if (!current) return repaired;
-  current.content = current.content
-    ? `${current.content}\n\n${instruction}`
-    : instruction;
-  return repaired;
 }
 
 function normalizeStopReason(value) {
@@ -362,8 +316,8 @@ export class KiroExecutor extends BaseExecutor {
    * transform the binary AWS EventStream into OpenAI-shaped SSE on success.
    *
    * BaseExecutor.execute() walks config.baseUrls (runtime.us-east-1.kiro.dev →
-   * codewhisperer → q) advancing to the next host on 429 (shouldRetry) and on
-   * network/5xx errors, while tryRetry handles in-place retries per `retry: {429: 2}`.
+   * codewhisperer → q) only after explicit HTTP rejections. Transport errors and
+   * accepted generations cannot authorize another request.
    * Note: api-key connections reorder these so the *.amazonaws.com hosts come
    * first — see getOrderedBaseUrls/buildUrl above.
    * Note: the baseUrls are alternate surfaces of one regional service, so rotation
@@ -385,8 +339,6 @@ export class KiroExecutor extends BaseExecutor {
     const legacyTimeout = envPositiveInt("KIRO_TOOL_CALL_REPAIR_TIMEOUT_MS", STREAM_FIRST_CHUNK_TIMEOUT_MS);
     const ttftTimeoutMs = envPositiveInt("KIRO_TOOL_CALL_REPAIR_TTFT_TIMEOUT_MS", legacyTimeout);
     const stallTimeoutMs = envPositiveInt("KIRO_TOOL_CALL_REPAIR_STALL_TIMEOUT_MS", legacyTimeout);
-    const repairEnabled = args.credentials?.providerSpecificData?.kiroToolCallRepair !== false &&
-      process.env.KIRO_TOOL_CALL_REPAIR !== "false";
     const forwardAbort = () => abortController.abort(args.signal?.reason);
     args.signal?.addEventListener("abort", forwardAbort, { once: true });
     let open = true;
@@ -406,12 +358,11 @@ export class KiroExecutor extends BaseExecutor {
         heartbeatTimer = setInterval(heartbeat, KIRO_REPAIR_HEARTBEAT_MS);
 
         try {
-          const bytes = await this.runIntegrityRecovery(result.response, args, {
+          const bytes = await this.validateAcceptedResponse(result.response, args, {
             signal: abortController.signal,
             maxBytes,
             ttftTimeoutMs,
             stallTimeoutMs,
-            repairEnabled,
             toolNameMap: args.toolNameMap,
           });
           if (abortController.signal.aborted) throw makeAbortError(abortController.signal.reason);
@@ -447,7 +398,7 @@ export class KiroExecutor extends BaseExecutor {
     });
   }
 
-  async runIntegrityRecovery(rawResponse, args, options) {
+  async validateAcceptedResponse(rawResponse, args, options) {
     const first = await this.readRecoverableIntegrityAttempt(
       rawResponse,
       args.model,
@@ -458,62 +409,19 @@ export class KiroExecutor extends BaseExecutor {
     if (first.kind === "terminal_stop" || first.kind === "upstream_error") {
       return this.integrityFailureSSE(first);
     }
-    if (first.kind === "invalid_tool" && !options.repairEnabled) {
-      return encodeSSEError("invalid_kiro_tool_call", first.message, first.diagnostics);
-    }
-
-    const repairKind = ["ellipsis", "short_final", "invalid_tool"].includes(first.kind)
-      ? first.kind
-      : null;
-    const repairBody = repairKind
-      ? appendRepairInstruction(args.body, repairKind === "invalid_tool" ? "tool" : repairKind)
-      : structuredClone(args.body || {});
-
-    const retry = await BaseExecutor.prototype.execute.call(this, {
-      ...args,
-      body: repairBody,
-      signal: options.signal
-    });
-    if (!retry?.response?.ok) {
-      let body = "";
-      try {
-        body = await readResponsePrefix(
-          retry?.response,
-          options.signal,
-          Math.min(options.maxBytes, 4096),
-          options.stallTimeoutMs
-        );
-      } catch (error) {
-        if (error.name === "AbortError") throw error;
-      }
-      return encodeSSEError(
-        "kiro_integrity_retry_upstream_error",
-        body || `Kiro integrity retry failed with HTTP ${retry?.response?.status || 502}`,
-        { status: retry?.response?.status || 502 }
-      );
-    }
-
-    const second = await this.readRecoverableIntegrityAttempt(
-      retry.response,
-      args.model,
-      options,
-      "retry"
-    );
-    if (second.kind === "complete") return second.bytes;
-    if (second.kind === "terminal_stop" || second.kind === "upstream_error") {
-      return this.integrityFailureSSE(second);
-    }
-    const code = second.kind === "ellipsis"
-      ? "kiro_ellipsis_retry_failed"
-      : second.kind === "short_final"
-        ? "kiro_short_final_retry_failed"
-        : second.kind === "invalid_tool"
-          ? "kiro_tool_call_repair_retry_failed"
-          : "kiro_missing_terminal_retry_failed";
+    // An accepted response can already be billed. A malformed or incomplete
+    // response is evidence of failure, never evidence that replay is safe.
+    const code = first.kind === "ellipsis"
+      ? "kiro_ellipsis_final"
+      : first.kind === "short_final"
+        ? "kiro_incomplete_final"
+        : first.kind === "invalid_tool"
+          ? "invalid_kiro_tool_call"
+          : "kiro_missing_terminal";
     return encodeSSEError(
       code,
-      `Kiro integrity validation failed after one bounded retry: ${second.message || second.kind}`,
-      { attempts: [first.diagnostics, second.diagnostics].filter(Boolean) }
+      `Kiro accepted the request but its response failed validation: ${first.kind}`,
+      { ...first.diagnostics, safe_to_replay: false }
     );
   }
 
