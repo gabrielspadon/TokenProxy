@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   guard: vi.fn(), conns: vi.fn(), conn: vi.fn(), windows: vi.fn(), oneWindow: vi.fn(),
-  drains: vi.fn(), qualifications: vi.fn(), settings: vi.fn(), disabled: vi.fn(),
+  drains: vi.fn(), qualifications: vi.fn(), settings: vi.fn(), disabled: vi.fn(), nodes: vi.fn(),
 }));
 vi.mock("@/lib/admin/guard.js", () => ({ requireAdmin: mocks.guard }));
 vi.mock("@/lib/db/repos/connectionsRepo.js", () => ({ getProviderConnections: mocks.conns, getProviderConnectionById: mocks.conn, isConnectionDegraded: () => false }));
@@ -10,6 +10,7 @@ vi.mock("@/lib/db/repos/quotaWindowsRepo.js", () => ({ getAllWindows: mocks.wind
 vi.mock("@/lib/admin/state.js", () => ({ readAllDrainDocs: mocks.drains, readAllQualifications: mocks.qualifications }));
 vi.mock("@/lib/db/repos/settingsRepo.js", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/db/repos/disabledModelsRepo.js", () => ({ getDisabledModels: mocks.disabled }));
+vi.mock("@/lib/db/repos/nodesRepo.js", () => ({ getProviderNodes: mocks.nodes }));
 
 import { GET as quota } from "../../src/app/api/admin/quota/route.js";
 import { GET as oneQuota } from "../../src/app/api/admin/quota/[connectionId]/route.js";
@@ -33,6 +34,7 @@ beforeEach(() => {
   mocks.conn.mockResolvedValue(conns[0]); mocks.oneWindow.mockResolvedValue([]);
   mocks.drains.mockResolvedValue({}); mocks.qualifications.mockResolvedValue({});
   mocks.settings.mockResolvedValue({}); mocks.disabled.mockResolvedValue({});
+  mocks.nodes.mockResolvedValue([]);
   vi.stubGlobal("fetch", vi.fn(() => { throw new Error("No upstream contact allowed"); }));
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -56,8 +58,21 @@ describe("passive capacity and eligibility API", () => {
     expect(body.accounts.filter((a) => a.verdict === "admissible")).toHaveLength(3);
     expect(body.accounts.filter((a) => a.verdict === "blocked")).toHaveLength(21);
     expect(body.accounts.every((a) => a.modelSupport.upstreamVerified === false)).toBe(true);
-    for (const read of [mocks.conns, mocks.windows, mocks.drains, mocks.qualifications, mocks.settings, mocks.disabled]) expect(read).toHaveBeenCalledOnce();
+    for (const read of [mocks.conns, mocks.windows, mocks.drains, mocks.qualifications, mocks.settings, mocks.disabled, mocks.nodes]) expect(read).toHaveBeenCalledOnce();
     expect(JSON.stringify(body)).not.toContain("SYNTHETIC_SECRET"); expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(["openai-compatible-fixture-node", "fixture-proxy"])("the actual endpoint resolves configured %s without provider discovery", async (provider) => {
+    mocks.nodes.mockResolvedValue([{ id: "openai-compatible-fixture-node", prefix: "fixture-proxy", type: "openai-compatible", baseUrl: "SYNTHETIC_SECRET" }]);
+    mocks.conns.mockResolvedValue([{ id: "node-account", provider: "openai-compatible-fixture-node", isActive: true, providerSpecificData: { enabledModels: ["vendor/model"] } }]);
+    mocks.disabled.mockResolvedValue({ "fixture-proxy::node-account": ["vendor/model"] });
+    const response = await eligibility(req(`provider=${provider}&model=vendor%2Fmodel`));
+    expect(response.status).toBe(200); const body = await response.json();
+    expect(body.requested.provider).toBe("openai-compatible-fixture-node");
+    expect(body.accounts[0].verdict).toBe("blocked");
+    expect(body.accounts[0].reasons.some((r) => r.code === "model-disabled")).toBe(true);
+    expect(body.accounts[0].reasons.some((r) => r.code === "provider-mismatch")).toBe(false);
+    expect(mocks.nodes).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toContain("SYNTHETIC_SECRET");
   });
   it.each(["", "provider=claude", "provider=claude&model=%00", `provider=claude&model=${"x".repeat(513)}`])("rejects malformed query %j before reading state", async (query) => {
     expect((await eligibility(req(query))).status).toBe(400);

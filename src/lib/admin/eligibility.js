@@ -1,4 +1,5 @@
-import { resolveProviderId, isProviderDisabled, isNoAuthProvider } from "@/shared/constants/providers.js";
+import { isProviderDisabled, isNoAuthProvider } from "@/shared/constants/providers.js";
+import { resolveProviderAlias } from "open-sse/services/model.js";
 import { accountSupportsModel } from "@/shared/utils/accountModelEligibility.js";
 import { isAccountModelDisabled } from "@/shared/utils/disabledModelPolicy.js";
 import { getPausedWindow } from "@/shared/utils/quotaPause.js";
@@ -17,9 +18,23 @@ function reason(code, label, source, observedAt = null, until = null) {
   return { code, label, source, observedAt: timestamp(observedAt), until: timestamp(until) };
 }
 
+// Match getModelInfo's configured-prefix precedence before its static alias
+// fallback. Node IDs remain valid direct identifiers for account inspection.
+const ROUTED_NODE_TYPES = ["openai-compatible", "anthropic-compatible", "multi-compatible", "custom-embedding"];
+function configuredNodeFor(provider, nodes) {
+  const list = Array.isArray(nodes) ? nodes : [];
+  for (const type of ROUTED_NODE_TYPES) {
+    const node = list.find((entry) => entry?.type === type && entry.prefix === provider);
+    if (node) return node;
+  }
+  return list.find((entry) => entry?.id === provider) ?? null;
+}
+
 /** Pure projection of persisted gates. Never selects, reserves, probes or refreshes. */
-export function projectEligibility({ connections, windowsByConnection, drains = {}, qualifications = {}, settings = {}, disabledModels = {}, provider, model, now = Date.now() }) {
-  const providerId = resolveProviderId(provider);
+export function projectEligibility({ connections, windowsByConnection, drains = {}, qualifications = {}, settings = {}, disabledModels = {}, providerNodes = [], provider, model, now = Date.now() }) {
+  const node = configuredNodeFor(provider, providerNodes);
+  const providerId = node?.id ?? resolveProviderAlias(provider);
+  const providerAliases = typeof node?.prefix === "string" && node.prefix ? [node.prefix] : [];
   const caps = getCapabilitiesForModel(providerId, model);
   const accounts = connections.map((conn) => {
     const blockers = [];
@@ -27,7 +42,7 @@ export function projectEligibility({ connections, windowsByConnection, drains = 
     const configured = conn.providerSpecificData?.enabledModels;
     const hasAllowlist = Array.isArray(configured) && configured.length > 0;
     const supports = accountSupportsModel(conn, model);
-    const matchingProvider = resolveProviderId(conn.provider) === providerId;
+    const matchingProvider = node ? conn.provider === providerId : resolveProviderAlias(conn.provider) === providerId;
     const draining = Boolean(drains[conn.id]?.isDraining);
     const enabled = Boolean(conn.isActive);
     if (!matchingProvider) blockers.push(reason("provider-mismatch", "Account belongs to another provider.", "connection.provider"));
@@ -39,7 +54,7 @@ export function projectEligibility({ connections, windowsByConnection, drains = 
     }
     // Share routing's effective account policy, including inherited provider
     // lists, explicit empty account overrides and provider aliases.
-    if (matchingProvider && isAccountModelDisabled(disabledModels, provider, model, isNoAuthProvider(providerId) ? null : conn.id)) {
+    if (matchingProvider && isAccountModelDisabled(disabledModels, providerId, model, isNoAuthProvider(providerId) ? null : conn.id, providerAliases)) {
       blockers.push(reason("model-disabled", "Model is disabled for this account by its effective operator policy.", "disabledModels"));
     }
     if (!supports) blockers.push(reason("account-model-excluded", "Model is excluded by this account's explicit allowlist.", "connection.providerSpecificData.enabledModels"));
