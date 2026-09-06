@@ -1,6 +1,9 @@
 # Graphite operator workspace
 
-The current interface follows observed work across a routing gateway. It uses a
+The user rejected this composition. It remains a historical design record.
+The replacement direction and stack are recorded in `WORKSPACE.md`.
+
+This interface follows observed work across a routing gateway. It uses a
 continuous graphite surface, a compact labeled navigation rail, a persistent
 telemetry strip, and adjacent inspectors. Provider brands distinguish routes.
 This supersedes the earlier paper/Fira and equal-weight card directions.
