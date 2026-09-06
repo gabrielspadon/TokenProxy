@@ -10,11 +10,20 @@ const T = (body) =>
   translateRequest(FORMATS.OPENAI, FORMATS.CLAUDE, "m", body, true, null, "anthropic-compatible-x");
 
 describe("OpenAI → Claude context mapping", () => {
-  // openai-to-claude.js:124-134 — always injects CLAUDE_SYSTEM_PROMPT ("You are Claude Code")
-  // KNOWN BUG: pollutes requests for non-official Claude-compatible providers
-  it.fails("does not inject Claude Code system prompt for compatible providers", () => {
+  it("does not inject Claude Code system prompt for compatible providers", () => {
     const out = T({ messages: [{ role: "user", content: "hi" }] });
-    expect(JSON.stringify(out.system), "Claude Code prompt injected").not.toContain("Claude Code");
+    expect(out.system).toBeUndefined();
+  });
+
+  it("preserves caller identity and developer instructions without adding a new identity", () => {
+    const out = T({ messages: [
+      { role: "system", content: "You are Claude Code inside a caller-authored quotation." },
+      { role: "developer", content: "\n规则 α 🧪\t-0 1e-09 9007199254740993\n" },
+      { role: "user", content: "hi" },
+    ] });
+    expect(out.system.map((block) => block.text)).toEqual([
+      "You are Claude Code inside a caller-authored quotation.\n\n规则 α 🧪\t-0 1e-09 9007199254740993\n",
+    ]);
   });
 
   it("assistant reasoning_content becomes a thinking block", () => {
@@ -33,27 +42,22 @@ describe("OpenAI → Claude context mapping", () => {
     }));
   });
 
-  // openai-to-claude.js:298 — tool_choice "none" mapped to {type:"auto"} (loses "do not call" intent)
-  // KNOWN BUG
-  it.fails("tool_choice=none is not turned into auto", () => {
+  it("tool_choice=none remains an explicit prohibition", () => {
     const out = T({
       messages: [{ role: "user", content: "hi" }],
       tools: [{ type: "function", function: { name: "f", parameters: { type: "object", properties: {} } } }],
       tool_choice: "none",
     });
-    expect(out.tool_choice?.type, "none became auto → model may call tools").not.toBe("auto");
+    expect(out.tool_choice).toEqual({ type: "none" });
   });
 
-  // getContentBlocksFromMessage — no input_audio branch → audio dropped
-  // KNOWN BUG
-  it.fails("input_audio content is preserved", () => {
-    const out = T({
+  it("rejects audio that the Messages transport cannot represent", () => {
+    expect(() => T({
       messages: [{ role: "user", content: [
         { type: "text", text: "transcribe" },
         { type: "input_audio", input_audio: { data: "AUDIO_B64", format: "wav" } },
       ] }],
-    });
-    expect(JSON.stringify(out), "audio dropped").toContain("AUDIO_B64");
+    })).toThrow(/messages\[0\].content\[1\].*cannot represent input audio/);
   });
 
   // openai-to-claude.js:235-251 — remote http image_url is kept (regression guard)

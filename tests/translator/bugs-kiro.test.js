@@ -53,24 +53,26 @@ describe("OpenAI → Kiro", () => {
     ).not.toThrow();
   });
 
-  // openai-to-kiro.js:309 — maxTokens hardcoded to 32000, ignores body.max_tokens
-  // KNOWN BUG
-  it.fails("respects client max_tokens", () => {
+  it("respects client max_tokens", () => {
     const out = O2K({ max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
     expect(out.inferenceConfig?.maxTokens, "client max_tokens ignored").toBe(100);
   });
 
-  // openai-to-kiro.js:132-134 — remote http image becomes "[Image: url]" text (lost)
-  // KNOWN BUG
-  it.fails("remote image url is preserved as an image, not text", () => {
-    const out = O2K({
+  it.each(["max_tokens", "max_completion_tokens", "max_output_tokens"])("maps %s before Kiro dispatch", (field) => {
+    expect(O2K({ [field]: 137, messages: [{ role: "user", content: "hi" }] }).inferenceConfig.maxTokens).toBe(137);
+  });
+
+  it("preserves the Responses output limit through its Chat bridge", () => {
+    expect(R2K("gpt-5.6-sol", { max_output_tokens: 113, input: "hi" }).inferenceConfig.maxTokens).toBe(113);
+  });
+
+  it("rejects remote images instead of replacing them with URL text", () => {
+    expect(() => O2K({
       messages: [{ role: "user", content: [
         { type: "text", text: "see" },
         { type: "image_url", image_url: { url: "https://x.com/p.png" } },
       ] }],
-    });
-    const content = out.conversationState?.currentMessage?.userInputMessage?.content || "";
-    expect(content, "remote image flattened to text").not.toContain("[Image:");
+    })).toThrow(/messages\[0\].content\[1\].*requires inline image data/);
   });
 });
 

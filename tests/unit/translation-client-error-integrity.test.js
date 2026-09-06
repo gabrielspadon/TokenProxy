@@ -44,6 +44,11 @@ describe("translation failures are local, terminal, and payload-safe", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn(() => { throw new Error("unexpected fetch"); }));
+    mocks.execute.mockImplementation(async () => ({
+      response: Response.json({ choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] }),
+      responseFormat: FORMATS.OPENAI,
+      url: "https://upstream.invalid/chat/completions", headers: {}, transformedBody: null,
+    }));
   });
 
   it.each(cases)("%s fails without changing the source", (_name, source, _provider, target, fixture) => {
@@ -86,10 +91,6 @@ describe("translation failures are local, terminal, and payload-safe", () => {
 
   it("keeps CommandCode's current Chat Completions argument string intact", async () => {
     const fixture = cases.find((row) => row[3] === FORMATS.COMMANDCODE)[4];
-    mocks.execute.mockImplementation(async () => ({
-      response: Response.json({ choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] }),
-      url: "https://upstream.invalid/chat/completions", headers: {}, transformedBody: null,
-    }));
     const result = await handleChatCore({
       body: { ...structuredClone(fixture), model: "test-model", stream: false },
       modelInfo: { provider: "commandcode", model: "test-model" },
@@ -100,6 +101,20 @@ describe("translation failures are local, terminal, and payload-safe", () => {
     expect(result.success).toBe(true);
     expect(mocks.execute).toHaveBeenCalledTimes(1);
     expect(mocks.execute.mock.calls[0][0].body.messages[0].tool_calls[0].function.arguments).toBe("{PRIVATE_ARGUMENTS");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["max_tokens", "max_completion_tokens", "max_output_tokens"])("Kiro receives client %s before generation starts", async (field) => {
+    const result = await handleChatCore({
+      body: { model: "claude-sonnet-5", stream: false, [field]: 137, messages: [{ role: "user", content: "hi" }] },
+      modelInfo: { provider: "kiro", model: "claude-sonnet-5" },
+      credentials: { apiKey: "mock-key", providerSpecificData: {} },
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      rtkEnabled: false, headroomEnabled: false, pxpipeEnabled: false,
+    });
+    expect(result.success).toBe(true);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute.mock.calls[0][0].body.inferenceConfig.maxTokens).toBe(137);
     expect(fetch).not.toHaveBeenCalled();
   });
 

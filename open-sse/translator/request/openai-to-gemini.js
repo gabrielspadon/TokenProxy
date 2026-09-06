@@ -96,7 +96,7 @@ function wrapFunctionResponsePayload(val) {
 }
 
 // Core: Convert OpenAI request to Gemini format (base for all variants)
-function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG_SIGNATURE) {
+function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG_SIGNATURE, sanitizeSystem = false) {
   const toolNameMap = new Map();
   // Gemma 4 shares this translator with the Gemini family but rejects the
   // replay artifacts the rest of it depends on — a synthetic thought part, and
@@ -171,22 +171,23 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   if (body.messages && Array.isArray(body.messages)) {
     for (let i = 0; i < body.messages.length; i++) {
       const msg = body.messages[i];
-      const role = msg.role;
+      const role = msg.role === ROLE.DEVELOPER ? ROLE.SYSTEM : msg.role;
       const content = msg.content;
 
       if (role === ROLE.SYSTEM && body.messages.length > 1) {
         const rawText = typeof content === "string" ? content : extractTextContent(content);
-        const sanitizedText = sanitizeAntigravitySystemPrompt(rawText);
-        result.systemInstruction = {
+        const sanitizedText = sanitizeSystem ? sanitizeAntigravitySystemPrompt(rawText) : rawText;
+        result.systemInstruction ??= {
           role: GEMINI_ROLE.USER,
-          parts: [{ text: sanitizedText }]
+          parts: []
         };
+        result.systemInstruction.parts.push({ text: sanitizedText });
       } else if (role === ROLE.USER || (role === ROLE.SYSTEM && body.messages.length === 1)) {
         const parts = convertOpenAIContentToParts(content);
         if (parts.length > 0) {
           if (role === ROLE.SYSTEM) {
             for (const part of parts) {
-              if (part.text) part.text = sanitizeAntigravitySystemPrompt(part.text);
+              if (part.text && sanitizeSystem) part.text = sanitizeAntigravitySystemPrompt(part.text);
             }
           }
           result.contents.push({ role: GEMINI_ROLE.USER, parts });
@@ -337,7 +338,7 @@ export function openaiToGeminiRequest(model, body, stream) {
 
 // OpenAI -> Gemini CLI (Cloud Code Assist)
 export function openaiToGeminiCLIRequest(model, body, stream) {
-  const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE);
+  const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE, true);
   // Thinking is normalized centrally by applyThinking (thinkingUnified.js) after translation.
 
   // Clean schema for tools

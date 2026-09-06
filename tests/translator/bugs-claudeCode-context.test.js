@@ -1,6 +1,6 @@
 // Real Claude Code CLI requests (Claude format) → non-Claude provider via OpenAI bridge.
 // Focuses on context components a real CLI sends: system arrays w/ cache_control, thinking
-// signatures, tool_result with images, audio. KNOWN BUG = it.fails (source file:line in comments).
+// signatures, tool_result with images, and explicit unsupported-route failures.
 import { describe, it, expect } from "vitest";
 import "./registerAll.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
@@ -39,10 +39,8 @@ describe("Claude Code CLI context → OpenAI", () => {
     expect(JSON.stringify(out)).toContain("step-by-step plan");
   });
 
-  // claude-to-openai.js:128 — redacted_thinking also dropped
-  // KNOWN BUG
-  it.fails("redacted_thinking block is not silently dropped", () => {
-    const out = T(FORMATS.CLAUDE, FORMATS.OPENAI, {
+  it("rejects opaque redacted thinking without leaking its payload", () => {
+    expect(() => T(FORMATS.CLAUDE, FORMATS.OPENAI, {
       messages: [
         { role: "assistant", content: [
           { type: "redacted_thinking", data: "ENCRYPTED_BLOB" },
@@ -50,14 +48,11 @@ describe("Claude Code CLI context → OpenAI", () => {
         ] },
         { role: "user", content: "go" },
       ],
-    });
-    expect(JSON.stringify(out)).toContain("ENCRYPTED_BLOB");
+    })).toThrow(/messages\[0\].content\[0\].*opaque redacted thinking/);
   });
 
-  // claude-to-openai.js:155-173 — tool_result image block stringified into raw JSON
-  // KNOWN BUG
-  it.fails("tool_result image block is preserved", () => {
-    const out = T(FORMATS.CLAUDE, FORMATS.OPENAI, {
+  it("rejects image tool results rather than changing their role or dropping them", () => {
+    expect(() => T(FORMATS.CLAUDE, FORMATS.OPENAI, {
       messages: [
         { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "screenshot", input: {} }] },
         { role: "user", content: [
@@ -66,8 +61,6 @@ describe("Claude Code CLI context → OpenAI", () => {
           ] },
         ] },
       ],
-    });
-    const tool = out.messages.find((m) => m.role === "tool");
-    expect(tool?.content, "image turned into raw JSON").not.toMatch(/^\[/);
+    })).toThrow(/messages\[1\].content\[0\].content\[0\].*only text/);
   });
 });
