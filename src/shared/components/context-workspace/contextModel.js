@@ -64,15 +64,15 @@ export function trendOption(trend, colors, scope) {
   const xAxis = grid.map((_, i) => ({ type: 'time', gridIndex: i,
     min: scope.start ? Date.parse(scope.start) : undefined,
     max: scope.end ? Date.parse(scope.end) : undefined,
-    axisLabel: { show: i === 2, color: '#65728a', formatter: (value) => spansDates ? utc(value).slice(5,16) : utc(value, true) },
+    axisLabel: { show: i === 2, color: '#5b6980', fontSize: 13, formatter: (value) => spansDates ? utc(value).slice(5,16) : utc(value, true) },
     axisLine: { lineStyle: { color: '#dde3ec' } }, axisTick: { show: false },
     splitLine: { show: true, lineStyle: { color: '#eef1f6' } },
   }));
   const yAxis = grid.map((_, i) => ({ type: 'value', gridIndex: i, splitNumber: 2,
-    axisLabel: { color: '#65728a', formatter: (value) => quantity(value, true) },
+    axisLabel: { color: '#5b6980', fontSize: 13, formatter: (value) => quantity(value, true) },
     splitLine: { lineStyle: { color: '#edf0f5' } },
   }));
-  return { grid, xAxis, yAxis, useUTC: true, axisPointer: { link: [{ xAxisIndex: 'all' }] },
+  return { grid, xAxis, yAxis, useUTC: true, textStyle: { fontFamily: 'IBM Plex Mono', fontSize: 13, color: '#5b6980' }, axisPointer: { link: [{ xAxisIndex: 'all' }] },
     tooltip: { trigger: 'axis', renderMode: 'richText', confine: true,
       valueFormatter: (value) => finite(value) ? quantity(value) : 'Unknown' },
     series: [
