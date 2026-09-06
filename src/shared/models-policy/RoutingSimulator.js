@@ -312,7 +312,7 @@ export function RoutingSimulator({ draft }) {
             </div>
           </div>
           <div className={styles.panelBody}>
-            <Table.ScrollContainer minWidth={670}>
+            <Table.ScrollContainer minWidth={670} scrollAreaProps={{ viewportProps: { tabIndex: 0, role: 'region', 'aria-label': 'Scroll captured candidate order', className: styles.tableViewport } }}>
               <Table aria-label="Captured candidate ordering">
                 <Table.Thead>
                   <Table.Tr>
@@ -401,7 +401,7 @@ export function RoutingSimulator({ draft }) {
             )}
             <details className={styles.receiptDetails}>
               <summary>Exact simulation receipt and ranking</summary>
-              <pre>
+              <pre tabIndex={0} aria-label="Exact captured simulation receipt">
                 {JSON.stringify(
                   {
                     receipt: result.receipt,

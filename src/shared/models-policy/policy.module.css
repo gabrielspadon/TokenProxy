@@ -156,6 +156,15 @@
   table-layout: fixed;
   width: 100%;
 }
+.tableViewport {
+  overscroll-behavior-x: contain;
+}
+.tableViewport:focus-visible,
+.diffTable pre:focus-visible,
+.receiptDetails pre:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: -2px;
+}
 .diffTable th:first-child {
   width: 26%;
 }

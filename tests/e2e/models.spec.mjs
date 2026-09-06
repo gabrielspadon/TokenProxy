@@ -10,12 +10,13 @@ test("empty catalog states its reason instead of an empty table", async ({ page 
   await expect(page.getByText("A model appears once a provider is connected.")).toBeVisible();
 });
 
-test("the catalog poll goes stale when the route stops answering", async ({ page }) => {
+test("an unavailable catalog shows the read failure without claiming live data", async ({ page }) => {
   await page.route("**/api/models", (r) => r.abort());
   await page.goto("/dashboard/models");
   await page.getByRole("tab", { name: "Catalog controls", exact: true }).click();
   const status = page.locator(".screen-head .fresh").first();
-  await expect(status).toHaveAttribute("data-state", /connecting|reconnecting/);
+  await expect(page.getByText("The gateway did not answer.", { exact: true })).toBeVisible();
+  await expect(status).not.toHaveAttribute("data-state", "live");
 });
 
 test("a forbidden combo delete renders the admin refusal sentence", async ({ page }) => {

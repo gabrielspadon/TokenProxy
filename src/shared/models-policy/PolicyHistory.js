@@ -24,7 +24,7 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
           </Button>
         </Alert>
       )}
-      <Table.ScrollContainer minWidth={660}>
+      <Table.ScrollContainer minWidth={660} scrollAreaProps={{ viewportProps: { tabIndex: 0, role: 'region', 'aria-label': `Scroll configuration ${kind}`, className: styles.tableViewport } }}>
         <Table striped withRowBorders aria-label={`Configuration ${kind}`}>
           <Table.Thead>
             <Table.Tr>

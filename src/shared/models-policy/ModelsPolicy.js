@@ -12,7 +12,7 @@ import styles from './policy.module.css';
 
 function Differences({ changes }) {
   return (
-    <Table.ScrollContainer minWidth={550}>
+    <Table.ScrollContainer minWidth={550} scrollAreaProps={{ viewportProps: { tabIndex: 0, role: 'region', 'aria-label': 'Scroll configuration differences', className: styles.tableViewport } }}>
       <Table aria-label="Covered configuration changes" className={styles.diffTable}>
         <Table.Thead>
           <Table.Tr>
@@ -31,10 +31,10 @@ function Differences({ changes }) {
                 </Text>
               </Table.Td>
               <Table.Td>
-                <pre>{JSON.stringify(change.before, null, 2)}</pre>
+                <pre tabIndex={0} aria-label={`Before ${change.path}`}>{JSON.stringify(change.before, null, 2)}</pre>
               </Table.Td>
               <Table.Td>
-                <pre>{JSON.stringify(change.after, null, 2)}</pre>
+                <pre tabIndex={0} aria-label={`After ${change.path}`}>{JSON.stringify(change.after, null, 2)}</pre>
               </Table.Td>
             </Table.Tr>
           ))}
@@ -334,6 +334,9 @@ export function ModelsPolicy() {
           )}
         </Group>
         <Group gap="xs">
+          <Button variant="subtle" disabled={busy} loading={current.loading} onClick={current.refresh}>
+            Refresh active policy
+          </Button>
           <Button variant="default" disabled={busy || dirty || !current.data} onClick={create}>
             New draft from active
           </Button>
