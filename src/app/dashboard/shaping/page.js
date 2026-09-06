@@ -10,6 +10,7 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtPct, fmtRelative, fmtUnit } from '@/shared/format';
 import './styles.css';
+import { ShapingWorkbench } from './Workbench';
 
 // One row per settings flag. `stage` is the id the byte ledger measures under,
 // so several flags can share one stage and say so.
@@ -219,6 +220,8 @@ export default function ShapingPage() {
         <h1>Shaping</h1>
         <Freshness status={pollFresh(stats)} lastDataAt={stats.goodAt} />
       </div>
+
+      <ShapingWorkbench />
 
       <section aria-labelledby="h-layers">
         <h2 id="h-layers">Layers</h2>

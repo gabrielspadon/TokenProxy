@@ -1,4 +1,31 @@
 @layer components {
+  .shaping-workspace-grid { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr); gap: 24px; margin-block: 20px; }
+  .shaping-editor { border-inline-start: 1px solid var(--rule); padding-inline-start: 24px; }
+  .shaping-editor label:not(.shaping-consent) { display: grid; gap: 6px; }
+  .shaping-setting-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-block: 16px; }
+  .shaping-setting-grid label { overflow-wrap: anywhere; font-size: var(--t-12); }
+  .shaping-setting-grid textarea { min-height: 64px; resize: vertical; }
+  .shaping-consent { display: flex; align-items: flex-start; gap: 8px; margin-block: 16px; }
+  .shaping-consent input { flex: 0 0 auto; margin-top: 4px; }
+  .shaping-profile-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-block-end: 1px solid var(--rule); padding: 12px 8px; }
+  .shaping-profile-row[data-selected] { background: var(--raised); box-shadow: inset 3px 0 var(--accent); }
+  .shaping-profile-row .sub { display: block; }
+  .shaping-profile-row .actions { gap: 4px; flex-wrap: wrap; }
+  .shaping-comparison { border-block: 1px solid var(--rule); margin-block: 24px; padding-block: 20px; }
+  .shaping-comparison-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+  .shaping-comparison-controls p { display: grid; margin: 0; }
+  .shaping-comparison-controls label { display: grid; gap: 6px; }
+  .shaping-table-scroll { overflow-x: auto; margin-block: 12px; }
+  .shaping-workbench table { width: 100%; border-collapse: collapse; font-size: var(--t-12); }
+  .shaping-workbench th, .shaping-workbench td { padding: 9px 12px; border-block-end: 1px solid var(--rule); text-align: start; vertical-align: top; }
+  .shaping-workbench td { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .shaping-workbench summary { cursor: pointer; padding-block: 8px; }
+  @media (max-width: 800px) {
+    .shaping-workspace-grid { grid-template-columns: 1fr; }
+    .shaping-editor { border-inline-start: 0; border-block-start: 1px solid var(--rule); padding-inline-start: 0; padding-block-start: 16px; }
+    .shaping-profile-row { flex-wrap: wrap; }
+    .shaping-comparison-controls { grid-template-columns: 1fr; }
+  }
   /* Three columns: who, state, action. One column below 640px. */
   .shaping-layer { grid-template-columns: minmax(0, 1fr); }
   .shaping-stage { grid-template-columns: minmax(0, 1fr); }
