@@ -271,11 +271,23 @@ describe("the two incidents the design must make greppable", () => {
 // neither the caller, the limit, the window nor the reset -- with all four in
 // scope on the very next line.
 describe("chat.js admission refusal (the 73% line)", () => {
+  // Drive the limiter to whatever ceiling it is configured with rather than
+  // assuming a count. RATE_LIMIT_MAX_REQUESTS is env-tunable
+  // (src/sse/handlers/chat.js:89), so a hardcoded 60 stopped burning the window
+  // the moment the default moved, and the request under test sailed past the
+  // gate these cases exist to exercise. Bounded like the sibling eviction suite
+  // so a limiter that never refuses fails the run instead of hanging it.
+  function burnWindow(limiter, key) {
+    let limited = false;
+    for (let n = 0; n < 10000 && !limited; n++) limited = limiter.isRateLimited(key);
+    expect(limited).toBe(true);
+  }
+
   it("names the key, the limit, the window and the reset, and folds the repeats", async () => {
     const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
     __rateLimiter.reset();
     const ip = "203.0.113.9";
-    for (let n = 0; n < 60; n++) __rateLimiter.isRateLimited(ip);
+    burnWindow(__rateLimiter, ip);
     lines.length = 0;
 
     const make = () => new Request("http://localhost:20128/v1/chat/completions", {
@@ -291,7 +303,10 @@ describe("chat.js admission refusal (the 73% line)", () => {
     expect(line).toBeDefined();
     expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:]{8}Z ADM\.ratelimited rid=[0-9a-f]{8} /);
     expect(line).toMatch(/ key=ip:[0-9a-f]{8} /);       // the caller, not the address
-    expect(line).toContain("limit=60/60s");             // the limit, window inside it
+    // The limit with the window inside it, asserted as SHAPE rather than as the
+    // frozen literal 60/60s: both halves are env-tunable, so pinning the number
+    // here tests the default instead of the schema this suite is about.
+    expect(line).toMatch(/ limit=\d+\/\d+s /);
     expect(line).not.toContain("win=");                 // no separate window field
     expect(line).toMatch(/ reset=\+(\d+s|\d+m|\d+h\d+m)/); // the reset, relatively
     expect(line).toContain("why=ip-window");
@@ -309,7 +324,7 @@ describe("chat.js admission refusal (the 73% line)", () => {
     const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
     __rateLimiter.reset();
     const ip = "203.0.113.9";
-    for (let n = 0; n < 60; n++) __rateLimiter.isRateLimited(ip);
+    burnWindow(__rateLimiter, ip);
     lines.length = 0;
 
     const res = await handleChat(new Request("http://localhost:20128/v1/chat/completions", {
@@ -328,7 +343,7 @@ describe("chat.js admission refusal (the 73% line)", () => {
     const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     __rateLimiter.reset();
-    for (let n = 0; n < 60; n++) __rateLimiter.isRateLimited("anonymous");
+    burnWindow(__rateLimiter, "anonymous");
     await handleChat(new Request("http://localhost:20128/v1/chat/completions", {
       method: "POST",
       body: JSON.stringify({ model: "m", messages: [] }),

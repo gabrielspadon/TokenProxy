@@ -267,7 +267,12 @@ describe('G4 — a local admission refusal tells the truth about itself', () => 
     // Burn the window, then assert the hint tracks the OLDEST hit's expiry: the
     // limiter already knew this and was throwing it away.
     const key = 'anonymous';
-    for (let i = 0; i < 60; i += 1) __rateLimiter.isRateLimited(key);
+    // Burn to the CONFIGURED ceiling: RATE_LIMIT_MAX_REQUESTS is env-tunable
+    // (src/sse/handlers/chat.js:89), so a literal 60 left the window unburnt
+    // once the default moved and the handler answered 200 instead of 429.
+    let limited = false;
+    for (let i = 0; i < 10000 && !limited; i += 1) limited = __rateLimiter.isRateLimited(key);
+    expect(limited).toBe(true);
     const expected = Math.ceil((__rateLimiter.resetAtMs(key) - Date.now()) / 1000);
 
     const response = await handleChat(request());
