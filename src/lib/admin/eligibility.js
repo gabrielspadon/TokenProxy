@@ -1,5 +1,6 @@
-import { resolveProviderId, getProviderAlias, isProviderDisabled, isNoAuthProvider } from "@/shared/constants/providers.js";
+import { resolveProviderId, isProviderDisabled, isNoAuthProvider } from "@/shared/constants/providers.js";
 import { accountSupportsModel } from "@/shared/utils/accountModelEligibility.js";
+import { isAccountModelDisabled } from "@/shared/utils/disabledModelPolicy.js";
 import { getPausedWindow } from "@/shared/utils/quotaPause.js";
 import { rankAccounts } from "@/shared/utils/quotaRanking.js";
 import { getExhaustedQuotaWindow, getModelLockKey } from "open-sse/services/accountFallback.js";
@@ -19,7 +20,6 @@ function reason(code, label, source, observedAt = null, until = null) {
 /** Pure projection of persisted gates. Never selects, reserves, probes or refreshes. */
 export function projectEligibility({ connections, windowsByConnection, drains = {}, qualifications = {}, settings = {}, disabledModels = {}, provider, model, now = Date.now() }) {
   const providerId = resolveProviderId(provider);
-  const alias = getProviderAlias(providerId);
   const caps = getCapabilitiesForModel(providerId, model);
   const accounts = connections.map((conn) => {
     const blockers = [];
@@ -37,13 +37,10 @@ export function projectEligibility({ connections, windowsByConnection, drains = 
       if (isNoAuthProvider(providerId)) blockers.push(reason("provider-disabled", "Provider is disabled by operator configuration.", "settings.disabledProviders"));
       else notes.push(reason("provider-disable-not-enforced", "A provider-disable setting exists, but account routing does not enforce this switch for authenticated providers.", "settings.disabledProviders"));
     }
-    // isModelDisabled checks the exact requested prefix before alias resolution.
-    // Do not silently broaden that existing gate in a read-only projection.
-    if (Array.isArray(disabledModels[provider]) && disabledModels[provider].includes(model)) {
-      blockers.push(reason("model-disabled", "Model is disabled for this provider.", "disabledModels"));
-    }
-    if (Array.isArray(disabledModels[`${alias}::${conn.id}`]) && disabledModels[`${alias}::${conn.id}`].includes(model)) {
-      notes.push(reason("account-display-disable", "The account model listing hides this model; live account selection uses the separate explicit allowlist.", "disabledModels.account"));
+    // Share routing's effective account policy, including inherited provider
+    // lists, explicit empty account overrides and provider aliases.
+    if (matchingProvider && isAccountModelDisabled(disabledModels, provider, model, isNoAuthProvider(providerId) ? null : conn.id)) {
+      blockers.push(reason("model-disabled", "Model is disabled for this account by its effective operator policy.", "disabledModels"));
     }
     if (!supports) blockers.push(reason("account-model-excluded", "Model is excluded by this account's explicit allowlist.", "connection.providerSpecificData.enabledModels"));
 

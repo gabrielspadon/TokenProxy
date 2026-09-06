@@ -127,7 +127,7 @@
       "EligibilityProjection": {
         "type": "object", "required": ["asOf", "mode", "requested", "basis", "upstreamVerified", "accounts"], "properties": {
           "asOf": { "type": "string", "format": "date-time" }, "mode": { "const": "passive" },
-          "requested": { "type": "object", "required": ["provider", "model", "routePrefix"], "properties": { "provider": { "type": "string" }, "model": { "type": "string" }, "routePrefix": { "type": "string", "description": "Exact submitted provider prefix, used by the existing model-disable gate before alias resolution." } } },
+          "requested": { "type": "object", "required": ["provider", "model", "routePrefix"], "properties": { "provider": { "type": "string" }, "model": { "type": "string" }, "routePrefix": { "type": "string", "description": "Submitted provider prefix, retained for traceability. Effective model-disable policy normalizes registered provider aliases." } } },
           "basis": { "const": "persisted-local-gates" }, "upstreamVerified": { "const": false },
           "limitations": { "type": "array", "items": { "type": "string" } },
           "capabilities": { "type": "object", "description": "Current local routing capability resolver values, including its defaults. Provider support is not verified." },

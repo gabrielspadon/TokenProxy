@@ -46,13 +46,31 @@ describe("passive account and model evidence", () => {
     expect(result.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(["provider-disable-not-enforced", "model-disabled"]));
     expect(result.reasons.find((r) => r.code === "provider-disable-not-enforced").effect).toBe("context");
   });
-  it("does not widen exact-prefix disables across aliases or account listing settings", () => {
-    const result = project([allowed()], { disabledModels: { cc: [model], "cc::configured": [model] } }).accounts[0];
-    expect(result.verdict).toBe("admissible");
-    expect(result.reasons.some((r) => r.code === "model-disabled")).toBe(false);
+  it("uses the shared alias-normalized account model-disable gate", () => {
+    const result = project([allowed()], { disabledModels: { cc: [model] } }).accounts[0];
+    expect(result.verdict).toBe("blocked");
+    expect(result.reasons.some((r) => r.code === "model-disabled")).toBe(true);
     const aliasRequest = project([allowed()], { provider: "cc", disabledModels: { cc: [model] } });
     expect(aliasRequest.requested.routePrefix).toBe("cc");
     expect(aliasRequest.accounts[0].verdict).toBe("blocked");
+  });
+  it("honors explicit empty account overrides while siblings inherit provider disables", () => {
+    const result = project([allowed("override"), allowed("inherited"), allowed("own")], {
+      disabledModels: { cc: [model], "claude::override": [], "cc::own": ["unrelated-model"] },
+    });
+    expect(result.accounts.map((a) => a.verdict)).toEqual(["admissible", "blocked", "admissible"]);
+  });
+  it("blocks account-specific disables even without a provider-wide list", () => {
+    const result = project([allowed("off"), allowed("on")], { disabledModels: { "cc::off": [model] } });
+    expect(result.accounts.map((a) => a.verdict)).toEqual(["blocked", "admissible"]);
+    expect(result.accounts[0].reasons.find((r) => r.code === "model-disabled").effect).toBe("blocks-selection");
+  });
+  it("uses provider defaults for no-auth routing instead of a fabricated account override", () => {
+    const result = project([{ ...allowed(), provider: "opencode" }], {
+      provider: "opencode", disabledModels: { oc: [model], "oc::configured": [] },
+    }).accounts[0];
+    expect(result.verdict).toBe("blocked");
+    expect(result.reasons.some((r) => r.code === "model-disabled")).toBe(true);
   });
   it("uses the real scoped quota rule and keeps unknown windows fail-open", () => {
     const conns = [allowed("empty"), allowed("bad"), allowed("exhausted"), allowed("other-family")];
