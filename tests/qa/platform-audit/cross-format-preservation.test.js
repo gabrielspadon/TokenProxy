@@ -101,6 +101,7 @@ describe('independent cross-format and adversarial semantic contracts', () => {
       (body) => { body.system[0].text = 'constraint deleted'; },
       (body) => { body.system[0].cache_control.ttl = '5m'; },
       (body) => { body.messages[2].content[0].content = JSON.stringify(JSON.parse(JSON_TEXT)); },
+      (body) => { body.messages[2].content[0].content = JSON_TEXT.replace('{', '{INVALID'); },
       (body) => { body.messages[2].content[0].tool_use_id = 'orphan'; },
       (body) => { body.messages[4].content[0].is_error = false; },
       (body) => { delete body.tools[0].input_schema.properties.payload.const.default; },

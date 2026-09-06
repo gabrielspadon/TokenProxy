@@ -32,6 +32,8 @@ export function semanticFixture() {
 // This oracle compares the JSON lexical token stream, avoiding a parse/stringify
 // oracle that would itself erase duplicate keys or round the large integer.
 export function jsonLexemes(text) {
+  if (typeof text !== 'string') return null;
+  try { JSON.parse(text); } catch { return null; }
   return text.match(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|[{}\[\],:]/g);
 }
 

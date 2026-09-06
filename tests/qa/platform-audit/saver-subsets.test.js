@@ -2,15 +2,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { semanticFixture, preservationViolations, jsonLexemes } from './semantic-fixture.mjs';
+import { pressureFixture, pressureViolations, mockVisualTransform } from './pressure-fixture.mjs';
+import { jsonCompact } from '../../../open-sse/rtk/filters/jsonCompact.js';
 
 const audit = vi.hoisted(() => ({
-  dispatched: null, order: [], fetches: 0,
-  wrap(module, name, stage) { return { ...module, [name]: function (...args) { audit.order.push(stage); return module[name](...args); } }; },
+  dispatched: null, order: [], fetches: 0, measure: false, events: [],
+  wrap(module, name, stage) { return { ...module, [name]: function (...args) {
+    audit.order.push(stage);
+    const before = audit.measure ? JSON.stringify(args[0]) : null;
+    const record = (result) => {
+      if (audit.measure) {
+        const after = Array.isArray(result) ? result : result?.messages ?? result?.tools ?? result?.body ?? args[0];
+        audit.events.push({ stage, function: name, changed: before !== JSON.stringify(after), outcome: result?.summary?.reason || args[1]?.diagnostics?.reason || (result == null ? 'no-result' : 'returned') });
+      }
+      return result;
+    };
+    const result = module[name](...args);
+    return result?.then ? result.then(record) : record(result);
+  } }; },
 }));
 
 // Observation wrappers always call the actual implementation. Only the final
 // provider executor and persistence boundary are substituted with fixtures.
 vi.mock('../../../open-sse/utils/toolDeduper.js', async (original) => audit.wrap(await original(), 'dedupeTools', 'tools'));
+vi.mock('../../../open-sse/utils/toolFilter.js', async (original) => audit.wrap(await original(), 'toolFilter', 'tools'));
+vi.mock('../../../open-sse/utils/toolDisclosure.js', async (original) => audit.wrap(await original(), 'disclosureTools', 'tools'));
 vi.mock('../../../open-sse/utils/schemaDistiller.js', async (original) => audit.wrap(await original(), 'distillToolSchemas', 'schema'));
 vi.mock('../../../open-sse/utils/thinkingStrip.js', async (original) => audit.wrap(await original(), 'stripHistoricalThinking', 'thinking'));
 vi.mock('../../../open-sse/rtk/index.js', async (original) => audit.wrap(await original(), 'compressMessages', 'rtk'));
@@ -55,20 +71,21 @@ function options(mask, window = 1_000_000) {
   };
 }
 
-async function run(mask, body = semanticFixture(), window) {
-  audit.order = []; audit.dispatched = null;
+async function run(mask, body = semanticFixture(), window, extra = {}) {
+  audit.order = []; audit.events = []; audit.dispatched = null;
   const result = await handleChatCore({
     requestId: `subset-${mask}`, body, modelInfo: { provider: 'anthropic', model: body.model },
     credentials: { apiKey: 'fixture-only', providerSpecificData: {} }, connectionId: 'fixture-account', sid: `independent-subset-${mask}`,
     clientRawRequest: { endpoint: '/v1/messages', headers: { 'user-agent': 'claude-cli/1.0.0 (external, cli)' } }, log,
     ...options(mask, window),
+    ...extra,
   });
   await result.response.text();
-  return { status: result.response.status, output: audit.dispatched, order: [...audit.order] };
+  return { status: result.response.status, output: audit.dispatched, order: [...audit.order], events: [...audit.events] };
 }
 
 beforeEach(() => {
-  memoClear(); audit.fetches = 0;
+  memoClear(); audit.fetches = 0; audit.measure = false;
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.stubGlobal('fetch', async (url) => { audit.fetches++; throw new Error(`Unexpected network boundary ${url}`); });
 });
@@ -152,4 +169,94 @@ describe('independent production saver subset coverage', () => {
     }
     expect(audit.fetches).toBe(0);
   });
+
+  it('preserves typed custom tool schemas and caller input across a compatible-provider translation', async () => {
+    const body = semanticFixture();
+    body.model = 'MiniMax-M3';
+    const before = structuredClone(body);
+    const result = await run(0, body, undefined, { modelInfo: { provider: 'minimax', model: body.model } });
+    expect(result.status).toBe(200);
+    expect(preservationViolations(before, result.output)).toEqual([]);
+    expect(body).toEqual(before);
+  });
+
+  it('exercises active pressure combinations in both safe and explicit lossy profiles', async () => {
+    audit.measure = true;
+    const serviceCalls = { headroom: 0, embeddings: 0, visual: 0 };
+    vi.stubGlobal('fetch', async (url, init) => {
+      const payload = JSON.parse(init.body);
+      if (String(url) === 'http://audit.invalid/embed') {
+        serviceCalls.embeddings++;
+        return Response.json({ data: payload.input.map((value, index) => {
+          const number = /Historical pair (\d+)/.exec(value)?.[1];
+          return { index, embedding: number === undefined ? [1, 0] : [20 - Number(number), 1] };
+        }) });
+      }
+      if (String(url) === 'http://audit.invalid/v1/compress') {
+        serviceCalls.headroom++;
+        const before = JSON.stringify(payload.messages).length;
+        for (const message of payload.messages) for (const block of message.content || []) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') block.content = jsonCompact(block.content) ?? block.content;
+        }
+        const after = JSON.stringify(payload.messages).length;
+        return Response.json({ messages: payload.messages, tokens_before: before, tokens_after: after, tokens_saved: before - after });
+      }
+      audit.fetches++;
+      throw new Error(`Unrecognized external service ${url}`);
+    });
+    const smoke = process.env.PLATFORM_AUDIT_PRESSURE_SMOKE === '1';
+    const masks = smoke ? [...new Set([0, ...ORDER.map((_, bit) => 1 << bit), (1 << 10) | (1 << 12), (1 << 9) | (1 << 12), allMasks - 1])] : Array.from({ length: allMasks }, (_, mask) => mask);
+    const profiles = [];
+    for (const allowLossy of [false, true]) {
+      const stages = Object.fromEntries(ORDER.map((stage) => [stage, { calls: 0, changed: 0, unchanged: 0, outcomes: {} }]));
+      const functions = {};
+      const failures = [];
+      const issueCounts = {};
+      const firstMaskByIssue = {};
+      let failedMasks = 0;
+      const digest = createHash('sha256');
+      for (const mask of masks) {
+        const body = pressureFixture();
+        const before = structuredClone(body);
+        const memory = Boolean(mask & (1 << ORDER.indexOf('memory')));
+        const { status, output, order, events } = await run(mask, body, 4500, {
+          modelInfo: { provider: 'minimax', model: body.model }, sid: `pressure-${allowLossy}-${mask}`,
+          rtkAllowLossy: allowLossy, schemaAllowLossy: allowLossy, headroomAllowLossy: allowLossy, pxpipeAllowLossy: allowLossy,
+          pxpipeTransform: (input) => { serviceCalls.visual++; return mockVisualTransform(input); },
+          embedReorderUrl: 'http://audit.invalid/embed', embedReorderModel: 'fixture-embedding',
+          toolDisclosure: { filterEnabled: Boolean(mask & 1), disclosureEnabled: Boolean(mask & 1), maxTools: 20, excludeTools: ['mcp__exa__web_fetch_exa'] },
+          memorySettings: { memoryContextWindowOverride: 4500, memoryToolPruningEnabled: memory, memoryMediaPruningEnabled: memory, memoryCompactionEnabled: memory, memoryCompactionThresholdTokens: 100, memoryRecentTurnsToKeep: 8, memoryMaxToolTurnsKeepFull: 3 },
+        });
+        const issues = pressureViolations(before, output, { allowLossy });
+        if (JSON.stringify(body) !== JSON.stringify(before)) issues.push('caller-mutated');
+        if (status !== 200) issues.push(`status-${status}`);
+        const positions = order.map((stage) => ORDER.indexOf(stage));
+        if (positions.some((value, i) => i && value < positions[i - 1])) issues.push('stage-order');
+        for (const event of events) {
+          const entry = stages[event.stage];
+          entry.calls++; entry[event.changed ? 'changed' : 'unchanged']++;
+          entry.outcomes[event.outcome] = (entry.outcomes[event.outcome] || 0) + 1;
+          functions[event.function] ??= { calls: 0, changed: 0 };
+          functions[event.function].calls++;
+          if (event.changed) functions[event.function].changed++;
+        }
+        digest.update(`${mask}:${order.join(',')}:${issues.join(',')}\n`);
+        if (issues.length) {
+          failedMasks++;
+          for (const issue of issues) { issueCounts[issue] = (issueCounts[issue] || 0) + 1; firstMaskByIssue[issue] ??= mask; }
+          if (failures.length < 25) failures.push({ mask, issues });
+        }
+      }
+      profiles.push({ allowLossy, masks: masks.length, expectedMasks: smoke ? masks.length : allMasks, failedMasks, issueCounts, firstMaskByIssue, failures, stages, functions, digest: digest.digest('hex') });
+    }
+    const receipt = {
+      inventory: ORDER, smoke, profiles, mockServiceCalls: serviceCalls, externalNetworkAttempts: audit.fetches, liveProviderCalls: 0,
+      fixture: 'Claude-compatible Minimax format, 4500-token fixture window, historical thinking, JSON tools, visual tool output, mixed-relevance text pairs, schema literals, live tool evidence and signed live thinking',
+      bounds: 'All wrappers execute production functions. Headroom/embedding responses and visual conversion are deterministic offline contract fixtures, not compression quality or billed-token evidence. Historical content changes only through explicit toggles; safe consent still permits separate historical pruning controls.',
+    };
+    if (process.env.PLATFORM_AUDIT_PRESSURE_RECEIPT) writeFileSync(process.env.PLATFORM_AUDIT_PRESSURE_RECEIPT, JSON.stringify(receipt, null, 2));
+    expect(audit.fetches).toBe(0);
+    expect(profiles.flatMap((profile) => profile.failures)).toEqual([]);
+    if (!smoke) for (const stage of ORDER) expect(profiles.reduce((sum, profile) => sum + profile.stages[stage].changed, 0), `${stage} must have an observed production change`).toBeGreaterThan(0);
+  }, 600_000);
 });
