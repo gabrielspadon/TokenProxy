@@ -1,7 +1,9 @@
+import { normalizeContextStructure } from "./contextStructure.mjs";
+
 // Fixed read-only Context projections. No driver, migration or writer imports.
 export class ContextQueryError extends Error {}
 
-const FILTER_KEYS = new Set(["view", "provider", "model", "connectionId", "clientTool", "projectLabel", "from", "to", "until", "page", "pageSize"]);
+const FILTER_KEYS = new Set(["view", "provider", "model", "connectionId", "clientTool", "clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "logicalRequestId", "requestId", "projectLabel", "from", "to", "until", "page", "pageSize"]);
 export function validateAnalyticsQuery(query) {
   if (!query || !["overview", "session"].includes(query.operation)
     || Object.keys(query).some((key) => !["operation", "filter", "sessionId", "retainedDays"].includes(key))) throw new ContextQueryError("Invalid analytics operation");
@@ -18,7 +20,7 @@ export function parseContextFilter(params) {
   const view = params.get("view");
   if (view !== null && !["full", "summary"].includes(view)) throw new ContextQueryError("Invalid view");
   if (view !== null) f.view = view;
-  for (const name of ["provider", "model", "connectionId", "clientTool", "projectLabel"]) {
+  for (const name of ["provider", "model", "connectionId", "clientTool", "clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "logicalRequestId", "requestId", "projectLabel"]) {
     const value = params.get(name);
     if (value !== null) {
       if (!value || value.length > 200) throw new ContextQueryError(`Invalid ${name}`);
@@ -48,7 +50,7 @@ export function parseContextFilter(params) {
 function whereFor(f, sessionId, attributedOnly = true) {
   const clauses = [attributedOnly ? "r.contextSessionId IS NOT NULL" : "1=1"];
   const args = [];
-  for (const key of ["provider", "model", "connectionId", "clientTool"]) if (f[key]) { clauses.push(`r.${key}=?`); args.push(f[key]); }
+  for (const key of ["provider", "model", "connectionId", "clientTool", "clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "logicalRequestId", "requestId"]) if (f[key]) { clauses.push(`r.${key === "requestId" ? "id" : key}=?`); args.push(f[key]); }
   if (f.projectLabel) { clauses.push("s.projectLabel=?"); args.push(f.projectLabel); }
   if (f.from) { clauses.push("r.timestamp>=?"); args.push(f.from); }
   if (f.to) { clauses.push("r.timestamp<=?"); args.push(f.to); }
@@ -125,6 +127,7 @@ export function readContextOverview(db, f = {}, retainedDays = 45) {
 function publicTurn(row) {
   const provider = row.usageSource === "provider";
   return { id: row.id, timestamp: row.timestamp, status: row.status, logicalRequestId: row.logicalRequestId, attempt: row.attempt,
+    explicitIdentity: Object.fromEntries(["clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "clientIdentitySource"].map((key) => [key, row[key] ?? null])),
     provider: row.provider, model: row.model, requestedModel: row.requestedModel, connectionId: row.connectionId, clientTool: row.clientTool,
     contextEstimate: row.contextEstimate, inputEstimate: row.inputEstimate, bodyBeforeBytes: row.bodyBeforeBytes, bodyAfterBytes: row.bodyAfterBytes,
     savedBytes: row.bodyBeforeBytes == null || row.bodyAfterBytes == null ? null : row.bodyBeforeBytes-row.bodyAfterBytes,
@@ -167,10 +170,19 @@ export function readContextSession(db, id, f = {}) {
   const rows = db.all(`SELECT r.* ${JOIN} ${filter.sql} ORDER BY r.timestamp ASC,r.id ASC LIMIT ? OFFSET ?`, [...filter.args,p.pageSize,(p.page-1)*p.pageSize]);
   const ids = rows.map((r) => r.id);
   const stages = ids.length ? db.all(`SELECT * FROM contextStages WHERE requestId IN (${ids.map(() => '?').join(',')}) ORDER BY requestId,ordinal`, ids) : [];
+  const structures = ids.length ? db.all(`SELECT requestId,data FROM contextStructures WHERE requestId IN (${ids.map(() => '?').join(',')}) ORDER BY boundary`, ids) : [];
+  const byRequest = new Map();
+  for (const row of structures) {
+    try { const value = normalizeContextStructure(JSON.parse(row.data));
+      if (!byRequest.has(row.requestId)) byRequest.set(row.requestId, []);
+      byRequest.get(row.requestId).push(value);
+    } catch { /* Untrusted or legacy malformed evidence remains unavailable. */ }
+  }
   const pins = db.all(`SELECT model,connectionId,providerNode,pinnedAt,expiresAt,lastSeenAt FROM sessionAffinity WHERE sessionHash=? ORDER BY model LIMIT 100`, [session.sessionHash]);
   const switches = db.all(`SELECT id,model,fromConnectionId,toConnectionId,trigger,reason,switchedAt FROM accountSwitches WHERE sessionHash=? ORDER BY switchedAt DESC LIMIT 100`, [session.sessionHash]);
   const { sessionHash: _private, ...safeSession } = session;
-  return { session: safeSession, summary: totals, turns: rows.map((r) => ({...publicTurn(r),stages: stages.filter((s) => s.requestId===r.id).map(({requestId: _id,...s})=>s)})),
+  return { session: safeSession, summary: totals, turns: rows.map((r) => ({...publicTurn(r),structures: byRequest.get(r.id) ?? [],stages: stages.filter((s) => s.requestId===r.id).map(({requestId: _id,...s})=>s)})),
     pagination: p, trend: sessionTrend(db,filter,totals), stages: stageSummary(db,filter), dimensions: dimensions(db,filter), pins, switches,
+    structuralDefinitions: { units: "UTF-8 bytes of serialized JSON; not tokens or decoded media bytes.", partition: "messageBytes + instructionBytes + toolSchemaBytes + envelopeBytes = bodyBytes. Role bytes plus messageContainerBytes = messageBytes.", subsets: "Tool call, tool result and attachment bytes overlap role bytes and may overlap each other; never sum these as a partition.", historyPrefix: "A structured history/instructions/tools fingerprint before the latest syntactic user message; not the provider wire prefix, cache eligibility, or proof of compaction.", missing: "Absent boundaries are unavailable, disabled, unsupported binary transport, or historical missing evidence; never zero.", fingerprints: "Installation-keyed HMAC-SHA256 fingerprints, comparable only within the same installation key." },
     routingScope: "Latest retained affinity and at most 100 switch receipts for this session, independent of the turn time filter." };
 }

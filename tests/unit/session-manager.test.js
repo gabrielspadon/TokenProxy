@@ -46,6 +46,11 @@ describe("resolveSessionId", () => {
     expect(got).toBe(deriveSessionId("connFallback"));
   });
 
+  it("explicit TokenProxy session header preserves routing identity", () => {
+    const value = resolveSessionIdentity({ headers: { "x-tokenproxy-session-id": "explicit-session" }, body: {} });
+    expect(value).toMatchObject({ sessionId: "explicit-session", ephemeral: false });
+  });
+
   it("client override: x-session-id header wins, skips later steps", () => {
     const got = resolveSessionId({
       headers: { "x-session-id": "client-sess-123" },

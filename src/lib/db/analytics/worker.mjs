@@ -3,6 +3,7 @@ import { openAnalyticsReadOnly } from "./readOnly.mjs";
 import { validateAnalyticsQuery, readContextOverview, readContextSession } from "./contextQueries.mjs";
 import { validateActivityQuery, readActivityAnalytics } from "./activityQueries.mjs";
 import { validateQuotaHistoryQuery, readQuotaHistory, readQuotaHistorySummary } from "./quotaHistoryQueries.mjs";
+import { validateContextEventQuery, readContextEvents } from "./contextEvents.mjs";
 import { analyticsDiagnostic } from "./diagnostics.mjs";
 
 // The message boundary accepts named projections only, never SQL or a DB path.
@@ -11,6 +12,7 @@ parentPort?.on("message", async ({ id, query }) => {
   let phase = "validate";
   try {
     const validated = query?.operation === "activity" ? validateActivityQuery(query)
+      : query?.operation === "events" ? validateContextEventQuery(query)
       : query?.operation?.startsWith("quota-history") ? validateQuotaHistoryQuery(query) : validateAnalyticsQuery(query);
     phase = "open";
     db = await openAnalyticsReadOnly(workerData.file, workerData.driver);
@@ -21,6 +23,7 @@ parentPort?.on("message", async ({ id, query }) => {
     const result = validated.operation === "quota-history" ? readQuotaHistory(db, validated)
       : validated.operation === "quota-history-summary" ? readQuotaHistorySummary(db)
       : validated.operation === "activity" ? readActivityAnalytics(db, validated)
+      : validated.operation === "events" ? readContextEvents(db, validated.filter)
       : validated.operation === "overview" ? readContextOverview(db, validated.filter, validated.retainedDays)
         : readContextSession(db, validated.sessionId, validated.filter);
     phase = "release";

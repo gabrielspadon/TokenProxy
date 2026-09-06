@@ -16,6 +16,7 @@ export function createContextTelemetry(fields) {
 export async function nextContextAttempt(previous, fields) {
   await recordContextFailure(previous, fields);
   const next = createContextTelemetry({ ...previous, pricingSnapshot: undefined,
+    structures: previous.structures?.filter((value) => value.boundary !== "physical-dispatch"),
     dispatchCoverage: fields.dispatchCoverage ?? previous.dispatchCoverage,
     timestamp: new Date().toISOString(), attempt: previous.attempt + 1 });
   next.identitySource = previous.identitySource;

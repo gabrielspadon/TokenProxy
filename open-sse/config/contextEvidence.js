@@ -1,7 +1,6 @@
 import { CLAUDE_BLOCK, GEMINI_ROLE, OPENAI_BLOCK, RESPONSES_ITEM, ROLE } from "../translator/schema/index.js";
 
-export const CONTEXT_BOUNDARIES = ["client-received", "gateway-shaped", "physical-dispatch"];
-export const CONTEXT_ROLES = [...Object.values(ROLE), "other"];
+export { CONTEXT_BOUNDARIES, CONTEXT_ROLES } from "../../src/lib/db/analytics/contextStructure.mjs";
 export const CONTEXT_INSTRUCTION_FIELDS = ["system", "instructions", "systemInstruction", "system_instruction"];
 export const CONTEXT_MESSAGE_FIELDS = ["messages", "input", "contents"];
 export const CONTEXT_TOOL_FIELDS = ["tools", "functions"];

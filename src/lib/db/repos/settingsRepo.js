@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS = {
   outboundNoProxy: "",
   mitmRouterBaseUrl: DEFAULT_MITM_ROUTER_BASE,
   dnsToolEnabled: {},
+  contextStructureEnabled: true,
   rtkEnabled: true,
   // Schema distillation: strip validation-noise JSON-Schema keywords from
   // tool input_schemas before dispatch. Off by default; engages only past an

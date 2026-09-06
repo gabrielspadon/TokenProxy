@@ -4,9 +4,11 @@ import { ContextQueryError, validId } from "../analytics/contextQueries.mjs";
 import { getAdapter } from "../driver.js";
 import { getSettings } from "./settingsRepo.js";
 
+import { normalizeContextIdentity, saveContextStructures } from "./contextEvidenceRepo.js";
+
 const DAY_MS = 86400000;
 const STAGE_NAMES = new Set(["tools", "schema", "thinking", "rtk", "privacy", "inject", "pxpipe", "mem", "headroom", "qac", "pairs", "reorder", "midinject", "final"]);
-const CONTROL_NAMES = new Set(["rtk", "rtkAllowLossy", "schema", "schemaAllowLossy", "thinking", "privacy", "caveman", "ponytail", "pxpipe", "pxpipeAllowLossy", "memory", "headroom", "headroomAllowLossy", "qac", "pairs", "reorder", "midinject", "clientOptOut"]);
+const CONTROL_NAMES = new Set(["contextStructure", "rtk", "rtkAllowLossy", "schema", "schemaAllowLossy", "thinking", "privacy", "caveman", "ponytail", "pxpipe", "pxpipeAllowLossy", "memory", "headroom", "headroomAllowLossy", "qac", "pairs", "reorder", "midinject", "clientOptOut"]);
 const TERMINAL = new Set(["success", "error", "cancelled", "aborted"]);
 const number = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 const present = (...values) => values.some((v) => number(v) !== null);
@@ -33,6 +35,12 @@ export function saveContextMetrics(db, detail) {
   if (!c) return;
   if (!/^[a-f0-9]{32,64}$/.test(c.sessionHash || "")) throw new Error("Invalid context identity");
   const stages = normalizeContextStages(c.stages);
+  const identity = normalizeContextIdentity(c.explicitIdentity);
+  if (Object.keys(identity).length) {
+    const fields = Object.keys(identity);
+    db.run(`UPDATE requestStats SET ${fields.map((field) => `${field}=COALESCE(${field},?)`).join(",")} WHERE id=?`, [...Object.values(identity), detail.id]);
+  }
+  saveContextStructures(db, detail.id, c.structures);
   const controls = Object.fromEntries(Object.entries(c.controls || {}).filter(([k,v]) => CONTROL_NAMES.has(k) && typeof v === "boolean"));
   const at = detail.timestamp;
   db.run(`INSERT INTO contextSessions(sessionHash, identitySource, firstSeenAt, lastSeenAt) VALUES(?, ?, ?, ?)
@@ -91,6 +99,8 @@ export function cleanupContext(db, now, days) {
   const cutoff = new Date(now - days * DAY_MS).toISOString();
   db.transaction(() => {
     db.run(`DELETE FROM requestStats WHERE timestamp < ?`, [cutoff]);
+    db.run(`DELETE FROM contextClientEvents WHERE occurredAt < ?`, [cutoff]);
+    db.run(`DELETE FROM contextStructures WHERE NOT EXISTS (SELECT 1 FROM requestStats r WHERE r.id=contextStructures.requestId)`);
     db.run(`DELETE FROM contextStages WHERE NOT EXISTS (SELECT 1 FROM requestStats r WHERE r.id=contextStages.requestId)`);
     db.run(`DELETE FROM contextSessions WHERE lastSeenAt < ? AND NOT EXISTS (SELECT 1 FROM requestStats r WHERE r.contextSessionId=contextSessions.id)`, [cutoff]);
   });

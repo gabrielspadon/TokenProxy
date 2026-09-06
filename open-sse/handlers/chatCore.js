@@ -1,3 +1,4 @@
+import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
 import { createContextTelemetry, recordContextAttempt, nextContextAttempt } from "./chatCore/contextTelemetry.js";
 import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
@@ -303,6 +304,7 @@ function trackCacheEpoch(sid, serialized) {
 export async function handleChatCore({
   requestId,
   contextTelemetry: contextIdentity = {},
+  contextStructureEnabled = true,
   rtkAllowLossy = false,
   schemaAllowLossy = false,
   headroomAllowLossy = false,
@@ -425,6 +427,8 @@ export async function handleChatCore({
     ccFilterNaming,
   );
   if (bypassResponse) return bypassResponse;
+  const contextCapture = await prepareContextCapture({ body: clientRawRequest?.body ?? body,
+    headers: clientRawRequest?.headers, apiKey, enabled: contextStructureEnabled });
 
   // Track as an active (concurrent) session for the dashboard. clientId is the
   // real client IP stamped by custom-server.js as x-tp-real-ip, which is the
@@ -1406,6 +1410,8 @@ export async function handleChatCore({
   let contextTelemetry = createContextTelemetry({
     ...contextIdentity, sessionHash: credentials?.sessionHash, sessionIdentitySource: credentials?.sessionIdentitySource,
     dispatchCoverage: "executor-invocation",
+    explicitIdentity: contextCapture.identity,
+    structures: [contextCapture.initial, contextCapture.capture(translatedBody, "gateway-shaped", finalSerialized)].filter(Boolean),
     timestamp: new Date(requestStartTime).toISOString(),
     requestedModel: clientRawRequest?.body?.model || body.model,
     clientTool, inputEstimate, messageCount, toolCount,
@@ -1414,6 +1420,7 @@ export async function handleChatCore({
     routeKind: passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated",
     formatPair: `${sourceFormat}>${targetFormat}`, selection: credentials?.selection?.verdict,
     controls: {
+      contextStructure: contextStructureEnabled,
       rtk: Boolean(rtkWillRun), rtkAllowLossy, schema: Boolean(schemaDistillRan), schemaAllowLossy,
       thinking: Boolean(thinkingWillRun), privacy: Boolean(privacyEnabled),
       caveman: Boolean(tokenSaverEnabled && cavemanEnabled), ponytail: Boolean(tokenSaverEnabled && ponytailEnabled),
@@ -1422,6 +1429,10 @@ export async function handleChatCore({
       qac: Boolean(qacWillRun), pairs: Boolean(pairsWillRun), reorder: Boolean(reorderWillRun), midinject: Boolean(tokenSaverEnabled && midPrefixInjectEnabled), clientOptOut: !tokenSaverEnabled,
     },
     stages: contextStages.map((stage) => ({ ...stage, ...(stage.stage === "rtk" ? { semanticPreserving: rtkStats?.semanticPreserving === true } : {}) })),
+  });
+  Object.defineProperties(saverMeta, {
+    requestId: { get: () => contextTelemetry.requestId },
+    logicalRequestId: { get: () => contextTelemetry.logicalRequestId },
   });
   await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
   // MCP context_status state: sid-keyed self-sizing snapshot for the
@@ -1713,10 +1724,13 @@ export async function handleChatCore({
   };
   const executeAttempt = (args) => {
     let dispatches = 0;
-    return executor.execute({ ...args, beforeDispatch: async () => {
+    return executor.execute({ ...args, beforeDispatch: async ({ body: dispatchBody, serialized } = {}) => {
       if (dispatches++ > 0) {
         contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime });
       }
+      const structure = contextCapture.capture(dispatchBody, "physical-dispatch", serialized);
+      contextTelemetry.structures = contextTelemetry.structures.filter((value) => value.boundary !== "physical-dispatch");
+      if (structure) contextTelemetry.structures.push(structure);
       contextTelemetry.dispatchCoverage = "physical-dispatch";
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
     } });

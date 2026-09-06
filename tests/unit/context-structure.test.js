@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { ROLE } from "../../open-sse/translator/schema/index.js";
+import { CONTEXT_ROLES } from "../../open-sse/config/contextEvidence.js";
 import { measureContextStructure, normalizeContextStructure } from "../../open-sse/utils/contextStructure.js";
 
 const key = Buffer.alloc(32, 7);
@@ -6,6 +8,9 @@ const size = (value) => Buffer.byteLength(JSON.stringify(value), "utf8");
 const capture = (body) => measureContextStructure(body, "client-received", key);
 
 describe("content-free structural evidence", () => {
+  it("keeps the versioned role DTO aligned with protocol roles", () => {
+    expect(CONTEXT_ROLES).toEqual([...Object.values(ROLE), "other"]);
+  });
   it("partitions UTF-8 JSON bytes exactly and preserves the caller", () => {
     const body = { model: "fixture", system: "private café 🐋", tools: [{ name: "secret-tool", input_schema: { type: "object" } }], messages: [{ role: "user", content: "última pergunta" }] };
     const before = structuredClone(body), result = capture(body);

@@ -970,6 +970,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // admission line and the request lines join on one grep.
         requestId: requestRid(request),
         contextTelemetry: requestIdentity,
+        contextStructureEnabled: chatSettings.contextStructureEnabled !== false,
         body: { ...structuredClone(body), model: `${provider}/${model}` },
         modelInfo: { provider, model },
         credentials: refreshedCredentials,

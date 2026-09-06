@@ -147,6 +147,7 @@ export async function saveRequestStats(detail) {
       // Optional observability must never roll back authoritative billed usage.
       db.run(`UPDATE requestStats SET contextSessionId=NULL,contextTelemetryError='invalid-metrics' WHERE id=?`, [detail.id]);
       db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
+      db.run(`DELETE FROM contextStructures WHERE requestId=?`, [detail.id]);
     }
     });
     await maybeCleanup(db);
