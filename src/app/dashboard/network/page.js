@@ -8,6 +8,7 @@ import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum } from '@/shared/format';
+import { Icon } from '@/shared/components/Icon';
 import './styles.css';
 
 const NODE_TYPE_WORD = {
@@ -273,7 +274,34 @@ export default function NetworkPage() {
       </div>
       {result ? <Notice {...result} /> : null}
 
-      <section aria-labelledby="h-outbound">
+      <div className="measures">
+        <div className="measure big">
+          <span className="label">Provider nodes</span>
+          <span className="value" data-i18n-skip>
+            {nodes.data ? fmtNum(nodeRows.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Proxy pools</span>
+          <span className="value" data-i18n-skip>
+            {pools.data ? fmtNum(poolRows.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Provider strategies</span>
+          <span className="value" data-i18n-skip>
+            {settings.data ? fmtNum(Object.keys(providerStrategies).length) : '—'}
+          </span>
+        </div>
+        <div className="measure big network-onoff">
+          <span className="label">Outbound proxy</span>
+          <span className="value">
+            {settings.data ? outboundEnabled ? 'On' : 'Off' : <span data-i18n-skip>—</span>}
+          </span>
+        </div>
+      </div>
+
+      <section aria-labelledby="h-outbound" className="panel">
         <div className="screen-head">
           <h2 id="h-outbound">Outbound proxy</h2>
           <Freshness status={pollFresh(settings)} lastDataAt={settings.goodAt} />
@@ -337,28 +365,30 @@ export default function NetworkPage() {
                     onChange={(e) => setOutbound((o) => ({ ...o, noProxy: e.target.value }))}
                   />
                 </label>
-                <div className="actions">
-                  <button type="button" className="button quiet" onClick={() => setOutbound(null)}>
-                    Cancel
-                  </button>
+                <div className="verb-row">
                   <button
                     type="button"
                     className="button"
                     onClick={() => setAction({ kind: 'outboundOn' })}
                   >
+                    <Icon name="i-play" />
                     Turn on
+                  </button>
+                  <button type="button" className="button quiet" onClick={() => setOutbound(null)}>
+                    Cancel
                   </button>
                 </div>
               </div>
             ) : (
-              <div className="actions">
+              <div className="verb-row">
                 {outboundEnabled ? (
                   <>
                     <button
                       type="button"
-                      className="button quiet"
+                      className="button"
                       onClick={() => setOutbound({ url: '', noProxy: outboundNoProxy })}
                     >
+                      <Icon name="i-edit" />
                       Change proxy URL
                     </button>
                     <button
@@ -366,6 +396,7 @@ export default function NetworkPage() {
                       className="button danger"
                       onClick={() => setAction({ kind: 'outboundOff' })}
                     >
+                      <Icon name="i-pause" />
                       Turn off
                     </button>
                   </>
@@ -375,6 +406,7 @@ export default function NetworkPage() {
                     className="button"
                     onClick={() => setOutbound({ url: '', noProxy: '' })}
                   >
+                    <Icon name="i-network" />
                     Set an outbound proxy
                   </button>
                 )}
@@ -390,6 +422,7 @@ export default function NetworkPage() {
         <div className="screen-head">
           <h2 id="h-nodes">Provider nodes</h2>
           <button type="button" className="button" onClick={() => openNode('createNode')}>
+            <Icon name="i-add" />
             Add a node
           </button>
         </div>
@@ -451,6 +484,7 @@ export default function NetworkPage() {
         <div className="screen-head">
           <h2 id="h-pools">Proxy pools</h2>
           <button type="button" className="button" onClick={() => openPool('createPool')}>
+            <Icon name="i-add" />
             Add a pool
           </button>
         </div>
@@ -516,6 +550,7 @@ export default function NetworkPage() {
                 </span>
                 <div className="actions">
                   <button type="button" className="button quiet" onClick={() => testPool(p)}>
+                    <Icon name="i-test" />
                     Test
                   </button>
                   <button
@@ -539,13 +574,13 @@ export default function NetworkPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-strategy">
+      <section aria-labelledby="h-strategy" className="panel">
         <h2 id="h-strategy">Per-provider proxy strategy</h2>
         <p>
           Binds one proxy pool to a provider id, for every connection under that provider that has
           no pool of its own.
         </p>
-        <div className="network-form">
+        <div className="network-form network-form-strategy">
           <label className="field">
             <span>Provider id</span>
             <input
@@ -573,13 +608,14 @@ export default function NetworkPage() {
                 ))}
             </select>
           </label>
-          <div className="actions">
+          <div className="verb-row">
             <button
               type="button"
               className="button"
               disabled={!strategyProvider.trim()}
               onClick={saveStrategy}
             >
+              <Icon name="i-edit" />
               Save strategy
             </button>
           </div>

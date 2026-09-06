@@ -11,6 +11,7 @@ import { runGrant, importPasted } from "@/shared/oauthGrant";
 import { TONE, WORDS, AUTH } from "@/shared/status";
 import { fmtNum, fmtRelative, fmtTime } from "@/shared/format";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { Icon } from "@/shared/components/Icon";
 import "./styles.css";
 
 function pollFresh(p) {
@@ -95,6 +96,7 @@ export default function ConnectionsPage() {
 
   const all = providers.data?.connections || [];
   const enabled = all.filter((c) => c.isActive !== false).length;
+  const draining = all.filter((c) => byDrain.get(c.id)?.isDraining === true).length;
   const health = sys.data?.providerHealth || null;
 
   // ---- add flow ----------------------------------------------------------
@@ -213,16 +215,17 @@ export default function ConnectionsPage() {
         </div>
         <div className="actions">
           <Freshness status={pollFresh(qual)} lastDataAt={qual.goodAt} />
-          <button type="button" className="button" onClick={() => { setAdding(true); setForm({ providerId: "", mode: "", name: "", secret: "", machineId: "" }); setFlow(null); setGrant(null); }}>Add a connection</button>
+          <button type="button" className="button" onClick={() => { setAdding(true); setForm({ providerId: "", mode: "", name: "", secret: "", machineId: "" }); setFlow(null); setGrant(null); }}><Icon name="i-add" />Add a connection</button>
         </div>
       </header>
 
       {forbidden ? <Notice {...refusal(qual.status || providers.status, qual.error || providers.error)} /> : null}
 
       <div className="measures">
-        <div className="measure"><span className="label">Configured</span><span className="value" data-i18n-skip>{fmtNum(all.length)}</span></div>
-        <div className="measure"><span className="label">Enabled</span><span className="value" data-i18n-skip>{fmtNum(enabled)}</span></div>
-        <div className="measure">
+        <div className="measure big"><span className="label">Configured</span><span className="value" data-i18n-skip>{fmtNum(all.length)}</span></div>
+        <div className="measure big"><span className="label">Enabled</span><span className="value" data-i18n-skip>{fmtNum(enabled)}</span></div>
+        <div className="measure big"><span className="label">Draining</span><span className="value" data-i18n-skip>{fmtNum(draining)}</span></div>
+        <div className="measure big">
           <span className="label">Degraded providers</span>
           {health && health.unavailable === null ? <span className="value" data-i18n-skip>{fmtNum(health.degradedProviderCount)}</span> : <span className="value unreported">Not reported</span>}
         </div>
@@ -307,14 +310,14 @@ export default function ConnectionsPage() {
               </div>
               <span className="status" data-tone={RELEASE_TONE[h.status] || "warn"}>{RELEASE_WORD[h.status] || h.status}</span>
               <div className="actions">
-                <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "activate", release: h }); }}>Activate</button>
+                <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "activate", release: h }); }}><Icon name="i-play" />Activate</button>
               </div>
             </div>
           ))}
         </div>
         {active?.previousReleaseId ? (
           <div className="actions">
-            <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "rollback" }); }}>Roll back</button>
+            <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "rollback" }); }}><Icon name="i-refresh" mirror />Roll back</button>
           </div>
         ) : null}
       </section>

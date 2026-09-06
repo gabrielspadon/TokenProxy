@@ -7,6 +7,7 @@ import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
+import { Icon } from '@/shared/components/Icon';
 import './styles.css';
 
 function pollFresh(p) {
@@ -417,8 +418,41 @@ export default function ModelsPage() {
       </div>
       {done ? <Notice tone="ok" title={done} /> : null}
 
+      <div className="measures">
+        <div className="measure big">
+          <span className="label">Catalog</span>
+          <span className="value" data-i18n-skip>
+            {models.data ? fmtNum(rows.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Combos</span>
+          <span className="value" data-i18n-skip>
+            {combos.data ? fmtNum(comboRows.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Custom</span>
+          <span className="value" data-i18n-skip>
+            {custom.data ? fmtNum(customRows.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Disabled aliases</span>
+          <span className="value" data-i18n-skip>
+            {disabled.data ? fmtNum(Object.keys(disabledByProvider).length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Unacknowledged</span>
+          <span className="value" data-i18n-skip>
+            {news.data ? fmtNum(totalUnseen) : '—'}
+          </span>
+        </div>
+      </div>
+
       <section aria-labelledby="h-catalog">
-        <div className="screen-head">
+        <div className="screen-head models-catalog-head">
           <h2 id="h-catalog">Catalog</h2>
           <label className="field models-search">
             <span>Search</span>
@@ -568,10 +602,11 @@ export default function ModelsPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-custom">
+      <section aria-labelledby="h-custom" className="panel">
         <div className="screen-head">
           <h2 id="h-custom">Custom models</h2>
           <button type="button" className="button" onClick={openAddCustom}>
+            <Icon name="i-add" />
             Register a model
           </button>
         </div>
@@ -738,10 +773,11 @@ export default function ModelsPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-combos">
+      <section aria-labelledby="h-combos" className="panel">
         <div className="screen-head">
           <h2 id="h-combos">Combos</h2>
           <button type="button" className="button" onClick={openCreateCombo}>
+            <Icon name="i-add" />
             Create a combo
           </button>
         </div>
@@ -797,7 +833,7 @@ export default function ModelsPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-decisions">
+      <section aria-labelledby="h-decisions" className="panel">
         <div className="screen-head">
           <h2 id="h-decisions">Routing decisions</h2>
           <Freshness status={pollFresh(settings)} lastDataAt={settings.goodAt} />
@@ -833,8 +869,9 @@ export default function ModelsPage() {
                 />
               </label>
             </div>
-            <div className="actions">
-              <button type="button" className="button quiet" onClick={saveComboDefaults}>
+            <div className="verb-row">
+              <button type="button" className="button" onClick={saveComboDefaults}>
+                <Icon name="i-edit" />
                 Save defaults
               </button>
             </div>

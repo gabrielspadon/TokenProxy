@@ -12,6 +12,7 @@ import { runGrant, importPasted } from "@/shared/oauthGrant";
 import { TONE, WORDS, AUTH } from "@/shared/status";
 import { fmtNum, fmtRelative, fmtTime, fmtDuration, isEpoch } from "@/shared/format";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
+import { Icon } from "@/shared/components/Icon";
 import "../styles.css";
 
 const HORIZON_MS = 6 * 60 * 60 * 1000;
@@ -207,7 +208,7 @@ export default function ConnectionPage({ params }) {
               </dl>
             ) : !qual.error ? <p className="empty">No probe on record.</p> : null}
             <div className="actions">
-              <button type="button" className="button quiet" onClick={() => openAction("recheck", { force: false })}>Recheck</button>
+              <button type="button" className="button quiet" onClick={() => openAction("recheck", { force: false })}><Icon name="i-test" />Recheck</button>
             </div>
           </section>
 
@@ -222,22 +223,25 @@ export default function ConnectionPage({ params }) {
             ) : <p className="empty">No windows observed for this account.</p>}
           </section>
 
-          <section>
+          <section className="panel">
             <h2>Actions</h2>
-            <div className="actions connections-actions">
+            <div className="verb-row">
               {c.isActive === false
-                ? <button type="button" className="button" onClick={() => openAction("enable")}>Enable</button>
-                : <button type="button" className="button quiet" onClick={() => openAction("disable")}>Disable</button>}
-              <button type="button" className="button quiet" onClick={() => openAction("priority", { priority: String(c.priority ?? 1) })}>Priority</button>
-              <button type="button" className="button quiet" onClick={() => openAction("thresholds", { ...(c.quotaPauseThresholds || {}) })}>Pause thresholds</button>
-              <button type="button" className="button quiet" onClick={() => openAction("pool", { poolId: psd.proxyPoolId || "" })}>Proxy pool</button>
-              <button type="button" className="button quiet" onClick={() => openAction("endpoint", { baseUrl: psd.baseUrl || "", apiType: psd.apiType || "" })}>Endpoint</button>
-              <button type="button" className="button quiet" onClick={() => openAction("concurrent", { maxConcurrent: maxConcurrent === undefined ? "" : String(maxConcurrent) })}>Concurrency ceiling</button>
+                ? <button type="button" className="button" onClick={() => openAction("enable")}><Icon name="i-play" />Enable</button>
+                : <button type="button" className="button" onClick={() => openAction("disable")}><Icon name="i-pause" />Disable</button>}
               {drainState?.isDraining
-                ? <button type="button" className="button quiet" onClick={() => openAction("undrain")}>Cancel the drain</button>
-                : <button type="button" className="button quiet" onClick={() => openAction("drain")}>Drain</button>}
-              <button type="button" className="button quiet" onClick={() => openAction("reauth", { force: false, secret: "", machineId: "" })}>Replace the credential</button>
-              <button type="button" className="button danger" onClick={() => openAction("del")}>Delete</button>
+                ? <button type="button" className="button quiet" onClick={() => openAction("undrain")}><Icon name="i-play" />Cancel the drain</button>
+                : <button type="button" className="button quiet" onClick={() => openAction("drain")}><Icon name="i-drain" />Drain</button>}
+              <button type="button" className="button quiet" onClick={() => openAction("reauth", { force: false, secret: "", machineId: "" })}><Icon name="i-lock" />Replace the credential</button>
+              <button type="button" className="button danger" onClick={() => openAction("del")}><Icon name="i-delete" />Delete</button>
+            </div>
+            <h3 className="connections-tune">Tuning</h3>
+            <div className="verb-row">
+              <button type="button" className="button quiet" onClick={() => openAction("priority", { priority: String(c.priority ?? 1) })}><Icon name="i-edit" />Priority</button>
+              <button type="button" className="button quiet" onClick={() => openAction("thresholds", { ...(c.quotaPauseThresholds || {}) })}><Icon name="i-edit" />Pause thresholds</button>
+              <button type="button" className="button quiet" onClick={() => openAction("pool", { poolId: psd.proxyPoolId || "" })}><Icon name="i-network" />Proxy pool</button>
+              <button type="button" className="button quiet" onClick={() => openAction("endpoint", { baseUrl: psd.baseUrl || "", apiType: psd.apiType || "" })}><Icon name="i-send" />Endpoint</button>
+              <button type="button" className="button quiet" onClick={() => openAction("concurrent", { maxConcurrent: maxConcurrent === undefined ? "" : String(maxConcurrent) })}><Icon name="i-shaping" />Concurrency ceiling</button>
             </div>
             {drainState?.isDraining ? (
               <p className="caption">Draining since <span data-i18n-skip>{drainState.requestedAt ? fmtTime(drainState.requestedAt) : "—"}</span>, <span data-i18n-skip>{fmtNum(drainState.activeStreams)}</span> streams still open.</p>

@@ -1,6 +1,24 @@
 @layer components {
   .models-search { min-width: 220px; margin-inline-start: auto; }
+  /* Pass-2 defect 8: the filter stays reachable while the ~100-row catalog
+     scrolls. Only from 1024px up, because below that the rail is itself sticky
+     at 0 and a second sticky offset by --strap-h lands on top of it. */
+  @media (min-width: 1024px) {
+    .models-catalog-head {
+      position: sticky;
+      inset-block-start: var(--strap-h);
+      z-index: 1;
+      background: var(--paper);
+      padding-block: 8px;
+      margin-block-end: 8px;
+      border-block-end: 1px solid var(--rule);
+    }
+  }
   .models-row { grid-template-columns: minmax(0, 1fr); }
+  /* Defect 8 named the catalog text as too small already, so the row keeps the
+     body size and only tightens its vertical rhythm. */
+  .models-row.row { padding: 6px 0; }
+  .models-row .who .name { font-family: var(--mono); font-weight: 400; }
   .models-form {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

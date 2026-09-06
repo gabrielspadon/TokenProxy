@@ -9,8 +9,9 @@ import { Notice } from '@/shared/components/Notice';
 import { QuotaWindow } from '@/shared/components/QuotaWindow';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
-import { fmtRelative, fmtTime } from '@/shared/format';
+import { fmtNum, fmtRelative, fmtTime } from '@/shared/format';
 import { TONE, WORDS as STATUS } from '@/shared/status';
+import { Icon } from '@/shared/components/Icon';
 import './styles.css';
 
 const HORIZON_MS = 6 * 3600 * 1000;
@@ -243,6 +244,33 @@ export default function SessionsPage() {
         <Freshness status={stream.status} lastDataAt={receivedAt} />
       </div>
 
+      <div className="measures">
+        <div className="measure big">
+          <span className="label">In flight</span>
+          <span className="value" data-i18n-skip>
+            {usage ? fmtNum(sessions.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Models in flight</span>
+          <span className="value" data-i18n-skip>
+            {usage ? fmtNum(new Set(sessions.map((s) => s.model).filter(Boolean)).size) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Switches shown</span>
+          <span className="value" data-i18n-skip>
+            {receipts.data ? fmtNum(rows.length) : '—'}
+          </span>
+        </div>
+        <div className="measure big">
+          <span className="label">Accounts known</span>
+          <span className="value" data-i18n-skip>
+            {detail.data ? fmtNum(names.size) : '—'}
+          </span>
+        </div>
+      </div>
+
       <section aria-labelledby="h-inflight">
         <h2 id="h-inflight">Sessions in flight</h2>
         <p className="caption">
@@ -345,6 +373,7 @@ export default function SessionsPage() {
             </select>
           </label>
           <button className="button" type="submit">
+            <Icon name="i-search" />
             Apply
           </button>
         </form>
@@ -388,7 +417,7 @@ export default function SessionsPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-find">
+      <section aria-labelledby="h-find" className="panel">
         <h2 id="h-find">Find one receipt</h2>
         <p className="caption">
           A receipt older than the last thousand switches reads exactly like one that never existed.
@@ -404,6 +433,7 @@ export default function SessionsPage() {
             />
           </label>
           <button className="button" type="submit">
+            <Icon name="i-search" />
             Find
           </button>
         </form>
@@ -417,25 +447,28 @@ export default function SessionsPage() {
 
       <section aria-labelledby="h-stick">
         <h2 id="h-stick">When a pin moves</h2>
-        <p>
-          A pin holds a session on one account for one model so a conversation keeps landing where
-          its context already is. It does not move just because ranking would now put another
-          account first. It moves only when one of these happens.
-        </p>
-        <ul className="bullets">
-          <li>The account it points at becomes unavailable.</li>
-          <li>The quota of the account it points at is exhausted.</li>
-          <li>An operator puts that account into drain.</li>
-          <li>That one model fails on that account.</li>
-          <li>
-            A higher-priority account that was not eligible when the pin was made becomes eligible
-            again.
-          </li>
-        </ul>
-        <p>
-          A session staying on an account that no longer looks like the best one is this stickiness
-          working, not a fault.
-        </p>
+        <details className="sessions-evidence">
+          <summary>How pinning decides, in full</summary>
+          <p>
+            A pin holds a session on one account for one model so a conversation keeps landing where
+            its context already is. It does not move just because ranking would now put another
+            account first. It moves only when one of these happens.
+          </p>
+          <ul className="bullets">
+            <li>The account it points at becomes unavailable.</li>
+            <li>The quota of the account it points at is exhausted.</li>
+            <li>An operator puts that account into drain.</li>
+            <li>That one model fails on that account.</li>
+            <li>
+              A higher-priority account that was not eligible when the pin was made becomes eligible
+              again.
+            </li>
+          </ul>
+          <p>
+            A session staying on an account that no longer looks like the best one is this
+            stickiness working, not a fault.
+          </p>
+        </details>
       </section>
 
       <section aria-labelledby="h-gap">
