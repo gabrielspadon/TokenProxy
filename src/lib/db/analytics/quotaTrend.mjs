@@ -184,6 +184,7 @@ export function projectQuotaScenario(analysis, { multiplier = 1, available = tru
     earliest = horizon(analysis.rate.maximum),
     latest = horizon(analysis.rate.minimum);
   result.projectedWithoutResetAt = central;
+  if (!central) return { ...result, state: 'unrepresentable_horizon' };
   result.beforeReset =
     analysis.resetAt && central ? instant(central) < instant(analysis.resetAt) : null;
   if (result.beforeReset === false) return { ...result, state: 'reset_before_exhaustion' };

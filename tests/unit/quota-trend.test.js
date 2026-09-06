@@ -21,6 +21,17 @@ const analyze = (rows, asOf = at(22)) =>
   analyzeQuotaSeries(rows, { asOf, measurement: 'absolute' });
 
 describe('quota trend evidence', () => {
+  it('keeps an unrepresentable distant horizon unavailable instead of showing a dated prediction', () => {
+    const rows = samples([100, 99.99999999999, 99.99999999998, 99.99999999997, 99.99999999996], {
+      resetAt: null,
+    });
+    const result = analyze(rows);
+    expect(result.state).toBe('available');
+    expect(projectQuotaScenario(result)).toMatchObject({
+      state: 'unrepresentable_horizon',
+      exhaustionAt: null,
+    });
+  });
   it('uses all distinct observed intervals and exposes a dated balance and rate units', () => {
     const result = analyze(samples());
     expect(result).toMatchObject({

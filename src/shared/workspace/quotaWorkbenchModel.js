@@ -31,6 +31,8 @@ export const QUOTA_TREND_EXPLANATIONS = {
   no_observed_consumption:
     'The median observed consumption rate is zero; no finite exhaustion time is supported.',
   not_observed: 'These records are not identified as actual quota observations.',
+  unrepresentable_horizon:
+    'The observed rate projects beyond the supported date range; no dated exhaustion estimate can be shown.',
 };
 
 export function quotaWorkbenchUrl(scope, connectionId, anchor) {

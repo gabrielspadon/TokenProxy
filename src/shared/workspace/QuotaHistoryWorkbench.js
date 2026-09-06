@@ -81,12 +81,11 @@ function Scenario({ analysis }) {
             This account is excluded from the scenario. Redistribution to other accounts has not
             been simulated.
           </p>
-        ) : analysis.state !== 'available' ? (
+        ) : result.state !== 'available' && result.state !== 'reset_before_exhaustion' ? (
           <>
             <strong>Forecast unavailable</strong>
             <p>
-              {QUOTA_TREND_EXPLANATIONS[analysis.state] ||
-                'This evidence cannot support a forecast.'}
+              {QUOTA_TREND_EXPLANATIONS[result.state] || 'This evidence cannot support a forecast.'}
             </p>
           </>
         ) : result.state === 'reset_before_exhaustion' ? (
@@ -339,6 +338,7 @@ function ResetChecks({ analysisUrl, onSnapshot }) {
           aria-label="Reset event type"
           placeholder="All recorded events"
           clearable
+          clearButtonProps={{ 'aria-label': 'Clear reset event filter' }}
           value={eventType}
           onChange={(value) => {
             setEventType(value);
