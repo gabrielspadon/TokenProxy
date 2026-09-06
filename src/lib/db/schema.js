@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -132,6 +132,18 @@ export const TABLES = {
       status: "TEXT",
       tokens: "TEXT",
       meta: "TEXT",
+      requestId: "TEXT",
+      logicalRequestId: "TEXT",
+      attempt: "INTEGER",
+      contextSessionId: "INTEGER",
+      projectId: "TEXT",
+      rateSnapshotId: "TEXT",
+      pricingCapturedAt: "TEXT",
+      costSource: "TEXT",
+      costEvidence: "TEXT",
+      usageSource: "TEXT",
+      estimatedCostUsd: "REAL",
+      reportedCostUsd: "REAL",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_uh_ts ON usageHistory(timestamp DESC)",
@@ -141,7 +153,24 @@ export const TABLES = {
       // Enforcing an API key's ceiling sums this table for one key on the auth
       // path. Without this index that is a full scan of a table nothing prunes.
       "CREATE INDEX IF NOT EXISTS idx_uh_apikey ON usageHistory(apiKey)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_uh_request_id ON usageHistory(requestId) WHERE requestId IS NOT NULL",
+      "CREATE INDEX IF NOT EXISTS idx_uh_logical ON usageHistory(logicalRequestId, id)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_session ON usageHistory(contextSessionId, id)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_project ON usageHistory(projectId, id)",
     ],
+  },
+  usageRateSnapshots: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      provider: "TEXT",
+      model: "TEXT",
+      currency: "TEXT NOT NULL",
+      unit: "TEXT NOT NULL",
+      calculatorVersion: "TEXT NOT NULL",
+      source: "TEXT NOT NULL",
+      rates: "TEXT",
+      capturedAt: "TEXT NOT NULL",
+    },
   },
   usageDaily: {
     columns: {
@@ -231,6 +260,8 @@ export const TABLES = {
       contextSessionId: "INTEGER",
       contextTelemetryError: "TEXT",
       logicalRequestId: "TEXT",
+      rateSnapshotId: "TEXT",
+      pricingCapturedAt: "TEXT",
       requestedModel: "TEXT",
       clientTool: "TEXT",
       contextEstimate: "INTEGER",
