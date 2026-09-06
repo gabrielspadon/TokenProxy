@@ -247,7 +247,7 @@ describe("connection default model routing (PR #474)", () => {
 
     expect(response.status).toBe(400);
     expect(authMocks.markAccountUnavailable).toHaveBeenCalledWith(
-      "connection-a", 400, "unknown model", "minimax", "auto", undefined,
+      "connection-a", 400, "unknown model", "minimax", "auto", undefined, null,
       { rid: expect.stringMatching(/^[0-9a-f]{8}$/) },
     );
   });

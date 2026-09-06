@@ -246,19 +246,14 @@ describe('G4 — auth, payment and policy are NEVER retried', () => {
     }
   });
 
-  it('still retries the same account on a transient status', async () => {
-    // The negative control for the case above: the veto is status-shaped, not a
-    // blanket disabling of the retry path.
-    let seen = 0;
-    dispatchMocks.handleChatCore.mockImplementation(() => {
-      seen += 1;
-      return seen === 1 ? failure(500, 'transient glitch') : success();
-    });
-
+  it('returns an uncertain transient failure without replaying the generation', async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 5000, mustWait: true });
+    dispatchMocks.handleChatCore.mockImplementation(() => failure(500, 'transient glitch'));
     const response = await handleChat(request());
-
-    expect(response.status).toBe(200);
-    expect(seen).toBe(2);
+    expect(response.status).toBe(500);
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledTimes(1);
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
   });
 });
 
@@ -317,7 +312,7 @@ describe('G4 — a local admission refusal tells the truth about itself', () => 
     authMocks.getProviderCredentials.mockImplementation(async (_p, excluded) =>
       excluded?.size ? null : account('account-a')
     );
-    dispatchMocks.handleChatCore.mockResolvedValue(failure(502, 'upstream exploded'));
+    dispatchMocks.handleChatCore.mockResolvedValue({ ...failure(429, 'quota exhausted'), failureMetadata: { safeToReplay: true } });
     authMocks.markAccountUnavailable.mockResolvedValue({
       shouldFallback: true,
       cooldownMs: 60_000,
@@ -325,10 +320,10 @@ describe('G4 — a local admission refusal tells the truth about itself', () => 
 
     const response = await handleChat(request());
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(429);
     expect(retryAfter(response)).toBe('1');
     await expect(response.json()).resolves.toMatchObject({
-      error: { failure_phase: 'provider', message: 'upstream exploded' },
+      error: { failure_phase: 'provider', message: 'quota exhausted' },
     });
   });
 

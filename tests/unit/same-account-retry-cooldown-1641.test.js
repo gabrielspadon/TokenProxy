@@ -1,42 +1,156 @@
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { checkFallbackError } from "../../open-sse/services/accountFallback.js";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const chat = readFileSync(new URL("../../src/sse/handlers/chat.js", import.meta.url), "utf8");
+const authMocks = vi.hoisted(() => ({
+  clearAccountError: vi.fn(),
+  getProviderCredentials: vi.fn(),
+  markAccountUnavailable: vi.fn(),
+}));
+const dispatchMocks = vi.hoisted(() => ({ handleChatCore: vi.fn() }));
+const modelMocks = vi.hoisted(() => ({ getComboModels: vi.fn(), getModelInfo: vi.fn() }));
+const settingsMocks = vi.hoisted(() => ({ getSettings: vi.fn() }));
+const logMocks = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  maskKey: vi.fn(() => "***"),
+  warn: vi.fn(),
+}));
 
-// markAccountUnavailable computes how long an account is out for and the caller
-// discarded it, so an account locked for two minutes was still retried three
-// times before the loop moved on — two pointless upstream calls and the latency
-// of both, every time.
-describe("the same-account retry respects the cooldown it computed (#1641)", () => {
-  it("reads the cooldown instead of dropping it", () => {
-    expect(chat).toContain("const { shouldFallback, cooldownMs } = await markAccountUnavailable");
+vi.mock("@/sse/services/auth.js", () => ({
+  clearAccountError: authMocks.clearAccountError,
+  extractApiKey: () => null,
+  getProviderCredentials: authMocks.getProviderCredentials,
+  isValidApiKey: vi.fn(async () => true),
+  markAccountUnavailable: authMocks.markAccountUnavailable,
+}));
+vi.mock("open-sse/handlers/chatCore.js", () => dispatchMocks);
+// Spread the real module: the chat handler imports more from it than these
+// three, and a mock that returns only some fails the whole file with
+// "No <name> export" rather than one assertion.
+vi.mock("open-sse/services/combo.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  detectRequiredCapabilities: vi.fn(() => []),
+  handleComboChat: vi.fn(),
+  handleFusionChat: vi.fn(),
+}));
+// Spread the real module: a partial mock fails the WHOLE file the moment the
+// module gains an export this object does not name (#577 added isModelDisabled).
+vi.mock("@/sse/services/model.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  ...modelMocks,
+}));
+vi.mock("@/lib/localDb", () => settingsMocks);
+vi.mock("@/sse/services/tokenRefresh.js", () => ({
+  checkAndRefreshToken: vi.fn(async (_provider, credentials) => credentials),
+  updateProviderCredentials: vi.fn(),
+}));
+vi.mock("@/sse/utils/logger.js", () => logMocks);
+
+let handleChat;
+
+function credentials(connectionId) {
+  return {
+    connectionId,
+    connectionName: connectionId,
+    apiKey: "provider-key",
+    providerSpecificData: {},
+  };
+}
+
+function failure(status = 429, safeToReplay = true) {
+  const error = "provider rejected request";
+  return {
+    success: false,
+    status,
+    failureMetadata: { safeToReplay },
+    error,
+    response: Response.json({ error: { message: error } }, { status }),
+  };
+}
+
+function success() {
+  return {
+    success: true,
+    response: Response.json({ choices: [{ message: { role: "assistant", content: "ok" } }] }),
+  };
+}
+
+function request() {
+  return new Request("http://localhost/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "codex/gpt-5.6-sol",
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  });
+}
+
+beforeAll(async () => {
+  ({ handleChat } = await import("../../src/sse/handlers/chat.js"));
+});
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  settingsMocks.getSettings.mockResolvedValue({
+    requireApiKey: false,
+    providerThinking: {},
+    cavemanEnabled: false,
+    ponytailEnabled: false,
+    ccFilterNaming: false,
+    connectTimeoutMs: 15000,
+    providerStrategies: { codex: { connectTimeoutMs: 8000 } },
+  });
+  modelMocks.getComboModels.mockResolvedValue(null);
+  modelMocks.getModelInfo.mockResolvedValue({ provider: "codex", model: "gpt-5.6-sol" });
+  authMocks.getProviderCredentials.mockResolvedValue(credentials("account-a"));
+  authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false, cooldownMs: 0 });
+});
+
+describe("same-account retry permission and cooldown (#1641)", () => {
+  it.each([500, 5000, 120000])("does not immediately retry or rotate a healthy pin during a %i ms wait", async (cooldownMs) => {
+    authMocks.markAccountUnavailable.mockResolvedValue({
+      shouldFallback: true, mustWait: true, retrySameAccount: false, cooldownMs,
+    });
+    dispatchMocks.handleChatCore.mockImplementation(() => failure());
+    const response = await handleChat(request());
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe(String(Math.ceil(cooldownMs / 1000)));
+    expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledTimes(1);
   });
 
-  it("gates the retry on it", () => {
-    expect(chat).toContain("fails < ACCOUNT_RETRY_LIMIT && cooldownMs <= SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS");
+  it("retries the same account only with explicit permission, no generation, and zero cooldown", async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({
+      shouldFallback: true, mustWait: false, retrySameAccount: true, cooldownMs: 0,
+    });
+    dispatchMocks.handleChatCore.mockImplementationOnce(() => failure(503)).mockImplementation(() => success());
+    const response = await handleChat(request());
+    expect(response.status).toBe(200);
+    expect(dispatchMocks.handleChatCore.mock.calls.map(([args]) => args.connectionId)).toEqual(["account-a", "account-a"]);
   });
 
-  it("moves to the next account when the lock is long", () => {
-    const branch = chat.slice(chat.indexOf("if (cooldownMs > SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS)"));
-    const body = branch.slice(0, branch.indexOf("continue;"));
-    expect(body).toContain("excludeConnectionIds.add(credentials.connectionId)");
+  it("does not replay uncertain generation despite an explicit same-account retry hint", async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({
+      shouldFallback: true, mustWait: false, retrySameAccount: true, cooldownMs: 0,
+    });
+    dispatchMocks.handleChatCore.mockImplementation(() => failure(503, false));
+    const response = await handleChat(request());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
   });
 
-  it("sits between the short and long cooldowns, so a backed-off transient still retries", () => {
-    const line = chat.split("\n").find((l) => l.includes("SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS ="));
-    const ms = Number(eval(line.split("=")[1].replace(";", "")));
-    // COOLDOWN.short is 5s, COOLDOWN.long is 2 minutes.
-    expect(ms).toBeGreaterThan(5 * 1000);
-    expect(ms).toBeLessThan(2 * 60 * 1000);
-  });
-
-  it("a rate limit still retries the same account, a bad key does not", () => {
-    // The two ends of the scale, taken from the real classifier rather than
-    // assumed: an early backoff is short, an auth failure is long.
-    const rate = checkFallbackError(429, "rate limit exceeded", 0);
-    const auth = checkFallbackError(401, "invalid api key", 0);
-    expect(rate.cooldownMs).toBeLessThanOrEqual(30 * 1000);
-    expect(auth.cooldownMs).toBeGreaterThan(30 * 1000);
+  it("rotates after verified depletion without retrying a credential before its reset", async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({
+      shouldFallback: true, mustWait: false, retrySameAccount: false, cooldownMs: 3600000,
+    });
+    authMocks.getProviderCredentials.mockImplementation(async (_provider, exclude) =>
+      credentials(exclude?.has("account-a") ? "account-b" : "account-a")
+    );
+    dispatchMocks.handleChatCore.mockImplementationOnce(() => failure()).mockImplementation(() => success());
+    const response = await handleChat(request());
+    expect(response.status).toBe(200);
+    expect(dispatchMocks.handleChatCore.mock.calls.map(([args]) => args.connectionId)).toEqual(["account-a", "account-b"]);
   });
 });

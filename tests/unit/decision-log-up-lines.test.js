@@ -99,6 +99,7 @@ function credentials(account) {
 function failure(status = 507, message = "buffer-overflow") {
   return {
     success: false,
+    failureMetadata: { safeToReplay: true },
     status,
     response: new Response(JSON.stringify({ error: { message } }), { status }),
     error: status === 507
@@ -126,23 +127,25 @@ describe("UP lines (chat.js admission/retry loop)", () => {
     expect(ups[0]).toContain("rid=aa11aa11");
   });
 
-  it("names UP.retry on a retryable status, then UP.failover when it persists", async () => {
-    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 500 });
+  it("names UP.no-replay while a healthy account waits through a cooldown", async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 500, mustWait: true });
     dispatchMocks.handleChatCore.mockImplementation(async () => failure(500, "server error"));
     const res = await handleChat(request({ "x-tp-rid": "bb22bb22" }));
     expect(res.status).toBe(500);
     const ups = classLines("UP");
-    expect(ups.some((l) => l.includes("UP.retry") && l.includes("conn=account-") && l.includes("why=status-500"))).toBe(
-      true
-    );
-    expect(ups.some((l) => l.includes("UP.failover") && l.includes("why=unavailable-500"))).toBe(true);
+    expect(ups).toHaveLength(1);
+    expect(ups[0]).toContain("UP.no-replay");
+    expect(ups[0]).toContain("why=account-cooldown");
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(res.headers.get("retry-after")).toBe("1");
     for (const l of ups) expect(l).toContain("rid=bb22bb22");
   });
 
-  it("names UP.failover with the advertised lock when cooldown exceeds same-account budget", async () => {
-    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 60000 });
-    dispatchMocks.handleChatCore.mockImplementation(async () => failure(500, "server error"));
+  it("names UP.failover with the advertised lock after confirmed quota depletion", async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 60000, mustWait: false });
+    dispatchMocks.handleChatCore.mockImplementation(async () => failure(429, "quota exhausted"));
     const res = await handleChat(request({ "x-tp-rid": "cc33cc33" }));
+    expect(res.status).toBe(429);
     const ups = classLines("UP");
     expect(ups).toHaveLength(1);
     expect(ups[0]).toContain("UP.failover");
@@ -161,7 +164,7 @@ describe("UP lines (chat.js admission/retry loop)", () => {
     expect(ups[0]).toContain("attempts=1");
   });
 
-  it("names UP.failover with the peek reason when a 200 stream is empty", async () => {
+  it("names UP.no-replay when an accepted generation returns an empty stream", async () => {
     authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 500 });
     dispatchMocks.handleChatCore.mockImplementation(async () => ({
       success: true,
@@ -170,9 +173,8 @@ describe("UP lines (chat.js admission/retry loop)", () => {
     await handleChat(request({ "x-tp-rid": "ee55ee55" }));
     const ups = classLines("UP");
     expect(ups).toHaveLength(1);
-    expect(ups[0]).toContain("UP.failover");
-    expect(ups[0]).toContain("from=account-");
-    expect(ups[0]).toContain("to=pool");
-    expect(ups[0]).toContain("why=provider_returned_an_empty_stream");
+    expect(ups[0]).toContain("UP.no-replay");
+    expect(ups[0]).toContain("why=accepted-empty-generation");
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
   });
 });
