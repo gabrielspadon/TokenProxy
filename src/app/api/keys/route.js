@@ -5,6 +5,7 @@ import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { getApiKeyDeviceCount } from "@/sse/services/apiKeyDevices.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { publicApiKey } from "@/lib/admin/publicApiKey.js";
+import { validateBudgetPolicy } from "@/lib/db/repos/budgetRepo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,10 @@ export async function POST(request) {
     // does not know about it keeps the behaviour it had (#2351). The repo
     // normalizes the shape and rejects at request-auth time.
     const { name, expiresAt = null } = body;
+    if (body.budgetPolicy !== undefined) {
+      try { validateBudgetPolicy(body.budgetPolicy); }
+      catch (error) { return NextResponse.json({ error: error.message }, { status: 400 }); }
+    }
 
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -73,6 +78,9 @@ export async function POST(request) {
       maxPromptTokens: stored.maxPromptTokens,
       maxCompletionTokens: stored.maxCompletionTokens,
       maxCostUsd: stored.maxCostUsd,
+      budgetPolicy: stored.budgetPolicy,
+      effectiveBudgetPolicy: stored.effectiveBudgetPolicy,
+      budgetPolicyExplanation: stored.budgetPolicyExplanation,
       allowedModels: stored.allowedModels,
     }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {

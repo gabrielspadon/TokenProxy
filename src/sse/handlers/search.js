@@ -1,3 +1,4 @@
+import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -46,6 +47,8 @@ export async function handleSearch(request) {
   if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
+  const budgetRefusal = await refuseUncoveredBudget(apiKey);
+  if (budgetRefusal) return budgetRefusal;
   if (apiKey) {
     log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
   } else {

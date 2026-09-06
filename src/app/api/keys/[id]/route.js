@@ -3,6 +3,7 @@ import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
 import { pickLimits } from "@/lib/db/repos/apiKeysRepo.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { publicApiKey } from "@/lib/admin/publicApiKey.js";
+import { validateBudgetPolicy } from "@/lib/db/repos/budgetRepo.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -29,6 +30,10 @@ export async function PUT(request, { params }) {
     const { id } = await params;
     const body = await request.json();
     const { isActive } = body;
+    if (body.budgetPolicy !== undefined) {
+      try { validateBudgetPolicy(body.budgetPolicy); }
+      catch (error) { return NextResponse.json({ error: error.message }, { status: 400 }); }
+    }
 
     const existing = await getApiKeyById(id);
     if (!existing) {

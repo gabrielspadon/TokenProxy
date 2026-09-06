@@ -1,5 +1,7 @@
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
 import { createContextTelemetry, recordContextAttempt, nextContextAttempt } from "./chatCore/contextTelemetry.js";
+import { requireBudgetDispatchCoverage, beginBudgetDispatch, observeBudgetResponse, budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
+import { BudgetAdmissionError, markBudgetUncertain } from "../../src/lib/db/repos/budgetRepo.js";
 import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
 import { resolveUpstreamRoute } from "./chatCore/upstreamRoute.js";
@@ -1658,7 +1660,14 @@ export async function handleChatCore({
   // Most executors return their registry format. Cursor AgentService is an
   // exception: it is decoded by the executor into OpenAI-compatible output.
   let providerResponseFormat = targetFormat;
-  const mapTransportError = (error) => {
+  const mapTransportError = async (error) => {
+    if (error instanceof BudgetAdmissionError) {
+      trackPendingRequest(model, provider, connectionId, false, true);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
+      streamController.handleComplete();
+      return budgetErrorResult(error, rid);
+    }
+    if (contextTelemetry?.budgetReservationId) await markBudgetUncertain(contextTelemetry.budgetReservationId, "transport-outcome-unknown");
     const isAntigravity = provider === "antigravity";
     const sinkError = isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : (error.message || String(error));
     if (callerSignal?.aborted && (isCallerAbortError(error) || error.name === "AbortError")) {
@@ -1722,18 +1731,21 @@ export async function handleChatCore({
     reqSummary("failed", { rid, conn: connPrefix, status: HTTP_STATUS.BAD_GATEWAY, why: "transport", ...saverFields });
     return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, { safeToReplay: false }, rid), saverMeta);
   };
-  const executeAttempt = (args) => {
+  const executeAttempt = async (args) => {
+    await requireBudgetDispatchCoverage(apiKey, executor.supportsBudgetDispatch === true);
     let dispatches = 0;
-    return executor.execute({ ...args, beforeDispatch: async ({ body: dispatchBody, serialized } = {}) => {
+    return executor.execute({ ...args, beforeDispatch: async (wire = {}) => {
       if (dispatches++ > 0) {
-        contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime });
+        contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
       }
-      const structure = contextCapture.capture(dispatchBody, "physical-dispatch", serialized);
+      if (!contextTelemetry.pricingSnapshot) await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+      await beginBudgetDispatch(contextTelemetry, apiKey, wire);
+      const structure = contextCapture.capture(wire.body, "physical-dispatch", wire.serialized);
       contextTelemetry.structures = contextTelemetry.structures.filter((value) => value.boundary !== "physical-dispatch");
       if (structure) contextTelemetry.structures.push(structure);
       contextTelemetry.dispatchCoverage = "physical-dispatch";
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
-    } });
+    }, afterDispatch: (result) => observeBudgetResponse(contextTelemetry, result) });
   };
   try {
     const result = await executeAttempt({

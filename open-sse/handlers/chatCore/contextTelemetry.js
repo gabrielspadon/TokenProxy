@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { saveRequestStats } from "../../../src/lib/db/repos/requestStatsRepo.js";
 import { captureUsagePricing } from "../../../src/lib/db/repos/usagePricing.js";
+import { markBudgetUncertain } from "../../../src/lib/db/repos/budgetRepo.js";
 
 export function createContextTelemetry(fields) {
   const requestId = randomUUID();
@@ -15,7 +16,7 @@ export function createContextTelemetry(fields) {
 
 export async function nextContextAttempt(previous, fields) {
   await recordContextFailure(previous, fields);
-  const next = createContextTelemetry({ ...previous, pricingSnapshot: undefined,
+  const next = createContextTelemetry({ ...previous, pricingSnapshot: undefined, budgetReservationId: undefined,
     structures: previous.structures?.filter((value) => value.boundary !== "physical-dispatch"),
     dispatchCoverage: fields.dispatchCoverage ?? previous.dispatchCoverage,
     timestamp: new Date().toISOString(), attempt: previous.attempt + 1 });
@@ -25,6 +26,9 @@ export async function nextContextAttempt(previous, fields) {
 }
 
 export async function recordContextAttempt(contextTelemetry, fields) {
+  if (contextTelemetry.budgetReservationId && ["error", "aborted", "cancelled"].includes(fields.status)) {
+    await markBudgetUncertain(contextTelemetry.budgetReservationId, fields.status);
+  }
   if (!contextTelemetry.pricingSnapshot) {
     contextTelemetry.pricingSnapshot = await captureUsagePricing(fields.provider, fields.model);
   }

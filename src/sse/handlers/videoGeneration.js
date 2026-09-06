@@ -1,3 +1,4 @@
+import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -127,6 +128,8 @@ function providerOwnsVideoRequest(provider, requestId) {
 export async function handleVideoCreate(request, action) {
   const auth = await requireValidApiKey(request);
   if (auth.error) return auth.error;
+  const budgetRefusal = await refuseUncoveredBudget(auth.apiKey);
+  if (budgetRefusal) return budgetRefusal;
 
   const bodyInfo = await readForwardableBody(request);
   if (bodyInfo.error) return bodyInfo.error;

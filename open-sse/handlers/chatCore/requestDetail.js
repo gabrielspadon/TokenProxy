@@ -159,13 +159,16 @@ export function summarizeReasoning(translatedBody) {
   return undefined;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid, contextTelemetry }) {
-  if (!tokens || typeof tokens !== "object") return;
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid, contextTelemetry, usageFinality = "final" }) {
+  if (!tokens || typeof tokens !== "object") {
+    if (contextTelemetry?.budgetReservationId) return saveRequestUsage({ provider, model, tokens: null, apiKey, contextTelemetry, usageFinality });
+    return;
+  }
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
   const outTokens = tokens.output_tokens ?? tokens.completion_tokens ?? 0;
 
-  if (inTokens === 0 && outTokens === 0 && priceUsage(tokens, null).costEvidence === null) return;
+  if (inTokens === 0 && outTokens === 0 && priceUsage(tokens, null).costEvidence === null && !contextTelemetry?.budgetReservationId) return;
 
   if (!silent) {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -186,6 +189,7 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     tokens: normalized,
     usagePresence: usageQuantityPresence(tokens),
     contextTelemetry,
+    usageFinality,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
     apiKey: apiKey || undefined,

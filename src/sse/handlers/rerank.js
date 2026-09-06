@@ -170,9 +170,10 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
-      const usageAttempt = createUsageAttemptTracker(identity, { provider, model, connectionId: credentials.connectionId }, credentials);
+      const usageAttempt = createUsageAttemptTracker(identity, { provider, model, connectionId: credentials.connectionId, apiKey }, credentials);
       const result = await handleRerankCore({
         beforeDispatch: usageAttempt.beforeDispatch,
+        afterDispatch: usageAttempt.afterDispatch,
         body: { ...body, model: `${provider}/${model}` },
         modelInfo: { provider, model },
         credentials: refreshedCredentials,

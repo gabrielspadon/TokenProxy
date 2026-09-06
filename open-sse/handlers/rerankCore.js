@@ -1,3 +1,6 @@
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { BudgetAdmissionError } from "../../src/lib/db/repos/budgetRepo.js";
+import { budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { getExecutor } from "../executors/index.js";
@@ -91,6 +94,7 @@ export async function handleRerankCore({
   onCredentialsRefreshed,
   onRequestSuccess,
   beforeDispatch,
+  afterDispatch,
 }) {
   const { provider, model } = modelInfo;
 
@@ -155,7 +159,9 @@ export async function handleRerankCore({
         ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
         : {}),
     });
+    await notifyDispatchResponse(afterDispatch, providerResponse);
   } catch (error) {
+    if (error instanceof BudgetAdmissionError) return budgetErrorResult(error);
     const errMsg = formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("RERANK", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
@@ -184,6 +190,7 @@ export async function handleRerankCore({
           headers: headers(),
           body: serialized,
         });
+    await notifyDispatchResponse(afterDispatch, providerResponse);
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }

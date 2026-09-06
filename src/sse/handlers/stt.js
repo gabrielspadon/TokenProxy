@@ -1,3 +1,4 @@
+import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   isValidApiKey,
   getProviderCredentials,
@@ -43,6 +44,8 @@ export async function handleStt(request) {
   if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
+  const budgetRefusal = await refuseUncoveredBudget(apiKey);
+  if (budgetRefusal) return budgetRefusal;
   if (settings.requireApiKey) {
     const authorized = await isInternalModelTestAuthorized(request, apiKey, isValidApiKey);
     if (!authorized) return errorResponse(HTTP_STATUS.UNAUTHORIZED, presentedApiKey ? "Invalid API key" : "Missing API key");

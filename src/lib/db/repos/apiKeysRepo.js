@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { effectiveBudgetPolicy, BUDGET_POLICY_EXPLANATIONS, validateBudgetPolicy, initializeBudgetAccount, getRecordedBudgetExposure } from "./budgetRepo.js";
 
 // A key's model allowlist lives in kv rather than in a column on apiKeys (#1154),
 // the same way disabled models, free models and pricing already do. Every read
@@ -28,6 +29,9 @@ function rowToKey(row) {
     maxPromptTokens: normalizeLimit(row.maxPromptTokens),
     maxCompletionTokens: normalizeLimit(row.maxCompletionTokens),
     maxCostUsd: normalizeLimit(row.maxCostUsd, false),
+    budgetPolicy: row.budgetPolicy ?? null,
+    effectiveBudgetPolicy: effectiveBudgetPolicy(row),
+    budgetPolicyExplanation: BUDGET_POLICY_EXPLANATIONS[effectiveBudgetPolicy(row)],
     // null means every model, which is what every key issued before this
     // existed keeps (#1154).
     allowedModels: normalizeAllowedModels(row.allowedModels),
@@ -193,7 +197,7 @@ export function exceededLimit(key, usage) {
 // explicit null clears it back to unlimited.
 export function pickLimits(body) {
   const picked = {};
-  for (const field of ["maxPromptTokens", "maxCompletionTokens", "maxCostUsd", "allowedModels"]) {
+  for (const field of ["maxPromptTokens", "maxCompletionTokens", "maxCostUsd", "allowedModels", "budgetPolicy"]) {
     if (body?.[field] !== undefined) picked[field] = body[field];
   }
   return picked;
@@ -228,12 +232,15 @@ export async function createApiKey(name, machineId, expiresAt = null) {
     maxPromptTokens: null,
     maxCompletionTokens: null,
     maxCostUsd: null,
+    budgetPolicy: "strict",
+    effectiveBudgetPolicy: "strict",
+    budgetPolicyExplanation: BUDGET_POLICY_EXPLANATIONS.strict,
     // and no allowlist, so it may route any model (#1154).
     allowedModels: null,
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, expiresAt) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, apiKey.expiresAt]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, expiresAt,budgetPolicy) VALUES(?, ?, ?, ?, ?, ?, ?,?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, apiKey.expiresAt,apiKey.budgetPolicy]
   );
   return apiKey;
 }
@@ -245,12 +252,20 @@ export async function updateApiKey(id, data) {
     const row = db.get(`${WITH_ALLOWED_MODELS} WHERE a.id = ?`, [id]);
     if (!row) return;
     const merged = { ...rowToKey(row), ...data };
+    validateBudgetPolicy(merged.budgetPolicy);
+    // Capture history under the old secret before its stable identity rotates.
+    if (merged.key !== row.key) {
+      if (db.get("SELECT id FROM usageHistory WHERE apiKey=? LIMIT 1", [merged.key])) {
+        throw new TypeError("Cannot rotate to key material with existing usage ownership");
+      }
+      initializeBudgetAccount(db, row);
+    }
     writeAllowedModels(db, id, merged.allowedModels);
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, expiresAt = ?, maxPromptTokens = ?, maxCompletionTokens = ?, maxCostUsd = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, expiresAt = ?, maxPromptTokens = ?, maxCompletionTokens = ?, maxCostUsd = ?, budgetPolicy=? WHERE id = ?`,
       [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, normalizeExpiry(merged.expiresAt),
         normalizeLimit(merged.maxPromptTokens), normalizeLimit(merged.maxCompletionTokens),
-        normalizeLimit(merged.maxCostUsd, false), id]
+        normalizeLimit(merged.maxCostUsd, false), merged.budgetPolicy, id]
     );
     // Read back rather than returning `merged`, so the caller is told what was
     // actually stored. `merged` is the raw input, and echoing "1500.9" for a
@@ -312,7 +327,7 @@ export async function deleteApiKeys(ids) {
 export async function getExceededLimit(key) {
   const db = await getAdapter();
   const row = db.get(
-    `SELECT maxPromptTokens, maxCompletionTokens, maxCostUsd FROM apiKeys WHERE key = ?`,
+    `SELECT id, maxPromptTokens, maxCompletionTokens, maxCostUsd FROM apiKeys WHERE key = ?`,
     [key],
   );
   if (!row) return null;
@@ -322,7 +337,7 @@ export async function getExceededLimit(key) {
     maxCostUsd: normalizeLimit(row.maxCostUsd, false),
   };
   if (!hasLimits(limits)) return null;
-  return exceededLimit(limits, await getApiKeyUsage(key));
+  return exceededLimit(limits, await getRecordedBudgetExposure(row.id) ?? await getApiKeyUsage(key));
 }
 
 export async function validateApiKey(key) {

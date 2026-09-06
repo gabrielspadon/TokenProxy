@@ -1,3 +1,6 @@
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { BudgetAdmissionError } from "../../src/lib/db/repos/budgetRepo.js";
+import { budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { getExecutor } from "../executors/index.js";
@@ -18,6 +21,7 @@ export async function handleEmbeddingsCore({
   onCredentialsRefreshed,
   onRequestSuccess,
   beforeDispatch,
+  afterDispatch,
 }) {
   const { provider, model } = modelInfo;
 
@@ -55,6 +59,7 @@ export async function handleEmbeddingsCore({
       input_type: body.input_type,
     });
   } catch (error) {
+    if (error instanceof BudgetAdmissionError) return budgetErrorResult(error);
     log?.debug?.("EMBEDDINGS", `Request build failed: ${error.message}`);
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, `[${provider}/${model}] ${error.message}`);
   }
@@ -74,7 +79,9 @@ export async function handleEmbeddingsCore({
         ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
         : {}),
     });
+    await notifyDispatchResponse(afterDispatch, providerResponse);
   } catch (error) {
+    if (error instanceof BudgetAdmissionError) return budgetErrorResult(error);
     const errMsg = formatProviderError(error, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("EMBEDDINGS", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
@@ -107,7 +114,9 @@ export async function handleEmbeddingsCore({
           headers: retryHeaders,
           body: serialized,
         });
+    await notifyDispatchResponse(afterDispatch, providerResponse);
       } catch (error) {
+    if (error instanceof BudgetAdmissionError) return budgetErrorResult(error);
         return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || 'Embedding retry failed', null, { safeToReplay: false });
       }
     } else {

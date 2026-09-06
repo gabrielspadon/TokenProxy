@@ -1,3 +1,4 @@
+import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   clearAccountError,
   getProviderCredentials,
@@ -57,6 +58,8 @@ export async function handleJsonProxy(request, kind) {
   if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
+  const budgetRefusal = await refuseUncoveredBudget(apiKey);
+  if (budgetRefusal) return budgetRefusal;
   const settings = await getSettings();
   if (settings.requireApiKey) {
     if (!presentedApiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
