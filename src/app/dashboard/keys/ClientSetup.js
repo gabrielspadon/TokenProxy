@@ -1,0 +1,203 @@
+'use client';
+import { useCallback, useEffect, useState } from 'react';
+import { Icon } from '@/shared/components/Icon';
+import { Notice } from '@/shared/components/Notice';
+import { call } from '@/shared/api';
+import { refusal } from '@/shared/refusal';
+import { fmtNum } from '@/shared/format';
+
+// The two tiers an operator can actually run, and what each one settles. The
+// third is described and deliberately not offered, because running it spends
+// money and that is a decision taken somewhere an operator expects to be
+// spending, not behind a button labelled "test".
+const RUNNABLE = [
+  {
+    tier: 'configuration',
+    label: 'Check configuration',
+    reaches: 'Reaches nothing.',
+    proves: 'That the endpoint is well formed and this key is currently valid for the model named.',
+  },
+  {
+    tier: 'authentication',
+    label: 'Test against this gateway',
+    reaches: 'Reaches this gateway only.',
+    proves: 'That the gateway accepts this key over the network and serves its model catalog.',
+  },
+];
+
+function Endpoint({ label, value, note }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="keys-endpoint">
+      <span className="label">{label}</span>
+      <code className="keys-secret" data-i18n-skip>
+        {value}
+      </code>
+      {note ? <span className="caption">{note}</span> : null}
+      <button type="button" className="button quiet" onClick={copy}>
+        <Icon name="i-copy" />
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+function Outcome({ outcome }) {
+  if (!outcome) return null;
+  if (outcome.tier === 'configuration') {
+    return (
+      <>
+        <Notice
+          tone={outcome.ok ? 'ok' : 'bad'}
+          title={
+            outcome.ok ? 'The configuration holds.' : 'The configuration would not work as written.'
+          }
+          next="Nothing was contacted. This says nothing about whether the gateway is reachable."
+        />
+        {outcome.findings?.length ? (
+          <ul className="keys-findings">
+            {outcome.findings.map((f) => (
+              <li key={f.code} data-tone={f.severity === 'error' ? 'bad' : 'warn'}>
+                {f.detail}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </>
+    );
+  }
+  if (outcome.skipped) {
+    return (
+      <Notice
+        tone="warn"
+        title="Not attempted."
+        next="The configuration check failed first, so contacting the gateway would have proved nothing. Fix what it reported and run this again."
+      />
+    );
+  }
+  return (
+    <Notice
+      tone={outcome.ok ? 'ok' : 'bad'}
+      title={
+        outcome.ok
+          ? 'The gateway accepted this key.'
+          : outcome.timedOut
+            ? 'The gateway did not answer in time.'
+            : 'The gateway refused or could not be reached.'
+      }
+      next="This reached this gateway only. It proves nothing about whether an upstream provider is available or what a real request would cost."
+      detail={
+        outcome.status
+          ? `HTTP ${outcome.status} in ${fmtNum(outcome.elapsedMs)}ms`
+          : `No response in ${fmtNum(outcome.elapsedMs)}ms`
+      }
+    />
+  );
+}
+
+export function ClientSetup({ record }) {
+  const [config, setConfig] = useState(null);
+  const [outcome, setOutcome] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [refused, setRefused] = useState(null);
+  const id = record.id;
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const res = await call(`/api/keys/${encodeURIComponent(id)}/connectivity`);
+      if (!live) return;
+      if (res.ok) setConfig(res.body);
+      else setRefused(refusal(res.status, res.body));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  const run = useCallback(
+    async (tier) => {
+      setBusy(tier);
+      setRefused(null);
+      setOutcome(null);
+      const res = await call(`/api/keys/${encodeURIComponent(id)}/connectivity`, {
+        method: 'POST',
+        body: { tier },
+      });
+      setBusy(null);
+      if (!res.ok) {
+        setRefused(refusal(res.status, res.body));
+        return;
+      }
+      setOutcome(res.body);
+    },
+    [id]
+  );
+
+  return (
+    <div className="keys-setup">
+      <p className="caption">
+        Configure a client with one of these base URLs and this key. The key itself is not shown
+        here; reveal it deliberately when you need it.
+      </p>
+      {refused ? <Notice {...refused} /> : null}
+      {config ? (
+        <>
+          <div className="keys-endpoints">
+            <Endpoint
+              label="OpenAI-compatible base URL"
+              value={config.endpoints.openaiBaseUrl}
+              note="For a client that appends its own path under /v1."
+            />
+            <Endpoint
+              label="Anthropic-style base URL"
+              value={config.endpoints.anthropicBaseUrl}
+              note="For a client that appends its own full path."
+            />
+          </div>
+          <div className="verb-row">
+            {RUNNABLE.map((t) => (
+              <button
+                key={t.tier}
+                type="button"
+                className="button quiet"
+                disabled={busy !== null}
+                onClick={() => run(t.tier)}
+              >
+                <Icon name="i-check" />
+                {busy === t.tier ? 'Checking' : t.label}
+              </button>
+            ))}
+          </div>
+          <dl className="facts">
+            {RUNNABLE.map((t) => (
+              <div key={t.tier}>
+                <dt>{t.label}</dt>
+                <dd>
+                  {t.reaches} {t.proves}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <Outcome outcome={outcome} />
+          {/* Stated, not offered. An operator should know the check exists and
+              know that nothing here will run it for them. */}
+          <p className="caption">
+            Neither check sends a real completion. Only a billed request against an upstream
+            provider proves the whole path works, and that is not run from this page.
+          </p>
+        </>
+      ) : refused ? null : (
+        <p className="skeleton">Reading</p>
+      )}
+    </div>
+  );
+}

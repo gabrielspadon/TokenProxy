@@ -12,6 +12,8 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit, fmtUsd } from '@/shared/format';
 import { KeyBudget } from './KeyBudget';
+import { KeyLifecycle } from './KeyLifecycle';
+import { ClientSetup } from './ClientSetup';
 import { keyBudgetState } from './budget';
 import './styles.css';
 
@@ -85,15 +87,22 @@ function LimitFields({ form, set }) {
       </p>
       <label className="field">
         <span>Budget protection</span>
-        <select className="input" value={form.budgetPolicy} onChange={event => set('budgetPolicy', event.target.value)}>
+        <select
+          className="input"
+          value={form.budgetPolicy}
+          onChange={(event) => set('budgetPolicy', event.target.value)}
+        >
           <option value="strict">Verified bounds</option>
           <option value="reserve-remaining">Reserve remaining allowance</option>
         </select>
       </label>
-      <p className="caption">{form.budgetPolicy === 'strict'
-        ? 'A capped request is refused when its maximum use cannot be verified. Missing recorded usage also prevents admission for that resource.'
-        : 'An unknown-bound request holds the remaining allowance and prevents overlapping exposure. Actual usage can exceed the allowance. This is best-effort protection.'}
-        {' '}Policy changes apply to subsequent requests. Existing reservations and uncertain outcomes stay held. Recorded costs are estimates, not a provider invoice guarantee.</p>
+      <p className="caption">
+        {form.budgetPolicy === 'strict'
+          ? 'A capped request is refused when its maximum use cannot be verified. Missing recorded usage also prevents admission for that resource.'
+          : 'An unknown-bound request holds the remaining allowance and prevents overlapping exposure. Actual usage can exceed the allowance. This is best-effort protection.'}{' '}
+        Policy changes apply to subsequent requests. Existing reservations and uncertain outcomes
+        stay held. Recorded costs are estimates, not a provider invoice guarantee.
+      </p>
     </>
   );
 }
@@ -106,12 +115,17 @@ const BLANK = {
   maxCostUsd: '',
   allowedModels: '',
   budgetPolicy: 'strict',
+  // No default overlap. Choosing one for the operator is choosing when their
+  // client's traffic breaks.
+  overlapHours: '',
+  profileId: '',
 };
 
 export default function KeysPage() {
   const keys = usePoll('/api/keys', 15000);
   const devices = usePoll('/api/keys/devices', 0);
   const settings = usePoll('/api/settings', 30000);
+  const accessProfiles = usePoll('/api/access-profiles', 0);
   const auth = useAuthStatus((s) => s.status);
   const [action, setAction] = useState(null);
   const [form, setForm] = useState(BLANK);
@@ -129,6 +143,7 @@ export default function KeysPage() {
   }, []);
 
   const rows = useMemo(() => keys.data?.keys || [], [keys.data]);
+  const profiles = useMemo(() => accessProfiles.data?.profiles || [], [accessProfiles.data]);
   const set = useCallback((field, value) => setForm((f) => ({ ...f, [field]: value })), []);
   const close = useCallback(() => {
     actionEpoch.current++;
@@ -140,13 +155,23 @@ export default function KeysPage() {
     setBusy(false);
   }, []);
 
-  useEffect(() => () => { actionEpoch.current++; }, []);
+  useEffect(
+    () => () => {
+      actionEpoch.current++;
+    },
+    []
+  );
   useEffect(() => {
     if (!created?.key) return;
     const timeout = setTimeout(close, 60000);
-    const hide = () => { if (document.visibilityState === 'hidden') close(); };
+    const hide = () => {
+      if (document.visibilityState === 'hidden') close();
+    };
     document.addEventListener('visibilitychange', hide);
-    return () => { clearTimeout(timeout); document.removeEventListener('visibilitychange', hide); };
+    return () => {
+      clearTimeout(timeout);
+      document.removeEventListener('visibilitychange', hide);
+    };
   }, [created, close]);
 
   const open = (kind, key) => {
@@ -206,6 +231,18 @@ export default function KeysPage() {
         method: 'PUT',
         body: { isActive: action.kind === 'activate' },
       });
+    } else if (action.kind === 'rotate') {
+      res = await call(`/api/keys/${encodeURIComponent(k.id)}/rotate`, {
+        method: 'POST',
+        body: { overlapHours: numberOrNull(form.overlapHours) },
+      });
+    } else if (action.kind === 'adopt') {
+      res = form.profileId
+        ? await call(`/api/keys/${encodeURIComponent(k.id)}/profile`, {
+            method: 'POST',
+            body: { profileId: form.profileId },
+          })
+        : await call(`/api/keys/${encodeURIComponent(k.id)}/profile`, { method: 'DELETE' });
     } else if (action.kind === 'revoke') {
       res = await call(`/api/keys/${encodeURIComponent(k.id)}`, { method: 'DELETE' });
     } else {
@@ -221,6 +258,13 @@ export default function KeysPage() {
     keys.refresh();
     if (action.kind === 'create' || action.kind === 'reveal') {
       setCreated(res.body);
+      return;
+    }
+    // A rotation hands back the successor's secret exactly once, so it goes
+    // through the same show-once path as a freshly created key.
+    if (action.kind === 'rotate') {
+      setCreated({ ...res.body.successor, rotation: res.body });
+      accessProfiles.refresh();
       return;
     }
     if (action.kind === 'revokeSelected') {
@@ -239,6 +283,7 @@ export default function KeysPage() {
         tone: 'ok',
         title: {
           limits: 'Saved.',
+          adopt: form.profileId ? 'Profile adopted.' : 'No longer following a profile.',
           activate: 'Activated.',
           deactivate: 'Deactivated.',
           revoke: 'Revoked.',
@@ -279,7 +324,8 @@ export default function KeysPage() {
       title: `Reveal ${action?.key?.name || 'this key'}`,
       verb: 'Reveal',
       requires: 'An operator session.',
-      changes: 'Sends this credential to your browser for client setup. Its activation, expiry and limits stay as configured.',
+      changes:
+        'Sends this credential to your browser for client setup. Its activation, expiry and limits stay as configured.',
       undo: 'Close the dialog to clear the displayed value. If copied, it remains on your clipboard.',
     },
     create: {
@@ -313,6 +359,22 @@ export default function KeysPage() {
       changes:
         'Stops this key authenticating on its next use. Its value and its usage record are kept.',
       undo: 'Activate it again.',
+    },
+    rotate: {
+      title: `Rotate ${action?.key?.name || 'this key'}`,
+      verb: 'Rotate',
+      requires: 'An operator session.',
+      changes:
+        "Issues a new key carrying this one's ceilings, allowlist and profile, and gives this one an expiry at the end of the overlap window you choose. This key keeps working until then, so a client you have not reconfigured is not cut off. The new value is shown once.",
+      undo: 'Revoke the successor. This key keeps whatever expiry the rotation gave it, which you can then clear by editing it.',
+    },
+    adopt: {
+      title: `Access profile for ${action?.key?.name || 'this key'}`,
+      verb: 'Apply',
+      requires: 'An operator session.',
+      changes:
+        "Copies the chosen profile's current ceilings, allowlist and budget policy onto this key, replacing what is set now. Choosing no profile leaves every setting exactly as it is and only stops the key being tracked against a profile.",
+      undo: 'Adopt a different profile, or edit the limits by hand. Nothing already spent is affected.',
     },
     revoke: {
       title: 'Revoke this key',
@@ -365,7 +427,7 @@ export default function KeysPage() {
           big
           label="Requests"
           measure={
-            keys.data && rows.every(k => Number.isFinite(k.usage?.requests))
+            keys.data && rows.every((k) => Number.isFinite(k.usage?.requests))
               ? { value: rows.reduce((n, k) => n + ((k.usage || {}).requests || 0), 0) }
               : null
           }
@@ -374,12 +436,15 @@ export default function KeysPage() {
       </div>
 
       <section aria-labelledby="h-keys">
-        <p className="caption">{keys.data?.usageState === 'unavailable'
-          ? 'Historical usage is temporarily unavailable. Current key controls and budget reservations remain available.'
-          : keys.data?.usageFreshness?.source === 'last-persisted-snapshot'
-            ? `History reflects the persisted database snapshot from ${keys.data.usageFreshness.persistedAt}.`
-            : keys.data?.usageFreshness?.snapshotCompletedAt
-              ? `History was read at ${keys.data.usageFreshness.snapshotCompletedAt}.` : 'Historical usage has not been reported.'}</p>
+        <p className="caption">
+          {keys.data?.usageState === 'unavailable'
+            ? 'Historical usage is temporarily unavailable. Current key controls and budget reservations remain available.'
+            : keys.data?.usageFreshness?.source === 'last-persisted-snapshot'
+              ? `History reflects the persisted database snapshot from ${keys.data.usageFreshness.persistedAt}.`
+              : keys.data?.usageFreshness?.snapshotCompletedAt
+                ? `History was read at ${keys.data.usageFreshness.snapshotCompletedAt}.`
+                : 'Historical usage has not been reported.'}
+        </p>
         <div className="screen-head">
           <h2 id="h-keys">Client keys</h2>
           <button type="button" className="button" onClick={() => open('create')}>
@@ -430,7 +495,12 @@ export default function KeysPage() {
                         <span className="id" data-i18n-skip>
                           {k.id}
                         </span>
-                        {k.keyPreview ? <span className="id" data-i18n-skip> {k.keyPreview}</span> : null}
+                        {k.keyPreview ? (
+                          <span className="id" data-i18n-skip>
+                            {' '}
+                            {k.keyPreview}
+                          </span>
+                        ) : null}
                         {k.createdAt ? (
                           <>
                             {' '}
@@ -468,7 +538,11 @@ export default function KeysPage() {
                       <KeyBudget record={k} />
                       <dl className="facts">
                         <dt>Requests</dt>
-                        <dd data-i18n-skip>{Number.isFinite(k.usage?.requests) ? fmtNum(k.usage.requests) : 'Unknown'}</dd>
+                        <dd data-i18n-skip>
+                          {Number.isFinite(k.usage?.requests)
+                            ? fmtNum(k.usage.requests)
+                            : 'Unknown'}
+                        </dd>
                         <dt>Machine</dt>
                         <dd className="id" data-i18n-skip>
                           {k.machineId}
@@ -484,10 +558,36 @@ export default function KeysPage() {
                           )}
                         </dd>
                       </dl>
+                      <KeyLifecycle record={k} profiles={profiles} now={now} />
+                      <details className="keys-detail">
+                        <summary>Client setup</summary>
+                        <ClientSetup record={k} />
+                      </details>
                       <div className="verb-row">
-                        <button type="button" className="button quiet" onClick={() => open('reveal', k)}>
+                        <button
+                          type="button"
+                          className="button quiet"
+                          onClick={() => open('reveal', k)}
+                        >
                           <Icon name="i-keys" />
                           Reveal key
+                        </button>
+                        <button
+                          type="button"
+                          className="button quiet"
+                          onClick={() => open('adopt', k)}
+                        >
+                          <Icon name="i-access" />
+                          Access profile
+                        </button>
+                        <button
+                          type="button"
+                          className="button quiet"
+                          disabled={!!k.supersededAt}
+                          onClick={() => open('rotate', k)}
+                        >
+                          <Icon name="i-refresh" />
+                          {k.supersededAt ? 'Rotated' : 'Rotate'}
                         </button>
                         <button
                           type="button"
@@ -678,17 +778,30 @@ export default function KeysPage() {
         </ul>
       </section>
 
-      <p className="caption">Key lists contain masked previews. Revealing a stored credential requires an explicit operator action on that key, even when dashboard sign-in is turned off.</p>
+      <p className="caption">
+        Key lists contain masked previews. Revealing a stored credential requires an explicit
+        operator action on that key, even when dashboard sign-in is turned off.
+      </p>
 
       <Confirm
         open={!!action}
         busy={busy}
         refusal={refused}
-        title={created ? (action?.kind === 'reveal' ? 'Key revealed' : 'Key created') : copyFor?.title}
+        title={
+          created ? (action?.kind === 'reveal' ? 'Key revealed' : 'Key created') : copyFor?.title
+        }
         verb={created ? 'Done' : copyFor?.verb}
         requires={created ? 'An operator session.' : copyFor?.requires}
-        changes={created ? 'This credential is visible temporarily. Its configured activation, expiry and limits govern subsequent requests.' : copyFor?.changes}
-        undo={created ? 'Close the dialog to clear the displayed value. Copied values remain on your clipboard.' : copyFor?.undo}
+        changes={
+          created
+            ? 'This credential is visible temporarily. Its configured activation, expiry and limits govern subsequent requests.'
+            : copyFor?.changes
+        }
+        undo={
+          created
+            ? 'Close the dialog to clear the displayed value. Copied values remain on your clipboard.'
+            : copyFor?.undo
+        }
         irreversible={!created && !!copyFor?.irreversible}
         onConfirm={run}
         onClose={close}
@@ -722,9 +835,73 @@ export default function KeysPage() {
             <LimitFields form={form} set={set} />
           </div>
         ) : null}
+        {action?.kind === 'rotate' && !created ? (
+          <div className="keys-form">
+            <label className="field">
+              <span>Overlap window in hours</span>
+              <input
+                className="input"
+                type="number"
+                min="0"
+                step="1"
+                inputMode="numeric"
+                value={form.overlapHours}
+                onChange={(e) => set('overlapHours', e.target.value)}
+              />
+            </label>
+            <p className="caption">
+              How long this key keeps working after the successor is issued. Choose enough time to
+              reconfigure every client that uses it. Zero stops this key immediately, which is for
+              responding to a leak. A window is never chosen for you.
+            </p>
+            {action.key?.expiresAt ? (
+              <p className="caption">
+                This key already expires{' '}
+                <span data-i18n-skip>{fmtRelative(action.key.expiresAt, now)}</span>. A longer
+                window does not extend it.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {action?.kind === 'adopt' ? (
+          <div className="keys-form">
+            <label className="field">
+              <span>Access profile</span>
+              <select
+                className="input"
+                value={form.profileId}
+                onChange={(e) => set('profileId', e.target.value)}
+              >
+                <option value="">Follow no profile</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} (v{p.version})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="caption">
+              {profiles.length
+                ? "Adopting copies the profile's settings onto this key. The key keeps them if the profile later changes or is deleted, and reports as behind or drifted rather than changing under a running client."
+                : 'No access profile is defined yet. A profile is a named, versioned bundle of ceilings, allowlist and budget policy that several keys can follow.'}
+            </p>
+          </div>
+        ) : null}
         {created ? (
           <div className="keys-once">
-            <p>This value clears after 60 seconds, when you leave this tab, or when you close the dialog. Use Reveal key to retrieve it again.</p>
+            <p>
+              This value clears after 60 seconds, when you leave this tab, or when you close the
+              dialog. Use Reveal key to retrieve it again.
+            </p>
+            {created.rotation ? (
+              <p className="caption">
+                This is the successor key. The previous one keeps working until{' '}
+                <span data-i18n-skip>{fmtRelative(created.rotation.overlapEndsAt, now)}</span>
+                {created.rotation.overlapTruncatedByExistingExpiry
+                  ? ', which is its own existing expiry rather than the window you chose.'
+                  : '.'}
+              </p>
+            ) : null}
             <code className="keys-secret" data-i18n-skip>
               {created.key}
             </code>

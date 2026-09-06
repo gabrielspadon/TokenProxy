@@ -54,3 +54,24 @@
     .keys-row .status { grid-column: 1 / -1; }
   }
 }
+
+@layer components {
+  /* The lifecycle facts sit between the budget table and the verbs, so they
+     get the same vertical rhythm as the rest of the disclosure. */
+  .keys-lifecycle > * + * { margin-block-start: 10px; }
+
+  .keys-setup > * + * { margin-block-start: 12px; }
+  .keys-endpoints { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+  .keys-endpoint { display: flex; flex-direction: column; gap: 6px; min-width: 0; align-items: start; }
+  .keys-endpoint .label { color: var(--slate); font-size: var(--t-13); }
+
+  /* A finding is a sentence about what would break, so it is marked by a rule
+     in its own tone rather than by a coloured dot that carries no text. */
+  .keys-findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .keys-findings li {
+    font-size: var(--t-13); line-height: 1.5; padding: 6px 12px;
+    border-inline-start: 3px solid var(--rule); background: var(--paper);
+  }
+  .keys-findings li[data-tone='bad'] { border-inline-start-color: var(--refusal); }
+  .keys-findings li[data-tone='warn'] { border-inline-start-color: var(--ember); }
+}
