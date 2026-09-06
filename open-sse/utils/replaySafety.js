@@ -11,3 +11,14 @@ export function withReplaySafety(response, safeToReplay = false, retryAfterMs = 
   if (Number.isFinite(retryAfterMs) && retryAfterMs > 0 && !headers.has('retry-after')) headers.set('retry-after', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
+const REJECTED_STATUSES = new Set([400, 401, 402, 403, 404, 405, 413, 415, 422, 429]);
+
+// Use at an actual upstream response boundary. An adapter that turns an
+// accepted response or exposed output into an error must carry an explicit
+// false permission. A 5xx status alone says nothing about paid acceptance.
+export function isReplaySafeRejection(response) {
+  if (!response || response.status < 400 || response.status >= 600) return false;
+  const permission = response.headers?.get?.('x-tokenproxy-replay-safe');
+  if (permission === 'false' || response.headers?.get?.('x-should-retry') === 'false') return false;
+  return permission === 'true' || REJECTED_STATUSES.has(response.status);
+}
