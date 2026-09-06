@@ -3,13 +3,14 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 const state = vi.hoisted(() => ({ adapter: null, get: vi.fn() }));
 vi.mock('../../src/lib/db/driver.js', () => ({ getAdapter: () => state.get() }));
+import { createBetterSqliteAdapter } from '../../src/lib/db/adapters/betterSqliteAdapter.js';
 import { createNodeSqliteAdapter } from '../../src/lib/db/adapters/nodeSqliteAdapter.js';
 import { createSqlJsAdapter } from '../../src/lib/db/adapters/sqljsAdapter.js';
 import { TABLES, buildCreateTableSql } from '../../src/lib/db/schema.js';
 import { saveRequestStats } from '../../src/lib/db/repos/requestStatsRepo.js';
 import { measureContextStructure } from '../../open-sse/utils/contextStructure.js';
 
-const factories = [['native', createNodeSqliteAdapter], ['sql.js', createSqlJsAdapter]];
+const factories = [['better-sqlite3', createBetterSqliteAdapter], ['node:sqlite', createNodeSqliteAdapter], ['sql.js', createSqlJsAdapter]];
 const stamp = new Date().toISOString();
 const structure = measureContextStructure({ messages: [{ role: 'user', content: 'protected α' }] }, 'client-received', Buffer.alloc(32, 7));
 function entry(patch = {}) {
