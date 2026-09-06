@@ -141,7 +141,7 @@ Both are wired to the same process-wide `statsEmitter` (`src/lib/db/repos/usageR
 ```
 {
   requestId, clientId, sessionId, model, provider,
-  account,        // connectionMap[connectionId] name, or "Account {first8}..." fallback, or presumably null/absent if no connectionId — confirm ternary's else-branch
+  account,        // connectionMap[connectionId] name, or "Account {first8}..." fallback, when entry.connectionId is set; null (not absent, not "") when it is not (usageRepo.js:454-456)
   startedAt,      // Date object per `new Date(entry.startedAt)` call — JSON-serializes to ISO string over the wire
   promptTokens, completionTokens, status,
 }
@@ -307,7 +307,7 @@ Response 200, normal branch (`status/route.js:30-48`), every field confirmed:
 ```
 `session` is `getDashboardAuthSession(cookieStore.get("auth_token")?.value)` — `null` when no cookie or an invalid/expired JWT, in which case every session-derived field above reads as the unauthenticated defaults (`loginMethod: "Password"`, `authenticated: false`, all name/email fields `null`, both `*Login` flags `false`) while `requireLogin`/`authMode`/`ssoType`/`oidcConfigured`/`samlConfigured`/`hasPassword` still reflect real settings — **`authenticated: false` does not mean the other fields are placeholders**, they are live config either way.
 
-Catch-all fallback on a thrown error (`status/route.js:50-...`, fully confirmed): identical shape with hardcoded safe defaults — `requireLogin: true, authMode: "password", ...loginMethod: "Password", authenticated: false, oidcName: null, oidcEmail: null, oidcLogin: false, samlName: null, samlEmail: null, samlLogin: false` (plus presumably `ssoType`/`oidcConfigured`/`samlConfigured`/`hasPassword`/`displayName` defaults not re-quoted here but following the same pattern) — fails closed to "you are not logged in, password auth only" rather than leaking a stack trace.
+Catch-all fallback on a thrown error (`status/route.js:50-69`, fully confirmed): identical key set with hardcoded safe defaults for every field, `requireLogin: true, authMode: "password", ssoType: "oidc", oidcConfigured: false, oidcLoginLabel: "Sign in with OIDC", samlConfigured: false, samlLoginLabel: "Sign in with SAML SSO", hasPassword: false, displayName: "Password user", loginMethod: "Password", authenticated: false, oidcName: null, oidcEmail: null, oidcLogin: false, samlName: null, samlEmail: null, samlLogin: false` — all five previously-guessed keys are present, not omitted, and each is a literal rather than a computed default, so the fallback fails closed to "you are not logged in, password auth only" rather than leaking a stack trace.
 
 ### POST /api/auth/login
 `src/app/api/auth/login/route.js:1-112`
@@ -399,7 +399,7 @@ There is no `/api/auth/change-password`. Password change is a field on `PATCH /a
 
 ## Known gaps in this pass (explicitly unread or under-confirmed, do not code against these blind)
 
-Resolved since first draft: SSE `update`/`pending` payload shape, including `errorProvider`'s exact type and 10000ms freshness window and the outer envelope's flat key layout (`usageRepo.js:469-505,787-791`, `stream/route.js:82-129`); session JWT lifetime (24h, confirmed); login 429 body (`retryAfter`/`resetHint`, confirmed); `/api/auth/status` full field set (confirmed both branches); `LOCAL_ONLY_PATHS` membership of `/api/auth/reset-password` (confirmed at `dashboardGuard.js:118`) and its exact 403 refusal body.
+Resolved since first draft: SSE `update`/`pending` payload shape, including `errorProvider`'s exact type and 10000ms freshness window and the outer envelope's flat key layout (`usageRepo.js:469-505,787-791`, `stream/route.js:82-129`); session JWT lifetime (24h, confirmed); login 429 body (`retryAfter`/`resetHint`, confirmed); `/api/auth/status` full field set (confirmed both branches); `LOCAL_ONLY_PATHS` membership of `/api/auth/reset-password` (confirmed at `dashboardGuard.js:118`) and its exact 403 refusal body; `getActiveSessions()`'s `account` field else-branch, which is `null` rather than absent or empty string when `entry.connectionId` is unset (`usageRepo.js:454-456`); and `/api/auth/status`'s catch-all fallback, which does carry all five previously-guessed keys as hardcoded literals rather than computed defaults (`status/route.js:50-69`).
 
 Still open:
 - `getUsageStats`/`getUsageStatsInRange`'s full top-level key list beyond `range`, `byEndpoint`.
