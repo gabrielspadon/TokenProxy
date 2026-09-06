@@ -1,4 +1,5 @@
 import { FORMATS } from "./formats.js";
+import { assertTranslationContent } from "./concerns/translationError.js";
 import { ensureToolCallIds, fixMissingToolResponses, repairOrphanToolResults } from "./concerns/toolCall.js";
 import { prepareClaudeRequest } from "./formats/claude.js";
 import { cloakClaudeTools } from "../utils/claudeCloaking.js";
@@ -63,6 +64,7 @@ function stripContentTypes(body, stripList = []) {
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
+  assertTranslationContent(sourceFormat, targetFormat, body);
   let result = body;
 
   // Null blocks are malformed, but must not abort routes with no media strip configured.
@@ -134,6 +136,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
       if (targetFormat !== FORMATS.OPENAI) {
         const fromOpenAI = requestRegistry.get(`${FORMATS.OPENAI}:${targetFormat}`);
         if (fromOpenAI) {
+          assertTranslationContent(FORMATS.OPENAI, targetFormat, result);
           result = fromOpenAI(model, result, stream, credentials);
         }
       }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
 import { resolveUpstreamRoute } from "./chatCore/upstreamRoute.js";
 import { translateRequest } from "../translator/index.js";
+import { assertTranslationContent, TranslationInputError } from "../translator/concerns/translationError.js";
 import {
   applyThinking,
   extractThinking,
@@ -566,6 +567,16 @@ export async function handleChatCore({
 
   // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
   if (!passthrough) {
+    try {
+      assertTranslationContent(sourceFormat, targetFormat, body);
+    } catch (error) {
+      if (!(error instanceof TranslationInputError)) throw error;
+      trackPendingRequest(model, provider, connectionId, false, true);
+      return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message, null, {
+        safeToReplay: false,
+        failurePhase: "translation",
+      }, rid);
+    }
     const caps = getCapabilitiesForModel(provider, model);
     if (stripUnsupportedModalities(body, sourceFormat, caps)) {
       log?.debug?.(
@@ -628,7 +639,8 @@ export async function handleChatCore({
       );
     }
   } else {
-    translatedBody = translateRequest(
+    try {
+      translatedBody = translateRequest(
       sourceFormat,
       targetFormat,
       upstreamModel,
@@ -640,7 +652,15 @@ export async function handleChatCore({
       stripList,
       connectionId,
       clientTool,
-    );
+      );
+    } catch (error) {
+      if (!(error instanceof TranslationInputError)) throw error;
+      trackPendingRequest(model, provider, connectionId, false, true);
+      return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message, null, {
+        safeToReplay: false,
+        failurePhase: "translation",
+      }, rid);
+    }
     if (!translatedBody) {
       trackPendingRequest(model, provider, connectionId, false, true);
       return createErrorResult(
