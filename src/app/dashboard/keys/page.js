@@ -13,7 +13,7 @@ import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit, fmtUsd } from '@/shared/format';
 import { KeyBudget } from './KeyBudget';
 import { KeyLifecycle } from './KeyLifecycle';
-import { ClientSetup } from './ClientSetup';
+import { ClientSetupDisclosure } from './ClientSetup';
 import { keyBudgetState } from './budget';
 import './styles.css';
 
@@ -559,10 +559,7 @@ export default function KeysPage() {
                         </dd>
                       </dl>
                       <KeyLifecycle record={k} profiles={profiles} now={now} />
-                      <details className="keys-detail">
-                        <summary>Client setup</summary>
-                        <ClientSetup record={k} />
-                      </details>
+                      <ClientSetupDisclosure record={k} />
                       <div className="verb-row">
                         <button
                           type="button"

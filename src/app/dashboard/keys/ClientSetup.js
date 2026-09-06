@@ -103,6 +103,23 @@ function Outcome({ outcome }) {
   );
 }
 
+/**
+ * The panel is mounted only once its disclosure is opened.
+ *
+ * `details` hides its children visually but React still renders them, so a
+ * panel that fetched on mount would issue one request per key every time the
+ * keys page loaded, for configuration nobody had asked to see.
+ */
+export function ClientSetupDisclosure({ record }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="keys-detail" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>Client setup</summary>
+      {open ? <ClientSetup record={record} /> : null}
+    </details>
+  );
+}
+
 export function ClientSetup({ record }) {
   const [config, setConfig] = useState(null);
   const [outcome, setOutcome] = useState(null);
@@ -115,7 +132,7 @@ export function ClientSetup({ record }) {
     (async () => {
       const res = await call(`/api/keys/${encodeURIComponent(id)}/connectivity`);
       if (!live) return;
-      if (res.ok) setConfig(res.body);
+      if (res.ok && res.body?.endpoints?.openaiBaseUrl) setConfig(res.body);
       else setRefused(refusal(res.status, res.body));
     })();
     return () => {

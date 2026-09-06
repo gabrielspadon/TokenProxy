@@ -27,13 +27,21 @@ afterEach(() => {
 });
 
 describe('schema 14: operation events', () => {
-  it('SCHEMA_VERSION is 14 and 15 stays reserved for project budgets', async () => {
+  // operationEvents landed at 14 and the table is what this file is about, so
+  // the version is asserted as "at least 14, never 15", which keeps the
+  // reservation guarded without breaking on every later additive bump.
+  it('keeps operationEvents present and 15 reserved for project budgets', async () => {
     const { SCHEMA_VERSION, TABLES } = await import('@/lib/db/schema.js');
-    expect(SCHEMA_VERSION).toBe(14);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(14);
+    expect(SCHEMA_VERSION).not.toBe(15);
     expect(TABLES.operationEvents).toBeDefined();
   });
 
   it('upgrading a version-13 database takes a backup before creating operationEvents', async () => {
+    // The backup directory is named for the version pair it spans, so it is
+    // derived rather than written down: hardcoding the target made this test
+    // fail on a later additive bump that changed nothing it is testing.
+    const { SCHEMA_VERSION } = await import('@/lib/db/schema.js');
     // Boot 1: current schema, then rewind the stored backup version to 13 and
     // drop the table, simulating a database written by the version-13 build.
     const { getAdapter } = await import('@/lib/db/driver.js');
@@ -54,7 +62,9 @@ describe('schema 14: operation events', () => {
     const db2 = await boot2();
 
     const backupsDir = path.join(tempDir, 'db', 'backups');
-    const backups = fs.readdirSync(backupsDir).filter((name) => name.startsWith('schema-13-to-14'));
+    const backups = fs
+      .readdirSync(backupsDir)
+      .filter((name) => name.startsWith(`schema-13-to-${SCHEMA_VERSION}`));
     expect(backups).toHaveLength(1);
     expect(fs.existsSync(path.join(backupsDir, backups[0], 'data.sqlite'))).toBe(true);
 
@@ -73,6 +83,8 @@ describe('schema 14: operation events', () => {
     expect(JSON.parse(db2.get(`SELECT data FROM settings WHERE id=1`).data)).toEqual({
       keep: 'me',
     });
-    expect(db2.get(`SELECT value FROM _meta WHERE key='backupSchemaVersion'`).value).toBe('14');
+    expect(db2.get(`SELECT value FROM _meta WHERE key='backupSchemaVersion'`).value).toBe(
+      String(SCHEMA_VERSION)
+    );
   });
 });
