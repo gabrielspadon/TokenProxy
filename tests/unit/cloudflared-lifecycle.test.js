@@ -290,7 +290,6 @@ describe('spawnQuickTunnel', () => {
 
   it('cleans up its temp config dir once the URL arrives', async () => {
     const child = fakeChild(805);
-    const before = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('cloudflared-quick-'));
     const { promise } = await start(child);
     await vi.waitFor(() => expect(h.spawnMock).toHaveBeenCalled());
     const configPath =
@@ -299,8 +298,7 @@ describe('spawnQuickTunnel', () => {
     child.stdout.emit('data', Buffer.from('https://x-y.trycloudflare.com\n'));
     await promise;
     expect(fs.existsSync(configPath)).toBe(false);
-    const after = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('cloudflared-quick-'));
-    expect(after.length).toBeLessThanOrEqual(before.length);
+    expect(fs.existsSync(path.dirname(configPath))).toBe(false);
   });
 });
 
