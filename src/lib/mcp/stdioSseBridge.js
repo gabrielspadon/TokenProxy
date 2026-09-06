@@ -1,183 +1,126 @@
-// Inline stdio<->SSE bridge for MCP. Spawns one child per plugin on demand,
-// broadcasts JSON-RPC frames over SSE, accepts client messages via HTTP POST.
-
+// One stdio child per SSE session. Wire IDs, capabilities, notifications and
+// request/response payloads never cross session boundaries.
 const { spawn } = require("child_process");
+const { StringDecoder } = require("node:string_decoder");
 const crypto = require("crypto");
 const { LOCAL_STDIO_PLUGINS } = require("@/shared/constants/coworkPlugins");
 
 const G_KEY = "__tokenproxyMcpBridges";
-const MAX_TEXT_CHARS = 50000;
-const COLLAPSE_THRESHOLD = 30;
-const COLLAPSE_KEEP_HEAD = 10;
-const COLLAPSE_KEEP_TAIL = 5;
-
-// Drop noise nodes, collapse repeated siblings, hard-truncate. Preserve [ref=eXX].
-function smartFilterText(text) {
-  if (typeof text !== "string" || text.length < 2000) return text;
-  let out = text;
-  out = out.replace(/^\s*-\s*generic:?\s*$/gm, "");
-  out = out.replace(/^\s*-\s*text:\s*""\s*$/gm, "");
-  out = collapseRepeated(out);
-  if (out.length > MAX_TEXT_CHARS) {
-    const head = out.slice(0, MAX_TEXT_CHARS - 300);
-    out = `${head}\n\n... [truncated ${text.length - head.length} chars by tokenproxy bridge. Page is large; ask user to scroll/navigate to a specific section, or click an element with the refs shown above]`;
-  }
-  return out;
-}
-
-// Group consecutive lines sharing the same leading indent + role prefix; collapse if >= COLLAPSE_THRESHOLD.
-function collapseRepeated(text) {
-  const lines = text.split("\n");
-  const out = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const m = line.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-    if (!m) { out.push(line); i++; continue; }
-    const indent = m[1];
-    const role = m[2];
-    let j = i;
-    while (j < lines.length) {
-      const ln = lines[j];
-      const mm = ln.match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-      if (mm && mm[1] === indent && mm[2] === role) { j++; continue; }
-      if (ln.startsWith(`${indent} `) || ln.startsWith(`${indent}\t`)) { j++; continue; }
-      break;
-    }
-    const groupLen = j - i;
-    if (groupLen >= COLLAPSE_THRESHOLD) {
-      const headEnd = findNthSiblingEnd(lines, i, indent, role, COLLAPSE_KEEP_HEAD);
-      const tailStart = findLastNSiblingStart(lines, j, indent, role, COLLAPSE_KEEP_TAIL);
-      for (let k = i; k < headEnd; k++) out.push(lines[k]);
-      out.push(`${indent}... [${groupLen - COLLAPSE_KEEP_HEAD - COLLAPSE_KEEP_TAIL} similar "${role}" items omitted by tokenproxy bridge]`);
-      for (let k = tailStart; k < j; k++) out.push(lines[k]);
-    } else {
-      for (let k = i; k < j; k++) out.push(lines[k]);
-    }
-    i = j;
-  }
-  return out.join("\n");
-}
-
-function findNthSiblingEnd(lines, start, indent, role, n) {
-  let count = 0;
-  for (let k = start; k < lines.length; k++) {
-    const mm = lines[k].match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-    if (mm && mm[1] === indent && mm[2] === role) {
-      count++;
-      if (count > n) return k;
-    }
-  }
-  return lines.length;
-}
-
-function findLastNSiblingStart(lines, end, indent, role, n) {
-  const positions = [];
-  for (let k = 0; k < end; k++) {
-    const mm = lines[k].match(/^(\s*)-\s*([a-zA-Z]+)\b/);
-    if (mm && mm[1] === indent && mm[2] === role) positions.push(k);
-  }
-  return positions.length > n ? positions[positions.length - n] : end;
-}
-
-// Apply filter to JSON-RPC tool/result content text blocks only.
-function filterFrame(line) {
-  try {
-    const msg = JSON.parse(line);
-    const content = msg?.result?.content;
-    if (!Array.isArray(content)) return line;
-    let mutated = false;
-    for (const item of content) {
-      if (item?.type === "text" && typeof item.text === "string") {
-        const filtered = smartFilterText(item.text);
-        if (filtered !== item.text) { item.text = filtered; mutated = true; }
-      }
-    }
-    return mutated ? JSON.stringify(msg) : line;
-  } catch { return line; }
-}
+const MAX_SESSIONS = 16;
+const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+const KILL_GRACE_MS = 5000;
 const getStore = () => {
   if (!globalThis[G_KEY]) globalThis[G_KEY] = new Map();
   return globalThis[G_KEY];
 };
-
-// Only preset stdio plugins may spawn. No user-defined commands (RCE prevention).
-function findPlugin(name) {
-  return LOCAL_STDIO_PLUGINS.find((p) => p.name === name) || null;
+function bridgeError(message, status = 500) {
+  return Object.assign(new Error(message), { status });
 }
-
-function getOrSpawn(name) {
-  const store = getStore();
-  let entry = store.get(name);
-  if (entry?.proc && !entry.proc.killed && entry.proc.exitCode === null) return entry;
-
+function findPlugin(name) {
+  return LOCAL_STDIO_PLUGINS.find((plugin) => plugin.name === name) || null;
+}
+function signalChild(entry, signal) {
+  try {
+    // Only groups created by this bridge are addressed. npx/uvx descendants
+    // otherwise survive killing their launcher and can retain browser ports.
+    if (entry.processGroup && Number.isInteger(entry.proc.pid)) process.kill(-entry.proc.pid, signal);
+    else entry.proc.kill(signal);
+  } catch { /* already exited */ }
+}
+function stopSession(entry) {
+  if (entry.closing) return;
+  entry.closing = true;
+  entry.buffer = "";
+  entry.bufferBytes = 0;
+  entry.send = null;
+  try { entry.onClose?.(); } catch { /* client already disconnected */ }
+  entry.onClose = null;
+  signalChild(entry, "SIGTERM");
+  entry.killTimer = setTimeout(() => signalChild(entry, "SIGKILL"), KILL_GRACE_MS);
+  entry.killTimer.unref?.();
+}
+function registerSession(name, sendFn, onClose) {
   const plugin = findPlugin(name);
-  if (!plugin) throw new Error(`Unknown local plugin: ${name}`);
-
-  const proc = spawn(plugin.command, plugin.args, { stdio: ["pipe", "pipe", "pipe"], env: process.env });
-  entry = { proc, sessions: new Map(), buffer: "" };
-  store.set(name, entry);
-
-  // Parse newline-delimited JSON-RPC from child stdout, broadcast to all sessions.
+  if (!plugin) throw bridgeError("Unknown local plugin", 404);
+  const store = getStore();
+  // Do not attach new clients to handles created by the previous shared-child
+  // implementation during a development hot reload.
+  if (store.has(name)) throw bridgeError("Legacy bridge must close before reconnecting", 409);
+  const count = Array.from(store.values()).filter((entry) => entry.name === name).length;
+  if (plugin.maxSessions && count >= plugin.maxSessions) {
+    throw bridgeError("This plugin already has an active session; close it before reconnecting", 409);
+  }
+  if (store.size >= MAX_SESSIONS) throw bridgeError("MCP session capacity reached", 503);
+  const sid = crypto.randomUUID();
+  const processGroup = process.platform !== "win32";
+  const proc = spawn(plugin.command, plugin.args, {
+    stdio: ["pipe", "pipe", "pipe"], env: process.env, detached: processGroup,
+  });
+  const entry = { name, sid, proc, processGroup, send: sendFn, onClose, buffer: "", bufferBytes: 0, closing: false };
+  const decoder = new StringDecoder("utf8");
+  store.set(sid, entry);
   proc.stdout.on("data", (chunk) => {
-    entry.buffer += chunk.toString("utf8");
+    if (entry.closing) return;
+    entry.bufferBytes += chunk.length;
+    entry.buffer += decoder.write(chunk);
     let idx;
     while ((idx = entry.buffer.indexOf("\n")) >= 0) {
-      const raw = entry.buffer.slice(0, idx).trim();
+      const raw = entry.buffer.slice(0, idx);
+      const bytes = Buffer.byteLength(raw, "utf8");
       entry.buffer = entry.buffer.slice(idx + 1);
-      if (!raw) continue;
-      const line = filterFrame(raw);
-      for (const send of entry.sessions.values()) {
-        try { send(`event: message\ndata: ${line}\n\n`); } catch { /* ignore broken pipe */ }
-      }
+      entry.bufferBytes -= bytes + 1;
+      if (bytes > MAX_FRAME_BYTES) { stopSession(entry); return; }
+      const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+      if (!line.trim()) continue;
+      // No content filtering or parse/stringify round trip. Those lose code,
+      // references, numeric lexemes, signed metadata and complete error evidence.
+      try { entry.send(`event: message\ndata: ${line}\n\n`); }
+      catch { stopSession(entry); return; }
     }
+    // Oversized/incomplete frames terminate the session explicitly. Never
+    // synthesize a successfully truncated tool result.
+    if (entry.bufferBytes > MAX_FRAME_BYTES) stopSession(entry);
   });
-
-  proc.stderr.on("data", (d) => console.log(`[mcp:${name}]`, d.toString().trim()));
-  proc.on("exit", (code) => {
-    console.log(`[mcp:${name}] exited`, code);
-    store.delete(name);
+  // Plugin diagnostics may include private tool data. Drain without copying
+  // arbitrary stderr into the shared application log.
+  proc.stderr.on("data", () => {});
+  proc.on("error", () => stopSession(entry));
+  proc.stdin.on?.("error", () => stopSession(entry));
+  proc.on("exit", () => stopSession(entry));
+  proc.on("close", () => {
+    stopSession(entry);
+    clearTimeout(entry.killTimer);
+    if (store.get(sid) === entry) store.delete(sid);
   });
-
-  return entry;
-}
-
-function registerSession(name, sendFn) {
-  const entry = getOrSpawn(name);
-  const sid = crypto.randomUUID();
-  entry.sessions.set(sid, sendFn);
   return sid;
 }
-
 function unregisterSession(name, sid) {
-  const entry = getStore().get(name);
-  if (!entry) return;
-  entry.sessions.delete(sid);
-  // No sessions left → kill child to avoid idle orphan process leak.
-  if (entry.sessions.size === 0) {
-    try { entry.proc.kill(); } catch { /* ignore */ }
-    getStore().delete(name);
-  }
+  const entry = getStore().get(sid);
+  if (entry?.name === name) stopSession(entry);
 }
-
-// Kill all spawned MCP children — called on app shutdown to prevent orphans.
 function killAllBridges() {
-  const store = getStore();
-  for (const [name, entry] of store) {
-    try { entry.proc.kill(); } catch { /* ignore */ }
-    store.delete(name);
+  for (const entry of getStore().values()) stopSession(entry);
+}
+function sendToChild(name, jsonRpc, sid) {
+  const entry = getStore().get(sid);
+  if (!sid || entry?.name !== name || entry.closing || !entry.proc?.stdin?.writable) {
+    throw bridgeError("MCP session not found", 404);
   }
+  const line = typeof jsonRpc === "string" ? jsonRpc : JSON.stringify(jsonRpc);
+  if (typeof line !== "string" || /[\r\n]/.test(line)) throw bridgeError("Invalid MCP frame", 400);
+  const bytes = Buffer.byteLength(line, "utf8");
+  if (bytes > MAX_FRAME_BYTES) throw bridgeError("MCP frame exceeds transport limit", 413);
+  if ((entry.proc.stdin.writableLength || 0) + bytes + 1 > MAX_FRAME_BYTES + 1) {
+    throw bridgeError("MCP input queue is full", 429);
+  }
+  // Backpressure does not authorize resending an accepted tool invocation.
+  // A false return means queued successfully; later stream errors close only
+  // this session and are never replayed automatically.
+  entry.proc.stdin.write(`${line}\n`);
 }
-
-function sendToChild(name, jsonRpc) {
-  const entry = getStore().get(name);
-  if (!entry?.proc?.stdin?.writable) throw new Error(`Bridge not running: ${name}`);
-  entry.proc.stdin.write(`${JSON.stringify(jsonRpc)}\n`);
-}
-
 function isRunning(name) {
-  const entry = getStore().get(name);
-  return !!(entry?.proc && !entry.proc.killed && entry.proc.exitCode === null);
+  return Array.from(getStore().values()).some((entry) => entry.name === name &&
+    entry.proc?.exitCode === null);
 }
 
 // Snapshot existing process handles only. Reading this function never creates
@@ -185,12 +128,13 @@ function isRunning(name) {
 function getBridgeStatus() {
   const store = globalThis[G_KEY];
   const presets = LOCAL_STDIO_PLUGINS.map((plugin) => {
-    const entry = store?.get?.(plugin.name);
-    const running = Boolean(entry?.proc && !entry.proc.killed && entry.proc.exitCode === null);
+    const entries = Array.from(store?.values?.() || []).filter((entry) => entry.name === plugin.name);
+    // A kill signal is a request, not evidence that the process exited.
+    const running = entries.some((entry) => entry.proc?.exitCode === null);
     return {
       id: plugin.name, name: plugin.title || plugin.name, transport: "stdio",
       configured: true, installation: "not-probed", running,
-      clients: entry?.sessions?.size || 0,
+      clients: entries.filter((entry) => !entry.closing).length,
       endpoint: `/api/mcp/${encodeURIComponent(plugin.name)}/sse`,
       declaredToolCount: Array.isArray(plugin.toolNames) ? plugin.toolNames.length : 0,
     };
@@ -202,4 +146,4 @@ function getBridgeStatus() {
   };
 }
 
-module.exports = { getOrSpawn, registerSession, unregisterSession, sendToChild, isRunning, findPlugin, killAllBridges, getBridgeStatus };
+module.exports = { registerSession, unregisterSession, sendToChild, isRunning, findPlugin, killAllBridges, getBridgeStatus };
