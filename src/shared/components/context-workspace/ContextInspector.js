@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Badge, SegmentedControl, Table } from '@mantine/core';
 import { CONTROLS, IDENTITY, IDENTITY_NOTE, STAGES, finite, orderedStages, quantity, signedBytes, utc } from './contextModel';
 import styles from './context.module.css';
+import { ContextStructureEvidence, ContextClientEvents, ContextCostEvidence, ContextAttemptComparison } from '@/shared/workspace/ContextEvidence';
 
 const STAGE_NAMES = Object.fromEntries(STAGES);
 function Facts({ rows }) {
@@ -36,17 +37,17 @@ function RoutingReceipts({ detail, accountName }) {
     </div>
   </div>;
 }
-export function ContextInspector({ turn, detail, accounts = [] }) {
+export function ContextInspector({ turn, detail, accounts = [], baseline, onBaseline, onClearBaseline, onSnapshot }) {
   const [view, setView] = useState('evidence');
   const accountName = (id) => accounts.find((account) => account.connectionId === id)?.displayName || id || 'Unknown account';
   const source = turn.usageSource === 'provider' ? 'Provider reported' : turn.usageSource === 'estimated' ? 'Estimated only' : 'Usage missing';
   return <div className={styles.inspector}>
-    <SegmentedControl aria-label="Request detail view" size="xs" value={view} onChange={setView} data={[{ value: 'evidence', label: 'Request & stages' }, { value: 'controls', label: 'Recorded controls' }, { value: 'routing', label: 'Session routing' }]} />
-    {view === 'controls' ? <RecordedControls controls={turn.controls} /> : view === 'routing' ? <RoutingReceipts detail={detail} accountName={accountName} /> : <div className={styles.evidenceGrid}>
+    <SegmentedControl className={styles.evidenceTabs} aria-label="Request detail view" size="xs" value={view} onChange={setView} data={[{ value: 'evidence', label: 'Request & stages' }, { value: 'structure', label: 'Structure' }, { value: 'events', label: 'Client reports' }, { value: 'compare', label: 'Compare' }, { value: 'controls', label: 'Recorded controls' }, { value: 'routing', label: 'Session routing' }]} />
+    {view === 'structure' ? <ContextStructureEvidence turn={turn} /> : view === 'events' ? <ContextClientEvents key={turn.id} turn={turn} sessionId={detail.session?.id} onSnapshot={onSnapshot} /> : view === 'compare' ? <ContextAttemptComparison turn={turn} baseline={baseline} onBaseline={onBaseline} onClear={onClearBaseline} /> : view === 'controls' ? <RecordedControls controls={turn.controls} /> : view === 'routing' ? <RoutingReceipts detail={detail} accountName={accountName} /> : <div className={styles.evidenceGrid}>
       <section className={styles.measurementSection}><h3>Request evidence <Badge variant="light" color={turn.usageSource === 'provider' ? 'teal' : 'gray'} size="sm">{source}</Badge></h3>
         <Facts rows={[
           ['Time · UTC', utc(turn.timestamp)], ['Recorded state', turn.status === 'pending' ? 'Pending / incomplete' : turn.status],
-          ['Logical request', turn.logicalRequestId], ['Upstream attempt', quantity(turn.attempt)],
+          ['Physical request', turn.id], ['Context session', turn.contextSessionId ?? detail.session?.id], ['Dispatch coverage', turn.dispatchCoverage], ['Logical request', turn.logicalRequestId], ['Upstream attempt', quantity(turn.attempt)],
           ['Served provider / model', `${turn.provider || 'Unknown'} / ${turn.model || 'Unknown'}`],
           ['Requested model', turn.requestedModel], ['Account', accountName(turn.connectionId)],
           ['Client', turn.clientTool], ['Route / formats', [turn.routeKind, turn.formatPair].filter(Boolean).join(' · ') || 'Unknown'],
@@ -60,6 +61,7 @@ export function ContextInspector({ turn, detail, accounts = [] }) {
           ['Net body change', signedBytes(finite(turn.savedBytes) ? -turn.savedBytes : null)],
           ['Recorded latency / first token', `${quantity(turn.latencyMs)} / ${quantity(turn.ttftMs)} ms`],
         ]} />
+        <ContextCostEvidence records={turn.costRecords} />
         {turn.compactHint && <p className={styles.caution}>A prefix discontinuity was observed. This is not proof of client compaction.</p>}
         <p className={styles.footnote}>{IDENTITY[detail.session?.identitySource] || 'Identity source unknown'}. {IDENTITY_NOTE[detail.session?.identitySource] || 'No distinct agent identity is asserted.'}</p>
       </section>

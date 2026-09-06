@@ -222,6 +222,17 @@ describe('Context workspace', () => {
     expect(container.textContent).toContain('Stored account pins');
     expect(container.textContent).not.toContain('Active pin');
   });
+  it('retains an explicitly chosen comparison baseline after another attempt and scope are selected', async () => {
+    await render(); await click('[aria-label="Inspect attempt 101"]'); await click('input[value="compare"]');
+    await clickText('Use this attempt as baseline');
+    await click('[aria-label="Inspect attempt 103"]'); await click('input[value="compare"]');
+    expect(container.querySelector('[aria-label="Attempt comparison"]').textContent).toContain('#101');
+    expect(container.querySelector('[aria-label="Attempt comparison"]').textContent).toContain('#103');
+    state.workspace = { ...state.workspace, scope: { ...initialScope, provider: 'synthetic-provider' } };
+    await render(); await click('[aria-label="Inspect attempt 103"]'); await click('input[value="compare"]');
+    expect(container.querySelector('[aria-label="Attempt comparison"]').textContent).toContain('#101');
+    await clickText('Clear baseline'); expect(container.textContent).toContain('No comparison baseline selected');
+  });
   it('uses client navigation for recorded controls without resetting the shared scope', async () => {
     state.workspace.scope = { ...initialScope, provider: 'synthetic-provider', start: '2026-09-06T10:00:00Z', end: '2026-09-06T11:00:00Z' };
     const sharedScope = state.workspace.scope;

@@ -1,6 +1,6 @@
 import { InvestigationError, OWNER_SCOPE, object, validateDefinition } from './investigationModel.mjs';
 import { readActivityEvidence } from './activityQueries.mjs';
-import { publicTurn } from './contextQueries.mjs';
+import { readContextEvidenceExport } from './contextEvidenceExport.mjs';
 import { EXPORT_LIMITS } from './evidenceFormat.mjs';
 
 export { EXPORT_LIMITS } from './evidenceFormat.mjs';
@@ -26,7 +26,7 @@ export function readEvidence(db,input) {
   const selection = mode === 'selected' ? d.selection : null;
   const selectedCohort=selection?.kind==='economics-group';
   const scope = selection && !selectedCohort ? {} : d.scope;
-  const kind = selection?.kind || (mode === 'comparison' ? 'account' : ({ capacity:'account',context:'context-session',economics:'economics-group',routing:'routing-switch' }[d.lens]));
+  const kind = selection?.kind || (mode === 'comparison' ? (d.lens === 'context' ? 'context-session' : 'account') : ({ capacity:'account',context:'context-session',economics:'economics-group',routing:'routing-switch' }[d.lens]));
   let result, source, coverage;
   if (kind.startsWith('economics')) {
     const filters = { ...scope };
@@ -42,25 +42,9 @@ export function readEvidence(db,input) {
     if (result.items) result.items = result.items.map((row) => selectFields(row,ACTIVITY_FIELDS));
     source = 'usageHistory'; coverage = result.coverage;
   } else if (kind.startsWith('context')) {
-    const clauses = ['contextSessionId IS NOT NULL'], args = [];
-    if (selection) { clauses.push(selection.kind === 'context-attempt' ? 'id=? AND contextSessionId=?' : 'contextSessionId=?'); args.push(...(selection.kind === 'context-attempt' ? [selection.id,selection.sessionId] : [selection.sessionId])); }
-    else {
-      for (const key of ['provider','model','connectionId']) if (scope[key]) { clauses.push(`${key}=?`); args.push(scope[key]); }
-      if (scope.start) { clauses.push('timestamp>=?'); args.push(scope.start); }
-      if (scope.end) { clauses.push('timestamp<?'); args.push(scope.end); }
-      if (d.context.clientTool) { clauses.push('clientTool=?'); args.push(d.context.clientTool); }
-      if (d.context.projectLabel) { clauses.push('contextSessionId IN (SELECT id FROM contextSessions WHERE projectLabel=?)'); args.push(d.context.projectLabel); }
-    }
-    result = limited(db,`SELECT * FROM requestStats WHERE ${clauses.join(' AND ')} ORDER BY timestamp,id`,args);
-    if (result.items) {
-      const ids = result.items.map((row) => row.id), stages = [];
-      for (let offset=0;offset<ids.length;offset+=100) { const page = ids.slice(offset,offset+100); stages.push(...db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk FROM contextStages WHERE requestId IN (${page.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,page)); }
-      const byRequest=new Map();for(const stage of stages){if(!byRequest.has(stage.requestId))byRequest.set(stage.requestId,[]);byRequest.get(stage.requestId).push(selectFields(stage,['ordinal','stage','beforeBytes','afterBytes','deltaBytes','outcome','risk']));}
-      const controlKeys=['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroom','headroomAllowLossy','pxpipe','pxpipeAllowLossy','thinking','privacy','memory','qac','pairs','reorder','midinject','caveman','ponytail','clientOptOut'];
-      result.items = result.items.map((row) => {const turn=publicTurn(row);return {...turn,controls:Object.fromEntries(Object.entries(turn.controls).filter(([key,value])=>controlKeys.includes(key)&&typeof value==='boolean')),stages:byRequest.get(row.id)||[]};});
-    }
-    source = 'requestStats + contextStages';
-    coverage = { attributedAttempts: result.totalRecords, reconstruction: false, contextOnly: true, includedCollections:['requestStats','contextStages'], excludedCollections:['contextStructures','clientEvents'] };
+    result = readContextEvidenceExport(db,d,mode,EXPORT_LIMITS.records);
+    source = 'requestStats + contextStages + contextStructures + contextClientEvents + exact linked usageHistory';
+    coverage = result.coverage;
   } else if (kind === 'account') {
     const clauses = [], args = [];
     const ids = selection ? [selection.id] : mode === 'comparison' ? d.comparisonIds : null;
@@ -82,8 +66,8 @@ export function readEvidence(db,input) {
     result = limited(db,`SELECT id,model,fromConnectionId,toConnectionId,trigger,switchedAt FROM accountSwitches ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY switchedAt,id`,args);
     source = 'accountSwitches'; coverage = { freeformReasonsExcluded: true, sessionIdentityExcluded: true, providerAttribution:'Current configured provider of the recorded destination account; deleted destinations are unknown.' };
   }
-  if (result.exceeded) return { refused: true, code: 'export_too_large', totalRecords: result.totalRecords, limits: EXPORT_LIMITS,
-    message: `The selected population contains ${result.totalRecords} records. Narrow the shared filters to at most ${EXPORT_LIMITS.records}; no partial export was produced.` };
+  if (result.exceeded) return { refused: true, code: 'export_too_large', totalRecords: result.totalRecords, relatedEventRecords: result.relatedEventRecords, limits: EXPORT_LIMITS,
+    message: `The selection exceeds the ${EXPORT_LIMITS.records}-record limit for attempts or related events. Narrow the filters; no partial export was produced.` };
   const timestamps = result.items.map((row)=>row.timestamp || row.switchedAt).filter(Boolean).sort();
   const payload = { manifest: { format: 'tokenproxy-evidence', version: 1, mode, source, ownerScope:OWNER_SCOPE, definition: d,
     scopeSemantics: selectedCohort ? 'Selected cohort dimensions within the fixed shared scope.' : selection ? 'Exact selected identity; shared filters do not restrict this evidence.' : 'Complete matching population in one committed read snapshot.',
@@ -91,7 +75,7 @@ export function readEvidence(db,input) {
     totalRecords: result.totalRecords, returnedRecords: result.items.length, complete: true, missingSelection: Boolean(selection && !result.items.length),
     limits: EXPORT_LIMITS, coverage, omissions: ['credentials','request/response content','private session identity','freeform error/reason content','unverified cost linkage'],
     units: { tokens:'tokens',bytes:'bytes',latency:'ms',cost:'USD estimate or separately labeled report',quota:'unknown' },
-    caveat: 'Historical pending is not active work. Cost estimates are not subscription spend. Records from different sources are never joined by timestamp.' }, items: result.items };
+    caveat: 'Historical pending is not active work. Cost estimates are not subscription spend. Records from different sources are never joined by timestamp.' }, items: result.items, ...(result.clientEvents ? {clientEvents:result.clientEvents} : {}) };
   if (Buffer.byteLength(JSON.stringify(payload)) > EXPORT_LIMITS.bytes) return { refused:true,code:'export_too_large',limits:EXPORT_LIMITS,message:'This evidence exceeds the 8 MiB export limit. Narrow the scope; no partial export was produced.' };
   return payload;
 }

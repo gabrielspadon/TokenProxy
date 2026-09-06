@@ -9,6 +9,7 @@ import { ActivityBand } from '@/shared/workspace/ActivityBand';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import shared from '@/shared/workspace/workspace.module.css';
 import { ContextInspector } from './ContextInspector';
+import { ContextClientEvents } from '@/shared/workspace/ContextEvidence';
 import { ContextTracks } from './ContextTracks';
 import { ContextTable } from './ContextTable';
 import { IDENTITY, IDENTITY_NOTE, contextUrl, finite, quantity, signedBytes, utc } from './contextModel';
@@ -62,11 +63,13 @@ function NoContext({ data, snapshot }) {
 }
 export function ContextWorkspace() {
   const workspace = useWorkspace();
-  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace} />;
+  const [baseline,setBaseline] = useState(null);
+  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace} baseline={baseline} setBaseline={setBaseline} />;
 }
-function ContextScope({ workspace }) {
+function ContextScope({ workspace, baseline, setBaseline }) {
   const { scope, setScope, accounts, snapshot, observeSnapshot, contextView, setContextView, selectedRecord, setSelectedRecord } = workspace;
   const [page, setPage] = useState(1);
+  const [showReports,setShowReports] = useState(false);
   const {sessionId, page:turnPage, projectLabel, clientTool} = contextView;
   const turnId = selectedRecord?.kind === 'context-attempt' ? selectedRecord.id : null;
   const setSessionId = useCallback((id) => setContextView({sessionId:id}),[setContextView]);
@@ -102,14 +105,14 @@ function ContextScope({ workspace }) {
   const refresh = () => { refreshOverview(); detail.refresh(); };
   const focusInterval = (next) => { if (selectedSessionId) setSessionId(selectedSessionId); setScope(next); };
   return <>
-    <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Shaping controls</Button></Group></div>
+    <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" aria-pressed={showReports} onClick={()=>setShowReports(!showReports)}>{showReports ? 'Return to session tracks' : 'Browse client reports'}</Button><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Shaping controls</Button></Group></div>
     <ScopeBar /><ActivityBand title="Retained request activity" />
     <div className={styles.workspace}>
       <RecordingCoverage recording={data?.recording} />
       {data?.recording?.rejectedAttempts > 0 && <Alert color="orange" className={styles.rejection} title={`${quantity(data.recording.rejectedAttempts)} context ${data.recording.rejectedAttempts === 1 ? 'record' : 'records'} rejected`}>Usage may remain available; context and stage evidence is absent. Counts follow the current filters.</Alert>}
-      <ReadState resource={overview}>
+      {showReports ? <ContextClientEvents key={contextUrl(scope,filters)} scope={scope} filters={filters} onSnapshot={observeSnapshot} /> : <ReadState resource={overview}>
         <div className={styles.toolbar}><div><h2>Session cohort</h2><span>{quantity(data?.summary?.sessions)} identities · latest observation first</span></div><Group gap={8}><Select aria-label="Project label filter" placeholder="All project labels" value={projectLabel} onChange={filterByProject} data={(data?.projects || []).filter((project) => project.projectLabel).map((project) => project.projectLabel)} clearable searchable w={180} /><form className={styles.clientFilter} onSubmit={(event) => { event.preventDefault(); setClientTool(clientDraft.trim()); changePage(1); }}><TextInput aria-label="Exact client filter" placeholder="Exact client name" value={clientDraft} onChange={(event) => setClientDraft(event.currentTarget.value)} w={150} /><Button type="submit" variant="default">Apply</Button></form>{clientTool && <Button variant="subtle" onClick={() => { setClientDraft(''); setClientTool(''); changePage(1); }}>Clear client</Button>}</Group></div>
-        {!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="calc(100dvh - 412px)" detail={selectedTurn && <ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={detail.data} accounts={accounts} />}>
+        {!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="calc(100dvh - 412px)" detail={selectedTurn && <ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={detail.data} accounts={accounts} baseline={baseline} onBaseline={(turn)=>setBaseline({turn:structuredClone(turn),receivedAt:detail.data.freshness?.snapshotCompletedAt || detail.receivedAt})} onClearBaseline={()=>setBaseline(null)} onSnapshot={observeSnapshot} />}>
           <div className={styles.cohortGrid}>
             <aside className={styles.sessions} aria-label="Recorded session cohort"><div className={styles.sessionList}>{sessions.map((item) => <UnstyledButton key={item.id} className={styles.sessionButton} data-selected={item.id === selectedSessionId || undefined} aria-pressed={item.id === selectedSessionId} onClick={() => selectSession(item.id)}><div className={styles.sessionName}><strong>{item.projectLabel || 'Unlabeled session'}</strong><span>#{item.id}</span></div><div className={styles.sessionClient}>{item.clientTool || 'Unknown client'}<Badge size="xs" color="gray" variant="light">{IDENTITY[item.identitySource] || 'Unknown identity'}</Badge></div><div className={styles.sessionNumbers}><span>{quantity(item.requests)} requests <small>· {quantity(item.attempts)} attempts</small></span><span>{quantity(item.providerInputTokens, true)} input</span></div><time className={styles.sessionTime} dateTime={item.lastSeenAt}>{utc(item.lastSeenAt)} UTC</time></UnstyledButton>)}</div><Pager pagination={data?.pagination} onPage={changePage} label="Sessions" /><p className={styles.identityFoot}>Identity is not a count of agents. Inferred locality may combine separate callers. Project labels are operator assigned.</p></aside>
             <div className={styles.sessionDetail}>{!selectedSessionId && <p className={styles.emptyInline}>Choose a recorded session to inspect its evidence.</p>}<ReadState resource={detail}>{session && <>
@@ -125,7 +128,7 @@ function ContextScope({ workspace }) {
             </>}</ReadState></div>
           </div>
         </SelectionDock>}
-      </ReadState>
+      </ReadState>}
       {data?.summary?.sessions > 0 && !sessions.length && !selectedSessionId && <Pager pagination={data?.pagination} onPage={changePage} label="Sessions" />}
       <footer className={styles.footer}><span>{quantity(data?.retentionDays)} days retained · recording began {utc(data?.recordingStartedAt)} UTC</span><span>{data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · {utc(data?.freshness?.persistedAt || data?.freshness?.snapshotCompletedAt)} UTC</span></footer>
     </div>

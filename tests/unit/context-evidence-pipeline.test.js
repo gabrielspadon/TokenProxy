@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { NextRequest } from "next/server";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-vi.hoisted(() => { process.env.JWT_SECRET = "context-evidence-fixture-signing-secret-0123456789"; });
+vi.hoisted(() => { process.env.JWT_SECRET = "context-evidence-fixture-signing-secret-0123456789"; process.env.TOKENPROXY_PEER_TOKEN = "context-export-fixture-peer-proof"; });
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), executor: null }));
 vi.mock("../../open-sse/executors/index.js", () => ({ getExecutor: () => mocks.executor }));
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: (...args) => mocks.fetch(...args) }));
@@ -43,6 +44,20 @@ beforeEach(() => {
 afterAll(async () => { await globalThis._contextAnalytics?.client.close(); delete globalThis._contextAnalytics; });
 
 describe("actual request capture, persistence and readonly query", () => {
+  it("exports the actual captured attempt and its authenticated client report through the protected read worker", async () => {
+    await handleChatCore(args()); const [row]=await finish();
+    const report=await (await post(event({requestId:row.id,logicalRequestId,sessionId:row.contextSessionId}))).json();
+    const { POST: exportEvidence }=await import("../../src/app/api/admin/investigations/export/route.js");
+    const token=await createDashboardAuthToken();
+    const request=new NextRequest("http://localhost/api/admin/investigations/export",{method:"POST",headers:{cookie:`auth_token=${token}`,"content-type":"application/json","x-tp-peer-token":process.env.TOKENPROXY_PEER_TOKEN,"x-tp-real-ip":"127.0.0.1"},body:JSON.stringify({mode:"selected",definition:{schemaVersion:1,lens:"context",scope:{period:"all"},selection:{kind:"context-attempt",id:row.id,sessionId:row.contextSessionId},comparisonIds:[]}})});
+    const response=await exportEvidence(request); expect(response.status).toBe(200);
+    const result=await response.json(); expect(result.items).toHaveLength(1); expect(result.items[0].structures).toHaveLength(3);
+    expect(result.items[0].contextSessionId).toBe(row.contextSessionId);
+    expect(result.clientEvents.map(e=>e.id)).toEqual([report.event.id]);
+    expect(result.freshness.snapshotStartedAt).toBeTruthy();
+    expect(JSON.stringify(result)).not.toMatch(/private café|private-client|fixture-key-only|upstream-fixture/);
+  });
+
   it("links exact physical UUIDs, content-free boundaries and explicit identity through the worker", async () => {
     const input=args(), before=structuredClone(input.body);
     const result=await handleChatCore(input); expect(result.response.status).toBe(200);

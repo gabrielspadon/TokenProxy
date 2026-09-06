@@ -1,4 +1,4 @@
-import { normalizeContextStructure } from "./contextStructure.mjs";
+import { CONTEXT_STRUCTURE_DEFINITIONS, readContextRelated } from "./contextRelated.mjs";
 
 // Fixed read-only Context projections. No driver, migration or writer imports.
 export class ContextQueryError extends Error {}
@@ -126,7 +126,7 @@ export function readContextOverview(db, f = {}, retainedDays = 45) {
 
 export function publicTurn(row) {
   const provider = row.usageSource === "provider";
-  return { id: row.id, timestamp: row.timestamp, status: row.status, logicalRequestId: row.logicalRequestId, attempt: row.attempt,
+  return { id: row.id, contextSessionId: row.contextSessionId ?? null, dispatchCoverage: row.dispatchCoverage ?? null, timestamp: row.timestamp, status: row.status, logicalRequestId: row.logicalRequestId, attempt: row.attempt,
     explicitIdentity: Object.fromEntries(["clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "clientIdentitySource"].map((key) => [key, row[key] ?? null])),
     provider: row.provider, model: row.model, requestedModel: row.requestedModel, connectionId: row.connectionId, clientTool: row.clientTool,
     contextEstimate: row.contextEstimate, inputEstimate: row.inputEstimate, bodyBeforeBytes: row.bodyBeforeBytes, bodyAfterBytes: row.bodyAfterBytes,
@@ -170,19 +170,12 @@ export function readContextSession(db, id, f = {}) {
   const rows = db.all(`SELECT r.* ${JOIN} ${filter.sql} ORDER BY r.timestamp ASC,r.id ASC LIMIT ? OFFSET ?`, [...filter.args,p.pageSize,(p.page-1)*p.pageSize]);
   const ids = rows.map((r) => r.id);
   const stages = ids.length ? db.all(`SELECT * FROM contextStages WHERE requestId IN (${ids.map(() => '?').join(',')}) ORDER BY requestId,ordinal`, ids) : [];
-  const structures = ids.length ? db.all(`SELECT requestId,data FROM contextStructures WHERE requestId IN (${ids.map(() => '?').join(',')}) ORDER BY boundary`, ids) : [];
-  const byRequest = new Map();
-  for (const row of structures) {
-    try { const value = normalizeContextStructure(JSON.parse(row.data));
-      if (!byRequest.has(row.requestId)) byRequest.set(row.requestId, []);
-      byRequest.get(row.requestId).push(value);
-    } catch { /* Untrusted or legacy malformed evidence remains unavailable. */ }
-  }
+  const related = readContextRelated(db, ids);
   const pins = db.all(`SELECT model,connectionId,providerNode,pinnedAt,expiresAt,lastSeenAt FROM sessionAffinity WHERE sessionHash=? ORDER BY model LIMIT 100`, [session.sessionHash]);
   const switches = db.all(`SELECT id,model,fromConnectionId,toConnectionId,trigger,reason,switchedAt FROM accountSwitches WHERE sessionHash=? ORDER BY switchedAt DESC LIMIT 100`, [session.sessionHash]);
   const { sessionHash: _private, ...safeSession } = session;
-  return { session: safeSession, summary: totals, turns: rows.map((r) => ({...publicTurn(r),structures: byRequest.get(r.id) ?? [],stages: stages.filter((s) => s.requestId===r.id).map(({requestId: _id,...s})=>s)})),
+  return { session: safeSession, summary: totals, turns: rows.map((r) => ({...publicTurn(r),structures: related.structures.get(r.id) ?? [],costRecords: related.costs.get(r.id) ?? [],stages: stages.filter((s) => s.requestId===r.id).map(({requestId: _id,...s})=>s)})),
     pagination: p, trend: sessionTrend(db,filter,totals), stages: stageSummary(db,filter), dimensions: dimensions(db,filter), pins, switches,
-    structuralDefinitions: { units: "UTF-8 bytes of serialized JSON; not tokens or decoded media bytes.", partition: "messageBytes + instructionBytes + toolSchemaBytes + envelopeBytes = bodyBytes. Role bytes plus messageContainerBytes = messageBytes.", subsets: "Tool call, tool result and attachment bytes overlap role bytes and may overlap each other; never sum these as a partition.", historyPrefix: "A structured history/instructions/tools fingerprint before the latest syntactic user message; not the provider wire prefix, cache eligibility, or proof of compaction.", missing: "Absent boundaries are unavailable, disabled, unsupported binary transport, or historical missing evidence; never zero.", fingerprints: "Installation-keyed HMAC-SHA256 fingerprints, comparable only within the same installation key." },
+    structuralDefinitions: CONTEXT_STRUCTURE_DEFINITIONS,
     routingScope: "Latest retained affinity and at most 100 switch receipts for this session, independent of the turn time filter." };
 }
