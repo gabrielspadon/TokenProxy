@@ -17,7 +17,7 @@ Pin IDs encode the existing hash and physical model. They are reversible opaque 
 
 `clear` deletes the pin and cancels a queued reassignment in the same transaction. The next selection uses ordinary ranking and may choose the same account. No response finalizer writes affinity, so completing an older request cannot restore a cleared pin.
 
-`expire` writes an absolute operator deadline. Normal touches retain the earlier of that deadline and the sliding 24-hour idle expiry. Once the binding ends, a fresh binding has the normal idle policy. Requests already admitted continue unchanged.
+`expire` writes an absolute operator deadline and caps the current expiry without extending it. A NULL current expiry is uncapped. Normal touches retain the earlier of the operator deadline and the sliding 24-hour idle expiry. Once the binding ends, a fresh binding has the normal idle policy. Requests already admitted continue unchanged.
 
 `reassign` queues one same-model target. The existing pin remains until the target passes normal account/model, quota, proxy and capacity checks. An explicit different account in a subsequent request, a target that cannot accept, or a command changing during admission returns `mustWait`; callers must not fall through to another account or model. The gateway checks the command again after asynchronous admission reads. It then reserves the target, writes the pin and switch receipt, and marks the action applied in one synchronous SQLite transaction. Applied means account selection, not upstream dispatch, successful generation or billing confirmation.
 

@@ -7,6 +7,8 @@ export class PinControlError extends Error {
 }
 const iso = now => new Date(now ?? Date.now()).toISOString();
 const parse = value => value ? JSON.parse(value) : null;
+const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value);
+const revision = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 export function encodePinId(pin) { return Buffer.from(JSON.stringify([pin.sessionHash, pin.model])).toString('base64url'); }
 export function decodePinId(id) {
   let fields;
@@ -35,8 +37,8 @@ function publicAction(row) {
 }
 export function validatePinAction(body) {
   if (!body || Object.keys(body).some(k => !['id', 'pinId', 'expectedRevision', 'action', 'targetConnectionId', 'deadline'].includes(k))) throw new PinControlError('invalid_fields');
-  if (body.id !== undefined && !/^[a-f0-9-]{36}$/.test(body.id)) throw new PinControlError('invalid_action_id');
-  if (!/^[a-f0-9]{64}$/.test(body.expectedRevision)) throw new PinControlError('invalid_revision');
+  if (body.id !== undefined && !uuid(body.id)) throw new PinControlError('invalid_action_id');
+  if (!revision(body.expectedRevision)) throw new PinControlError('invalid_revision');
   if (!['clear', 'expire', 'reassign'].includes(body.action)) throw new PinControlError('invalid_action');
   if (body.action === 'reassign' ? typeof body.targetConnectionId !== 'string' || !body.targetConnectionId || body.targetConnectionId.length > 128 : body.targetConnectionId !== undefined) throw new PinControlError('invalid_target');
   if (body.action === 'expire' ? typeof body.deadline !== 'string' || !Number.isFinite(Date.parse(body.deadline)) || new Date(body.deadline).toISOString() !== body.deadline : body.deadline !== undefined) throw new PinControlError('invalid_deadline');
@@ -49,7 +51,7 @@ export async function getSessionPin(id) {
   return row;
 }
 export async function getSessionPinAction(id) {
-  if (!/^[a-f0-9-]{36}$/.test(id)) throw new PinControlError('invalid_action_id');
+  if (!uuid(id)) throw new PinControlError('invalid_action_id');
   const db = await getAdapter(), action = db.get('SELECT * FROM sessionPinActions WHERE id=?', [id]);
   if (!action) throw new PinControlError('action_not_found', 404);
   return publicAction(action);
@@ -96,7 +98,10 @@ export async function previewSessionPin(body, evidence, { now } = {}) {
     if (body.action === 'reassign' && (pin.expiresAt && pin.expiresAt <= at)) throw new PinControlError('pin_expired', 409);
     if (body.action === 'reassign' && pin.connectionId === body.targetConnectionId) throw new PinControlError('target_is_current_account');
     if (body.action === 'expire' && body.deadline > new Date(Date.parse(at) + 30 * 86400000).toISOString()) throw new PinControlError('deadline_too_far');
+    const pending = db.get(PENDING_PIN_SELECT, [key.sessionHash, key.model]);
     const preview = { ...evidence, affectedPins: 1, modelSubstitution: false, inFlightAffected: false,
+      conflicts: [...(evidence?.conflicts || []), ...(pending && body.action !== 'clear' ? [{ connectionId: pending.targetConnectionId, reason: 'reassignment-pending' }] : [])],
+      cancelledActions: pending && body.action === 'clear' ? [pending.id] : [],
       consequence: body.action === 'clear' ? 'Future selection may choose the same account. A different account can rebuild the provider prompt cache.'
         : body.action === 'expire' ? 'Activity cannot extend this absolute deadline. Selection after expiry ranks accounts again and may choose the same account.'
           : 'Only a later selection can consume the target. Existing work continues on its admitted account. The same physical model is retained; moving account can rebuild the provider prompt cache.',
@@ -108,7 +113,7 @@ export async function previewSessionPin(body, evidence, { now } = {}) {
   });
 }
 export async function applySessionPin({ id, expectedRevision }, { now } = {}) {
-  if (!/^[a-f0-9-]{36}$/.test(id) || !/^[a-f0-9]{64}$/.test(expectedRevision)) throw new PinControlError('invalid_apply');
+  if (!uuid(id) || !revision(expectedRevision)) throw new PinControlError('invalid_apply');
   const db = await getAdapter(), at = iso(now);
   if (db.driver === 'sql.js') throw new PinControlError('durable_storage_required', 503);
   return db.transaction(() => {
@@ -127,7 +132,10 @@ export async function applySessionPin({ id, expectedRevision }, { now } = {}) {
     if (pending && action.action !== 'clear') throw new PinControlError('reassignment_pending', 409);
     if (pending) db.run("UPDATE sessionPinActions SET status='cancelled', reason='affinity-cleared', appliedAt=? WHERE id=?", [at, pending.id]);
     if (action.action === 'clear') db.run('DELETE FROM sessionAffinity WHERE sessionHash=? AND model=?', [action.sessionHash, action.model]);
-    if (action.action === 'expire') db.run('UPDATE sessionAffinity SET operatorExpiresAt=?, expiresAt=? WHERE sessionHash=? AND model=?', [action.deadline, action.deadline, action.sessionHash, action.model]);
+    if (action.action === 'expire') {
+      const expiry = pin.expiresAt && pin.expiresAt < action.deadline ? pin.expiresAt : action.deadline;
+      db.run('UPDATE sessionAffinity SET operatorExpiresAt=?, expiresAt=? WHERE sessionHash=? AND model=?', [action.deadline, expiry, action.sessionHash, action.model]);
+    }
     const after = db.get(PIN_SELECT, [action.sessionHash, action.model]);
     db.run('UPDATE sessionPinActions SET status=?, reason=?, afterState=?, appliedAt=? WHERE id=?',
       [action.action === 'reassign' ? 'queued' : 'applied', action.action === 'reassign' ? 'awaiting-subsequent-selection' : 'operator-applied',

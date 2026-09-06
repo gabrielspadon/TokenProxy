@@ -15,7 +15,7 @@ import { createProviderConnection, updateProviderConnection } from '@/lib/db/rep
 import { disableModels, enableModels } from '@/lib/db/repos/disabledModelsRepo.js';
 import { setPin } from '@/lib/db/repos/sessionAffinityRepo.js';
 import { listSessionPins, previewSessionPin, applySessionPin, getSessionPinAction, encodePinId, publicPin } from '@/lib/db/repos/sessionPinsRepo.js';
-import { PIN_SELECT } from '@/lib/db/helpers/sessionPinControl.js';
+import { PIN_SELECT, completePinAction } from '@/lib/db/helpers/sessionPinControl.js';
 import { createSchedulerRepos } from '@/sse/services/schedulerRepos.js';
 import { selectAndReserve } from '@/sse/services/accountScheduler.js';
 import { getProviderCredentials } from '@/sse/services/auth.js';
@@ -85,6 +85,24 @@ it('absolute expiry survives a pin touch and expires at the exact boundary', asy
   expect(pin().expiresAt).toBe(deadline);
   expect((await createSchedulerRepos({ now: now + 60000 })).getPin({ sessionHash: hash, model })).toBeNull();
 });
+it('a distant operator deadline never extends the existing idle expiry on apply', async () => {
+  const previous = pin().expiresAt, deadline = new Date(now + 20 * 86400000).toISOString();
+  const p = await preview('expire', { deadline }, now);
+  expect((await apply(p, now)).status).toBe('applied');
+  expect(pin()).toMatchObject({ expiresAt: previous, operatorExpiresAt: deadline });
+  const repos = await createSchedulerRepos({ now: now + 1000 }); repos.touchPin({ sessionHash: hash, model });
+  expect(pin().expiresAt).toBe(new Date(now + 86401000).toISOString());
+});
+it('a legacy no-TTL pin gains an expiry only from the explicitly applied operator deadline', async () => {
+  await setPin(hash, model, a.id, { now: new Date(now), expiresAt: null });
+  const listed = await listSessionPins();
+  expect(listed.pins[0].expiresAt).toBeNull(); expect(pin().expiresAt).toBeNull();
+  const deadline = new Date(now + 60000).toISOString();
+  const p = await preview('expire', { deadline }, now);
+  expect(pin().expiresAt).toBeNull();
+  await apply(p, now);
+  expect(pin()).toMatchObject({ expiresAt: deadline, operatorExpiresAt: deadline });
+});
 it('idle expiry advancing makes a preview stale and records the conflict without changing the binding', async () => {
   const p = await preview('clear', {}, now);
   const repos = await createSchedulerRepos({ now: now + 1000 }); repos.touchPin({ sessionHash: hash, model });
@@ -111,7 +129,13 @@ it('repeated preview and apply are idempotent only for the original payload', as
 });
 it('clear cancels queued reassignment, and later selection can choose the same account', async () => {
   const q = await preview('reassign', { targetConnectionId: b.id }); await apply(q);
-  const clear = await preview('clear'); await apply(clear);
+  const conflict = await preview('expire', { deadline: new Date(Date.now() + 60000).toISOString() });
+  expect(conflict.preview.conflicts).toContainEqual({ connectionId: b.id, reason: 'reassignment-pending' });
+  const clear = await preview('clear');
+  expect(clear.preview.cancelledActions).toEqual([q.id]);
+  await apply(clear);
+  expect((await getSessionPinAction(q.id)).status).toBe('cancelled');
+  completePinAction(db, { id: q.id, sessionHash: hash, model }, new Date().toISOString());
   expect((await getSessionPinAction(q.id)).status).toBe('cancelled');
   const repos = await createSchedulerRepos();
   const result = selectAndReserve({ sessionHash: hash, model, accounts: [a], registry: leaseRegistry, repos, now: Date.now() });
@@ -230,5 +254,15 @@ it('bounds and sanitizes malformed mutation bodies', async () => {
   expect((await request(['preview'], 'x'.repeat(32769))).status).toBe(413);
   expect((await request(['preview'], { pinId: 'bad', secret: 'hidden' })).status).toBe(400);
   expect((await request(['apply'], { id: 'bad', expectedRevision: 'bad' })).status).toBe(400);
+  expect((await request(['apply'], { id: [randomUUID()], expectedRevision: 'a'.repeat(64) })).status).toBe(400);
+  expect((await request(['apply'], { id: randomUUID(), expectedRevision: ['a'.repeat(64)] })).status).toBe(400);
   expect((await request(['preview'], { pinId: 'bad', action: 'reassign' })).status).toBe(400);
+});
+it('rejects a 36-char hex-dash id that is not a canonical UUID', async () => {
+  const shifted = 'aaaaaaaa-aaaa-aaaa-aaaaa-aaaaaaaaaaa';
+  await expect(getSessionPinAction(shifted)).rejects.toMatchObject({ code: 'invalid_action_id' });
+  const row = pin();
+  await expect(previewSessionPin({ id: shifted, pinId: encodePinId(row), expectedRevision: publicPin(row).revision, action: 'clear' }, {})).rejects.toMatchObject({ code: 'invalid_action_id' });
+  await expect(applySessionPin({ id: shifted, expectedRevision: 'a'.repeat(64) })).rejects.toMatchObject({ code: 'invalid_apply' });
+  await expect(applySessionPin({ id: randomUUID(), expectedRevision: 'g'.repeat(64) })).rejects.toMatchObject({ code: 'invalid_apply' });
 });

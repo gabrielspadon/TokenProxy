@@ -106,6 +106,7 @@ export default function SessionPins({ onChanged } = {}) {
       <p>One pin affected. Model remains {preview.model}. Upstream readiness remains unknown.</p>
       {preview.preview.localTarget ? <p>Captured account decision {preview.preview.localTarget.status} · {preview.preview.localTarget.reason}</p> : null}
       {preview.preview.conflicts?.length ? <ul>{preview.preview.conflicts.map((c, i) => <li key={i}>{c.reason}</li>)}</ul> : null}
+      {preview.preview.cancelledActions?.length ? <p>Clearing also cancels queued control {preview.preview.cancelledActions.join(', ')}.</p> : null}
       {preview.preview.unknownEvidence?.length ? <p className="caption">Not verified here · {preview.preview.unknownEvidence.join(', ')}</p> : null}
       <p className="caption">Preview valid until {date(preview.previewExpiresAt)}. Pending reassignment waits if its account is unavailable or a request explicitly names a different account. Clear affinity cancels a pending reassignment.</p>
       <button type="button" className="button" disabled={busy} onClick={apply}>Apply this change</button>
