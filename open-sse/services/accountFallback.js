@@ -277,7 +277,11 @@ export function getExhaustedQuotaWindow(connection, model, now = Date.now()) {
   if (!Array.isArray(windows)) return null;
   const quotaWindow = windows.find((entry) => entry?.key === model);
   if (!quotaWindow || quotaWindow.unlimited === true) return null;
-  if (Number(quotaWindow.remainingPercentage) !== 0) return null;
+  const remaining = quotaWindow.remainingPercentage;
+  // Unknown values must not become measured depletion through Number(null),
+  // Number('') or Number(false). Providers may supply finite numeric strings.
+  if (typeof remaining !== 'number' && (typeof remaining !== 'string' || !remaining.trim())) return null;
+  if (!Number.isFinite(Number(remaining)) || Number(remaining) !== 0) return null;
   const resetAt = new Date(quotaWindow.resetAt).getTime();
   if (!Number.isFinite(resetAt) || resetAt <= now) return null;
   return { key: quotaWindow.key, until: new Date(resetAt).toISOString() };
