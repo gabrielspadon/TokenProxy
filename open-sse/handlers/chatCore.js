@@ -1,3 +1,4 @@
+import { createContextTelemetry, recordContextAttempt } from "./chatCore/contextTelemetry.js";
 import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
 import { resolveUpstreamRoute } from "./chatCore/upstreamRoute.js";
@@ -229,9 +230,9 @@ function boundedSet(map, key, value) {
     }
   }
 }
-function rememberRidSession(rid, sid, estimatedTokens) {
-  if (!rid || !sid) return;
-  boundedSet(ridSessions, rid, { sid, estimatedTokens });
+function rememberRidSession(rid, sid, estimatedTokens, calibrationKey = sid) {
+  if (!rid || !calibrationKey) return;
+  boundedSet(ridSessions, rid, { sid, estimatedTokens, calibrationKey });
 }
 export function sessionCalibrationFor(sid) {
   return (sid && sessionCalibration.get(sid)) || 1;
@@ -239,18 +240,18 @@ export function sessionCalibrationFor(sid) {
 onReqSummary((verdict, fields) => {
   const rid = typeof fields?.rid === "string" ? fields.rid : null;
   if (!rid) return;
-  const entry = ridSessions.get(rid);
+  const key = fields.row || rid;
+  const entry = ridSessions.get(key);
   if (!entry) return;
-  ridSessions.delete(rid);
+  ridSessions.delete(key);
   if (verdict !== "ok") return;
-  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-  const actual = n(fields.in) + n(fields.cr) + n(fields.cw);
-  if (actual <= 0) return;
-  writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
+  const actual = fields.ctx;
+  if (typeof actual !== "number" || !Number.isFinite(actual) || actual <= 0) return;
+  if (entry.sid) writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
   if (entry.estimatedTokens > 0) {
     const ratio = actual / entry.estimatedTokens;
-    const prev = sessionCalibration.get(entry.sid);
-    boundedSet(sessionCalibration, entry.sid, prev ? prev * 0.5 + ratio * 0.5 : ratio);
+    const prev = sessionCalibration.get(entry.calibrationKey);
+    boundedSet(sessionCalibration, entry.calibrationKey, prev ? prev * 0.5 + ratio * 0.5 : ratio);
   }
 });
 
@@ -308,6 +309,11 @@ function trackCacheEpoch(sid, serialized) {
 
 export async function handleChatCore({
   requestId,
+  contextTelemetry: contextIdentity = {},
+  rtkAllowLossy = false,
+  schemaAllowLossy = false,
+  headroomAllowLossy = false,
+  pxpipeAllowLossy = false,
   body,
   modelInfo,
   credentials: rawCredentials,
@@ -369,6 +375,7 @@ export async function handleChatCore({
       }
     : rawCredentials;
   const { provider, model } = modelInfo;
+  const contextScope = credentials?.sessionHash ? `${credentials.sessionHash}:${provider}:${model}:${connectionId || ""}` : sid;
   const notifyTerminalVerificationSuccess =
     onVerificationSuccess && verificationContext?.challengeIdAtStart
       ? async () => {
@@ -459,6 +466,9 @@ export async function handleChatCore({
   if (useTransport && credentials) credentials.runtimeTransport = useTransport;
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
+  const inputEstimate = estimateRequestTokens(body);
+  const messageCount = Array.isArray(body.messages) ? body.messages.length : Array.isArray(body.input) ? body.input.length : null;
+  const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
   const passthrough = isNativePassthrough(clientTool, provider);
 
@@ -679,10 +689,7 @@ export async function handleChatCore({
   // entry (negative delta) instead of vanishing into the entry bytes.
   let toolsStageDelta = null;
   let toolsStripped = false;
-  let toolsBeforeBytes = null;
-  if (Array.isArray(translatedBody.tools) && translatedBody.tools.length > 0) {
-    toolsBeforeBytes = Buffer.byteLength(JSON.stringify(translatedBody.tools));
-  }
+  const toolsBeforeBytes = Buffer.byteLength(JSON.stringify(translatedBody));
   if (Array.isArray(translatedBody.tools)) {
     const { tools: deduped, stripped } = dedupeTools(translatedBody.tools, { clientTool, model });
     if (stripped.length > 0) {
@@ -752,16 +759,6 @@ export async function handleChatCore({
         `measure: ${beforeN}tools ${beforeBytes}B → ${afterN}tools ${afterBytes}B`,
       );
     }
-    if (toolsBeforeBytes !== null) {
-      const toolsAfterBytes = Buffer.byteLength(JSON.stringify(translatedBody.tools));
-      if (toolsAfterBytes !== toolsBeforeBytes) {
-        toolsStageDelta = {
-          delta: toolsAfterBytes - toolsBeforeBytes,
-          in: toolsBeforeBytes,
-          out: toolsAfterBytes,
-        };
-      }
-    }
   }
 
   // Token savers: applied at the final body just before dispatch
@@ -799,10 +796,13 @@ export async function handleChatCore({
           ponytailEnabled ||
           memorySettings)),
   );
+  const toolsAfterBytes = Buffer.byteLength(JSON.stringify(translatedBody));
+  toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true };
   const saverStages = [];
+  const contextStages = [{ stage: "tools", ...toolsStageDelta }];
   // The tools-normalization block above ran before this ledger existed; fold
   // its measured delta in as the first stage so save= attributes the strip.
-  if (toolsStageDelta) saverStages.push({ stage: "tools", ...toolsStageDelta });
+  if (toolsStageDelta.delta !== 0) saverStages.push({ stage: "tools", ...toolsStageDelta });
   if (toolsStripped) notePath(rid, "XFORM.tool-strip");
   // Per-stage compressed-turn indices for the qac/thinking event rows (the
   // dashboard shows WHICH turns a stage compressed, bounded at 8).
@@ -817,21 +817,13 @@ export async function handleChatCore({
   const pushPrefixNote = (note) => {
     if (prefixNotes.length < PREFIX_NOTES_MAX) prefixNotes.push(note);
   };
-  const saverPrev = saverWillRun
-    ? { bytes: Buffer.byteLength(JSON.stringify(translatedBody)) }
-    : null;
+  const saverPrev = { bytes: Buffer.byteLength(JSON.stringify(translatedBody)) };
   const saverEntryBytes = saverPrev ? saverPrev.bytes : 0;
   const measureSaverStage = (stage, ran) => {
-    if (!saverPrev || !ran) return;
     const at = Buffer.byteLength(JSON.stringify(translatedBody));
-    if (at !== saverPrev.bytes) {
-      saverStages.push({
-        stage,
-        delta: at - saverPrev.bytes,
-        in: saverPrev.bytes,
-        out: at,
-      });
-    }
+    const measurement = { ran: Boolean(ran), stage, delta: at - saverPrev.bytes, in: saverPrev.bytes, out: at };
+    contextStages.push(measurement);
+    if (at !== saverPrev.bytes) saverStages.push(measurement);
     saverPrev.bytes = at;
   };
 
@@ -846,7 +838,7 @@ export async function handleChatCore({
   const schemaDistillRan =
     tokenSaverEnabled && schemaDistillEnabled && Array.isArray(translatedBody.tools);
   if (schemaDistillRan) {
-    const distilled = distillToolSchemas(translatedBody.tools);
+    const distilled = distillToolSchemas(translatedBody.tools, { allowLossy: schemaAllowLossy });
     if (distilled.savedBytes > 0) {
       translatedBody.tools = distilled.tools;
       notePath(rid, "XFORM.tool-distill");
@@ -936,6 +928,7 @@ export async function handleChatCore({
   const rtkStats = compressMessages(
     translatedBody,
     rtkWillRun,
+    { allowLossy: rtkAllowLossy },
   );
   const rtkLine = formatRtkLog(rtkStats);
   if (rtkLine) console.log(rtkLine);
@@ -1013,6 +1006,7 @@ export async function handleChatCore({
   if (pxpipeEnabled) {
     const pxpipeResult = await compressWithPxpipe(translatedBody, {
       enabled: tokenSaverEnabled,
+      allowLossy: pxpipeAllowLossy,
       format: finalFormat,
       model: upstreamModel,
       minChars: pxpipeMinChars,
@@ -1045,7 +1039,7 @@ export async function handleChatCore({
       settings: memorySettings,
       targetFormat: finalFormat,
       contextWindow: memoryCaps?.contextWindow ?? null,
-      calibration: sessionCalibrationFor(sid),
+      calibration: sessionCalibrationFor(contextScope),
       log,
     });
     memStats = memRes.stats || null;
@@ -1093,7 +1087,7 @@ export async function handleChatCore({
     measureContextPressure(translatedBody, {
       contextWindow: getCapabilitiesForModel(provider, upstreamModel)?.contextWindow ?? null,
       settings: memorySettings || undefined,
-      calibration: sessionCalibrationFor(sid),
+      calibration: sessionCalibrationFor(contextScope),
     });
   // The memory ladder cuts tool results oldest-first and prunes on chunk
   // crossings only, so between crossings the prefix is byte-stable and on a
@@ -1130,6 +1124,7 @@ export async function handleChatCore({
   const headroomPressure = headroomEnabled ? measurePrefixPressure() : null;
   const headroomStats = await compressWithHeadroom(translatedBody, {
     enabled: tokenSaverEnabled && headroomEnabled,
+    allowLossy: headroomAllowLossy,
     url: headroomUrl,
     model: upstreamModel,
     format: finalFormat,
@@ -1372,12 +1367,12 @@ export async function handleChatCore({
   // response headers. With no saver and no sid, nothing is serialized.
   let finalBodyBytes = null;
   let compactHint = false;
-  if (saverWillRun || sid) {
+  if (saverPrev || sid) {
     const finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
     measureSaverStage("final", true);
-    if (sid) {
-      const tracked = trackCacheEpoch(sid, finalSerialized);
+    if (contextScope) {
+      const tracked = trackCacheEpoch(contextScope, finalSerialized);
       if (tracked) {
         saverFields.ce = tracked.ce;
         // HEADERS: the compact hint fires only on a known ce that dropped
@@ -1399,11 +1394,11 @@ export async function handleChatCore({
   // number that decides whether history gets cut.
   const estTokens = finalBodyBytes === null ? null : estimateRequestTokens(translatedBody);
   const saverMeta = {};
-  if (estTokens !== null) {
+  if (estTokens !== null && (saverWillRun || sid)) {
     // measureContextPressure.projected, arrived at by the same arithmetic:
     // the clamped calibration and the same rounding, so the header and the
     // ladder cannot report two different sizes for one body.
-    saverMeta.ctxTokens = Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(sid)));
+    saverMeta.ctxTokens = Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(contextScope)));
   }
   if (saverStages.length) {
     saverMeta.saveBytes = Math.round(
@@ -1412,14 +1407,34 @@ export async function handleChatCore({
   }
   if (saverFields.ce !== undefined) saverMeta.ce = saverFields.ce;
   if (compactHint) saverMeta.compactHint = true;
+  const contextTelemetry = createContextTelemetry({
+    ...contextIdentity, sessionHash: credentials?.sessionHash,
+    timestamp: new Date(requestStartTime).toISOString(),
+    requestedModel: clientRawRequest?.body?.model || body.model,
+    clientTool, inputEstimate, messageCount, toolCount,
+    contextEstimate: Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(contextScope))), bodyAfterBytes: finalBodyBytes,
+    cachePrefixBytes: saverMeta.ce, compactHint,
+    routeKind: passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated",
+    formatPair: `${sourceFormat}>${targetFormat}`, selection: credentials?.selection?.verdict,
+    controls: {
+      rtk: Boolean(rtkWillRun), rtkAllowLossy, schema: Boolean(schemaDistillRan), schemaAllowLossy,
+      thinking: Boolean(thinkingWillRun), privacy: Boolean(privacyEnabled),
+      caveman: Boolean(tokenSaverEnabled && cavemanEnabled), ponytail: Boolean(tokenSaverEnabled && ponytailEnabled),
+      pxpipe: Boolean(tokenSaverEnabled && pxpipeEnabled), pxpipeAllowLossy,
+      memory: Boolean(tokenSaverEnabled && memorySettings), headroom: Boolean(tokenSaverEnabled && headroomEnabled), headroomAllowLossy,
+      qac: Boolean(qacWillRun), pairs: Boolean(pairsWillRun), reorder: Boolean(reorderWillRun), midinject: Boolean(tokenSaverEnabled && midPrefixInjectEnabled), clientOptOut: !tokenSaverEnabled,
+    },
+    stages: contextStages.map((stage) => ({ ...stage, ...(stage.stage === "rtk" ? { semanticPreserving: rtkStats?.semanticPreserving === true } : {}) })),
+  });
+  await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
   // MCP context_status state: sid-keyed self-sizing snapshot for the
   // /api/v1/mcp tool. Written before dispatch so an upstream failure still
   // leaves fresh telemetry. The store swallows its own errors; this catch is
   // the belt on the same contract, telemetry never breaks the request.
-  if (sid) {
-    rememberRidSession(rid, sid, estTokens);
+  if (contextScope) {
+    rememberRidSession(contextTelemetry.requestId, sid, estTokens, contextScope);
     try {
-      writeContextStatus(sid, {
+      if (sid) writeContextStatus(sid, {
         rid,
         ctxTokens: saverMeta.ctxTokens,
         saveBytes: saverMeta.saveBytes,
@@ -1639,6 +1654,7 @@ export async function handleChatCore({
     const isAntigravity = provider === "antigravity";
     const sinkError = isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : (error.message || String(error));
     if (callerSignal?.aborted && (isCallerAbortError(error) || error.name === "AbortError")) {
+      recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "aborted", latency: { total: Date.now() - requestStartTime } });
       trackPendingRequest(model, provider, connectionId, false);
       return withSaverHeaders(createCallerAbortResult(), saverMeta);
     }
@@ -1651,11 +1667,12 @@ export async function handleChatCore({
     }).catch(() => {});
     saveRequestDetail(
       buildRequestDetail({
+        contextTelemetry,
         provider,
         model,
         connectionId,
         latency: { ttft: 0, total: Date.now() - requestStartTime },
-        tokens: { prompt_tokens: 0, completion_tokens: 0 },
+        tokens: null,
         request: extractRequestConfig(body, stream),
         providerRequest: translatedBody || null,
         response: {
@@ -1672,7 +1689,7 @@ export async function handleChatCore({
     if (error.name === "AbortError") {
       streamController.handleError(isAntigravity ? new Error(ANTIGRAVITY_SAFE_ERROR_MESSAGE) : error);
       reqSummary("failed", { rid, conn: connPrefix, status: 499, why: "aborted", ...saverFields });
-      return withSaverHeaders(createErrorResult(499, isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Request aborted", null, null, rid), saverMeta);
+      return withSaverHeaders(createErrorResult(499, isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Request aborted", null, { safeToReplay: false }, rid), saverMeta);
     }
     const errMsg = isAntigravity
       ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
@@ -1683,7 +1700,7 @@ export async function handleChatCore({
         HTTP_STATUS.GATEWAY_TIMEOUT,
         isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Upstream response body timed out",
         null,
-        null,
+        { safeToReplay: false },
         rid,
       ), saverMeta);
     }
@@ -1695,7 +1712,7 @@ export async function handleChatCore({
       );
     }
     reqSummary("failed", { rid, conn: connPrefix, status: HTTP_STATUS.BAD_GATEWAY, why: "transport", ...saverFields });
-    return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, null, rid), saverMeta);
+    return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, { safeToReplay: false }, rid), saverMeta);
   };
   try {
     const result = await executor.execute({
@@ -1871,6 +1888,7 @@ export async function handleChatCore({
             }).catch(() => {});
             log?.debug?.("FIELDSTRIP", `Retry succeeded for ${provider}/${model}`);
             const sharedCtx = {
+              contextTelemetry,
               provider,
               model,
               body,
@@ -1988,11 +2006,12 @@ export async function handleChatCore({
     const sinkMessage = provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : message;
     saveRequestDetail(
       buildRequestDetail({
+        contextTelemetry,
         provider,
         model,
         connectionId,
         latency: { ttft: 0, total: Date.now() - requestStartTime },
-        tokens: { prompt_tokens: 0, completion_tokens: 0 },
+        tokens: null,
         request: extractRequestConfig(body, stream),
         providerRequest: finalBody || translatedBody || null,
         response: { error: sinkMessage, status: safeStatusCode, thinking: null },
@@ -2015,10 +2034,11 @@ export async function handleChatCore({
     }
     reqLogger.logError(new Error(sinkMessage), finalBody || translatedBody);
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
-    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, failureMetadata, rid), saverMeta);
+    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay: true }, rid), saverMeta);
   }
 
   const sharedCtx = {
+    contextTelemetry,
     provider,
     model,
     body,

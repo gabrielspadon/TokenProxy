@@ -1,3 +1,4 @@
+import { recordContextFailure } from "./contextTelemetry.js";
 import { FORMATS } from "../../translator/formats.js";
 import { needsTranslation } from "../../translator/index.js";
 import { fromOpenAIFinish } from "../../translator/concerns/finishReason.js";
@@ -638,11 +639,18 @@ function hasMultipleClassifierAlternatives(responseBody) {
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {} }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry }) {
   // HEADERS finding: gateway-built error responses carry the same x-tp-*
   // saver telemetry as successes.
-  const saverErrorResult = (...args) => withSaverHeaders(createErrorResult(...args), saverMeta);
-  const abortResult = () => withSaverHeaders(createCallerAbortResult(), saverMeta);
+  const saverErrorResult = (...args) => {
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, tokens: extractUsageFromResponse(responseBody) });
+    args[3] = { ...args[3], safeToReplay: false };
+    return withSaverHeaders(createErrorResult(...args), saverMeta);
+  };
+  const abortResult = () => {
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted" });
+    return withSaverHeaders(createCallerAbortResult(), saverMeta);
+  };
   const contentType = providerResponse.headers.get("content-type") || "";
   const classifierMode = sourceFormat === FORMATS.CLAUDE
     && isClaudeClassifierRequest(body);
@@ -982,9 +990,10 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   const totalLatency = Date.now() - requestStartTime;
   const doneDetail = buildRequestDetail({
+      contextTelemetry,
     provider, model, connectionId,
     latency: { ttft: totalLatency, total: totalLatency },
-    tokens: usage || { prompt_tokens: 0, completion_tokens: 0 },
+    tokens: usage ?? null,
     request: extractRequestConfig(body, stream),
     providerRequest: finalBody || translatedBody || null,
     providerResponse: responseBody || null,

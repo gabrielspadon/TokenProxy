@@ -1,4 +1,5 @@
 import { getAdapter } from "../driver.js";
+import { saveContextMetrics, shouldIgnorePending, cleanupContext, retentionDays } from "./contextRepo.js";
 import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
 
 // Full-history statistics source. One row per request (id is the requestDetail
@@ -7,7 +8,6 @@ import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
 // ring-buffer toggle. Retained statsRetentionDays (default 45), cleaned on a
 // cadence from saveRequestStats.
 
-const DEFAULT_RETENTION_DAYS = 45;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const HOUR_MS = 3600000;
 const DAY_MS = 86400000;
@@ -99,6 +99,8 @@ export async function saveRequestStats(detail) {
     const db = await getAdapter();
     const tokens = canonicalizeUsage(detail.tokens) || {};
     const latency = detail.latency || {};
+    db.transaction(() => {
+    if (shouldIgnorePending(db.get(`SELECT status FROM requestStats WHERE id=?`, [detail.id]), detail)) return;
     db.run(
       `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
          promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens,
@@ -130,6 +132,8 @@ export async function saveRequestStats(detail) {
         latency.ttft || 0,
       ]
     );
+    saveContextMetrics(db, { ...detail, timestamp: detail.timestamp || new Date().toISOString() });
+    });
     await maybeCleanup(db);
   } catch (e) {
     console.error("[requestStats] save failed:", e);
@@ -143,9 +147,7 @@ async function maybeCleanup(db) {
   try {
     const { getSettings } = await import("./settingsRepo.js");
     const settings = await getSettings();
-    const days = settings.statsRetentionDays || DEFAULT_RETENTION_DAYS;
-    const cutoff = new Date(now - days * DAY_MS).toISOString();
-    db.run(`DELETE FROM requestStats WHERE timestamp < ?`, [cutoff]);
+    cleanupContext(db, now, retentionDays(settings));
   } catch {}
 }
 

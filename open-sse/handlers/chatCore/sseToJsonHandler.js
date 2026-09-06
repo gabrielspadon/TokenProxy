@@ -1,3 +1,4 @@
+import { recordContextFailure } from "./contextTelemetry.js";
 import { convertResponsesStreamToJson } from "../../transformer/streamToJsonConverter.js";
 import { createCallerAbortResult, createErrorResult, isCallerAbortError } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
@@ -407,7 +408,7 @@ function assertClassifierGeminiSseLossless(rawSSE) {
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {} }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
   if (!isSSE) return null; // not handled here
@@ -425,10 +426,18 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   const connPrefix = connectionId ? String(connectionId).slice(0, 8) : undefined;
   // HEADERS finding: gateway-built error responses carry the same x-tp-*
   // saver telemetry as successes.
-  const saverErrorResult = (...args) => withSaverHeaders(createErrorResult(...args), saverMeta);
+  let contextFailureTokens = null;
+  const saverErrorResult = (...args) => {
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, tokens: contextFailureTokens });
+    args[3] = { ...args[3], safeToReplay: false };
+    return withSaverHeaders(createErrorResult(...args), saverMeta);
+  };
   const bodyReadFailure = (error, context = "convert-sse-json") => {
     trackDoneOnce();
-    if (callerSignal?.aborted && isCallerAbortError(error)) return withSaverHeaders(createCallerAbortResult(), saverMeta);
+    if (callerSignal?.aborted && isCallerAbortError(error)) {
+      recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted", tokens: contextFailureTokens });
+      return withSaverHeaders(createCallerAbortResult(), saverMeta);
+    }
     if (isBodyReadTimeoutError(error)) {
       reqSummary("failed", { ...saverFields, rid, conn: connPrefix, route, fmt, sel, status: HTTP_STATUS.GATEWAY_TIMEOUT, why: "body-timeout" });
       return saverErrorResult(HTTP_STATUS.GATEWAY_TIMEOUT, `Upstream response body timed out for ${provider}`, null, null, rid);
@@ -494,6 +503,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
             provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Invalid Gemini SSE response for non-streaming request",
           );
         }
+        contextFailureTokens = parsed.usage ?? null;
         if (parsed.error) {
           trackDoneOnce();
           return saverErrorResult(
@@ -529,6 +539,11 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
           consume: (reader) => convertResponsesStreamToJson(providerResponse.body, { reader }),
         });
       }
+      contextFailureTokens = jsonResponse?.usage ?? null;
+      if (jsonResponse?.status === "failed" || jsonResponse?.error) {
+        trackDoneOnce();
+        return saverErrorResult(HTTP_STATUS.BAD_GATEWAY, "Upstream generation failed", null, { safeToReplay: false }, rid);
+      }
       // Client tools are cloaked with a suffix on the way out and restored on
       // the way back. The non-streaming handler does that; this path never did,
       // so a client that declared `exec` was handed `exec_ide` and rejected its
@@ -549,20 +564,16 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       appendLog({ tokens: usage, status: "200 OK" });
       saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid });
 
-      // Same cache-inclusive total for the recorded detail, so the DB and the
-      // client-facing usage can never disagree.
-      const inTokensForLog = (usage.input_tokens || 0)
-        + (usage.cache_read_input_tokens || usage.cached_tokens || 0)
-        + (usage.cache_creation_input_tokens || 0);
       const { msgItem, textContent: rawTextContent } = pickAssistantMessageForChatCompletion(jsonResponse.output);
       // JSON mode: drop a ```json fence the provider added around the object
       const textContent = wantsJsonOutput(body) ? stripJsonFence(rawTextContent) : rawTextContent;
       const totalLatency = Date.now() - requestStartTime;
 
       const doneDetail = buildRequestDetail({
+      contextTelemetry,
         ...ctx,
         latency: { ttft: totalLatency, total: totalLatency },
-        tokens: { prompt_tokens: inTokensForLog, completion_tokens: usage.output_tokens || 0 },
+        tokens: jsonResponse.usage ?? null,
         response: { content: textContent, thinking: null, finish_reason: jsonResponse.status || "unknown" },
         status: "success",
         rid,
@@ -754,6 +765,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         rid,
       );
     }
+    contextFailureTokens = parsed.usage ?? null;
     if (parsed.error) {
       trackDoneOnce();
       reqSummary("failed", { ...saverFields, rid, conn: connPrefix, route, fmt, sel, status: HTTP_STATUS.BAD_GATEWAY, why: "upstream-error-in-sse" });
@@ -787,6 +799,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
     const totalLatency = Date.now() - requestStartTime;
     const doneDetail = buildRequestDetail({
+      contextTelemetry,
       ...ctx,
       latency: { ttft: totalLatency, total: totalLatency },
       tokens: usage,

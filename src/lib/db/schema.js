@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -186,6 +186,33 @@ export const TABLES = {
   // Full-history statistics source (45-day retention). Written once per
   // request from the same detail used for requestDetails; the Statistics page
   // reads all aggregation from this table only.
+  contextSessions: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      sessionHash: "TEXT UNIQUE NOT NULL",
+      identitySource: "TEXT NOT NULL",
+      projectLabel: "TEXT",
+      firstSeenAt: "TEXT NOT NULL",
+      lastSeenAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_cs_seen ON contextSessions(lastSeenAt DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_cs_project ON contextSessions(projectLabel)",
+    ],
+  },
+  contextStages: {
+    columns: {
+      requestId: "TEXT NOT NULL REFERENCES requestStats(id) ON DELETE CASCADE",
+      ordinal: "INTEGER NOT NULL",
+      stage: "TEXT NOT NULL",
+      beforeBytes: "INTEGER NOT NULL",
+      afterBytes: "INTEGER NOT NULL",
+      deltaBytes: "INTEGER NOT NULL",
+      outcome: "TEXT NOT NULL",
+      risk: "TEXT NOT NULL",
+    },
+    primaryKey: "PRIMARY KEY (requestId, ordinal)",
+  },
   requestStats: {
     columns: {
       id: "TEXT PRIMARY KEY",
@@ -201,9 +228,34 @@ export const TABLES = {
       reasoningTokens: "INTEGER DEFAULT 0",
       latencyTotal: "INTEGER DEFAULT 0",
       latencyTtft: "INTEGER DEFAULT 0",
+      contextSessionId: "INTEGER",
+      logicalRequestId: "TEXT",
+      requestedModel: "TEXT",
+      clientTool: "TEXT",
+      contextEstimate: "INTEGER",
+      inputEstimate: "INTEGER",
+      bodyBeforeBytes: "INTEGER",
+      bodyAfterBytes: "INTEGER",
+      cachePrefixBytes: "INTEGER",
+      compactHint: "INTEGER",
+      usageSource: "TEXT",
+      usageInputPresent: "INTEGER",
+      usageOutputPresent: "INTEGER",
+      cacheReadPresent: "INTEGER",
+      cacheWritePresent: "INTEGER",
+      messageCount: "INTEGER",
+      toolCount: "INTEGER",
+      routeKind: "TEXT",
+      formatPair: "TEXT",
+      selection: "TEXT",
+      contextControls: "TEXT",
+      attempt: "INTEGER",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_rs_ts ON requestStats(timestamp DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_rs_context_session ON requestStats(contextSessionId, timestamp, id)",
+      "CREATE INDEX IF NOT EXISTS idx_rs_context_request ON requestStats(logicalRequestId)",
+      "CREATE INDEX IF NOT EXISTS idx_rs_context_client ON requestStats(clientTool, timestamp)",
       "CREATE INDEX IF NOT EXISTS idx_rs_provider ON requestStats(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rs_model ON requestStats(model)",
       "CREATE INDEX IF NOT EXISTS idx_rs_conn ON requestStats(connectionId)",

@@ -222,7 +222,7 @@ export async function saveRequestDetail(detail) {
   // the stats write — which runs unconditionally, independent of the
   // observability toggle — sees a stable key.
   if (!detail.id) detail.id = generateDetailId(detail.model);
-  saveRequestStats(detail).catch((e) => console.error("[requestStats] save failed:", e.message));
+  await saveRequestStats(detail).catch((e) => console.error("[requestStats] save failed:", e.message));
 
   const config = await getObservabilityConfig();
   if (!config.enabled) {return;}

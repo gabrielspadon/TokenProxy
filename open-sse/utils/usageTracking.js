@@ -150,6 +150,7 @@ export function normalizeUsage(usage) {
     normalized.completion_tokens_details = usage.completion_tokens_details;
   }
 
+  if (usage.estimated === true) normalized.estimated = true;
   if (Object.keys(normalized).length === 0) return null;
   return normalized;
 }
@@ -291,6 +292,7 @@ export function canonicalizeUsage(usage, ctx = null) {
     cached_tokens: cached,
     cache_creation_input_tokens: cacheCreation,
   };
+  if (usage.estimated === true) result.estimated = true;
   copyNonnegativeExactCosts(usage, result);
   if (reasoning > 0) result.reasoning_tokens = reasoning;
   return result;
@@ -369,8 +371,8 @@ export function extractUsage(chunk) {
   if (chunk.type === "message_start" && chunk.message?.usage && typeof chunk.message.usage === "object") {
     const u = chunk.message.usage;
     return normalizeUsage({
-      prompt_tokens: u.input_tokens || 0,
-      completion_tokens: u.output_tokens || 0,
+      prompt_tokens: u.input_tokens,
+      completion_tokens: u.output_tokens,
       cache_read_input_tokens: u.cache_read_input_tokens,
       cache_creation_input_tokens: u.cache_creation_input_tokens,
       cost_usd: u.cost_usd,
@@ -381,9 +383,9 @@ export function extractUsage(chunk) {
 
   // Claude format (message_delta event)
   if (chunk.type === "message_delta" && chunk.usage && typeof chunk.usage === "object") {
-    const completionTokens = chunk.usage.output_tokens || 0;
+    const completionTokens = chunk.usage.output_tokens;
     return normalizeUsage({
-      prompt_tokens: chunk.usage.input_tokens || 0,
+      prompt_tokens: chunk.usage.input_tokens,
       completion_tokens: completionTokens,
       cache_read_input_tokens: chunk.usage.cache_read_input_tokens,
       cache_creation_input_tokens: chunk.usage.cache_creation_input_tokens,
@@ -402,8 +404,8 @@ export function extractUsage(chunk) {
     const usage = chunk.response.usage;
     const cachedTokens = usage.input_tokens_details?.cached_tokens;
     return normalizeUsage({
-      prompt_tokens: usage.input_tokens || usage.prompt_tokens || 0,
-      completion_tokens: usage.output_tokens || usage.completion_tokens || 0,
+      prompt_tokens: usage.input_tokens ?? usage.prompt_tokens,
+      completion_tokens: usage.output_tokens ?? usage.completion_tokens,
       cached_tokens: cachedTokens,
       reasoning_tokens: usage.output_tokens_details?.reasoning_tokens,
       cost_usd: usage.cost_usd,
@@ -417,8 +419,8 @@ export function extractUsage(chunk) {
   if (chunk.usage && typeof chunk.usage === "object" && chunk.usage.prompt_tokens !== undefined) {
     return normalizeUsage({
       prompt_tokens: chunk.usage.prompt_tokens,
-      completion_tokens: chunk.usage.completion_tokens || 0,
-      cached_tokens: chunk.usage.prompt_tokens_details?.cached_tokens || chunk.usage.prompt_cache_hit_tokens,
+      completion_tokens: chunk.usage.completion_tokens,
+      cached_tokens: chunk.usage.prompt_tokens_details?.cached_tokens ?? chunk.usage.prompt_cache_hit_tokens,
       reasoning_tokens: chunk.usage.completion_tokens_details?.reasoning_tokens,
       cost_usd: chunk.usage.cost_usd,
       cost_in_usd: chunk.usage.cost_in_usd,
@@ -433,8 +435,8 @@ export function extractUsage(chunk) {
   const usageMeta = chunk.usageMetadata || chunk.response?.usageMetadata;
   if (usageMeta && typeof usageMeta === "object") {
     return normalizeUsage({
-      prompt_tokens: usageMeta.promptTokenCount || 0,
-      completion_tokens: usageMeta.candidatesTokenCount || 0,
+      prompt_tokens: usageMeta.promptTokenCount,
+      completion_tokens: usageMeta.candidatesTokenCount,
       total_tokens: usageMeta.totalTokenCount,
       cached_tokens: usageMeta.cachedContentTokenCount,
       reasoning_tokens: usageMeta.thoughtsTokenCount
@@ -445,9 +447,9 @@ export function extractUsage(chunk) {
   // Ollama sends: {"model":"...","done":true,"prompt_eval_count":N,"eval_count":M}
   if (chunk.done === true && typeof chunk.prompt_eval_count === "number") {
     return normalizeUsage({
-      prompt_tokens: chunk.prompt_eval_count || 0,
-      completion_tokens: chunk.eval_count || 0,
-      total_tokens: (chunk.prompt_eval_count || 0) + (chunk.eval_count || 0)
+      prompt_tokens: chunk.prompt_eval_count,
+      completion_tokens: chunk.eval_count,
+      total_tokens: (chunk.prompt_eval_count) + (chunk.eval_count)
     });
   }
 
