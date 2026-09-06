@@ -1,0 +1,363 @@
+.book {
+  padding: 4px 26px 0;
+}
+.bookBody {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  border: 1px solid #dae1ec;
+  border-bottom: 0;
+  background: #fff;
+  border-radius: 6px 6px 0 0;
+  overflow: hidden;
+}
+.bookToolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  min-height: 46px;
+  background: #fff;
+}
+.bookTitle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.bookTitle h2 {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.2px;
+}
+.bookTitle > span:last-child {
+  color: #5e6d85;
+  font-size: 13px;
+  margin-inline-start: 5px;
+}
+.accountSearch {
+  width: 167px;
+}
+.resetOverview {
+  display: grid;
+  grid-template-columns: 235px minmax(200px, 1fr) 160px;
+  align-items: center;
+  background: #f7f9fd;
+  border-block: 1px solid #e3e8f2;
+  padding: 0 16px;
+}
+.resetOverview h3 {
+  font-size: 13px;
+  font-weight: 500;
+  color: #34435d;
+}
+.resetOverview p {
+  font-size: 13px;
+  color: #5e6d85;
+  margin-top: 3px;
+}
+.resetChart {
+  min-width: 0;
+}
+.resetBasis {
+  font-size: 13px;
+  color: #5e6d85;
+  text-align: end;
+}
+.tableRegion {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.tableScroll {
+  height: 100%;
+}
+.accountTable {
+  font-size: 13px;
+  white-space: nowrap;
+  width: 100%;
+}
+.accountTable thead {
+  z-index: 1;
+  background: #fbfcfe;
+  box-shadow: 0 1px #dce3ed;
+}
+.accountTable th {
+  font-size: 13px;
+  font-weight: 500;
+  color: #63718a;
+  height: 32px;
+  padding: 5px 13px;
+  background: #fbfcfe;
+}
+.accountTable td {
+  padding: 4px 13px;
+  line-height: 1.2;
+  height: 33px;
+  border-color: #e9edf3;
+  color: #34435b;
+}
+.accountTable th:first-child,
+.accountTable td:first-child {
+  width: 32px;
+  padding-inline: 13px 5px;
+}
+.accountTable th:nth-child(2) {
+  width: 300px;
+}
+.accountTable th:nth-child(3) {
+  width: 11%;
+}
+.accountTable th:nth-child(4) {
+  width: 10%;
+}
+.accountTable th:nth-child(5) {
+  width: 15%;
+}
+.accountTable th:nth-child(6) {
+  width: 17%;
+}
+.accountTable th:nth-child(7) {
+  width: 17%;
+}
+.accountTable tr[data-selected] td {
+  background: #edf1fe;
+}
+.accountTable tr[data-selected] td:first-child {
+  box-shadow: inset 2px 0 #5f75d6;
+}
+.sortButton {
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  width: 100%;
+}
+.sortButton:hover {
+  color: #455bca;
+}
+.sortButton > span:last-child {
+  color: #6178ce;
+}
+.accountCell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: start;
+}
+.accountCell > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 235px;
+}
+.accountCell :global(.provider-mark) {
+  height: 22px;
+  width: 22px;
+  min-width: 22px;
+  border: 1px solid #e3e7ef;
+  background: #fff;
+  border-radius: 6px;
+}
+.accountCell :global(.provider-mark img) {
+  width: 19px;
+  height: 19px;
+  object-fit: contain;
+}
+.state {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  font-size: 13px;
+  color: #6d788b;
+}
+.state i {
+  width: 6px;
+  height: 6px;
+  background: #9ba7b9;
+  border-radius: 50%;
+}
+.state[data-color='teal'] {
+  color: #2c7069;
+}
+.state[data-color='teal'] i {
+  background: #439589;
+}
+.state[data-color='orange'] {
+  color: #8f682c;
+}
+.state[data-color='orange'] i {
+  background: #c4934a;
+}
+.requestMeasure {
+  width: 84px;
+  text-align: end;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tokenMeasure {
+  min-width: 135px;
+  max-width: 180px;
+}
+.tokenMeasure > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.tokenMeasure small {
+  font-size: 13px;
+  color: #4f726b;
+}
+.windowEvidence {
+  min-width: 140px;
+  max-width: 240px;
+  font-size: 13px;
+}
+.windowEvidence > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.moreWindows {
+  color: #5b6fa8;
+  background: #edf0f8;
+  font-size: 13px;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.unknown {
+  font-size: 13px;
+  color: #5e6d85;
+}
+.unknownScale {
+  display: block;
+  height: 3px;
+  width: 100%;
+  background: repeating-linear-gradient(
+    110deg,
+    #e2e7ee 0,
+    #e2e7ee 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+.reset {
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  font-size: 13px;
+}
+.reset > span:last-child {
+  color: #5e6d85;
+  font-size: 13px;
+}
+.reset > span[data-passed='true'] {
+  color: #986f39;
+}
+.bookFoot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: #5e6d85;
+  border-top: 1px solid #dfe5ee;
+  padding: 7px 14px;
+  gap: 10px;
+  background: #fafbfd;
+}
+.bookFoot > span:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.bookFoot i {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  margin-inline-start: 5px;
+}
+.bookFoot a {
+  color: #4c62b5;
+  margin-inline-start: 5px;
+  text-decoration: none;
+}
+.quotaTable {
+  font-size: 13px;
+  min-width: 760px;
+}
+.quotaTable th {
+  font-weight: 500;
+  color: #5e6d85;
+}
+.support {
+  padding: 18px;
+}
+.support h2 {
+  font-size: 18px;
+  font-weight: 500;
+  margin-bottom: 3px;
+}
+.support table {
+  font-size: 13px;
+}
+@media (min-width: 1700px) {
+  .accountCell > span:last-child {
+    max-width: 310px;
+  }
+  .accountTable td {
+    height: 33px;
+  }
+  .tokenMeasure {
+    max-width: 240px;
+  }
+  .requestMeasure {
+    width: 120px;
+  }
+}
+@media (max-width: 1250px) {
+  .bookTitle > span:last-child {
+    display: none;
+  }
+  .bookToolbar {
+    flex-wrap: wrap;
+  }
+  .bookFoot {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 768px) {
+  .book {
+    padding: 6px 16px 0;
+  }
+  .bookToolbar {
+    padding: 10px;
+  }
+  .bookToolbar > div:last-child {
+    width: 100%;
+  }
+  .accountSearch {
+    flex: 1;
+    min-width: 100px;
+  }
+  .resetOverview {
+    grid-template-columns: 125px minmax(120px, 1fr);
+    padding: 5px 12px;
+  }
+  .resetBasis {
+    display: none;
+  }
+  .resetOverview p {
+    font-size: 13px;
+  }
+  .bookFoot > span:last-child {
+    display: none;
+  }
+}
