@@ -4,6 +4,7 @@
   border-top: 1px solid var(--border, #dce2ec);
   color: #24324a;
   min-width: 0;
+  --mantine-color-dimmed: #596981;
 }
 .workbench h3 {
   font-size: 17px;

@@ -233,7 +233,13 @@ function ObservationSeries({ series }) {
               </Button>
             )}
           </Group>
-          <ScrollArea>
+          <ScrollArea
+            viewportProps={{
+              tabIndex: 0,
+              role: 'region',
+              'aria-label': 'Scroll contributing quota observations',
+            }}
+          >
             <Table className={styles.table} aria-label="Contributing quota observations">
               <Table.Thead>
                 <Table.Tr>
@@ -274,6 +280,8 @@ function ObservationSeries({ series }) {
               onChange={setPage}
               size="xs"
               aria-label="Quota observation pages"
+              getControlProps={(control) => ({ 'aria-label': `${control} quota observation page` })}
+              getItemProps={(page) => ({ 'aria-label': `Quota observation page ${page}` })}
             />
           </Group>
           {selected && (
@@ -363,7 +371,13 @@ function ResetChecks({ analysisUrl, onSnapshot }) {
         <p className={styles.empty}>No matching check events were retained in this period.</p>
       ) : (
         <>
-          <ScrollArea>
+          <ScrollArea
+            viewportProps={{
+              tabIndex: 0,
+              role: 'region',
+              'aria-label': 'Scroll recorded reset checks',
+            }}
+          >
             <Table className={styles.table} aria-label="Recorded quota reset checks">
               <Table.Thead>
                 <Table.Tr>
@@ -401,6 +415,8 @@ function ResetChecks({ analysisUrl, onSnapshot }) {
               onChange={setPage}
               size="xs"
               aria-label="Reset check pages"
+              getControlProps={(control) => ({ 'aria-label': `${control} reset check page` })}
+              getItemProps={(page) => ({ 'aria-label': `Reset check page ${page}` })}
             />
           </Group>
         </>

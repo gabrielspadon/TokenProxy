@@ -353,11 +353,11 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
       <Tabs.Panel value="quota">
         <div className={shared.dockBody}>
           {row.windows.length ? (
-            <ScrollArea>
+            <ScrollArea viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Scroll current quota windows' }}>
               <QuotaTable windows={row.windows} anchor={anchor} selectedScope={selectedScope} />
             </ScrollArea>
           ) : (
-            <Text size="sm" c="dimmed">
+            <Text size="sm" c="#596981">
               No quota windows were recorded for this account.
             </Text>
           )}
