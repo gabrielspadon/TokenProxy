@@ -730,6 +730,33 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
   const governing = resolveQuotaEntry(quotas, providerConfig);
   if (governing && isQuotaExhausted(governing) && governing.resetAt) {
     await markRateLimitedUntil(connection, governing.resetAt, provider, deps);
+  } else if (
+    governing &&
+    !isQuotaExhausted(governing) &&
+    connection.rateLimitedUntil &&
+    new Date(connection.rateLimitedUntil).getTime() > Date.now()
+  ) {
+    // EARLY LIFT. The lock's timestamp is our guess (blind backoff caps at 6h)
+    // or the provider's last word, and providers lift quotas before either.
+    // This tick's usage read is fresher than both: a governing window reading
+    // healthy while the lock is still in the future means the quota is gone,
+    // so release the account now instead of serving out the sentence. The
+    // usage read already happened, so this costs no request and no quota.
+    // backoffLevel is deliberately kept: a lock cleared wrongly re-locks one
+    // level higher on the next real failure, which is half-open behavior.
+    // ponytail: account-level lock only; per-model modelLock_* clears when a
+    // per-model provider (antigravity) needs early lift.
+    try {
+      await deps.updateProviderConnection(connection.id, { rateLimitedUntil: null });
+      console.log(
+        `[AutoPing] ${provider}:${connection.id}: quota lifted early, lock cleared` +
+          ` (was ${connection.rateLimitedUntil})`
+      );
+    } catch (e) {
+      console.warn(
+        `[AutoPing] ${provider}:${connection.id}: could not clear lifted lock: ${e.message}`
+      );
+    }
   }
   if (
     providerConfig.skipWhenBlockingQuotaExhausted &&
