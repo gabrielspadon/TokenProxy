@@ -15,7 +15,7 @@ const PERIODS = [
   { value: 'custom', label: 'Custom UTC range' },
 ];
 const unique = (values) => [...new Set(values.filter(Boolean))];
-export function ScopeBar() {
+export function ScopeBar({ analysisActions = true }) {
   const { scope, setScope, snapshot, accounts, models, refresh } = useWorkspace();
   const [customOpen, setCustomOpen] = useState(false);
   const [start, setStart] = useState(null);
@@ -128,7 +128,7 @@ export function ScopeBar() {
           Clear
         </Button>
       )}
-      <Investigations />
+      {analysisActions && <Investigations />}
       <span className={styles.scopeSummary}>Shared UTC scope</span>
       <Tooltip label={snapshot ? 'Re-read the isolated snapshot' : 'Refresh observations'}>
         <ActionIcon
@@ -175,6 +175,6 @@ export function ScopeBar() {
           </Group>
         </Stack>
       </Modal>
-    </div><SelectionEvidence /></>
+    </div>{analysisActions && <SelectionEvidence />}</>
   );
 }

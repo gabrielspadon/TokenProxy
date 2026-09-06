@@ -8,6 +8,9 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
+import { Tabs } from '@mantine/core';
+import { ModelsPolicy } from '@/shared/models-policy/ModelsPolicy';
+import policyStyles from '@/shared/models-policy/policy.module.css';
 import './styles.css';
 
 function pollFresh(p) {
@@ -33,6 +36,14 @@ const NEXT_REQUEST =
   'New requests take the change. A request already in flight keeps what it started with.';
 
 export default function ModelsPage() {
+  const [view, setView] = useState('policy');
+  return <Tabs value={view} onChange={setView} className={policyStyles.pageTabs}>
+    <Tabs.List><Tabs.Tab value="policy">Policy workbench</Tabs.Tab><Tabs.Tab value="catalog">Catalog controls</Tabs.Tab></Tabs.List>
+    <Tabs.Panel value="policy"><ModelsPolicy /></Tabs.Panel>
+    <Tabs.Panel value="catalog">{view === 'catalog' && <CatalogControls />}</Tabs.Panel>
+  </Tabs>;
+}
+function CatalogControls() {
   const models = usePoll('/api/models', 30000);
   const disabled = usePoll('/api/models/disabled', 30000);
   const custom = usePoll('/api/models/custom', 30000);
