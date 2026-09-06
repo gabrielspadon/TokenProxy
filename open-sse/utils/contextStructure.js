@@ -22,9 +22,8 @@ function fragments() {
     return result;
   };
   const arrayBytes = (parts) => 2 + Math.max(0, parts.length - 1) + parts.reduce((sum, part) => sum + part.bytes, 0);
-  const array = (parts) => ({ encoded: `[${parts.map((part) => part.encoded).join(",")}]`, bytes: arrayBytes(parts) });
   const object = (entries) => `{${entries.map(([name, value]) => `${JSON.stringify(name)}:${value}`).join(",")}}`;
-  return { serialize, array, arrayBytes, object };
+  return { serialize, arrayBytes, object };
 }
 
 // Counts describe serialized JSON, not tokenizer input or decoded media size.
@@ -34,7 +33,9 @@ export function measureContextStructure(body, boundary, key, { serialized } = {}
   // Internal callers may supply the exact JSON they already prepared for wire
   // serialization. Never accept this option from a client-supplied field.
   const encoded = typeof serialized === "string" ? serialized : JSON.stringify(body);
-  const bodyBytes = Buffer.byteLength(encoded, "utf8");
+  // Encode once; the same buffer serves the byte count and the body HMAC below.
+  const encodedBuffer = Buffer.from(encoded, "utf8");
+  const bodyBytes = encodedBuffer.length;
   if (bodyBytes > CONTEXT_CAPTURE_LIMITS.bytes) throw new ContextStructureError("Structural measurement exceeds capture limits");
   const result = {
     version: 1, boundary, bodyBytes, messageBytes: 0, messageContainerBytes: 0,
@@ -66,7 +67,7 @@ export function measureContextStructure(body, boundary, key, { serialized } = {}
       result.roles[role].count++; result.roles[role].bytes += size; roleBytes += size;
     }
     const latestUser = messages.findLastIndex((item) => contextRole(item) === ROLE.USER);
-    history.push([field, json.array(latestUser >= 0 ? parts.slice(0, latestUser) : []).encoded]);
+    history.push([field, latestUser >= 0 ? parts.slice(0, latestUser) : []]);
   }
   result.messageContainerBytes = result.messageBytes - roleBytes;
   result.envelopeBytes = bodyBytes - result.messageBytes - result.instructionBytes - result.toolSchemaBytes;
@@ -77,36 +78,55 @@ export function measureContextStructure(body, boundary, key, { serialized } = {}
     if (++visited > CONTEXT_CAPTURE_LIMITS.nodes || current.depth > CONTEXT_CAPTURE_LIMITS.depth) throw new ContextStructureError("Structural measurement exceeds capture limits");
     if (value === null || typeof value !== "object") continue;
     if (Array.isArray(value)) {
-      for (const child of value) stack.push({ ...current, value: child, depth: current.depth + 1 });
+      const depth = current.depth + 1;
+      for (const child of value) stack.push({ value: child, depth, toolCalls: current.toolCalls, toolResults: current.toolResults, attachments: current.attachments });
       continue;
     }
-    const categories = {
-      toolCalls: CONTEXT_CALL_TYPES.has(value.type) || value.functionCall !== undefined,
-      toolResults: CONTEXT_RESULT_TYPES.has(value.type) || value.role === ROLE.TOOL || value.functionResponse !== undefined,
-      attachments: CONTEXT_ATTACHMENT_TYPES.has(value.type) || value.inlineData !== undefined || value.fileData !== undefined,
-    };
-    const flags = {};
-    for (const [category, detected] of Object.entries(categories)) {
-      if (detected && !current[category]) { result.subsets[category].count++; result.subsets[category].bytes += bytes(value); }
-      flags[category] = current[category] || detected;
-    }
+    const isToolCall = CONTEXT_CALL_TYPES.has(value.type) || value.functionCall !== undefined;
+    const isToolResult = CONTEXT_RESULT_TYPES.has(value.type) || value.role === ROLE.TOOL || value.functionResponse !== undefined;
+    const isAttachment = CONTEXT_ATTACHMENT_TYPES.has(value.type) || value.inlineData !== undefined || value.fileData !== undefined;
+    if (isToolCall && !current.toolCalls) { result.subsets.toolCalls.count++; result.subsets.toolCalls.bytes += bytes(value); }
+    if (isToolResult && !current.toolResults) { result.subsets.toolResults.count++; result.subsets.toolResults.bytes += bytes(value); }
+    if (isAttachment && !current.attachments) { result.subsets.attachments.count++; result.subsets.attachments.bytes += bytes(value); }
+    const toolCalls = current.toolCalls || isToolCall, toolResults = current.toolResults || isToolResult, attachments = current.attachments || isAttachment;
     // Inspect protocol containers only. Tool arguments, schema examples and
     // arbitrary result objects must not be mistaken for real content blocks.
     for (const field of ["content", "parts", "tool_calls"]) {
       const child = value[field];
       if (!Array.isArray(child) && !object(child)) continue;
-      if (field === "tool_calls" && Array.isArray(child) && !flags.toolCalls) {
+      if (field === "tool_calls" && Array.isArray(child) && !toolCalls) {
         for (const call of child) { result.subsets.toolCalls.count++; result.subsets.toolCalls.bytes += bytes(call); }
-        stack.push({ value: child, depth: current.depth + 1, ...flags, toolCalls: true });
-      } else stack.push({ value: child, depth: current.depth + 1, ...flags });
+        stack.push({ value: child, depth: current.depth + 1, toolCalls: true, toolResults, attachments });
+      } else stack.push({ value: child, depth: current.depth + 1, toolCalls, toolResults, attachments });
     }
   }
   const instructionJson = json.object(instructions), toolJson = json.object(tools);
-  const prefixJson = `{"instructions":${instructionJson},"tools":${toolJson},"history":${json.object(history)}}`;
-  result.historyPrefixBytes = Buffer.byteLength(prefixJson, "utf8");
+  const instructionBuffer = Buffer.from(instructionJson, "utf8"), toolBuffer = Buffer.from(toolJson, "utf8");
+  // Stream the prefix HMAC over the exact fragment sequence the version-1 JSON
+  // contract concatenates. Fragment boundaries sit between complete JSON values,
+  // so per-fragment UTF-8 encoding is byte-identical to encoding the whole
+  // string, and the digest and byte count match the materialized form exactly.
+  const prefix = createHmac("sha256", key).update("context-v1:history-prefix\0");
+  let prefixBytes = 0;
+  const text = (part) => { prefix.update(part, "utf8"); prefixBytes += Buffer.byteLength(part, "utf8"); };
+  const buffer = (part) => { prefix.update(part); prefixBytes += part.length; };
+  text('{"instructions":'); buffer(instructionBuffer);
+  text(',"tools":'); buffer(toolBuffer);
+  text(',"history":{');
+  for (let index = 0; index < history.length; index++) {
+    const [field, parts] = history[index];
+    text(`${index ? "," : ""}${JSON.stringify(field)}:[`);
+    for (let position = 0; position < parts.length; position++) {
+      if (position) text(",");
+      prefix.update(parts[position].encoded, "utf8"); prefixBytes += parts[position].bytes;
+    }
+    text("]");
+  }
+  text("}}");
+  result.historyPrefixBytes = prefixBytes;
   result.fingerprints = {
-    body: createHmac("sha256", key).update("context-v1:body\0").update(encoded, "utf8").digest("hex"),
-    instructions: fingerprint(key, "instructions", instructionJson), tools: fingerprint(key, "tools", toolJson), historyPrefix: fingerprint(key, "history-prefix", prefixJson),
+    body: createHmac("sha256", key).update("context-v1:body\0").update(encodedBuffer).digest("hex"),
+    instructions: fingerprint(key, "instructions", instructionBuffer), tools: fingerprint(key, "tools", toolBuffer), historyPrefix: prefix.digest("hex"),
   };
   return result;
 }
