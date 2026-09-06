@@ -1015,7 +1015,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         headroomEnabled: comboTokenSaver.headroomEnabled,
         headroomAllowLossy: chatSettings.headroomAllowLossy === true,
         headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
-        headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
+        headroomCompressUserMessages: chatSettings.headroomCompressUserMessages === true,
         headroomTimeoutMs: chatSettings.headroomTimeoutMs ?? parseHeadroomTimeoutMs(),
         cavemanEnabled: comboTokenSaver.cavemanEnabled,
         cavemanLevel: chatSettings.cavemanLevel || "full",

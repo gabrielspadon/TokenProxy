@@ -33,6 +33,16 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('independent money boundary at the real chat coordinator', () => {
+  it.each([false, 'false', 'true', 1, null])('requires literal consent for historical user compression (%s)', async (value) => {
+    mocks.settings.mockResolvedValue({ requireApiKey: false, providerThinking: {}, providerStrategies: {},
+      headroomAllowLossy: true, headroomCompressUserMessages: value });
+    mocks.core.mockImplementation(success);
+    const response = await handleChat(request());
+    expect(response.status).toBe(200);
+    expect(mocks.core.mock.calls[0][0].headroomCompressUserMessages).toBe(false);
+    await response.text();
+  });
+
   it.each([429, 503, 507])('does not replay an uncertain or partial %i failure', async (status) => {
     mocks.core.mockResolvedValueOnce(failure(status, false)).mockImplementation(success);
     const response = await handleChat(request());
