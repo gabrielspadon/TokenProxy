@@ -26,6 +26,7 @@ export const COMPATIBILITY_TABLES = {
       result: 'TEXT CHECK (result IS NULL OR length(CAST(result AS BLOB)) <= 524288)',
       error: 'TEXT', createdAt: 'TEXT NOT NULL', startedAt: 'TEXT', finishedAt: 'TEXT',
     },
+    constraints: ['FOREIGN KEY (fixtureId,fixtureRevision) REFERENCES compatibilityFixtures(id,revision)'],
     indexes: [
       'CREATE INDEX IF NOT EXISTS idx_compat_runs_owner ON compatibilityRuns(ownerScope,createdAt DESC,id)',
       'CREATE INDEX IF NOT EXISTS idx_compat_runs_fixture ON compatibilityRuns(fixtureId,fixtureRevision,createdAt DESC)',
