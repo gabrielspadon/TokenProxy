@@ -6,6 +6,7 @@ import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
 import { useResource } from './useResource';
 import { LENS_PATHS,selectionExcluded,selectionLens } from '@/lib/db/analytics/investigationModel.mjs';
+import { serializeEvidence } from '@/lib/db/analytics/evidenceFormat.mjs';
 import styles from './investigations.module.css';
 
 async function request(url,method,body) {
@@ -85,7 +86,7 @@ export function SelectionEvidence() {
     try {
       const result=await request('/api/admin/investigations/export','POST',{mode,definition:workspace.captureDefinition(lens)});
       if(workspace.snapshot)result.manifest.preview={...workspace.snapshot,basis:'Authenticated response headers observed by this workspace; freshness describes the database read transaction.'};
-      const blob=new Blob([JSON.stringify(result,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob);
+      const blob=new Blob([serializeEvidence(result,true)],{type:'application/json'}),url=URL.createObjectURL(blob);
       const anchor=document.createElement('a');anchor.href=url;anchor.download=`tokenproxy-evidence-${lens}-${new Date().toISOString().replaceAll(':','-')}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);setManifest(result.manifest);
     } catch(failure){setError(failure.message);}finally{setBusy(false);}
   }

@@ -1,8 +1,9 @@
 import { InvestigationError, OWNER_SCOPE, object, validateDefinition } from './investigationModel.mjs';
 import { readActivityEvidence } from './activityQueries.mjs';
 import { publicTurn } from './contextQueries.mjs';
+import { EXPORT_LIMITS } from './evidenceFormat.mjs';
 
-export const EXPORT_LIMITS = { records: 5000, bytes: 8 * 1024 * 1024 };
+export { EXPORT_LIMITS } from './evidenceFormat.mjs';
 export function validateEvidenceQuery(query) {
   object(query,['operation','mode','definition']);
   if (query.operation !== 'evidence' || !['selected','population','comparison'].includes(query.mode)) throw new InvestigationError('Invalid evidence export.');

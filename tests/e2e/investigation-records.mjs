@@ -122,6 +122,7 @@ try {
   const keysResponse=await active.request.get('http://127.0.0.1:20311/api/keys');assert.equal(keysResponse.status(),200);assert(!(await keysResponse.text()).includes(key.key));
   await active.goto('http://127.0.0.1:20311/dashboard/keys');
   const keyRow=active.locator('.keys-row').filter({hasText:key.name});await keyRow.waitFor();
+  await keyRow.locator('summary').click();
   assert(!(await active.locator('body').innerText()).includes(key.key));
   await keyRow.getByRole('button',{name:'Reveal key',exact:true}).click();
   const confirmation=active.getByRole('dialog',{name:`Reveal ${key.name}`,exact:true});await confirmation.waitFor();
