@@ -1,257 +1,82 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ActionIcon, AppShell, Burger, Button, Divider, Group, Kbd, Modal, NavLink, ScrollArea, Stack, Text, TextInput, Tooltip } from '@mantine/core';
+import { useHotkeys } from '@mantine/hooks';
 import { NAV, NAV_GROUPS } from '@/shared/nav';
-import { Brand } from './Brand';
 import { useAuthStatus } from '@/store/authStatus';
-import { usePoll } from '@/shared/hooks/usePoll';
 import { LocaleSelect } from './LocaleSelect';
 import { Icon } from './Icon';
-import { Strap } from './Strap';
-
-function NavList({ pathname, onPick }) {
-  return (
-    <div className="nav-groups">
-      {NAV_GROUPS.map((group) => (
-        <div className="nav-group" key={group.label}>
-          <span className="nav-group-label">{group.label}</span>
-          <ul className="nav-list" role="list">
-            {group.paths
-              .map((href) => NAV.find((n) => n.href === href))
-              .filter(Boolean)
-              .map((n) => {
-                const current =
-                  n.href === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(n.href);
-                return (
-                  <li key={n.href}>
-                    <Link
-                      href={n.href}
-                      prefetch={false}
-                      aria-current={current ? 'page' : undefined}
-                      title={n.label}
-                      onClick={onPick}
-                    >
-                      <Icon name={n.icon} />
-                      <span className="nav-label">{n.label}</span>
-                    </Link>
-                  </li>
-                );
-              })}
-          </ul>
-        </div>
-      ))}
-    </div>
-  );
-}
+import { WorkspaceProvider, useWorkspace } from '@/shared/workspace/WorkspaceProvider';
+import styles from '@/shared/workspace/workspace.module.css';
 
 const SEARCH_TERMS = {
-  '/dashboard': 'health traffic overview live requests',
-  '/dashboard/context': 'cache compaction conversation project context tokens',
-  '/dashboard/connections': 'provider account quota limit oauth credential',
-  '/dashboard/models': 'model routing combo fallback',
+  '/dashboard': 'capacity account quota reset health headroom allocation',
+  '/dashboard/context': 'cache compaction conversation project agent context tokens',
+  '/dashboard/connections': 'provider account quota oauth credential',
+  '/dashboard/models': 'model routing combo fallback eligibility',
   '/dashboard/shaping': 'cache saver compression token optimization memory risk',
   '/dashboard/keys': 'endpoint api key credential',
-  '/dashboard/usage': 'cost spend price statistics tokens requests latency',
-  '/dashboard/access': 'security password login sso',
-  '/dashboard/network': 'proxy pools dns network',
-  '/dashboard/system': 'settings logs backup restore',
+  '/dashboard/usage': 'economics cost spend price statistics tokens requests latency',
 };
-const matchesControl = (n, query) =>
-  `${n.label} ${SEARCH_TERMS[n.href] || ''}`.toLowerCase().includes(query.trim().toLowerCase());
+const LABELS = { '/dashboard': 'Capacity', '/dashboard/usage': 'Economics' };
+const lensName = (item) => LABELS[item.href] || item.label;
 
-const METHOD = { Password: 'Password sign-in', SAML: 'SAML sign-in', OIDC: 'OIDC sign-in' };
-
-function Foot({ auth, version }) {
-  const signOut = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    window.location.assign('/login');
-  };
-  const v = version.data;
-  return (
-    <div className="rail-foot">
-      {v?.currentVersion ? (
-        <span className="version" data-update={v.hasUpdate ? 'true' : 'false'}>
-          {v.hasUpdate ? 'Update available' : 'Version'}{' '}
-          <span className="id" data-i18n-skip>
-            {v.currentVersion}
-          </span>
-          {v.hasUpdate && v.latestVersion ? (
-            <>
-              {' '}
-              <span>Latest</span>{' '}
-              <span className="id" data-i18n-skip>
-                {v.latestVersion}
-              </span>
-            </>
-          ) : null}
-        </span>
-      ) : null}
-      {auth?.authenticated ? (
-        <span className="caption">
-          {auth.displayName && auth.loginMethod !== 'Password' ? (
-            <span data-i18n-skip>{auth.displayName}</span>
-          ) : null}
-          {auth.loginMethod ? (
-            <>
-              {' '}
-              <span>{METHOD[auth.loginMethod] || auth.loginMethod}</span>
-            </>
-          ) : null}
-        </span>
-      ) : auth && auth.requireLogin === false ? (
-        <span className="caption">Sign-in is turned off</span>
-      ) : null}
-      <LocaleSelect />
-      {auth?.authenticated ? (
-        <button type="button" className="button quiet" onClick={signOut}>
-          <Icon name="i-signout" mirror />
-          Sign out
-        </button>
-      ) : null}
-    </div>
-  );
+export function SnapshotNotice() {
+  const { snapshot } = useWorkspace();
+  if (!snapshot) return null;
+  const captured = snapshot.capturedAt ? new Date(snapshot.capturedAt).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) : 'Historical';
+  return <Tooltip label="A private copy of recorded data. Outbound calls and operational changes are disabled. Persisted pending statuses are not live requests."><span className={styles.snapshot}><span className={styles.snapshotDot} />Snapshot {captured}{snapshot.capturedAt ? ' UTC' : ''}<span className={styles.isolation}>Isolated</span></span></Tooltip>;
 }
 
-export function Shell({ children }) {
+function WorkspaceShell({ children }) {
   const pathname = usePathname() || '/dashboard';
-  const auth = useAuthStatus((s) => s.status);
-  const load = useAuthStatus((s) => s.load);
-  const version = usePoll('/api/version', 0);
-  const dialog = useRef(null);
-  const searchDialog = useRef(null);
-  const accountDialog = useRef(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [query, setQuery] = useState('');
-  useEffect(() => {
-    load();
-  }, [load]);
-  useEffect(() => {
-    const open = (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
-        event.preventDefault();
-        searchDialog.current?.showModal();
-      }
-    };
-    window.addEventListener('keydown', open);
-    return () => window.removeEventListener('keydown', open);
-  }, []);
-
-  return (
-    <div className="shell">
-      <a href="#main" className="skip-link">
-        Skip to content
-      </a>
-      <header className="rail">
-        <div className="rail-head">
-          <Link className="brand" href="/dashboard" aria-label="TokenProxy overview" data-i18n-skip>
-            <Brand />
-          </Link>
-          <button
-            type="button"
-            className="button quiet menu-button"
-            aria-haspopup="dialog"
-            onClick={() => dialog.current?.showModal()}
-          >
-            <Icon name="i-menu" />
-            Menu
-          </button>
-        </div>
-        <button
-          className="nav-search"
-          type="button"
-          aria-label="Find a control"
-          onClick={() => searchDialog.current?.showModal()}
-        >
-          <Icon name="i-search" />
-          <span>Find a control</span>
-          <kbd>⌘ K</kbd>
-        </button>
+  const auth = useAuthStatus((state) => state.status);
+  const load = useAuthStatus((state) => state.load);
+  const { snapshot } = useWorkspace();
+  useEffect(() => { load(); }, [load]);
+  useHotkeys([['mod+k', () => setSearchOpen(true)]]);
+  const signOut = async () => {
+    const response = await fetch('/api/auth/logout', { method: 'POST' });
+    if (response.ok) window.location.assign('/login');
+  };
+  const isCapacity = pathname === '/dashboard';
+  return <AppShell padding={0} header={{ height: 52 }} navbar={{ width: 194, breakpoint: 'md', collapsed: { mobile: !mobileOpen } }} className={styles.shell}>
+    <a href="#main" className="skip-link">Skip to content</a>
+    <AppShell.Header className={styles.header}>
+      <Group gap="sm" h="100%" px={18} wrap="nowrap">
+        <Burger opened={mobileOpen} onClick={() => setMobileOpen(!mobileOpen)} hiddenFrom="md" size="sm" aria-label="Open navigation" />
+        <Link href="/dashboard" className={styles.wordmark} data-i18n-skip>TokenProxy<span className={styles.wordmarkPoint}>.</span></Link>
+        <span className={styles.headerDivider} />
+        <Text className={styles.workspaceLabel}>Workspace</Text>
+        <div className={styles.headerSpacer} />
+        <SnapshotNotice />
+        <Tooltip label="Find a page or control"><ActionIcon variant="subtle" color="gray" size="lg" aria-label="Find a control" onClick={() => setSearchOpen(true)}><Icon name="i-search" /></ActionIcon></Tooltip>
+        <Tooltip label="Workspace account and language"><ActionIcon variant="subtle" color="gray" size="lg" aria-label="Workspace account and language" onClick={() => setPreferencesOpen(true)}><Icon name="i-access" /></ActionIcon></Tooltip>
+      </Group>
+    </AppShell.Header>
+    <AppShell.Navbar className={styles.navbar}>
+      <div className={styles.navIntro}><span className={styles.workspaceOrb}><Icon name="i-models" /></span><div><strong>Gateway workspace</strong><span>{snapshot ? 'Recorded environment' : 'Local environment'}</span></div></div>
+      <ScrollArea className={styles.navScroll}>
         <nav aria-label="Sections">
-          <NavList pathname={pathname} />
+          {NAV_GROUPS.map((group, index) => <div className={styles.navGroup} key={group.label}><Text className={styles.navGroupLabel}>{index === 0 ? 'Analysis' : group.label}</Text>{group.paths.map((href) => NAV.find((item) => item.href === href)).filter(Boolean).map((item) => <NavLink key={item.href} component={Link} href={item.href} prefetch={false} label={lensName(item)} leftSection={<Icon name={item.icon} />} active={pathname === item.href} aria-current={pathname === item.href ? 'page' : undefined} onClick={() => setMobileOpen(false)} className={styles.navItem} />)}</div>)}
         </nav>
-        <Foot auth={auth} version={version} />
-      </header>
-      <div className="workspace-topbar">
-        <div className="workspace-name" data-i18n-skip>
-          TokenProxy <small>{NAV.find((n) => n.href === pathname)?.label || 'Workspace'}</small>
-        </div>
-        <Strap />
-        <button
-          className="account-button"
-          aria-label="Workspace account and language"
-          onClick={() => accountDialog.current?.showModal()}
-        >
-          <Icon name="i-access" />
-        </button>
-      </div>
-      <dialog
-        className="account-dialog"
-        ref={accountDialog}
-        aria-label="Workspace account and language"
-      >
-        <div className="screen-head">
-          <h2>Workspace preferences</h2>
-          <button className="button quiet" onClick={() => accountDialog.current?.close()}>
-            Close
-          </button>
-        </div>
-        <Foot auth={auth} version={version} />
-      </dialog>
-      <dialog className="nav-dialog" ref={dialog} aria-label="Sections">
-        <div className="rail-head">
-          <span className="brand" data-i18n-skip>
-            <Brand />
-          </span>
-          <button type="button" className="button quiet" onClick={() => dialog.current?.close()}>
-            Close
-          </button>
-        </div>
-        <nav aria-label="Sections" style={{ marginBlockStart: 16 }}>
-          <NavList pathname={pathname} onPick={() => dialog.current?.close()} />
-        </nav>
-        <Foot auth={auth} version={version} />
-      </dialog>
-      <dialog className="command-dialog" ref={searchDialog} aria-label="Find a control">
-        <div className="command-head">
-          <Icon name="i-search" />
-          <input
-            className="input"
-            aria-label="Find a control"
-            placeholder="Search pages and controls…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button
-            className="button quiet"
-            onClick={() => searchDialog.current?.close()}
-            aria-label="Close search"
-          >
-            <Icon name="i-close" />
-          </button>
-        </div>
-        <div className="command-results">
-          {NAV.filter((n) => matchesControl(n, query)).map((n) => (
-            <Link
-              href={n.href}
-              key={n.href}
-              onClick={() => {
-                searchDialog.current?.close();
-                setQuery('');
-              }}
-            >
-              <Icon name={n.icon} />
-              {n.label}
-              <Icon name="i-right" />
-            </Link>
-          ))}
-          {!NAV.some((n) => matchesControl(n, query)) ? (
-            <p className="empty">No matching controls.</p>
-          ) : null}
-        </div>
-      </dialog>
-      <main className="content" id="main" tabIndex={-1}>
-        {children}
-      </main>
-    </div>
-  );
+      </ScrollArea>
+      <div className={styles.navBottom}><Button fullWidth variant="transparent" color="gray" leftSection={<Icon name="i-search" />} rightSection={<Kbd size="xs">⌘ K</Kbd>} onClick={() => setSearchOpen(true)}>Find a control</Button><Text size="xs">{snapshot ? 'Private historical preview' : 'Operator workspace'}</Text></div>
+    </AppShell.Navbar>
+    <AppShell.Main className={styles.main}><main id="main" tabIndex={-1} className={isCapacity ? styles.lensMain : styles.legacyMain}>{children}</main></AppShell.Main>
+    <Modal opened={searchOpen} onClose={() => setSearchOpen(false)} title="Find a control" centered size="lg">
+      <TextInput data-autofocus aria-label="Find a control" placeholder="Search capacity, cache, quota, models…" value={query} onChange={(event) => setQuery(event.currentTarget.value)} leftSection={<Icon name="i-search" />} size="md" />
+      <Stack gap={4} mt="md">{NAV.filter((item) => `${lensName(item)} ${SEARCH_TERMS[item.href] || ''}`.toLowerCase().includes(query.toLowerCase())).map((item) => <NavLink component={Link} href={item.href} label={lensName(item)} leftSection={<Icon name={item.icon} />} key={item.href} onClick={() => setSearchOpen(false)} />)}</Stack>
+    </Modal>
+    <Modal opened={preferencesOpen} onClose={() => setPreferencesOpen(false)} title="Workspace preferences" centered>
+      <Stack><Text>{auth?.authenticated ? `${auth.loginMethod || 'Password'} sign-in` : auth?.requireLogin === false ? 'Sign-in is turned off' : 'Operator account'}</Text><LocaleSelect /><Divider />{auth?.authenticated && <Button variant="light" disabled={snapshot?.isolated} onClick={signOut} leftSection={<Icon name="i-signout" />}>Sign out</Button>}{snapshot && <Text size="sm" c="dimmed">Operational changes are disabled in this private snapshot.</Text>}</Stack>
+    </Modal>
+  </AppShell>;
 }
+export function Shell({ children }) { return <WorkspaceProvider><WorkspaceShell>{children}</WorkspaceShell></WorkspaceProvider>; }

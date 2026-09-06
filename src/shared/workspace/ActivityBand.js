@@ -1,0 +1,35 @@
+'use client';
+import { useMemo, useState } from 'react';
+import { Button, Loader, Modal, Pagination, Table } from '@mantine/core';
+import { AnalyticalChart, METRIC_COLORS } from './AnalyticalChart';
+import { useWorkspace } from './WorkspaceProvider';
+import styles from './workspace.module.css';
+
+const number = (value) => value == null ? '—' : new Intl.NumberFormat('en-US').format(value);
+const date = (value) => new Date(value).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+export function ActivityBand({ resource: suppliedResource, title = 'Recorded attempts' }) {
+  const workspace = useWorkspace();
+  const resource = suppliedResource || workspace.activity;
+  const [tableOpen, setTableOpen] = useState(false), [page, setPage] = useState(1);
+  const points = resource.data?.series?.points;
+  const summary = resource.data?.summary;
+  const option = useMemo(() => ({
+    grid: { top: 12, bottom: 24, left: 30, right: 7 },
+    tooltip: { trigger: 'axis', renderMode: 'richText', confine: true, valueFormatter: number },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: '#dce2ec' } }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { color: '#6b788d', fontSize: 13, formatter: (value) => date(value) } },
+    yAxis: { type: 'value', splitNumber: 2, axisLabel: { color: '#758198', fontSize: 13, formatter: (value) => value >= 1000 ? `${value / 1000}k` : value }, splitLine: { lineStyle: { color: '#eef1f6' } } },
+    brush: { xAxisIndex: 0, brushMode: 'single', brushType: 'lineX', throttleType: 'debounce', throttleDelay: 300, brushStyle: { color: 'rgba(69,91,202,0.12)', borderColor: '#7d90e2' }, toolbox: [] },
+    series: [
+      { name: 'Recorded attempts', type: 'bar', data: (points || []).map((point) => [point.bucketStartMs, point.records]), barMaxWidth: 6, itemStyle: { color: METRIC_COLORS.input }, emphasis: { itemStyle: { color: '#455bca' } } },
+      { name: 'Failed attempts', type: 'line', showSymbol: false, data: (points || []).map((point) => [point.bucketStartMs, point.failed]), lineStyle: { color: METRIC_COLORS.failure, width: 1.5 }, itemStyle: { color: METRIC_COLORS.failure } },
+    ],
+  }), [points]);
+  return <div className={styles.activity}>
+    <div className={styles.activitySurface}>
+      <div className={styles.activitySummary}><h2>{title}</h2><div className={styles.activityTotal}>{summary ? number(summary.records) : '—'}</div><p>{summary ? `${number(summary.failed)} failed` : 'Within selected scope'}</p></div>
+      {resource.loading ? <div className={styles.activityUnavailable}><Loader size="sm" />Loading recorded activity…</div> : resource.error ? <div className={styles.activityUnavailable}>Activity is unavailable. <Button variant="subtle" onClick={resource.refresh}>Try again</Button></div> : !points?.length ? <div className={styles.activityUnavailable}>No recorded activity in this interval.</div> : <div className={styles.activityChart}><div className={styles.activityLegend}><span className={styles.legendItem}><i className={styles.legendSwatch} style={{ '--color': METRIC_COLORS.input }} />Attempts</span><span className={styles.legendItem}><i className={styles.legendSwatch} style={{ '--color': METRIC_COLORS.failure }} />Failures</span><span style={{ marginInlineStart: 'auto' }}><Button size="compact-xs" variant="subtle" color="gray" onClick={() => setTableOpen(true)}>View data</Button></span></div><AnalyticalChart height={91} option={option} label={`${number(summary.records)} recorded attempts across the selected UTC interval. Use the time range controls to change the interval.`} onEvents={{ brushEnd: (event) => { const range = event.areas?.[0]?.coordRange; if (range?.length === 2 && range[0] < range[1]) workspace.setScope({ period: 'custom', start: new Date(range[0]).toISOString(), end: new Date(range[1]).toISOString() }); } }} /></div>}
+    </div>
+    <div className={styles.activityFoot}><span>{summary?.firstSeenAt ? `${date(summary.firstSeenAt)} – ${date(summary.lastSeenAt)} · ${Math.round((resource.data.series.bucketMs || 0) / 60000)}-minute buckets` : 'Historical requests, separate from current quota observations'}</span><span>{summary?.recordedPending ? `${number(summary.recordedPending)} recorded pending · not live requests` : 'No upstream requests made'}</span></div>
+    <Modal opened={tableOpen} onClose={() => setTableOpen(false)} title="Recorded activity by UTC bucket" size="xl"><Table striped><Table.Thead><Table.Tr><Table.Th>Bucket start (UTC)</Table.Th><Table.Th>Attempts</Table.Th><Table.Th>Failed</Table.Th><Table.Th>Recorded input tokens</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{(points || []).slice((page-1)*20,page*20).map((point) => <Table.Tr key={point.bucketStart}><Table.Td>{point.bucketStart}</Table.Td><Table.Td>{number(point.records)}</Table.Td><Table.Td>{number(point.failed)}</Table.Td><Table.Td>{number(point.inputTokens)}</Table.Td></Table.Tr>)}</Table.Tbody></Table><Pagination mt="md" value={page} onChange={setPage} total={Math.max(1,Math.ceil((points?.length || 0)/20))} /></Modal>
+  </div>;
+}
