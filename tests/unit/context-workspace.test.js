@@ -57,6 +57,39 @@ describe('Context projection contracts', () => {
 });
 
 describe('Context workspace', () => {
+  it('renders isolated SQLite writer and read-worker projections without inventing unavailable fields', async () => {
+    expect(process.env.DATA_DIR).toContain('tokenproxy-test-file-');
+    const { saveRequestStats } = await import('../../src/lib/db/repos/requestStatsRepo.js');
+    const { getAdapter } = await import('../../src/lib/db/driver.js');
+    const { getContextOverview, getContextSession, updateContextSession } = await import('../../src/lib/db/repos/contextRepo.js');
+    const db = await getAdapter();
+    try {
+      for (const [index, turn] of fixture.detail.turns.entries()) {
+        await saveRequestStats({ id: String(turn.id), timestamp: new Date(Date.now() - 600000 + index * 60000).toISOString(), provider: turn.provider, model: turn.model, connectionId: turn.connectionId, status: turn.status,
+          tokens: turn.usageSource === 'provider' ? { prompt_tokens: turn.providerInputTokens, completion_tokens: turn.providerOutputTokens, cached_tokens: turn.cacheReadTokens, cache_creation_input_tokens: turn.cacheWriteTokens } : null,
+          contextTelemetry: { sessionHash: 'f'.repeat(32), identitySource: 'inferred', logicalRequestId: turn.logicalRequestId, attempt: 1, contextEstimate: turn.contextEstimate, bodyAfterBytes: turn.bodyAfterBytes, clientTool: turn.clientTool, controls: turn.controls,
+            stages: turn.stages.map((stage) => ({ stage: stage.stage, in: stage.beforeBytes, out: stage.afterBytes, semanticPreserving: stage.stage === 'rtk' })) },
+        });
+      }
+      await saveRequestStats({ id: 'unattributed', timestamp: new Date().toISOString(), status: 'success', tokens: { prompt_tokens: 10 } });
+      fixture.overview = await getContextOverview();
+      expect(fixture.overview.recording).toMatchObject({ totalRetainedAttempts: 4, attributedAttempts: 3, unattributedAttempts: 1, rejectedAttempts: 0 });
+      const id = fixture.overview.sessions[0].id;
+      await updateContextSession(id, { projectLabel: 'Synthetic SQLite pipeline' });
+      fixture.overview = await getContextOverview();
+      fixture.detail = await getContextSession(id);
+      expect(fixture.detail.summary).toMatchObject({ providerInputTokens: 1600, cacheReadTokens: 450, cacheWriteTokens: 0, missingUsageSamples: 1, savedBytes: 2880 });
+      expect(fixture.detail.turns[1]).toMatchObject({ usageSource: 'missing', providerInputTokens: null });
+      await render(); await click('[aria-label="Inspect attempt 101"]');
+      expect(container.textContent).toContain('Synthetic SQLite pipeline');
+      expect(container.querySelectorAll('table[aria-label="Ordered shaping stages"] tbody tr')).toHaveLength(14);
+      expect(container.textContent).toContain('-960 B');
+      expect(state.chart.option.series[1].data.map((point) => point[1])).toEqual([1200, null, 400]);
+    } finally {
+      await globalThis._contextAnalytics?.client.close();
+      db.close();
+    }
+  });
   it('shows historical coverage without synthesizing sessions or requesting their details', async () => {
     fixture.overview = { ...fixture.overview, recording: { totalRetainedAttempts: 77589, attributedAttempts: 0, unattributedAttempts: 77589, rejectedAttempts: 0 }, sessions: [], summary: { sessions: 0 } };
     state.workspace.snapshot = { isolated: true, capturedAt: '2026-09-06T10:03:00Z' };
@@ -90,7 +123,7 @@ describe('Context workspace', () => {
     expect(container.textContent).toContain('Provider reported');
     expect(container.textContent).toContain('400 tokens');
     await click('[aria-label="Inspect attempt 102"]');
-    expect(container.textContent).toContain('Estimated only');
+    expect(container.textContent).toContain('Usage missing');
     expect(container.textContent).toContain('not proof of client compaction');
     expect(container.textContent).toContain('may combine separate agents');
   });

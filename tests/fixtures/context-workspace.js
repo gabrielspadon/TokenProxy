@@ -6,7 +6,7 @@ function stageChain() {
   return stages.map((stage, ordinal) => {
     const deltaBytes = ({ schema: -20, rtk: -1000, inject: 40, final: 20 })[stage] || 0;
     const row = { stage, ordinal, beforeBytes: before, afterBytes: before + deltaBytes, deltaBytes,
-      outcome: deltaBytes ? 'applied' : 'skipped', risk: 'semantic_preserving' };
+      outcome: deltaBytes ? 'applied' : 'unchanged', risk: stage === 'rtk' ? 'semantic-preserving' : ['tools','final'].includes(stage) ? 'normalization' : 'content-changing' };
     before = row.afterBytes; return row;
   });
 }
@@ -16,15 +16,15 @@ export function contextFixture() {
   const session = { id: 7, projectLabel: 'Synthetic research', identitySource: 'inferred', clientTool: 'synthetic-cli', firstSeenAt: start, lastSeenAt: last, attempts: 3, requests: 3, providerInputTokens: 1600, savedBytes: 2880 };
   const turns = [
     { id: 101, timestamp: start, status: 'success', usageSource: 'provider', providerInputTokens: 1200, providerOutputTokens: 80, cacheReadTokens: 400, cacheWriteTokens: 0, contextEstimate: 1250 },
-    { id: 102, timestamp: '2026-09-06T10:01:00.000Z', status: 'pending', usageSource: 'estimated', providerInputTokens: null, providerOutputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, contextEstimate: 1500, estimatedInputTokens: 1450, estimatedOutputTokens: 5 },
+    { id: 102, timestamp: '2026-09-06T10:01:00.000Z', status: 'pending', usageSource: 'missing', providerInputTokens: null, providerOutputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, contextEstimate: 1500, estimatedInputTokens: null, estimatedOutputTokens: null },
     { id: 103, timestamp: last, status: 'error', usageSource: 'provider', providerInputTokens: 400, providerOutputTokens: null, cacheReadTokens: 50, cacheWriteTokens: null, contextEstimate: 420 },
   ].map((turn) => ({ ...turn, logicalRequestId: `synthetic-${turn.id}`, attempt: 1, provider: 'synthetic-provider', model: 'synthetic-model', requestedModel: 'synthetic-model', connectionId: 'synthetic-account', clientTool: 'synthetic-cli',
     bodyBeforeBytes: 5000, bodyAfterBytes: 4040, savedBytes: 960, messageCount: 8, toolCount: 2,
     compactHint: turn.id === 102, controls: { rtk: true, schema: true, rtkAllowLossy: false }, stages: stageChain(), routeKind: 'direct', formatPair: 'claude:claude' }));
-  const summary = { attempts: 3, requests: 3, sessions: 1, succeeded: 1, pending: 1, failed: 1, providerUsageSamples: 2, estimatedUsageSamples: 1, missingUsageSamples: 0,
+  const summary = { attempts: 3, requests: 3, sessions: 1, succeeded: 1, pending: 1, failed: 1, providerUsageSamples: 2, estimatedUsageSamples: 0, missingUsageSamples: 1,
     providerInputTokens: 1600, providerOutputTokens: 80, cacheReadTokens: 450, cacheWriteTokens: 0,
     cacheEligibleInputTokens: 1600, cacheEligibleReadTokens: 450, cacheHitRate: 450 / 1600,
-    estimatedInputTokens: 1450, estimatedOutputTokens: 5, savedBytes: 2880, firstSeenAt: start, lastSeenAt: last };
+    estimatedInputTokens: null, estimatedOutputTokens: null, savedBytes: 2880, firstSeenAt: start, lastSeenAt: last };
   const freshness = { source: 'committed-sqlite', snapshotStartedAt: '2026-09-06T10:03:00.000Z', snapshotCompletedAt: '2026-09-06T10:03:00.000Z', persistedAt: null };
   const pagination = { page: 1, pageSize: 25, totalItems: 3, totalPages: 1, hasPrev: false, hasNext: false };
   return {

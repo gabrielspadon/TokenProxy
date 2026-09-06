@@ -30,7 +30,9 @@ historical data or use background per-account query loops.
 `analyticsUrl(scope, view='activity', extra={})` maps scope to `/api/analytics`;
 extra accepts supported query options such as groupBy, page and pageSize.
 `ScopeBar` renders shared period/provider/account/model controls. Put it below the
-lens heading. Backend Context uses from/to rather than start/end; map explicitly.
+lens heading. Map Context `scope.start` to `from` (inclusive) and `scope.end` to
+`until` (exclusive). The legacy `to` parameter is inclusive and must not be sent
+with `until`.
 
 ## Rendering
 
