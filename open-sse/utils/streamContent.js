@@ -103,6 +103,15 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
   }
 
   const reader = response.body.getReader();
+  let readerReleased = false;
+  const releaseReader = () => {
+    if (readerReleased) return;
+    try { reader.releaseLock?.(); readerReleased = true; } catch {}
+  };
+  const cancelReader = async reason => {
+    try { await reader.cancel?.(reason); } catch {}
+    finally { releaseReader(); }
+  };
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const rawChunks = [];
   let rawBytes = 0;
@@ -171,6 +180,7 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
     readError = error;
     hasContent = false;
   } finally {
+    if (upstreamDone) releaseReader();
     if (timer) clearTimeout(timer);
   }
 
@@ -179,11 +189,11 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
   // late frame can go to the abandoned read while the replay hangs or sees EOF.
   // Cancel and settle that read first, then replay only bytes already buffered.
   if (timedOut) {
-    const cancellation = reader.cancel?.();
+    const cancellation = cancelReader();
     await Promise.allSettled([cancellation, pendingRead].filter(Boolean));
     pendingRead = null;
     upstreamDone = true;
-    try { reader.releaseLock?.(); } catch {}
+    releaseReader();
   }
 
   const createReplayBody = () => new ReadableStream({
@@ -196,27 +206,27 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
       if (upstreamDone) return;
       try {
         const { done, value } = await reader.read();
-        if (done) { upstreamDone = true; controller.close(); return; }
+        if (done) { upstreamDone = true; releaseReader(); controller.close(); return; }
         controller.enqueue(value);
       } catch (error) {
+        upstreamDone = true;
+        releaseReader();
         controller.error(error);
       }
     },
     cancel(reason) {
-      const cancellation = reader.cancel?.(reason);
-      cancellation?.catch(() => {});
+      upstreamDone = true;
+      return cancelReader(reason);
     }
   });
 
   if (!hasContent) {
     if (readError && preserveOnNoContent) {
-      try { await reader.cancel?.(); } catch {}
-      try { reader.releaseLock?.(); } catch {}
+      await cancelReader();
       return { hasContent: false, body: null, error: readError, upstreamError };
     }
     if (!preserveOnNoContent) {
-      const cancellation = reader.cancel?.();
-      await cancellation?.catch(() => {});
+      await cancelReader();
       return { hasContent: false, body: null, error: readError, upstreamError };
     }
     return { hasContent: false, body: createReplayBody(), error: null, upstreamError };
