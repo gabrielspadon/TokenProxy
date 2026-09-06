@@ -4,7 +4,11 @@
   .notifications-dest,
   .notifications-log { grid-template-columns: minmax(0, 1fr); }
 
-  .notifications-list { display: flex; flex-direction: column; }
+  .notifications-list { display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
+  .notifications-list > span {
+    border: 1px solid var(--rule); border-radius: var(--radius);
+    background: var(--paper); padding: 1px 8px; font-size: var(--t-13);
+  }
   .notifications-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 
   .notifications-form {
