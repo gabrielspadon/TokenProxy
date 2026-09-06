@@ -69,7 +69,7 @@ export function QuotaSummary({ windows, onInspect }) {
             >
               <span className={styles.scope}>{window.scope || 'Unspecified'}</span>
               <span
-                className={styles.measure}
+                className={percentage === null ? styles.unknown : styles.measure}
                 data-low={(percentage !== null && percentage <= 10) || undefined}
               >
                 {percentage === null ? 'Unknown' : `${percentage}%`}
