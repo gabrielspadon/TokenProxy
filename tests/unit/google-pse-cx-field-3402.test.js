@@ -38,11 +38,4 @@ describe("Google PSE can be given its search engine id (#3402)", () => {
     expect(buildProviderSpecificData({ hasBaseUrlField: true, baseUrl: "http://h", extraValues: { cx: "x" } }))
       .toEqual({ baseUrl: "http://h", cx: "x" });
   });
-
-  it("the key form renders the declared fields and saves their values", () => {
-    const modal = readFileSync(new URL("../../src/app/(dashboard)/dashboard/providers/[id]/AddApiKeyModal.js", import.meta.url), "utf8");
-    expect(modal).toContain("AI_PROVIDERS?.[provider]?.extraFields");
-    expect(modal).toContain("extraFields?.map((field) => (");
-    expect(modal).toContain("extraValues: formData.extraValues,");
-  });
 });

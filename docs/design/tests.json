@@ -1,0 +1,175 @@
+{
+  "slices": [
+    {
+      "name": "shell",
+      "sections": [
+        "§10",
+        "§3",
+        "§4",
+        "§8",
+        "§19",
+        "§20",
+        "gap"
+      ],
+      "routes": [
+        "/login",
+        "/callback",
+        "/dashboard"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/shell/report.json"
+    },
+    {
+      "name": "connections",
+      "sections": [
+        "§1",
+        "§3",
+        "§5",
+        "§12"
+      ],
+      "routes": [
+        "/dashboard/connections",
+        "/dashboard/connections/[id]"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/connections/report.json"
+    },
+    {
+      "name": "sessions",
+      "sections": [
+        "§4"
+      ],
+      "routes": [
+        "/dashboard/sessions"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/sessions/report.json"
+    },
+    {
+      "name": "network",
+      "sections": [
+        "§2"
+      ],
+      "routes": [
+        "/dashboard/network"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/network/report.json"
+    },
+    {
+      "name": "models",
+      "sections": [
+        "§6",
+        "§13"
+      ],
+      "routes": [
+        "/dashboard/models"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/models/report.json"
+    },
+    {
+      "name": "keys",
+      "sections": [
+        "§7",
+        "§9"
+      ],
+      "routes": [
+        "/dashboard/keys"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/keys/report.json"
+    },
+    {
+      "name": "usage",
+      "sections": [
+        "§8"
+      ],
+      "routes": [
+        "/dashboard/usage"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/usage/report.json"
+    },
+    {
+      "name": "shaping",
+      "sections": [
+        "§11"
+      ],
+      "routes": [
+        "/dashboard/shaping"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/shaping/report.json"
+    },
+    {
+      "name": "translation",
+      "sections": [
+        "§16"
+      ],
+      "routes": [
+        "/dashboard/translation"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/translation/report.json"
+    },
+    {
+      "name": "tools",
+      "sections": [
+        "§14",
+        "§15"
+      ],
+      "routes": [
+        "/dashboard/tools"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/tools/report.json"
+    },
+    {
+      "name": "remote",
+      "sections": [
+        "§17"
+      ],
+      "routes": [
+        "/dashboard/remote"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/remote/report.json"
+    },
+    {
+      "name": "notifications",
+      "sections": [
+        "§18"
+      ],
+      "routes": [
+        "/dashboard/notifications"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/notifications/report.json"
+    },
+    {
+      "name": "access",
+      "sections": [
+        "§19",
+        "§9"
+      ],
+      "routes": [
+        "/dashboard/access"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/access/report.json"
+    },
+    {
+      "name": "system",
+      "sections": [
+        "§10",
+        "§20"
+      ],
+      "routes": [
+        "/dashboard/system"
+      ],
+      "status": "passing",
+      "evidence": "docs/design/evidence/system/report.json"
+    }
+  ]
+}

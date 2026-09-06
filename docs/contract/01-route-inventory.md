@@ -6,7 +6,7 @@ Next.js App Router, plain ESM JS. Rewrites (`next.config.mjs`): `/v1/*`→`/api/
 
 - **Dashboard session**: JWT (jose, HS256, `JWT_SECRET`), httpOnly cookie `auth_token`, 24h expiry. Password is bcrypt hash in `settings.password`, falling back to env `INITIAL_PASSWORD` or literal `"123456"` on first run.
 - **Login**: progressive lockout on repeated failures.
-- **`requireLogin=false`**: a settings toggle that lets `/api/*` (the ones in `PROTECTED_API_PATHS`) pass without a session — does NOT satisfy `ALWAYS_PROTECTED` paths (admin operator class, oauth credential export, notifications write, mcp, settings/database).
+- **`requireLogin=false`**: a settings toggle that lets `/api/*` (the ones in `PROTECTED_API_PATHS`) pass without a session — does NOT satisfy the four `ALWAYS_PROTECTED` paths (`/api/shutdown`, `/api/settings/database`, `/api/version/shutdown`, `/api/version/update`, `src/dashboardGuard.js:81-85`), nor the separately-gated admin operator class, oauth credential export, notifications write, or mcp routes.
 - **CLI token**: header `x-tp-cli-token` compared to `getConsistentMachineId("tp-cli-auth")`.
 - **Trusted peer / tunnel**: `x-tp-real-ip` / `x-tp-peer-token` vs `TOKENPROXY_PEER_TOKEN`.
 - **Loopback**: `isLocalRequest()` — checks the resolved peer is 127.0.0.1/::1 (post trusted-peer resolution).
@@ -81,6 +81,8 @@ In-process library-mode transform (not a subprocess). `health` (POST+GET alias),
 ## 10. Tunnel (`/api/tunnel/**`)
 
 `enable`/`disable` (Cloudflare tunnel, `DNS_WARMUP_DELAY_MS=8000` on enable), `status` (3s in-process cache, merges tunnel+tailscale probes+download status), `tailscale-check`/`-enable`/`-disable` (multi-probe daemon detection: brew, custom binary, system daemon; reports `hasCachedPassword` from MITM cert manager).
+
+`status`'s `publicUrl` field is withheld (returned as `""`) unless `state.registered === true`; only then is it `publicUrlFor(shortId)` (`src/lib/tunnel/cloudflare/manager.js` `getTunnelStatus()`, comment: "stops offering a link that 404s while the direct URL works", issue #1365). `tunnelUrl` has no such gate.
 
 ## 11. Headroom (`/api/headroom/**`)
 

@@ -46,10 +46,10 @@ Every refusal body is built by `adminError(status, code, error, extra)` (`policy
 - Auth: operator class, read method.
 - Query/body: none.
 - **Always returns 200** — the status is in the body, not the HTTP status (comment at file top explains this mirrors `/api/health` philosophy).
-- Response body: `{status, checks:{database, connections}}`.
+- Response body is exactly `{status, checks:{database, connections}}` (`adminJson({ status, checks: { database, connections } })`, `route.js:63`) — **`scanFailed` is computed internally but never appears in the returned JSON**, it only feeds the `status` calculation below.
   - `database`: built from `getAdapter()` (line 1 import) — a DB probe; on failure `database.status === "error"`.
   - `connections`: array from `getProviderConnections()` projected via `toConnection()` (see project.js section below), combined with `readAllDrainDocs()` for drain flags.
-  - `scanFailed`: true if the connection scan itself threw.
+  - `scanFailed` (internal only, not returned): true if the connection scan itself threw.
   - `unhealthy = connections.some(c => c.status === "degraded" || c.status === "cooldown")`.
   - Overall `status`: `"error"` if `database.status === "error" || scanFailed`; else `"degraded"` if `unhealthy`; else `"ok"`.
 
@@ -180,10 +180,11 @@ A `confidence:"unknown"` (or a row that never existed, yielding `windows: []`) d
 `qualificationDetail(...)` — `src/lib/admin/qualification.js`:
 ```
 {
-  connectionId, provider, displayName, status, isActive, isDraining,
-  lastQualifiedAt, lastError,          // via toConnection(conn, {isDraining, now})
+  connectionId, provider,
+  status,                              // connectionStatus(conn, {isDraining, now}); "error" when the last probe itself failed
+  checkedAt,                           // probe.checkedAt ?? conn.lastErrorAt ?? conn.updatedAt ?? null
   generation: {
-    ok: Boolean(probe?...),            // whether the real completion succeeded
+    ok: probe ? Boolean(probe.ok) : conn.testStatus === "active",   // whether the real completion succeeded
     model: probe?.model ?? null,
     latencyMs: Number.isFinite(probe?.latencyMs) ? probe.latencyMs : null,
     error: redactError(probe?.error ?? conn.lastError),
@@ -191,6 +192,8 @@ A `confidence:"unknown"` (or a row that never existed, yielding `windows: []`) d
   quota: toWindowRecords(windows),
 }
 ```
+`displayName`, `isActive`, `isDraining`, `lastQualifiedAt` and `lastError` are not on this object (verified against `src/lib/admin/qualification.js:12-32`); read them from the list route's `toConnection` projection.
+
 Comment at file top: `generation` is "the ABI's credential-safe evidence: whether a real completion succeeded, against which model, how long it took, and a redacted reason if not. Never the generated content, and never the probe's request or response body."
 
 ---

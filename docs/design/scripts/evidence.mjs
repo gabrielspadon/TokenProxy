@@ -21,7 +21,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => a.start
 const BASE = process.env.E2E_BASE_URL || "http://127.0.0.1:20143";
 const PASSWORD = process.env.SMOKE_PASSWORD || "123456";
 const slice = args.slice || "unnamed";
-const routes = (args.routes || "/dashboard").split(",");
+let routes = (args.routes || "/dashboard").split(",");
 const locales = (args.locales || "en,de,vi,zh-CN,fa").split(",");
 const widths = (args.widths || "390,768,1440").split(",").map(Number);
 const RTL = new Set(["he", "ar", "fa", "ur"]);
@@ -40,6 +40,22 @@ const ctx = await browser.newContext({ baseURL: BASE, ignoreHTTPSErrors: true })
 // Session cookie once, via the real login route.
 const login = await ctx.request.post("/api/auth/login", { data: { password: PASSWORD } });
 check("login", login.ok(), `status=${login.status()}`);
+
+// A [id] route needs a real record behind it, or the detail fetch 404s in the console.
+for (let i = 0; i < routes.length; i++) {
+  if (!routes[i].includes("[id]")) continue;
+  const list = await ctx.request.get("/api/providers").then((r) => r.json()).catch(() => null);
+  let id = list?.connections?.[0]?.id;
+  if (!id) {
+    const made = await ctx.request.post("/api/providers", {
+      data: { provider: "openai", apiKey: "sk-evidence-seed", name: "evidence seed" },
+    }).then((r) => r.json()).catch(() => null);
+    id = made?.connection?.id;
+  }
+  check(`${routes[i]} id-resolved`, !!id, id ? `id=${id}` : "no connection and seed failed");
+  routes[i] = id ? routes[i].replace("[id]", id) : null;
+}
+routes = routes.filter(Boolean);
 
 for (const locale of locales) {
   await ctx.request.post("/api/locale", { data: { locale } });

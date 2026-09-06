@@ -7,7 +7,7 @@ Auth classes referenced below are enforced by `src/dashboardGuard.js` (Next.js m
 ## Auth classes
 
 - **public** — path is in `PUBLIC_API_PATHS` or `PUBLIC_PREFIXES` (`src/dashboardGuard.js:39-53`). No auth required.
-- **protected (dashboard)** — path prefix is in `PROTECTED_API_PATHS` (`src/dashboardGuard.js:88-106`), which includes `/api/keys` and `/api/usage`. Requires a valid `auth_token` JWT cookie UNLESS `settings.requireLogin === false`, in which case the check is bypassed entirely (`isAuthenticated`, `src/dashboardGuard.js:222-227`).
+- **protected (dashboard)** — path prefix is in `PROTECTED_API_PATHS` (`src/dashboardGuard.js:89-106`), which includes `/api/keys` and `/api/usage`. Requires a valid `auth_token` JWT cookie UNLESS `settings.requireLogin === false`, in which case the check is bypassed entirely (`isAuthenticated`, `src/dashboardGuard.js:222-227`). Note: `PROTECTED_API_PATHS` also lists `/api/cloud` (`src/dashboardGuard.js:99`) — no route exists under `src/app/api/cloud` in this tree (confirmed by directory listing), so that entry names a route that is absent; left as-is since this doc does not edit `dashboardGuard.js`.
 - **local-only** — path is in `LOCAL_ONLY_PATHS` (`src/dashboardGuard.js:109-...`), includes `/api/auth/reset-password`. Requires loopback Host+Origin (`isLocalRequest`) regardless of `requireLogin`.
 - **admin ABI** — `/api/admin/*` only, not used by anything in this doc's scope; classification lives in `src/lib/admin/policy.js` (`adminAuthClass`, `adminDecision`) and is out of scope here.
 
@@ -29,7 +29,7 @@ Response 200:
 { keys: [ <key row + usage + deviceCount>, ... ] }
 ```
 Each key row is `rowToKey()` (`src/lib/db/repos/apiKeysRepo.js:13-...`) plus two merged fields added in the route handler:
-- `id`, `key` (full plaintext secret, **always returned, never masked**), `name`, `machineId`, `isActive` (boolean), `createdAt`, `expiresAt` (`null` = never expires), `maxPromptTokens`, `maxCompletionTokens`, `maxCostUsd` (each `null` = no ceiling), `allowedModels` (`null` = every model allowed, else array of model ids)
+- `id`, `key` (full plaintext secret, **always returned, never masked**), `name`, `machineId`, `isActive` (boolean), `createdAt`, `expiresAt` (`null` = never expires), `isExpired` (boolean, `isExpired(row.expiresAt)`, `apiKeysRepo.js:25`; an unparseable stamp reads as NOT expired rather than locking the key out), `maxPromptTokens`, `maxCompletionTokens`, `maxCostUsd` (each `null` = no ceiling), `allowedModels` (`null` = every model allowed, else array of model ids)
 - `usage`: `{ promptTokens, completionTokens, costUsd, requests }` from `getApiKeyUsageTotals()` (`src/lib/db/repos/apiKeysRepo.js:152-172`), aggregated from `usageHistory` grouped by `apiKey`. A key with zero rows in `usageHistory` gets all-zero totals (route defaults each field with `|| 0`), not an absent object — **usage is always present, zero is a real zero here, not "no data"**.
 - `deviceCount`: integer from `getApiKeyDeviceCount(key.key)` (`src/sse/services/apiKeyDevices.js:71-76`) — count of distinct (IP, User-Agent) fingerprints seen using this key in the trailing 30-minute in-memory window. Not persisted; resets on process restart; 0 for a key nothing has used in the window.
 
@@ -45,14 +45,14 @@ Request body: `{ name: string (required), expiresAt?: string|number|null, maxPro
 - The three spend ceilings and `allowedModels` are picked via `pickLimits(body)` (`src/lib/db/repos/apiKeysRepo.js:194-200`): a field the caller omits is left unset (new key gets `null`/unlimited from `createApiKey`); an explicit `null` clears it back to unlimited. Absent means "no ceiling" — this is a documented compat guarantee (#3371 comment) so a caller predating these fields still creates an unrestricted key.
 - Key format: `sk-{machineId}-{keyId}-{crc8}` (`generateApiKeyWithMachine`, `src/shared/utils/apiKey.js:56-61`). **The full key is returned in the create response** (`key` field on the created row) — this is the only time it is shown; there is no separate "reveal" endpoint and no server-side masking. GET routes also return it in full (see above), so "shown once" is a UI convention the frontend must implement itself, not a backend guarantee.
 
-Response 201/200 (verify status in route — not confirmed to differ from 200): the created key object (same shape as one row above), merged with `updateApiKey()` result if any limit was set, else the raw `createApiKey()` result.
+Response 201 (`route.js:65`, confirmed): the created key object (same shape as one row above), merged with `updateApiKey()` result if any limit was set, else the raw `createApiKey()` result.
 
 ### DELETE /api/keys
-`src/app/api/keys/route.js:...-96`
+`src/app/api/keys/route.js:76-91`
 
-Request body: `{ ids: string[] }` — bulk revoke.
+Request: repeated query param `?id=<a>&id=<b>` (`new URL(request.url).searchParams.getAll("id").filter(Boolean)`), not a JSON body — bulk revoke. Empty/absent → 400 `{ error: "id is required" }` (`route.js:80`).
 
-Response: `{ requested: ids.length, deleted: <count actually removed> }` (`route.js:91`). `deleteApiKeys()` (`src/lib/db/repos/apiKeysRepo.js:296-...`) dedupes ids, ignores ids that don't exist (they are "simply not matched"), and deletes in one transaction so a partial batch can never leave some of a compromised key set still spendable (comment at `apiKeysRepo.js:291-295`). **Revocation is a hard SQL DELETE — the key row and its `allowedModels` kv entry are both destroyed, irreversibly.** No soft-delete, no tombstone.
+Response: `{ requested: ids.length, deleted: <count actually removed> }` (`route.js:85`). `deleteApiKeys()` (`src/lib/db/repos/apiKeysRepo.js:296-...`) dedupes ids, ignores ids that don't exist (they are "simply not matched"), and deletes in one transaction so a partial batch can never leave some of a compromised key set still spendable (comment at `apiKeysRepo.js:291-295`). **Revocation is a hard SQL DELETE — the key row and its `allowedModels` kv entry are both destroyed, irreversibly.** No soft-delete, no tombstone.
 
 Error 500: `{ error: "Failed to delete keys" }`.
 
@@ -76,13 +76,13 @@ Response: `{ message: "Key deleted successfully" }` on success (`route.js:...`).
 Error 500: `{ error: "Failed to delete key" }`.
 
 ### GET /api/keys/devices
-`src/app/api/keys/devices/route.js:1-37`
+`src/app/api/keys/devices/route.js:20-33`
 
 Response 200:
 ```
-{ devices: [ { keyId, keyName, count }, ... ], windowMinutes: 30 }
+{ devices: [ { id, name, deviceCount }, ... ], windowMinutes: 30 }
 ```
-(exact per-item field names unconfirmed past `keyId`/`count` shape sketch in truncated read — reread lines 15-29 before shipping frontend code against this; the route wraps `getApiKeyDeviceCounts()`, `src/sse/services/apiKeyDevices.js:78-91`, which returns `{ [apiKey]: count }` keyed by the **full plaintext key string**, not by key id, so the route must be doing a lookup/mapping step to translate that into `keyId`.)
+One row per key (`getApiKeys()`), `name` is `k.name || null`, `deviceCount` is looked up from `getApiKeyDeviceCounts()` (`src/sse/services/apiKeyDevices.js`, keyed by the full plaintext key string) with a `|| 0` fallback for a key nothing has used. The plaintext key itself is never returned in this response.
 `windowMinutes: 30` is a hardcoded constant matching `apiKeyDevices.js`'s `TTL_MS = 30 * 60 * 1000`.
 
 Error 500: `{ error: "Failed to fetch key devices" }`.
@@ -176,15 +176,17 @@ Error 500: `{ error: "Failed to fetch..." }` (verify route path — file is unde
 
 Query: `?provider=&connectionId=&model=&startDate=&endDate=&page=&pageSize=` (comment at line 19).
 
-Response 200:
+Response 200 (`route.js:60-62`, confirmed): `items` and `pagination` are siblings at the top level, not nested inside one `items` object —
 ```
 {
   filters: <getStatsFilters() result>,
   summary: <getStatsSummary(filter) result>,
   series: <getStatsSeries(filter) result>,
-  items: <getStatsItems(filter, page, pageSize) result>,   // exact call signature not fully reread — verify page/pageSize wiring in route.js lines 20-56
+  items: itemsResult.items,
+  pagination: itemsResult.pagination,
 }
 ```
+where `itemsResult = await getStatsItems(filter, page, pageSize)`. `getStatsItems()` itself is not read in this pass — its `items`/`pagination` sub-shapes are unconfirmed, only that the route destructures and re-flattens them as shown.
 Header: `Cache-Control: no-store` (`route.js:60`).
 Error 500: `{ error: error.message }` — **this route leaks the raw error message to the client**, unlike most others which use a static string (`route.js:64`).
 
@@ -222,14 +224,14 @@ Error 500: `{ error: "Failed to fetch provider health" }`.
 
 Query: `?period=` (VALID_PERIODS), `?startDate=&endDate=` (same range-wins-over-period rule).
 
-Response: raw `getChartData(period, range)` result (`usageRepo.js:1061-...`) — not fully read; builds minute-bucketed rows over a trailing window (`bucketMap` keyed by minute timestamp, `{requests, promptTokens, completionTokens, cost}` per bucket, seen at lines 815-818). Exact top-level wrapper shape (array vs `{buckets:[...]}`) not confirmed.
+Response: a bare array, never a `{buckets:[...]}` wrapper — confirmed across every branch of `getChartData()` (`usageRepo.js:1061-1203`): the range-resolved branch returns `buckets` (line 1090), `"today"` and `"24h"` each return their own `buckets` array (lines 1126, 1153), `"all"` returns `rows.map(...)` (line 1174) or an early `[]` when no data exists (line 1158), and the default `7d`/`30d`/`60d` branch returns `Array.from(...)` directly (line 1192). Each element is `{label, tokens, cost}`, with `bucketStart` additionally present in the `"today"`/`"24h"` branches. The route (`route.js:1-32`) passes this straight through via `NextResponse.json(data)` with no wrapping.
 
 Error 500: `{ error: "Failed to fetch chart data" }`.
 
 ### GET /api/usage/logs and GET /api/usage/request-logs
 
 Two distinct routes, different shapes:
-- `GET /api/usage/logs` (`src/app/api/usage/logs/route.js:1-63` — the paginated one): query `?page=&pageSize=` (defaults `DEFAULT_PAGE_SIZE=200`, `MAX_PAGE_SIZE=500`). Response includes `{ logs: [...], pagination: { ..., hasMore: page > 1 /* verify — looks backwards, reread */, maxScan: MAX_SCAN } }` — the `hasMore: page > 1` line as transcribed looks like it may be a truncation artifact of the read, not real logic; **do not trust this field's condition without rereading `logs/route.js` lines 40-58 verbatim**.
+- `GET /api/usage/logs` (`src/app/api/usage/logs/route.js:1-63` — the paginated one): with neither `?page=` nor `?pageSize=` present, returns a **bare array** via `getRecentLogs(DEFAULT_PAGE_SIZE=200)` for the pre-existing consumer (`route.js:24-28`). Once either query param is given: `?page=&pageSize=` (defaults `DEFAULT_PAGE_SIZE=200`, `MAX_PAGE_SIZE=500`, hard scan ceiling `MAX_SCAN=5000`). Response (confirmed, `route.js:38-53`): `{ logs: [...], pagination: { page, pageSize, hasNext, hasPrev, maxScan: MAX_SCAN } }` — there is no `hasMore` field. `hasPrev` is `page > 1`; `hasNext` is `rows.length > end && end < MAX_SCAN` (`false` once `offset >= MAX_SCAN`, which returns `logs: []` early).
 - `GET /api/usage/request-logs` (`src/app/api/usage/request-logs/route.js:1-14` — the simple one): no query params, calls `getRecentLogs(200)` directly, returns the array **unwrapped** (`NextResponse.json(logs)`, not `{logs}`). Error 500: `{ error: "Failed to fetch logs" }`.
 
 These are easy to confuse in a frontend — same-sounding names, different response envelopes (wrapped vs bare array) and different pagination support.
@@ -336,7 +338,7 @@ status 429, header `Retry-After: <same integer, as string>`. `RESET_HINT = "Forg
 
 **401 response** (confirmed, `login/route.js:~104-107`):
 ```
-{ error: "Incorrect password. {remainingBeforeLock} attempt(s) left before lockout.", remainingBeforeLock }
+{ error: "Invalid password. {remainingBeforeLock} attempt(s) left before lockout.", remainingBeforeLock }
 ```
 status 401. `recordFail(ip)` is called on this path (supplies `remainingBeforeLock`); `recordSuccess(ip)` is called on the matching correct-password path, clearing the lockout history.
 
@@ -357,7 +359,7 @@ export async function POST() {
 Clears the `auth_token` cookie plus three OIDC PKCE/state cookies unconditionally (SAML has no equivalent transient cookies to clear here, matching `saml/acs` not setting any beyond the auth cookie itself — verify this asymmetry is intentional if it matters to the frontend).
 
 ### POST /api/auth/reset-password
-`src/app/api/auth/reset-password/route.js:1-14` — auth class **local-only**, confirmed: `/api/auth/reset-password` is a literal entry in `LOCAL_ONLY_PATHS` (`src/dashboardGuard.js:121`). Gate: `canAccessLocalOnlyRoute()` (`dashboardGuard.js:201-206`) — passes with a valid CLI token, or with loopback Host+Origin (`isLocalRequest`) AND a valid dashboard session/`requireLogin=false`. Refusal (confirmed, `dashboardGuard.js:270-277`): `{ error: "Local only: CLI token required" }`, status 403.
+`src/app/api/auth/reset-password/route.js:1-14` — auth class **local-only**, confirmed: `/api/auth/reset-password` is a literal entry in `LOCAL_ONLY_PATHS` (`src/dashboardGuard.js:118`). Gate: `canAccessLocalOnlyRoute()` (`dashboardGuard.js:201-206`) — passes with a valid CLI token, or with loopback Host+Origin (`isLocalRequest`) AND a valid dashboard session/`requireLogin=false`. Refusal (confirmed, `dashboardGuard.js:270-277`): `{ error: "Local only: CLI token required" }`, status 403.
 
 Body: none. Effect: `updateSettings({ password: null })` — clears the stored hash so the next login falls back to `INITIAL_PASSWORD` env or the literal default `"123456"` (`DEFAULT_PASSWORD` in `dashboardSession.js:8`). Response: `{ success: true }`. **Never returns the default password literal** (comment line 5).
 
@@ -395,16 +397,16 @@ There is no `/api/auth/change-password`. Password change is a field on `PATCH /a
 
 ## Known gaps in this pass (explicitly unread or under-confirmed, do not code against these blind)
 
-Resolved since first draft: SSE `update`/`pending` payload shape, session JWT lifetime (24h, confirmed), login 429 body (`retryAfter`/`resetHint`, confirmed), `/api/auth/status` full field set (confirmed both branches), `LOCAL_ONLY_PATHS` membership of `/api/auth/reset-password` (confirmed at `dashboardGuard.js:121`) and its exact 403 refusal body.
+Resolved since first draft: SSE `update`/`pending` payload shape, session JWT lifetime (24h, confirmed), login 429 body (`retryAfter`/`resetHint`, confirmed), `/api/auth/status` full field set (confirmed both branches), `LOCAL_ONLY_PATHS` membership of `/api/auth/reset-password` (confirmed at `dashboardGuard.js:118`) and its exact 403 refusal body.
 
 Still open:
 - `errorProvider`'s shape inside `getActiveRequests()` (`usageRepo.js` ~500-548).
 - `getUsageStats`/`getUsageStatsInRange`'s full top-level key list beyond `range`, `byEndpoint`.
 - `getStatsItems()` — not read at all.
 - `getStatsFilters()`'s exact serialized shape (Map→JSON).
-- `getChartData()`'s top-level wrapper shape.
-- `/api/usage/logs`'s `hasMore`/pagination object — the transcribed `hasMore: page > 1` looks suspect, reread before trusting.
 - `/api/usage/[connectionId]` and `.../codex-reset-credits` — live-upstream routes, not detailed here.
+
+Resolved since the "still open" note above: `getChartData()` returns a bare array in every branch, and `/api/usage/logs`'s pagination object is `{page, pageSize, hasNext, hasPrev, maxScan}` with no `hasMore` field — both confirmed at the `GET /api/usage/chart` and `GET /api/usage/logs` sections above.
 
 ## Files read
 

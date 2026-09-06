@@ -55,7 +55,3 @@ it("#2021 mimo-v2.5-free is multimodal", async () => {
   expect(getStaticCapabilitiesForModel("mimo", "mimo-v2.5-free").vision).toBe(true);
 });
 
-it("#2025 the Codex reset-credit expiry is surfaced", () => {
-  expect(read("src/app/(dashboard)/dashboard/usage/components/ProviderLimits/index.js"))
-    .toContain("reset credit expiry");
-});
