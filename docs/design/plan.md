@@ -188,6 +188,16 @@ answer.
   Everything else is local component state.
 - Fonts cover Latin, Vietnamese, currency and arrows; other scripts use the
   system stack.
+- Locale coverage is not uniform, and one locale is deliberately left short.
+  Khmer (`public/i18n/literals/km.json`) holds a large share of values
+  identical to their English key because argos-translate ships no Khmer
+  model, so those strings were never machine-translated and no fallback was
+  substituted. An English string standing in for an untranslated one is
+  visible as untranslated; a wrong translation is not, so the gap is left
+  open rather than filled. Measure it with the command rather than trusting
+  a figure written here, because it moves whenever the catalogue grows:
+  `node -e 'const m=require("./public/i18n/literals/km.json");const e=Object.entries(m);console.log(e.filter(([k,v])=>k===v).length,"of",e.length)'`
+  It closes when a Khmer model exists or a human translation lands.
 
 ## Slices, in build order
 
