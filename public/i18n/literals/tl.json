@@ -1362,5 +1362,7 @@
   "spent": "spent",
   "uses the default strategy": "uses the default strategy",
   "⚠️ MITM intercepts HTTPS traffic of IDE tools (Antigravity, GitHub Copilot, Kiro) via local CA to redirect requests to your providers. May violate ToS → account ban. Use at your own risk.": "⚠️ Hinaharang ng MITM ang HTTPS traffic ng mga IDE tool (Antigravity, GitHub Copilot, Kiro) sa pamamagitan ng lokal na CA upang i-redirect ang mga kahilingan sa iyong mga provider. Maaaring lumabag sa ToS → panganib ng pag-ban sa account. Gamitin sa sarili mong panganib.",
-  "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ Babala sa Panganib: Ang provider na ito ay gumagamit ng subscription/OAuth session na hindi opisyal na lisensyado para sa proxy/router na paggamit. Maaaring marestrikta o ma-ban ang account. Gamitin sa sarili mong panganib."
+  "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ Babala sa Panganib: Ang provider na ito ay gumagamit ng subscription/OAuth session na hindi opisyal na lisensyado para sa proxy/router na paggamit. Maaaring marestrikta o ma-ban ang account. Gamitin sa sarili mong panganib.",
+  "req/min": "req/min",
+  "Telemetry": "Telemetry"
 }
