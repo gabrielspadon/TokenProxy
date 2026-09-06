@@ -1,7 +1,7 @@
 // Fixed read-only Context projections. No driver, migration or writer imports.
 export class ContextQueryError extends Error {}
 
-const FILTER_KEYS = new Set(["view", "provider", "model", "connectionId", "clientTool", "projectLabel", "from", "to", "page", "pageSize"]);
+const FILTER_KEYS = new Set(["view", "provider", "model", "connectionId", "clientTool", "projectLabel", "from", "to", "until", "page", "pageSize"]);
 export function validateAnalyticsQuery(query) {
   if (!query || !["overview", "session"].includes(query.operation)
     || Object.keys(query).some((key) => !["operation", "filter", "sessionId", "retainedDays"].includes(key))) throw new ContextQueryError("Invalid analytics operation");
@@ -25,14 +25,18 @@ export function parseContextFilter(params) {
       f[name] = value;
     }
   }
-  for (const name of ["from", "to"]) {
+  for (const name of ["from", "to", "until"]) {
     const value = params.get(name);
     if (value !== null) {
-      if (!/^\d{4}-\d{2}-\d{2}T/.test(value) || !Number.isFinite(Date.parse(value))) throw new ContextQueryError(`Invalid ${name}`);
+      if (!/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) throw new ContextQueryError(`Invalid ${name}`);
+      const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+      if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) throw new ContextQueryError(`Invalid ${name}`);
       f[name] = new Date(value).toISOString();
     }
   }
   if (f.from && f.to && f.from > f.to) throw new ContextQueryError("from must precede to");
+  if (f.to && f.until) throw new ContextQueryError("Use either inclusive to or exclusive until");
+  if (f.from && f.until && f.from >= f.until) throw new ContextQueryError("from must precede until");
   for (const [name, fallback, max] of [["page", 1, 10000], ["pageSize", 50, 100]]) {
     const raw = params.get(name);
     if (raw !== null && (!/^[1-9]\d*$/.test(raw) || Number(raw) > max)) throw new ContextQueryError(`Invalid ${name}`);
@@ -48,6 +52,7 @@ function whereFor(f, sessionId, attributedOnly = true) {
   if (f.projectLabel) { clauses.push("s.projectLabel=?"); args.push(f.projectLabel); }
   if (f.from) { clauses.push("r.timestamp>=?"); args.push(f.from); }
   if (f.to) { clauses.push("r.timestamp<=?"); args.push(f.to); }
+  if (f.until) { clauses.push("r.timestamp<?"); args.push(f.until); }
   if (sessionId) { clauses.push("r.contextSessionId=?"); args.push(sessionId); }
   return { sql: `WHERE ${clauses.join(" AND ")}`, args };
 }

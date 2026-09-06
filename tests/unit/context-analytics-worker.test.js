@@ -6,7 +6,7 @@ import { getAdapter } from "../../src/lib/db/driver.js";
 import { DATA_FILE } from "../../src/lib/db/paths.js";
 import { saveRequestStats } from "../../src/lib/db/repos/requestStatsRepo.js";
 import { getContextOverview, getContextSession } from "../../src/lib/db/repos/contextRepo.js";
-import { readContextOverview, validateAnalyticsQuery } from "../../src/lib/db/analytics/contextQueries.mjs";
+import { parseContextFilter, readContextOverview, validateAnalyticsQuery } from "../../src/lib/db/analytics/contextQueries.mjs";
 import { openAnalyticsReadOnly } from "../../src/lib/db/analytics/readOnly.mjs";
 import { createContextAnalyticsClient, ContextAnalyticsError } from "../../src/lib/db/analytics/client.js";
 
@@ -86,6 +86,35 @@ describe("read-only Context analytics", () => {
     const next = await openAnalyticsReadOnly(file, "sql.js");
     expect(next.get("SELECT COUNT(*) AS n FROM requestStats").n).toBe(n + 1);
     next.close();
+  });
+  it("partitions adjacent time scopes without duplicating boundary attempts", async () => {
+    const sessionId = db.get("SELECT id FROM contextSessions LIMIT 1").id;
+    for (let i = 0; i < 3; i++) db.run("INSERT INTO requestStats(id,timestamp,provider,contextSessionId) VALUES(?,?,?,?)",
+      [`boundary-${i}`, `2026-09-06T1${i}:00:00.000Z`, "boundary", sessionId]);
+    try {
+      const first = { provider: "boundary", from: "2026-09-06T10:00:00.000Z", until: "2026-09-06T11:00:00.000Z", pageSize: 1 };
+      const next = { ...first, from: first.until, until: "2026-09-06T12:00:00.000Z" };
+      for (const [filter, expected] of [[first, "boundary-0"], [next, "boundary-1"]]) {
+        const overview = await getContextOverview(filter);
+        const session = await getContextSession(sessionId, filter);
+        expect(overview.summary.attempts).toBe(1);
+        expect(overview.recording.totalRetainedAttempts).toBe(1);
+        expect(session.turns.map((turn) => turn.id)).toEqual([expected]);
+        expect(session.pagination.totalItems).toBe(1);
+        expect(session.trend.points.reduce((total, point) => total + point.attempts, 0)).toBe(1);
+      }
+      const { until, ...inclusive } = first;
+      expect((await getContextOverview({ ...inclusive, to: until })).summary.attempts).toBe(2);
+    } finally { db.run("DELETE FROM requestStats WHERE provider=?", ["boundary"]); }
+  });
+  it("requires unambiguous valid timestamps and mutually exclusive end bounds", () => {
+    expect(parseContextFilter(new URLSearchParams({ from: "2026-09-06T07:00:00-03:00", until: "2026-09-06T11:00:00Z" })))
+      .toMatchObject({ from: "2026-09-06T10:00:00.000Z", until: "2026-09-06T11:00:00.000Z" });
+    for (const filter of [
+      { until: "2026-09-06T11:00:00" }, { from: "2026-02-30T10:00:00Z" },
+      { to: "2026-09-06T11:00:00Z", until: "2026-09-06T12:00:00Z" },
+      { from: "2026-09-06T11:00:00Z", until: "2026-09-06T11:00:00Z" },
+    ]) expect(() => parseContextFilter(new URLSearchParams(filter))).toThrow();
   });
   it("accepts projections only and never caller SQL, paths or unbounded filters", () => {
     for (const query of [
