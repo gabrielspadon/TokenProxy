@@ -50,6 +50,47 @@ describe('quotaRanking: window classification and horizons', () => {
     expect(r.ok).toBe(true);
     expect(r.windows.map((x) => x.scope)).toEqual(['session (5h)']);
   });
+
+  // A period name QUALIFIED by anything else is a BRANCH of that period, never
+  // the account's entitlement in it. Anthropic reports `weekly opus (7d)` and
+  // `weekly sonnet (7d)` beside the plan-wide `weekly (7d)`
+  // (open-sse/services/usage/claude.js), and codex reports `spark_session` /
+  // `spark_weekly` (open-sse/services/usage/codex.js). Ranking either as
+  // general let ONE model's exhausted sub-quota set usable=false for the whole
+  // connection, taking it out of service for every other model.
+  it('classifies a qualified period name as a sub-quota, not entitlement', () => {
+    expect(classifyWindow('weekly opus (7d)')).toBe('scoped');
+    expect(classifyWindow('weekly sonnet (7d)')).toBe('scoped');
+    expect(classifyWindow('review_weekly')).toBe('scoped');
+    // The plan-wide windows beside them are untouched.
+    expect(classifyWindow('weekly (7d)')).toBe('general');
+    expect(classifyWindow('weekly')).toBe('general');
+    expect(classifyWindow('session (5h)')).toBe('general');
+    expect(classifyWindow('Ratelimit')).toBe('general');
+  });
+
+  // `\b` treats `_` as a word character, so `\bsession\b` could not see the
+  // name inside `spark_session` and the codex spark windows landed as
+  // UNCLASSIFIABLE. Unreadable never benched the account, but it erased the
+  // codex lane's real deadline ordering.
+  it('reads a period name across an underscore boundary', () => {
+    expect(classifyWindow('spark_session')).toBe('scoped');
+    expect(classifyWindow('spark_weekly')).toBe('scoped');
+    expect(windowHorizonMs('spark_weekly')).toBe(7 * DAY);
+  });
+
+  it('a per-model weekly at zero does not deplete the whole account', () => {
+    const windows = [
+      w('weekly (7d)', 500, 1000, iso(3 * DAY)),
+      w('weekly opus (7d)', 0, 100, iso(3 * DAY)),
+    ];
+    const r = normalizeAccountWindows(windows);
+    expect(r.ok).toBe(true);
+    expect(r.windows.map((x) => x.scope)).toEqual(['weekly (7d)']);
+    const ranked = rankAccounts([{ id: 'a', windows }], { now: NOW });
+    expect(ranked.eligible.map((x) => x.id)).toEqual(['a']);
+    expect(ranked.reason).toBeNull();
+  });
 });
 
 describe('quotaRanking: compound window shapes (Acceptance: Compound windows)', () => {

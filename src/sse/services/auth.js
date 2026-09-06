@@ -58,7 +58,8 @@ const prefix8 = (v) => String(v ?? '').slice(0, 8);
 import { effectiveCapacity } from '@/shared/utils/accountCapacity.js';
 import { toRankerWindows } from '@/shared/utils/quotaWindowBridge.js';
 import { buildSwitchReceipt } from '@/shared/utils/switchReceipt.js';
-import { putWindows } from '@/lib/db/repos/quotaWindowsRepo.js';
+import { putWindows, getWindows } from '@/lib/db/repos/quotaWindowsRepo.js';
+import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaRanking.js';
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
 
@@ -262,6 +263,57 @@ function retryDelayCapMs(provider) {
   return FREE_PROVIDERS?.[id] || FREE_TIER_PROVIDERS?.[id]
     ? FREE_TIER_RATE_LIMIT_COOLDOWN_MS
     : MAX_RATE_LIMIT_COOLDOWN_MS;
+}
+
+/**
+ * Longest a 429 may bench an account that our own quota evidence says still has
+ * entitlement. A provider's `retry-after` on a 429 is frequently the QUOTA
+ * WINDOW RESET rather than a wait: Anthropic answered a burst with 515919s
+ * (143h, its weekly reset) on a connection reading 10% session / 17% weekly
+ * headroom, and 17052s (4.7h, its 5h session reset) on one reading 63% / 68%
+ * that had served the same model 30 seconds earlier. Written verbatim into a
+ * model lock that is a lane taken out of service for hours over one rejected
+ * request, and with enough lanes gone the survivors were the genuinely depleted
+ * accounts, so ranking answered `all-depleted` while the pool had headroom.
+ *
+ * The evidence, not the provider's number, decides which case this is. With a
+ * READABLE window that still has headroom, the lock is cut to this bound and the
+ * account comes back inside the minute. With every window at zero, or no
+ * readable evidence at all, the provider's reset stands: it is then the only
+ * thing anyone knows, and shortening it would just replay into the same wall.
+ */
+const HEADROOM_RETRY_CEILING_MS = 60 * 1000;
+
+/**
+ * Positive evidence that this connection still has entitlement, read from the
+ * persisted window snapshot the selection path already writes (persistWindows
+ * above). Deliberately fail-safe in BOTH directions: `null` means "no readable
+ * evidence", which leaves the provider's own reset untouched, and it never
+ * invents headroom from an absent, malformed or unclassifiable reading.
+ *
+ * Scoped sub-quota windows are already dropped by normalizeAccountWindows, so a
+ * per-model branch at zero cannot speak for the whole connection here either.
+ */
+async function hasQuotaHeadroom(connectionId, nowMs = Date.now()) {
+  let windows;
+  try {
+    windows = await getWindows(connectionId);
+  } catch {
+    return null;
+  }
+  const structural = normalizeAccountWindows(windows);
+  if (!structural.ok || structural.blocked) return null;
+  let readable = 0;
+  for (const w of structural.windows) {
+    // A window whose recorded reset has elapsed has replenished, which is the
+    // same projection resolveWindows applies before it judges eligibility.
+    const effective = effectiveResetAt(w.resetAt, w.horizonMs, nowMs);
+    if (effective === null) continue;
+    readable += 1;
+    const remaining = w.resetAt <= nowMs ? w.limit : w.remaining;
+    if (remaining <= 0) return false;
+  }
+  return readable > 0 ? true : null;
 }
 
 const GITHUB_MONTHLY_USAGE_LIMIT = "you've reached your additional usage limit for your plan";
@@ -1124,6 +1176,10 @@ export async function markAccountUnavailable(
   // (row 51): {requested, applied} is only interesting when they differ.
   let requestedMs = null;
   let clampedApplied = false;
+  // The ceiling that actually applied, which LOCK.applied reports as cap=. The
+  // headroom branch below can lower it, and a log line naming the provider
+  // ceiling while a shorter one was used would misreport the lock's own length.
+  let appliedCapMs = retryDelayCapMs(provider);
   if (githubResetAtMs) {
     shouldFallback = true;
     cooldownMs = githubResetAtMs - Date.now();
@@ -1131,8 +1187,15 @@ export async function markAccountUnavailable(
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     requestedMs = resetsAtMs - Date.now();
-    cooldownMs = Math.min(requestedMs, retryDelayCapMs(provider));
-    clampedApplied = cooldownMs === retryDelayCapMs(provider) && requestedMs > cooldownMs;
+    // A 429 whose reset outruns the ceiling is a claim about a window, and our
+    // own snapshot may already contradict it. Checked only when the number is
+    // long enough to matter, so the common short reset costs no read.
+    if (numStatus === 429 && requestedMs > HEADROOM_RETRY_CEILING_MS) {
+      const headroom = await hasQuotaHeadroom(connectionId);
+      if (headroom === true) appliedCapMs = Math.min(appliedCapMs, HEADROOM_RETRY_CEILING_MS);
+    }
+    cooldownMs = Math.min(requestedMs, appliedCapMs);
+    clampedApplied = cooldownMs === appliedCapMs && requestedMs > cooldownMs;
     newBackoffLevel = 0;
   } else {
     ({ shouldFallback, cooldownMs, newBackoffLevel } = fallbackResult);
@@ -1202,7 +1265,7 @@ export async function markAccountUnavailable(
         sched: 'backoff',
         level: newBackoffLevel ?? backoffLevel,
         cooldown: `${Math.max(0, Math.round(cooldownMs / 1000))}s`,
-        cap: `${Math.round(retryDelayCapMs(provider) / 1000)}s`,
+        cap: `${Math.round(appliedCapMs / 1000)}s`,
         why,
         expect_reset: lockClass !== 'credential',
       })

@@ -72,7 +72,30 @@ const BARE_NAME_MS = {
 // classification) rather than failing the account.
 const SCOPED_MARKERS = /\b(per[-_ ]?model|per[-_ ]?feature|model|feature|tool|agent)\b/i;
 
-const GENERAL_NAMES = /\b(session|rate[-_ ]?limit|hourly|daily|weekly|monthly|annual|yearly)\b/i;
+// `\b` treats `_` as a word character, so `\bsession\b` could not see the name
+// inside `spark_session` and codex's spark sub-quota landed as an UNCLASSIFIABLE
+// scope. An underscore separates two names here exactly as a space does, so the
+// boundary is spelled against the alphabet the names are actually built from.
+const GENERAL_NAMES =
+  /(?<![a-z0-9])(session|rate[-_ ]?limit|hourly|daily|weekly|monthly|annual|yearly)(?![a-z0-9])/i;
+
+const PARENTHETICAL_DURATION = /\(\s*\d+(?:\.\d+)?\s*[a-z]+\s*\)/i;
+
+/**
+ * A general period name QUALIFIED by anything else names a sub-quota of that
+ * period, never the account's entitlement in it. Anthropic reports the per-model
+ * branches of one weekly plan as `weekly opus (7d)` and `weekly sonnet (7d)`
+ * beside the plan-wide `weekly (7d)` (open-sse/services/usage/claude.js), and
+ * codex reports its spark lane as `spark_session` / `spark_weekly`. Ranking any
+ * of those as general let ONE model's exhausted sub-quota set `usable = false`
+ * for the whole connection, taking it out of service for every other model.
+ */
+function isQualifiedPeriod(name) {
+  const bare = name.replace(PARENTHETICAL_DURATION, '');
+  const period = GENERAL_NAMES.exec(bare);
+  if (!period) return false;
+  return bare.replace(period[0], '').replace(/[^a-z0-9]+/gi, '') !== '';
+}
 
 // Below this a "horizon" is the 1 ms unknown-shape fallback, not a period. Both
 // forward projection and reset ordering need a real period to mean anything, so
@@ -108,8 +131,9 @@ export function classifyWindow(scope) {
   const name = String(scope ?? '').trim();
   if (!name) return null;
   if (SCOPED_MARKERS.test(name) && !GENERAL_NAMES.test(name)) return 'scoped';
+  if (isQualifiedPeriod(name)) return 'scoped';
   if (GENERAL_NAMES.test(name)) return 'general';
-  if (/\(\s*\d+(?:\.\d+)?\s*[a-z]+\s*\)/i.test(name)) return 'general';
+  if (PARENTHETICAL_DURATION.test(name)) return 'general';
   return null;
 }
 
