@@ -265,6 +265,22 @@ function comboMatchesKinds(combo, kindFilter) {
   return kindFilter.includes(kind);
 }
 
+// Claude Code (2.1.263) resolves a model's window from
+// `entry.runtime.max_input_tokens ?? entry.context_window`, clamped to
+// [8192, 1e6]. It reads neither context_length nor capabilities.contextWindow,
+// the only two spellings this gateway emitted, so every listed model missed
+// both keys and the client fell back to its built-in catalogue -- the same
+// guess-low-against-a-wide-lane failure the bare-id listing already fixed.
+// An alias, not a rename: other clients match on context_length, which stays.
+// Applied at buildModelsList's two exits rather than beside each of the three
+// context_length assignments, so a fourth cannot be added without it.
+function withContextWindow(entry) {
+  if (Number.isFinite(entry?.context_length) && entry.context_length > 0) {
+    entry.context_window = entry.context_length;
+  }
+  return entry;
+}
+
 /**
  * Build OpenAI-format models list filtered by service kinds.
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
@@ -444,11 +460,13 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false } =
   // max_completion_tokens enrichment that a bare comboToEntry would drop.
   if (settings.exposeComboOnly) {
     const seenComboIds = new Set();
-    return models.filter((m) => {
-      if (m?.owned_by !== "combo" || seenComboIds.has(m.id)) return false;
-      seenComboIds.add(m.id);
-      return true;
-    });
+    return models
+      .filter((m) => {
+        if (m?.owned_by !== "combo" || seenComboIds.has(m.id)) return false;
+        seenComboIds.add(m.id);
+        return true;
+      })
+      .map(withContextWindow);
   }
 
   if (connectionsUnavailable) {
@@ -766,7 +784,7 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false } =
   for (const model of models) {
     if (!model?.id || seenModelIds.has(model.id)) continue;
     seenModelIds.add(model.id);
-    dedupedModels.push(model);
+    dedupedModels.push(withContextWindow(model));
   }
 
   return dedupedModels;
