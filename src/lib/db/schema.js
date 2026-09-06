@@ -10,8 +10,9 @@ import { API_KEY_BUDGET_COLUMNS, BUDGET_TABLES } from "./budgetSchema.js";
 import { INVESTIGATION_TABLES } from "./investigationSchema.js";
 import { SESSION_PIN_COLUMNS, SESSION_PIN_TABLES } from "./sessionPinSchema.js";
 import { SHAPING_TABLES } from "./shapingSchema.js";
+import { COMPATIBILITY_TABLES } from "./compatibilitySchema.js";
 
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 13;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -34,6 +35,7 @@ export const TABLES = {
   ...INVESTIGATION_TABLES,
   ...SESSION_PIN_TABLES,
   ...SHAPING_TABLES,
+  ...COMPATIBILITY_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
@@ -404,5 +406,6 @@ export const TABLES = {
 export function buildCreateTableSql(name, def) {
   const cols = Object.entries(def.columns).map(([k, v]) => `${k} ${v}`);
   if (def.primaryKey) cols.push(def.primaryKey);
+  if (def.constraints) cols.push(...def.constraints);
   return `CREATE TABLE IF NOT EXISTS ${name} (${cols.join(", ")})`;
 }
