@@ -105,6 +105,7 @@ function processTextNode(node) {
   
   // Only update if different to avoid unnecessary DOM mutations
   if (translated !== node.nodeValue) {
+    node._translatedText = translated;
     node.nodeValue = translated;
   }
 }
@@ -124,7 +125,10 @@ function processAttributes(element) {
     if (!element[key]) element[key] = current;
     
     const translated = translate(element[key]);
-    if (translated !== current) element.setAttribute(attr, translated);
+    if (translated !== current) {
+      element[`_i18nTranslated_${attr}`] = translated;
+      element.setAttribute(attr, translated);
+    }
   }
 }
 
@@ -170,6 +174,25 @@ export async function initRuntimeI18n() {
   // Watch for new nodes
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
+      // A framework writes a new value into an existing node. Unless it is the
+      // value this walker just wrote, it is the new original.
+      if (mutation.type === "characterData") {
+        const node = mutation.target;
+        if (node.nodeValue !== node._translatedText) {
+          node._originalText = node.nodeValue;
+          processTextNode(node);
+        }
+        return;
+      }
+      if (mutation.type === "attributes") {
+        const el = mutation.target;
+        const attr = mutation.attributeName;
+        if (el.getAttribute(attr) !== el[`_i18nTranslated_${attr}`]) {
+          el[`_i18nOriginal_${attr}`] = el.getAttribute(attr);
+          processAttributes(el);
+        }
+        return;
+      }
       mutation.addedNodes.forEach((node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
           processElement(node);
@@ -182,6 +205,9 @@ export async function initRuntimeI18n() {
   
   observer.observe(document.body, {
     childList: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: TRANSLATED_ATTRIBUTES,
     subtree: true,
   });
 }

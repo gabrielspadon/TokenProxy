@@ -51,11 +51,14 @@ export const CONFIDENCE = {
 const STALE_AFTER_MS = 15 * 60_000;
 
 function finitePositive(value) {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const n = finiteNonNegative(value);
+  return n !== null && n > 0 ? n : null;
 }
 
 function finiteNonNegative(value) {
+  // Match the numeric wire types accepted by usage/shared.js toFiniteNumber.
+  // Number(null), Number('') and Number(false) are zero, but none is a reading.
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return null;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : null;
 }

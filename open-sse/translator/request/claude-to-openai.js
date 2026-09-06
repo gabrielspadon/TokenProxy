@@ -245,6 +245,8 @@ function convertClaudeMessage(msg) {
                 url: encodeDataUri(block.source.media_type, block.source.data)
               }
             });
+          } else if (block.source?.type === "url") {
+            parts.push({ type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: block.source.url } });
           }
           break;
 
@@ -353,6 +355,7 @@ function convertToolChoice(choice) {
   
   switch (choice.type) {
     case "auto": return "auto";
+    case "none": return "none";
     case "any": return "required";
     case "tool": return { type: OPENAI_BLOCK.FUNCTION, function: { name: choice.name } };
     default: return "auto";

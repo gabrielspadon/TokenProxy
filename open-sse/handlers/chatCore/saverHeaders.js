@@ -19,6 +19,10 @@ export function saverTelemetryHeaders(meta = {}) {
     h["x-tp-ce-bytes"] = String(Math.round(meta.ce));
   }
   if (meta.compactHint) h["x-tp-compact-hint"] = "1";
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+  if (uuid.test(meta.requestId || "")) h["x-tokenproxy-request-id"] = meta.requestId;
+  if (uuid.test(meta.logicalRequestId || "")) h["x-tokenproxy-logical-request-id"] = meta.logicalRequestId;
+  if (h["x-tokenproxy-request-id"] || h["x-tokenproxy-logical-request-id"]) h["Access-Control-Expose-Headers"] = Object.keys(h).join(", ");
   return h;
 }
 
@@ -29,7 +33,7 @@ export function withSaverHeaders(result, meta) {
   if (!result?.response || !Object.keys(extra).length) return result;
   try {
     const headers = new Headers(result.response.headers);
-    for (const [k, v] of Object.entries(extra)) headers.set(k, v);
+    for (const [k, v] of Object.entries(extra)) headers.set(k, k === "Access-Control-Expose-Headers" && headers.has(k) ? `${headers.get(k)}, ${v}` : v);
     return {
       ...result,
       response: new Response(result.response.body, {

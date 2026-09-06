@@ -1,9 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
 import { detectUpstreamErrorContent } from "open-sse/services/upstreamErrorContent.js";
 import { peekStreamForContent } from "open-sse/utils/streamContent.js";
 
-const combo = readFileSync(new URL("../../open-sse/services/combo.js", import.meta.url), "utf8");
+import { handleComboChat } from 'open-sse/services/combo.js';
 
 const sse = (chunks) =>
   new Response(
@@ -42,15 +41,13 @@ describe("a combo member's in-content upstream error keeps its reason (#1996)", 
     expect(peek.upstreamError).toBeNull();
   });
 
-  it("combo destructures upstreamError and reports it before the empty-stream case", () => {
-    expect(combo).toContain("body: replayBody, upstreamError } = await peekStreamForContent(result)");
-    const guard = combo.indexOf("if (upstreamError) {");
-    const empty = combo.indexOf('lastError = "provider returned an empty stream"');
-    expect(guard).toBeGreaterThan(0);
-    // Order matters: the empty-stream branch is the fallthrough, so an error
-    // reaching it first would erase the reason again.
-    expect(guard).toBeLessThan(empty);
-    expect(combo).toContain("lastStatus = upstreamError.status || 502");
+  it("preserves an accepted stream error without replaying generation", async () => {
+    const dispatch = vi.fn(async () => sse([frame('[qoder error 429: rate limited]')]));
+    const response = await handleComboChat({ body: { messages: [{ role: 'user', content: 'hi' }] }, models: ['qoder/a', 'other/b'], handleSingleModel: dispatch, log: { info() {}, warn() {} }, comboStrategy: 'fallback' });
+    expect(response.status).toBe(429);
+    expect(await response.text()).toContain('rate limited');
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it("the status carried out is the upstream's, not a blanket 503", () => {

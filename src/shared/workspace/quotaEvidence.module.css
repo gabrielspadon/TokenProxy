@@ -1,0 +1,46 @@
+.summary {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+}
+.window {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  line-height: 16px;
+  font-size: 13px;
+  border-radius: 2px;
+}
+.window:hover,
+.window:focus-visible {
+  background: #eaf0fd;
+  color: #344fb0;
+}
+.scope {
+  color: #5c6980;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.measure {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.measure[data-low] {
+  color: #975321;
+}
+.unknown {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: #5e6d85;
+}
+.evidence {
+  min-width: 140px;
+  max-width: 240px;
+  display: grid;
+  gap: 4px;
+}

@@ -1,7 +1,14 @@
+import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
+import { isReplaySafeRejection, withReplaySafety } from "../utils/replaySafety.js";
+import { createContextTelemetry, recordContextAttempt, nextContextAttempt } from "./chatCore/contextTelemetry.js";
+import { requireBudgetDispatchCoverage, beginBudgetDispatch, observeBudgetResponse, budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
+import { BudgetAdmissionError, markBudgetUncertain, releaseUndispatchedBudgetReservation } from "../../src/lib/db/repos/budgetRepo.js";
+import { isLocalTransportPoolRefusal } from "../utils/dispatcherCache.js";
 import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
 import { resolveUpstreamRoute } from "./chatCore/upstreamRoute.js";
 import { translateRequest } from "../translator/index.js";
+import { assertTranslationContent, TranslationInputError } from "../translator/concerns/translationError.js";
 import {
   applyThinking,
   extractThinking,
@@ -105,30 +112,22 @@ import { isConnectTimeoutError } from "../utils/responseHeaderTimeout.js";
 import { applyCodexFastMode } from "../config/codexFastMode.js";
 import { projectClientModelStatus } from "../config/modelErrorClassifier.js";
 
-// Give the compressor its own copy of the items it rewrites in place, so a
-// retry on another account starts from the caller's original text rather than
-// from the previous attempt's output. Only the compressible collections are
-// copied, never the whole body: the body carries streams and abort signals that
-// structuredClone would reject, and the rest of it is not touched by the
-// compressor anyway. Falls back to leaving the body alone, which is the
-// pre-existing behaviour, if the clone is refused.
-function isolateCompressibleItems(body) {
-  if (!body) return;
-  for (const key of ["messages", "input"]) {
-    if (!Array.isArray(body[key])) continue;
-    try {
-      body[key] = structuredClone(body[key]);
-    } catch {
-      // A non-cloneable item means this collection stays shared. Compression is
-      // idempotent-ish rather than exact, so a shared array is a worse result,
-      // not a broken one.
-    }
+// Own every JSON container before translation or shaping mutates it. Direct
+// engine callers can also attach opaque signals/streams/functions; retain
+// those handles without sharing their surrounding mutable request records.
+function isolateRequestBody(value, copies = new WeakMap()) {
+  if (!value || typeof value !== "object") return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
+  if (copies.has(value)) return copies.get(value);
+  const copy = Array.isArray(value) ? new Array(value.length) : Object.create(prototype);
+  copies.set(value, copy);
+  for (const [key, item] of Object.entries(value)) {
+    Object.defineProperty(copy, key, {
+      value: isolateRequestBody(item, copies), enumerable: true, writable: true, configurable: true,
+    });
   }
-  if (body.conversationState) {
-    try {
-      body.conversationState = structuredClone(body.conversationState);
-    } catch { /* as above */ }
-  }
+  return copy;
 }
 
 /**
@@ -229,9 +228,9 @@ function boundedSet(map, key, value) {
     }
   }
 }
-function rememberRidSession(rid, sid, estimatedTokens) {
-  if (!rid || !sid) return;
-  boundedSet(ridSessions, rid, { sid, estimatedTokens });
+function rememberRidSession(rid, sid, estimatedTokens, calibrationKey = sid) {
+  if (!rid || !calibrationKey) return;
+  boundedSet(ridSessions, rid, { sid, estimatedTokens, calibrationKey });
 }
 export function sessionCalibrationFor(sid) {
   return (sid && sessionCalibration.get(sid)) || 1;
@@ -239,18 +238,18 @@ export function sessionCalibrationFor(sid) {
 onReqSummary((verdict, fields) => {
   const rid = typeof fields?.rid === "string" ? fields.rid : null;
   if (!rid) return;
-  const entry = ridSessions.get(rid);
+  const key = fields.row || rid;
+  const entry = ridSessions.get(key);
   if (!entry) return;
-  ridSessions.delete(rid);
+  ridSessions.delete(key);
   if (verdict !== "ok") return;
-  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-  const actual = n(fields.in) + n(fields.cr) + n(fields.cw);
-  if (actual <= 0) return;
-  writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
+  const actual = fields.ctx;
+  if (typeof actual !== "number" || !Number.isFinite(actual) || actual <= 0) return;
+  if (entry.sid) writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
   if (entry.estimatedTokens > 0) {
     const ratio = actual / entry.estimatedTokens;
-    const prev = sessionCalibration.get(entry.sid);
-    boundedSet(sessionCalibration, entry.sid, prev ? prev * 0.5 + ratio * 0.5 : ratio);
+    const prev = sessionCalibration.get(entry.calibrationKey);
+    boundedSet(sessionCalibration, entry.calibrationKey, prev ? prev * 0.5 + ratio * 0.5 : ratio);
   }
 });
 
@@ -308,6 +307,12 @@ function trackCacheEpoch(sid, serialized) {
 
 export async function handleChatCore({
   requestId,
+  contextTelemetry: contextIdentity = {},
+  contextStructureEnabled = true,
+  rtkAllowLossy = false,
+  schemaAllowLossy = false,
+  headroomAllowLossy = false,
+  pxpipeAllowLossy = false,
   body,
   modelInfo,
   credentials: rawCredentials,
@@ -358,6 +363,7 @@ export async function handleChatCore({
   toolDisclosure,
   codexFastMode,
 }) {
+  body = isolateRequestBody(body);
   const credentials = rawCredentials
     ? {
         ...rawCredentials,
@@ -369,6 +375,7 @@ export async function handleChatCore({
       }
     : rawCredentials;
   const { provider, model } = modelInfo;
+  const contextScope = credentials?.sessionHash ? `${credentials.sessionHash}:${provider}:${model}:${connectionId || ""}` : sid;
   const notifyTerminalVerificationSuccess =
     onVerificationSuccess && verificationContext?.challengeIdAtStart
       ? async () => {
@@ -424,6 +431,8 @@ export async function handleChatCore({
     ccFilterNaming,
   );
   if (bypassResponse) return bypassResponse;
+  const contextCapture = await prepareContextCapture({ body: clientRawRequest?.body ?? body,
+    headers: clientRawRequest?.headers, apiKey, enabled: contextStructureEnabled });
 
   // Track as an active (concurrent) session for the dashboard. clientId is the
   // real client IP stamped by custom-server.js as x-tp-real-ip, which is the
@@ -459,6 +468,9 @@ export async function handleChatCore({
   if (useTransport && credentials) credentials.runtimeTransport = useTransport;
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
+  const inputEstimate = estimateRequestTokens(body);
+  const messageCount = Array.isArray(body.messages) ? body.messages.length : Array.isArray(body.input) ? body.input.length : null;
+  const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
   const passthrough = isNativePassthrough(clientTool, provider);
 
@@ -563,6 +575,16 @@ export async function handleChatCore({
 
   // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
   if (!passthrough) {
+    try {
+      assertTranslationContent(sourceFormat, targetFormat, body);
+    } catch (error) {
+      if (!(error instanceof TranslationInputError)) throw error;
+      trackPendingRequest(model, provider, connectionId, false, true);
+      return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message, null, {
+        safeToReplay: false,
+        failurePhase: "translation",
+      }, rid);
+    }
     const caps = getCapabilitiesForModel(provider, model);
     if (stripUnsupportedModalities(body, sourceFormat, caps)) {
       log?.debug?.(
@@ -625,7 +647,8 @@ export async function handleChatCore({
       );
     }
   } else {
-    translatedBody = translateRequest(
+    try {
+      translatedBody = translateRequest(
       sourceFormat,
       targetFormat,
       upstreamModel,
@@ -637,7 +660,15 @@ export async function handleChatCore({
       stripList,
       connectionId,
       clientTool,
-    );
+      );
+    } catch (error) {
+      if (!(error instanceof TranslationInputError)) throw error;
+      trackPendingRequest(model, provider, connectionId, false, true);
+      return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message, null, {
+        safeToReplay: false,
+        failurePhase: "translation",
+      }, rid);
+    }
     if (!translatedBody) {
       trackPendingRequest(model, provider, connectionId, false, true);
       return createErrorResult(
@@ -679,10 +710,7 @@ export async function handleChatCore({
   // entry (negative delta) instead of vanishing into the entry bytes.
   let toolsStageDelta = null;
   let toolsStripped = false;
-  let toolsBeforeBytes = null;
-  if (Array.isArray(translatedBody.tools) && translatedBody.tools.length > 0) {
-    toolsBeforeBytes = Buffer.byteLength(JSON.stringify(translatedBody.tools));
-  }
+  const toolsBeforeBytes = Buffer.byteLength(JSON.stringify(translatedBody));
   if (Array.isArray(translatedBody.tools)) {
     const { tools: deduped, stripped } = dedupeTools(translatedBody.tools, { clientTool, model });
     if (stripped.length > 0) {
@@ -752,16 +780,6 @@ export async function handleChatCore({
         `measure: ${beforeN}tools ${beforeBytes}B → ${afterN}tools ${afterBytes}B`,
       );
     }
-    if (toolsBeforeBytes !== null) {
-      const toolsAfterBytes = Buffer.byteLength(JSON.stringify(translatedBody.tools));
-      if (toolsAfterBytes !== toolsBeforeBytes) {
-        toolsStageDelta = {
-          delta: toolsAfterBytes - toolsBeforeBytes,
-          in: toolsBeforeBytes,
-          out: toolsAfterBytes,
-        };
-      }
-    }
   }
 
   // Token savers: applied at the final body just before dispatch
@@ -776,10 +794,10 @@ export async function handleChatCore({
     delete translatedBody.tools;
   }
 
-  // Token-saver byte ledger: whole-body per-stage deltas serialized once per
-  // stage boundary. Feeds REQ save=/save_tok=, the XFORM.saver-guard anomaly
+  // Token-saver byte ledger: whole-body per-stage deltas with serialization
+  // only at potentially changed boundaries. Feeds REQ save=/save_tok=, the XFORM.saver-guard anomaly
   // line, bytesSaved on the saver event rows, and the honest growth check.
-  // Off entirely when no saver will run, so a saver-free request pays nothing.
+  // Disabled stages retain explicit zero-delta rows without body serialization.
   // privacy runs under its own flag below (line ~758), independent of
   // tokenSaverEnabled, so its measurement must not depend on the token-saver
   // union either.
@@ -799,10 +817,13 @@ export async function handleChatCore({
           ponytailEnabled ||
           memorySettings)),
   );
+  const toolsAfterBytes = Buffer.byteLength(JSON.stringify(translatedBody));
+  toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true };
   const saverStages = [];
+  const contextStages = [{ stage: "tools", ...toolsStageDelta }];
   // The tools-normalization block above ran before this ledger existed; fold
   // its measured delta in as the first stage so save= attributes the strip.
-  if (toolsStageDelta) saverStages.push({ stage: "tools", ...toolsStageDelta });
+  if (toolsStageDelta.delta !== 0) saverStages.push({ stage: "tools", ...toolsStageDelta });
   if (toolsStripped) notePath(rid, "XFORM.tool-strip");
   // Per-stage compressed-turn indices for the qac/thinking event rows (the
   // dashboard shows WHICH turns a stage compressed, bounded at 8).
@@ -817,21 +838,17 @@ export async function handleChatCore({
   const pushPrefixNote = (note) => {
     if (prefixNotes.length < PREFIX_NOTES_MAX) prefixNotes.push(note);
   };
-  const saverPrev = saverWillRun
-    ? { bytes: Buffer.byteLength(JSON.stringify(translatedBody)) }
-    : null;
+  const saverPrev = { bytes: toolsAfterBytes };
   const saverEntryBytes = saverPrev ? saverPrev.bytes : 0;
-  const measureSaverStage = (stage, ran) => {
-    if (!saverPrev || !ran) return;
-    const at = Buffer.byteLength(JSON.stringify(translatedBody));
-    if (at !== saverPrev.bytes) {
-      saverStages.push({
-        stage,
-        delta: at - saverPrev.bytes,
-        in: saverPrev.bytes,
-        out: at,
-      });
-    }
+  const measureSaverStage = (stage, ran, measuredBytes) => {
+    // Every mutation between ledger boundaries belongs to a gated stage.
+    // A disabled stage retains its exact predecessor measurement and still
+    // contributes an explicit zero-delta row. The final serializer supplies
+    // its already-measured size so the ledger never serializes it twice.
+    const at = measuredBytes ?? (ran ? Buffer.byteLength(JSON.stringify(translatedBody)) : saverPrev.bytes);
+    const measurement = { ran: Boolean(ran), stage, delta: at - saverPrev.bytes, in: saverPrev.bytes, out: at };
+    contextStages.push(measurement);
+    if (saverWillRun && at !== saverPrev.bytes) saverStages.push(measurement);
     saverPrev.bytes = at;
   };
 
@@ -846,7 +863,7 @@ export async function handleChatCore({
   const schemaDistillRan =
     tokenSaverEnabled && schemaDistillEnabled && Array.isArray(translatedBody.tools);
   if (schemaDistillRan) {
-    const distilled = distillToolSchemas(translatedBody.tools);
+    const distilled = distillToolSchemas(translatedBody.tools, { allowLossy: schemaAllowLossy });
     if (distilled.savedBytes > 0) {
       translatedBody.tools = distilled.tools;
       notePath(rid, "XFORM.tool-distill");
@@ -922,20 +939,12 @@ export async function handleChatCore({
   }
   measureSaverStage("thinking", thinkingWillRun);
 
-  // RTK: compress tool_result content.
-  //
-  // compressMessages rewrites message content IN PLACE, and on the passthrough
-  // path translatedBody is a shallow spread of the caller's body, so the array
-  // and the message objects inside it are the caller's. Account fallback calls
-  // this handler again with that same body, which meant attempt two compressed
-  // the already-compressed text and each further attempt compressed it again
-  // (#3566). Isolate the messages first, and only when the stage will actually
-  // run, so a request with the saver off pays nothing.
+  // RTK rewrites only this attempt's privately owned request containers.
   const rtkWillRun = tokenSaverEnabled && rtkEnabled;
-  if (rtkWillRun) isolateCompressibleItems(translatedBody);
   const rtkStats = compressMessages(
     translatedBody,
     rtkWillRun,
+    { allowLossy: rtkAllowLossy },
   );
   const rtkLine = formatRtkLog(rtkStats);
   if (rtkLine) console.log(rtkLine);
@@ -962,18 +971,6 @@ export async function handleChatCore({
   let privacyRan = false;
   if (privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming)) {
     privacyRan = true;
-    // Same in-place hazard RTK has (#3566): on passthrough these are the
-    // caller's own objects, and an account-fallback retry would hand a fresh
-    // filter a body that is already aliased, leaving it with an empty mapping
-    // and nothing to restore.
-    if (!rtkWillRun) isolateCompressibleItems(translatedBody);
-    if (translatedBody.system && typeof translatedBody.system === "object") {
-      try {
-        translatedBody.system = structuredClone(translatedBody.system);
-      } catch {
-        /* shared is a worse result, not a broken one */
-      }
-    }
     privacyFilter = redactOutbound(translatedBody, privacyTerms);
     if (privacyFilter) {
       log?.debug?.("PRIVACY", `pseudonymised ${privacyFilter.size} value(s)`);
@@ -1013,6 +1010,7 @@ export async function handleChatCore({
   if (pxpipeEnabled) {
     const pxpipeResult = await compressWithPxpipe(translatedBody, {
       enabled: tokenSaverEnabled,
+      allowLossy: pxpipeAllowLossy,
       format: finalFormat,
       model: upstreamModel,
       minChars: pxpipeMinChars,
@@ -1045,7 +1043,7 @@ export async function handleChatCore({
       settings: memorySettings,
       targetFormat: finalFormat,
       contextWindow: memoryCaps?.contextWindow ?? null,
-      calibration: sessionCalibrationFor(sid),
+      calibration: sessionCalibrationFor(contextScope),
       log,
     });
     memStats = memRes.stats || null;
@@ -1093,7 +1091,7 @@ export async function handleChatCore({
     measureContextPressure(translatedBody, {
       contextWindow: getCapabilitiesForModel(provider, upstreamModel)?.contextWindow ?? null,
       settings: memorySettings || undefined,
-      calibration: sessionCalibrationFor(sid),
+      calibration: sessionCalibrationFor(contextScope),
     });
   // The memory ladder cuts tool results oldest-first and prunes on chunk
   // crossings only, so between crossings the prefix is byte-stable and on a
@@ -1127,9 +1125,10 @@ export async function handleChatCore({
   // client sent it, so the prompt prefix stays byte-identical turn to turn and
   // the provider's cache keeps hitting.
   const headroomDiagnostics = {};
-  const headroomPressure = headroomEnabled ? measurePrefixPressure() : null;
+  const headroomPressure = tokenSaverEnabled && headroomEnabled ? measurePrefixPressure() : null;
   const headroomStats = await compressWithHeadroom(translatedBody, {
     enabled: tokenSaverEnabled && headroomEnabled,
+    allowLossy: headroomAllowLossy,
     url: headroomUrl,
     model: upstreamModel,
     format: finalFormat,
@@ -1320,6 +1319,7 @@ export async function handleChatCore({
     claudePrefixTarget &&
     prefixNotes.length > 0 &&
     !!prefixMessages();
+  let midinjectApplied = false;
   if (midinjectWillRun) {
     const noteText = composeBoundaryNote(prefixNotes);
     let insertIndex = -1;
@@ -1332,10 +1332,12 @@ export async function handleChatCore({
     const res = injectBoundaryNote(translatedBody.messages, insertIndex, noteText);
     if (res.injected) {
       translatedBody.messages = res.messages;
-      measureSaverStage("midinject", true);
+      midinjectApplied = true;
       notePath(rid, "XFORM.midinject-applied");
     }
   }
+
+  measureSaverStage("midinject", midinjectApplied);
 
   if (xf.length && log?.line) log.line(reqTag, "⚙", xf.join(" · "));
 
@@ -1366,18 +1368,18 @@ export async function handleChatCore({
   // growth reported honestly) plus the cache-epoch prefix this request shares
   // with its session's previous final pre-dispatch body. savers off -> silent.
   const saverFields = {};
-  // T-F2: the final pre-dispatch body is serialized ONCE, only when a
-  // consumer needs it (a saver ran, or ce tracking has a sid); the string
-  // feeds the stage ledger's final measure, the ce tracking and the x-tp-*
-  // response headers. With no saver and no sid, nothing is serialized.
+  // The complete stage ledger requires the final serialization even with
+  // optional savers disabled. Reuse its size for the final row and its string
+  // for cache-prefix and structural evidence consumers.
   let finalBodyBytes = null;
+  let finalSerialized = null;
   let compactHint = false;
-  if (saverWillRun || sid) {
-    const finalSerialized = JSON.stringify(translatedBody);
+  if (saverPrev || sid) {
+    finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
-    measureSaverStage("final", true);
-    if (sid) {
-      const tracked = trackCacheEpoch(sid, finalSerialized);
+    measureSaverStage("final", true, finalBodyBytes);
+    if (contextScope) {
+      const tracked = trackCacheEpoch(contextScope, finalSerialized);
       if (tracked) {
         saverFields.ce = tracked.ce;
         // HEADERS: the compact hint fires only on a known ce that dropped
@@ -1399,11 +1401,11 @@ export async function handleChatCore({
   // number that decides whether history gets cut.
   const estTokens = finalBodyBytes === null ? null : estimateRequestTokens(translatedBody);
   const saverMeta = {};
-  if (estTokens !== null) {
+  if (estTokens !== null && (saverWillRun || sid)) {
     // measureContextPressure.projected, arrived at by the same arithmetic:
     // the clamped calibration and the same rounding, so the header and the
     // ladder cannot report two different sizes for one body.
-    saverMeta.ctxTokens = Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(sid)));
+    saverMeta.ctxTokens = Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(contextScope)));
   }
   if (saverStages.length) {
     saverMeta.saveBytes = Math.round(
@@ -1412,14 +1414,42 @@ export async function handleChatCore({
   }
   if (saverFields.ce !== undefined) saverMeta.ce = saverFields.ce;
   if (compactHint) saverMeta.compactHint = true;
+  let contextTelemetry = createContextTelemetry({
+    ...contextIdentity, sessionHash: credentials?.sessionHash, sessionIdentitySource: credentials?.sessionIdentitySource,
+    dispatchCoverage: "executor-invocation",
+    explicitIdentity: contextCapture.identity,
+    structures: [contextCapture.initial, contextCapture.capture(translatedBody, "gateway-shaped", finalSerialized)].filter(Boolean),
+    timestamp: new Date(requestStartTime).toISOString(),
+    requestedModel: clientRawRequest?.body?.model || body.model,
+    clientTool, inputEstimate, messageCount, toolCount,
+    contextEstimate: Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(contextScope))), bodyAfterBytes: finalBodyBytes,
+    cachePrefixBytes: saverMeta.ce, compactHint,
+    routeKind: passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated",
+    formatPair: `${sourceFormat}>${targetFormat}`, selection: credentials?.selection?.verdict,
+    controls: {
+      contextStructure: contextStructureEnabled,
+      rtk: Boolean(rtkWillRun), rtkAllowLossy, schema: Boolean(schemaDistillRan), schemaAllowLossy,
+      thinking: Boolean(thinkingWillRun), privacy: Boolean(privacyEnabled),
+      caveman: Boolean(tokenSaverEnabled && cavemanEnabled), ponytail: Boolean(tokenSaverEnabled && ponytailEnabled),
+      pxpipe: Boolean(tokenSaverEnabled && pxpipeEnabled), pxpipeAllowLossy,
+      memory: Boolean(tokenSaverEnabled && memorySettings), headroom: Boolean(tokenSaverEnabled && headroomEnabled), headroomAllowLossy,
+      qac: Boolean(qacWillRun), pairs: Boolean(pairsWillRun), reorder: Boolean(reorderWillRun), midinject: Boolean(tokenSaverEnabled && midPrefixInjectEnabled), clientOptOut: !tokenSaverEnabled,
+    },
+    stages: contextStages.map((stage) => ({ ...stage, ...(stage.stage === "rtk" ? { semanticPreserving: rtkStats?.semanticPreserving === true } : {}) })),
+  });
+  Object.defineProperties(saverMeta, {
+    requestId: { get: () => contextTelemetry.requestId },
+    logicalRequestId: { get: () => contextTelemetry.logicalRequestId },
+  });
+  await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
   // MCP context_status state: sid-keyed self-sizing snapshot for the
   // /api/v1/mcp tool. Written before dispatch so an upstream failure still
   // leaves fresh telemetry. The store swallows its own errors; this catch is
   // the belt on the same contract, telemetry never breaks the request.
-  if (sid) {
-    rememberRidSession(rid, sid, estTokens);
+  if (contextScope) {
+    rememberRidSession(contextTelemetry.requestId, sid, estTokens, contextScope);
     try {
-      writeContextStatus(sid, {
+      if (sid) writeContextStatus(sid, {
         rid,
         ctxTokens: saverMeta.ctxTokens,
         saveBytes: saverMeta.saveBytes,
@@ -1635,10 +1665,29 @@ export async function handleChatCore({
   // Most executors return their registry format. Cursor AgentService is an
   // exception: it is decoded by the executor into OpenAI-compatible output.
   let providerResponseFormat = targetFormat;
-  const mapTransportError = (error) => {
+  const mapTransportError = async (error) => {
+    if (isLocalTransportPoolRefusal(error)) {
+      await releaseUndispatchedBudgetReservation(contextTelemetry?.budgetReservationId, error);
+      trackPendingRequest(model, provider, connectionId, false, true);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
+      streamController.handleComplete();
+      reqSummary("refused", { rid, conn: connPrefix, status: 503, why: error.code, ...saverFields });
+      const response = withReplaySafety(Response.json({ error: { type: 'local_admission_error', code: error.code,
+        message: error.message, failure_phase: 'admission' } }, { status: 503 }), false, 1000, true);
+      return withSaverHeaders({ success: false, status: 503, error: error.message, response,
+        failureMetadata: { safeToReplay: false, failurePhase: 'admission', transportDispatched: false }, rid }, saverMeta);
+    }
+    if (error instanceof BudgetAdmissionError) {
+      trackPendingRequest(model, provider, connectionId, false, true);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
+      streamController.handleComplete();
+      return budgetErrorResult(error, rid);
+    }
+    if (contextTelemetry?.budgetReservationId) await markBudgetUncertain(contextTelemetry.budgetReservationId, "transport-outcome-unknown");
     const isAntigravity = provider === "antigravity";
     const sinkError = isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : (error.message || String(error));
     if (callerSignal?.aborted && (isCallerAbortError(error) || error.name === "AbortError")) {
+      recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "aborted", latency: { total: Date.now() - requestStartTime } });
       trackPendingRequest(model, provider, connectionId, false);
       return withSaverHeaders(createCallerAbortResult(), saverMeta);
     }
@@ -1651,11 +1700,12 @@ export async function handleChatCore({
     }).catch(() => {});
     saveRequestDetail(
       buildRequestDetail({
+        contextTelemetry,
         provider,
         model,
         connectionId,
         latency: { ttft: 0, total: Date.now() - requestStartTime },
-        tokens: { prompt_tokens: 0, completion_tokens: 0 },
+        tokens: null,
         request: extractRequestConfig(body, stream),
         providerRequest: translatedBody || null,
         response: {
@@ -1672,7 +1722,7 @@ export async function handleChatCore({
     if (error.name === "AbortError") {
       streamController.handleError(isAntigravity ? new Error(ANTIGRAVITY_SAFE_ERROR_MESSAGE) : error);
       reqSummary("failed", { rid, conn: connPrefix, status: 499, why: "aborted", ...saverFields });
-      return withSaverHeaders(createErrorResult(499, isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Request aborted", null, null, rid), saverMeta);
+      return withSaverHeaders(createErrorResult(499, isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Request aborted", null, { safeToReplay: false }, rid), saverMeta);
     }
     const errMsg = isAntigravity
       ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
@@ -1683,7 +1733,7 @@ export async function handleChatCore({
         HTTP_STATUS.GATEWAY_TIMEOUT,
         isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : "Upstream response body timed out",
         null,
-        null,
+        { safeToReplay: false },
         rid,
       ), saverMeta);
     }
@@ -1695,10 +1745,26 @@ export async function handleChatCore({
       );
     }
     reqSummary("failed", { rid, conn: connPrefix, status: HTTP_STATUS.BAD_GATEWAY, why: "transport", ...saverFields });
-    return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, null, rid), saverMeta);
+    return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, { safeToReplay: false }, rid), saverMeta);
+  };
+  const executeAttempt = async (args) => {
+    await requireBudgetDispatchCoverage(apiKey, executor.supportsBudgetDispatch === true);
+    let dispatches = 0;
+    return executor.execute({ ...args, beforeDispatch: async (wire = {}) => {
+      if (dispatches++ > 0) {
+        contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
+      }
+      if (!contextTelemetry.pricingSnapshot) await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+      await beginBudgetDispatch(contextTelemetry, apiKey, wire);
+      const structure = contextCapture.capture(wire.body, "physical-dispatch", wire.serialized);
+      contextTelemetry.structures = contextTelemetry.structures.filter((value) => value.boundary !== "physical-dispatch");
+      if (structure) contextTelemetry.structures.push(structure);
+      contextTelemetry.dispatchCoverage = "physical-dispatch";
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+    }, afterDispatch: (result) => observeBudgetResponse(contextTelemetry, result) });
   };
   try {
-    const result = await executor.execute({
+    const result = await executeAttempt({
       model,
       body: translatedBody,
       stream,
@@ -1724,6 +1790,7 @@ export async function handleChatCore({
   // Handle 401/403 - try token refresh (skip for noAuth providers)
   if (
     !executor.noAuth &&
+    isReplaySafeRejection(providerResponse) &&
     (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
@@ -1760,7 +1827,9 @@ export async function handleChatCore({
           }
         }
         try {
-          const retryResult = await executor.execute({
+          try { Promise.resolve(providerResponse.body?.cancel()).catch(() => {}); } catch {}
+          contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
+          const retryResult = await executeAttempt({
             model,
             body: translatedBody,
             stream,
@@ -1796,11 +1865,11 @@ export async function handleChatCore({
   // Provider returned error
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    const { statusCode, message, resetsAtMs, validation, errorPayload } = await parseUpstreamError(
-      providerResponse,
-      executor,
-    );
-    const safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
+    let parsedError;
+    try { parsedError = await parseUpstreamError(providerResponse, executor, { signal: executionSignal }); }
+    catch (error) { return mapTransportError(error); }
+    let { statusCode, message, resetsAtMs, validation, errorPayload } = parsedError;
+    let safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
       ? statusCode
       : HTTP_STATUS.BAD_GATEWAY;
 
@@ -1814,7 +1883,7 @@ export async function handleChatCore({
         log?.warn?.("VERIFICATION", `validation callback failed for ${String(connectionId).slice(0, 8)}`);
       }
     }
-    const failureMetadata = projectClientModelStatus({
+    let failureMetadata = projectClientModelStatus({
       provider,
       requestedModel: model,
       status: statusCode,
@@ -1824,7 +1893,7 @@ export async function handleChatCore({
     // Adaptive unsupported-parameter retry: on a 400 naming rejected fields,
     // record them per provider+model, strip, and retry once immediately.
     const rejectedOn400 =
-      statusCode === HTTP_STATUS.BAD_REQUEST
+      statusCode === HTTP_STATUS.BAD_REQUEST && isReplaySafeRejection(providerResponse)
         ? extractRejectedFieldNamesFromError(message).filter((f) => {
             const existing = getRejectedFields(provider, model);
             return !existing.has(f.toLowerCase());
@@ -1844,7 +1913,8 @@ export async function handleChatCore({
           `Stripped body sent. Fields blocked: ${rejectedOn400.join(", ")}`,
         );
         try {
-          const retryResult = await executor.execute({
+          contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
+          const retryResult = await executeAttempt({
             model,
             body: stripped,
             stream,
@@ -1857,11 +1927,14 @@ export async function handleChatCore({
             toolNameMap,
             connectTimeout,
           });
-          if (retryResult.response.ok) {
-            providerResponse = retryResult.response;
-            providerUrl = retryResult.url;
-            providerResponseFormat = retryResult.responseFormat || targetFormat;
-            translatedBody = stripped;
+          providerResponse = retryResult.response;
+          providerUrl = retryResult.url;
+          providerHeaders = retryResult.headers;
+          finalBody = retryResult.transformedBody || stripped;
+          providerResponseFormat = retryResult.responseFormat || targetFormat;
+          translatedBody = stripped;
+          reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
+          if (providerResponse.ok) {
             trackPendingRequest(model, provider, connectionId, false);
             appendRequestLog({
               model,
@@ -1871,6 +1944,7 @@ export async function handleChatCore({
             }).catch(() => {});
             log?.debug?.("FIELDSTRIP", `Retry succeeded for ${provider}/${model}`);
             const sharedCtx = {
+              contextTelemetry,
               provider,
               model,
               body,
@@ -1955,16 +2029,24 @@ export async function handleChatCore({
               streamState,
             });
           } else {
+            // The last physical response owns status, reset and replay proof.
+            // Parse it once, then finalize below without a third field edit.
+            ({ statusCode, message, resetsAtMs, validation, errorPayload } = await parseUpstreamError(providerResponse, executor, { signal: executionSignal }));
+            safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600 ? statusCode : HTTP_STATUS.BAD_GATEWAY;
+            failureMetadata = projectClientModelStatus({ provider, requestedModel: model, status: statusCode, payload: errorPayload });
+            if (validation && typeof onValidationRequired === 'function') {
+              try { await onValidationRequired({validation,observationId:verificationContext?.observationId}); }
+              catch { log?.warn?.('VERIFICATION','Validation callback failed after field-strip rejection'); }
+            }
             log?.warn?.(
               "FIELDSTRIP",
               `Retry still failed: ${retryResult.response.status} ${retryResult.response.statusText}`,
             );
           }
         } catch (e) {
-          if (e.name === "AbortError" || isConnectTimeoutError(e)) {
-            return mapTransportError(e);
-          }
-          log?.warn?.("FIELDSTRIP", `Retry threw: ${provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : e.message}`);
+          // The retry may have reached generation even though its response was
+          // lost. The earlier 400 proves nothing about this later attempt.
+          return mapTransportError(e);
         }
       } else {
         log?.warn?.(
@@ -1988,11 +2070,12 @@ export async function handleChatCore({
     const sinkMessage = provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : message;
     saveRequestDetail(
       buildRequestDetail({
+        contextTelemetry,
         provider,
         model,
         connectionId,
         latency: { ttft: 0, total: Date.now() - requestStartTime },
-        tokens: { prompt_tokens: 0, completion_tokens: 0 },
+        tokens: null,
         request: extractRequestConfig(body, stream),
         providerRequest: finalBody || translatedBody || null,
         response: { error: sinkMessage, status: safeStatusCode, thinking: null },
@@ -2015,10 +2098,14 @@ export async function handleChatCore({
     }
     reqLogger.logError(new Error(sinkMessage), finalBody || translatedBody);
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
-    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, failureMetadata, rid), saverMeta);
+    // An executor may convert an accepted SSE failure to HTTP. Preserve its
+    // explicit no-replay provenance instead of treating it as a rejection.
+    const safeToReplay = isReplaySafeRejection(providerResponse);
+    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay }, rid), saverMeta);
   }
 
   const sharedCtx = {
+    contextTelemetry,
     provider,
     model,
     body,

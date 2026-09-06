@@ -1,6 +1,9 @@
 // Microsoft Edge / Bing TTS (no auth) — via Bing translator endpoint
 import { Buffer } from "node:buffer";
 import { UA } from "./_base.js";
+import { isReplaySafeRejection } from "../../utils/replaySafety.js";
+import { discardResponseBody } from "../../utils/discardResponseBody.js";
+import { extractRetryAfterDeadline } from "../../utils/error.js";
 
 const REFRESH_MS = 5 * 60 * 1000; // token TTL ~1h, refresh early
 const VOICES_TTL = 24 * 60 * 60 * 1000;
@@ -71,7 +74,8 @@ export default {
     let res = await ttsRequest(text, voiceId, token);
 
     // 429/403: invalidate cache and retry once
-    if (res.status === 429 || res.status === 403) {
+    if ((res.status === 429 || res.status === 403) && isReplaySafeRejection(res) && !extractRetryAfterDeadline(res)) {
+      discardResponseBody(res);
       cache.token = null;
       cache.tokenTime = 0;
       token = await getToken();

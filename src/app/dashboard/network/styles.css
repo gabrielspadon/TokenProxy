@@ -1,0 +1,25 @@
+@layer components {
+  .network-node-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .network-pool-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+
+  .network-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+  /* Strategy form (pass-2 defect 17): constrained fields inside the panel, not full-width. */
+  .network-form-strategy { flex-direction: row; flex-wrap: wrap; align-items: end; }
+  .network-form-strategy .field { flex: 0 1 260px; }
+  /* The verb sits beside its fields, not right-aligned on its own line the way
+     the shared .actions class would place it. */
+  .network-form-strategy .verb-row { margin-block-start: 0; }
+  /* The On/Off tile carries a word, not a numeral. Localized words (de
+     "Ausgeschaltet") outrun --t-30 mono on narrow screens, so drop to the
+     default measure size and let it wrap inside the tile. */
+  .network-onoff .value { font-size: var(--t-19); font-family: var(--sans); overflow-wrap: anywhere; }
+  .network-check { display: flex; gap: 8px; align-items: flex-start; }
+  .network-check input { accent-color: var(--signal); margin-top: 3px; }
+}
+
+@layer states {
+  @media (max-width: 767px) {
+    .network-node-row,
+    .network-pool-row { grid-template-columns: minmax(0, 1fr) auto; }
+  }
+}

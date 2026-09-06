@@ -8,6 +8,9 @@ import { initState, translateRequest, translateResponse } from "../translator/in
 import { FORMATS } from "../translator/formats.js";
 import { parseSSELine, formatSSE } from "../utils/streamHelpers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { inspectErrorBody } from "../utils/inspectErrorBody.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
 import { createExecutorResponseHeaderTimeout } from "../utils/responseHeaderTimeout.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
@@ -138,6 +141,8 @@ export class GithubExecutor extends BaseExecutor {
     return !(m.includes("gemini") || m.includes("claude"));
   }
 
+  get supportsBudgetDispatch() { return true; }
+
   async execute(options) {
     const { model, log } = options;
 
@@ -169,10 +174,12 @@ export class GithubExecutor extends BaseExecutor {
     // Only escalate to /responses for models that endpoint can actually serve.
     // Gemini/Claude would otherwise loop into a misleading "does not support
     // Responses API" 400 instead of surfacing the real /chat/completions error (#1062).
-    if (result.response.status === HTTP_STATUS.BAD_REQUEST && this.supportsResponsesEndpoint(model)) {
-      const errorBody = await result.response.clone().text();
+    if (result.response.status === HTTP_STATUS.BAD_REQUEST && isReplaySafeRejection(result.response) && this.supportsResponsesEndpoint(model)) {
+      const inspected = await inspectErrorBody(result.response, { signal: options.signal });
+      const errorBody = inspected.complete ? inspected.text : '';
 
       if (errorBody.includes("not accessible via the /chat/completions endpoint") || errorBody.includes("The requested model is not supported")) {
+        await notifyDispatchResponse(options.afterDispatch, result.response, "model-endpoint-unsupported");
         log?.warn("GITHUB", `Model ${model} requires /responses. Switching...`);
         // Cache the /responses route only once that endpoint has actually served
         // the model. "The requested model is not supported" is also Copilot's
@@ -181,6 +188,7 @@ export class GithubExecutor extends BaseExecutor {
         // to /responses, where it failed again — #3477 shows gpt-5.2 and
         // grok-code-fast-1 (neither responses-only) escalated after one such 400,
         // for the lifetime of the process.
+        try { Promise.resolve(result.response.body?.cancel?.()).catch(() => {}); } catch {}
         const responsesResult = await this.executeWithResponsesEndpoint(options);
         if (responsesResult.response.ok) this.knownCodexModels.add(model);
         return responsesResult;
@@ -190,11 +198,12 @@ export class GithubExecutor extends BaseExecutor {
     return result;
   }
 
-  async executeWithResponsesEndpoint({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  async executeWithResponsesEndpoint({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch = null, afterDispatch = null }) {
     const url = this.config.responsesUrl;
     const headers = this.buildHeaders(credentials, stream);
 
     const transformedBody = openaiToOpenAIResponsesRequest(model, body, stream, credentials);
+    const serialized = JSON.stringify(transformedBody);
 
     log?.debug("GITHUB", "Sending translated request to /responses");
 
@@ -206,12 +215,15 @@ export class GithubExecutor extends BaseExecutor {
     });
     let response;
     try {
+      signal?.throwIfAborted();
+      if (beforeDispatch) await beforeDispatch({ body: transformedBody, serialized, url });
       response = await proxyAwareFetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify(transformedBody),
+        body: serialized,
         signal: deadline.signal,
       }, proxyOptions);
+      await notifyDispatchResponse(afterDispatch, response);
     } catch (error) {
       throw deadline.classify(error);
     } finally {
@@ -288,7 +300,7 @@ export class GithubExecutor extends BaseExecutor {
   // see the note in execute() above), so we translate to Anthropic-native ourselves.
   // This is what makes prepareClaudeRequest() (translator/formats/claude.js) inject
   // cache_control — /chat/completions never gets there, so it never sees cache tokens.
-  async executeWithMessagesEndpoint({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  async executeWithMessagesEndpoint({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch = null, afterDispatch = null }) {
     const url = this.config.messagesUrl;
     const headers = this.buildHeaders(credentials, stream);
 
@@ -303,6 +315,7 @@ export class GithubExecutor extends BaseExecutor {
     // schema rejects the extra field with a 400.
     const toolNameMap = transformedBody._toolNameMap;
     delete transformedBody._toolNameMap;
+    const serialized = JSON.stringify(transformedBody);
 
     log?.debug("GITHUB", "Sending translated request to /v1/messages");
 
@@ -314,12 +327,15 @@ export class GithubExecutor extends BaseExecutor {
     });
     let response;
     try {
+      signal?.throwIfAborted();
+      if (beforeDispatch) await beforeDispatch({ body: transformedBody, serialized, url });
       response = await proxyAwareFetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify(transformedBody),
+        body: serialized,
         signal: deadline.signal,
       }, proxyOptions);
+      await notifyDispatchResponse(afterDispatch, response);
     } catch (error) {
       throw deadline.classify(error);
     } finally {

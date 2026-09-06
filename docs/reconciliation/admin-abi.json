@@ -42,15 +42,38 @@
       },
       "WindowRecord": {
         "type": "object",
-        "description": "Normalized quota-window evidence, exactly the record shape required by the Account Scheduling Contract, rule 1.",
+        "description": "Passive stored quota evidence. Unknown values remain null. Scope is unique within a connection. Units and history were not retained; unknown-confidence rows may use a synthetic denominator of 100.",
         "required": ["scope", "remaining", "limit", "resetAt", "observedAt", "confidence"],
         "properties": {
           "scope": { "type": "string", "description": "Provider-defined window identifier, e.g. '5h', '7d', '30d', or a provider-specific future window key. Providers may omit windows they do not have." },
-          "remaining": { "type": "number", "description": "Absolute usable entitlement remaining in this window, provider units. Never a percentage." },
-          "limit": { "type": "number", "description": "Absolute entitlement ceiling for this window." },
-          "resetAt": { "type": "string", "format": "date-time", "description": "ISO-8601 timestamp when this window resets." },
-          "observedAt": { "type": "string", "format": "date-time", "description": "ISO-8601 timestamp this evidence was captured. Unknown evidence is distinguished from fresh evidence by staleness of this field, per Account Scheduling Contract rule 2." },
-          "confidence": { "type": "string", "enum": ["measured", "estimated", "unknown"], "description": "measured: read directly from a provider usage response. estimated: derived (e.g. carried forward from a stale snapshot). unknown: no evidence yet; must not outrank fresher known evidence for a different account (rule 2)." }
+          "remaining": { "type": ["number", "null"], "minimum": 0, "description": "Stored remaining value in the recorded scale. Null means unreadable or absent, zero remains zero." },
+          "limit": { "type": ["number", "null"], "minimum": 0, "description": "Stored ceiling. A denominator of 100 alone does not establish an absolute entitlement or percent unit." },
+          "resetAt": { "type": ["string", "null"], "format": "date-time", "description": "Stored reset deadline, never advanced or synthesized by this view." },
+          "observedAt": { "type": ["string", "null"], "format": "date-time", "description": "Stored observation timestamp, not a claim that this GET contacted the provider. Identical observations may be deduplicated by the writer." },
+          "confidence": { "type": "string", "enum": ["measured", "estimated", "unknown"], "description": "Recorded measurement provenance. Both fresh and stale raw measurements map to measured; age is reported separately in freshness." },
+          "source": { "type": "string", "enum": ["quotaWindows", "stored-quota-evidence"] },
+          "unit": { "type": "null", "description": "The store has no quota-unit field." },
+          "scale": { "type": "string", "enum": ["absolute", "unknown"] },
+          "scaleNote": { "type": "string" },
+          "durationMs": { "type": ["number", "null"], "description": "Fixed duration inferred only from an explicit minute/hour/day/week scope label. Bare month/year labels remain unknown." },
+          "durationSource": { "enum": ["scope-label", null] },
+          "windowType": { "enum": ["general", "scoped", "unknown"] },
+          "windowTypeSource": { "const": "scope-label" },
+          "resetSemantics": { "enum": ["stored-deadline", "unknown"] },
+          "resetState": { "enum": ["passed", "upcoming", "unknown"] },
+          "freshness": { "$ref": "#/components/schemas/EvidenceFreshness" },
+          "percentage": { "type": ["object", "null"], "description": "Separately retained derived percentage from connection.lastQuotaSnapshot, joined by exact scope. Never inferred from remaining/limit.", "properties": {
+            "value": { "type": "number", "minimum": 0, "maximum": 100 }, "unit": { "const": "percent" },
+            "source": { "const": "connection.lastQuotaSnapshot" }, "measurement": { "const": "derived-percentage" },
+            "observedAt": { "type": ["string", "null"], "format": "date-time" }, "resetAt": { "type": ["string", "null"], "format": "date-time" },
+            "freshness": { "$ref": "#/components/schemas/EvidenceFreshness" }
+          } }
+        }
+      },
+      "EvidenceFreshness": {
+        "type": "object", "required": ["state", "ageMs", "maxAgeMs", "basis"], "properties": {
+          "state": { "enum": ["fresh", "stale", "unknown"] }, "ageMs": { "type": ["number", "null"], "minimum": 0 },
+          "maxAgeMs": { "const": 900000 }, "basis": { "const": "stored-observation-age-and-deadline" }
         }
       },
       "Connection": {
@@ -69,15 +92,31 @@
       },
       "QualificationDetail": {
         "type": "object",
-        "required": ["connectionId", "provider", "status", "checkedAt", "generation", "quota"],
+        "required": ["connectionId", "provider", "status", "checkedAt", "validation", "generation", "quota"],
         "properties": {
           "connectionId": { "type": "string" },
           "provider": { "type": "string" },
           "status": { "type": "string", "enum": ["healthy", "degraded", "cooldown", "drained", "unqualified", "error"] },
-          "checkedAt": { "type": "string", "format": "date-time" },
+          "checkedAt": { "type": ["string", "null"], "format": "date-time", "description": "Timestamp of the retained validation record. Configuration edits and provider-health flags are not check observations." },
+          "validation": {
+            "type": "object",
+            "required": ["ok", "kind", "source", "checkedAt", "model", "latencyMs", "error", "upstreamContact", "generationVerified"],
+            "properties": {
+              "ok": { "type": ["boolean", "null"] },
+              "kind": { "const": "provider-validation" },
+              "source": { "enum": ["recorded-recheck", "not-recorded"] },
+              "checkedAt": { "type": ["string", "null"], "format": "date-time" },
+              "model": { "type": "null", "description": "The provider validator does not record a model-specific generation receipt." },
+              "latencyMs": { "type": ["number", "null"], "minimum": 0 },
+              "error": { "type": ["string", "null"] },
+              "upstreamContact": { "const": "not-recorded" },
+              "generationVerified": { "const": false }
+            }
+          },
           "generation": {
             "type": "object",
-            "description": "Credential-safe generation evidence: proof the connection can complete a real generation, never the generated content.",
+            "deprecated": true,
+            "description": "Legacy generation-named credential-check result. Provider checks may only inspect token presence/expiry or accept an intentional invalid request. This field does not prove model generation support.",
             "required": ["ok", "model", "latencyMs", "error"],
             "properties": {
               "ok": { "type": "boolean" },
@@ -95,7 +134,31 @@
         "properties": {
           "connectionId": { "type": "string" },
           "provider": { "type": "string" },
+          "asOf": { "type": "string", "format": "date-time" },
+          "mode": { "const": "passive" },
+          "historyAvailable": { "const": false },
           "windows": { "type": "array", "items": { "$ref": "#/components/schemas/WindowRecord" } }
+        }
+      },
+      "EligibilityProjection": {
+        "type": "object", "required": ["asOf", "mode", "requested", "basis", "upstreamVerified", "accounts"], "properties": {
+          "asOf": { "type": "string", "format": "date-time" }, "mode": { "const": "passive" },
+          "requested": { "type": "object", "required": ["provider", "model", "routePrefix"], "properties": { "provider": { "type": "string" }, "model": { "type": "string" }, "routePrefix": { "type": "string", "description": "Submitted provider prefix, retained for traceability. Effective model-disable policy normalizes registered provider aliases." } } },
+          "basis": { "const": "persisted-local-gates" }, "upstreamVerified": { "const": false },
+          "limitations": { "type": "array", "items": { "type": "string" } },
+          "capabilities": { "type": "object", "description": "Current local routing capability resolver values, including its defaults. Provider support is not verified." },
+          "accounts": { "type": "array", "items": { "type": "object", "required": ["connectionId", "provider", "verdict", "localAdmission", "reasons", "enabled", "draining", "modelSupport", "qualification", "quotaEvidence"], "properties": {
+            "connectionId": { "type": "string" }, "provider": { "type": "string" },
+            "verdict": { "enum": ["admissible", "blocked", "unknown"], "description": "Admissible means persisted local gates allow selection and an explicit account allowlist includes the model. It never guarantees upstream service. Unknown means no blocker but account-specific model support is unverified." },
+            "localAdmission": { "enum": ["allowed", "blocked"] },
+            "enabled": { "type": "boolean" }, "draining": { "type": "boolean" },
+            "cooldownUntil": { "type": ["string", "null"], "format": "date-time" },
+            "legacyCooldownUntil": { "type": ["string", "null"], "format": "date-time", "description": "Legacy display context, not independently a current routing gate." },
+            "reasons": { "type": "array", "items": { "type": "object", "required": ["code", "label", "source", "observedAt", "until", "effect"], "properties": { "code": { "type": "string" }, "label": { "type": "string" }, "source": { "type": "string" }, "observedAt": { "type": ["string", "null"], "format": "date-time" }, "until": { "type": ["string", "null"], "format": "date-time" }, "effect": { "enum": ["blocks-selection", "context"] } } } },
+            "modelSupport": { "type": "object", "properties": { "status": { "enum": ["configured", "excluded", "unknown"] }, "source": { "enum": ["connection.providerSpecificData.enabledModels", null] }, "observedAt": { "type": "null" }, "upstreamVerified": { "const": false } } },
+            "qualification": { "type": "object", "properties": { "status": { "enum": ["passed", "failed", "unknown"] }, "source": { "enum": ["admin.qualification", null] }, "kind": { "const": "credential-check" }, "modelSupportVerified": { "const": false }, "observedAt": { "type": ["string", "null"], "format": "date-time" } } },
+            "quotaEvidence": { "type": "object", "properties": { "windowCount": { "type": "integer", "minimum": 0 }, "source": { "const": "quotaWindows" }, "historyAvailable": { "const": false }, "windows": { "type": "array", "items": { "$ref": "#/components/schemas/WindowRecord" } }, "percentageObservedAt": { "type": ["string", "null"], "format": "date-time" } } }
+          } } }
         }
       },
       "DrainState": {
@@ -204,7 +267,7 @@
     },
     "/api/admin/qualification/{connectionId}": {
       "get": {
-        "summary": "Full qualification detail for one connection: last passive status plus the most recent generation and quota evidence on file. Never contacts the provider.",
+        "summary": "Reported connection status with retained provider validation and quota evidence. A validation result does not establish model generation. This read never contacts the provider.",
         "readOnly": true,
         "stateChanging": false,
         "authClass": "operator",
@@ -220,7 +283,7 @@
     },
     "/api/admin/qualification/{connectionId}/recheck": {
       "post": {
-        "summary": "Actively probe the connection: spends one real generation against the provider and refreshes stored qualification and quota evidence. The only qualification endpoint that touches the network.",
+        "summary": "Actively check the connection using its provider-specific credential probe and save the result. May contact providers or refresh tokens, but does not universally prove a real generation.",
         "readOnly": false,
         "stateChanging": true,
         "authClass": "operator",
@@ -228,7 +291,7 @@
         "parameters": [ { "name": "connectionId", "in": "path", "required": true, "schema": { "type": "string" } } ],
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "properties": { "force": { "type": "boolean", "description": "Probe even if a recent qualification result is still fresh. Default false." } } } } } },
         "responses": {
-          "200": { "description": "Probe completed (result may itself be a failed generation; that is still a successful call, reported inside the body's generation.ok field).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QualificationDetail" } } } },
+          "200": { "description": "Validation completed. Inspect validation.ok for passed, failed or unknown; HTTP success is not proof of model generation.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QualificationDetail" } } } },
           "400": { "description": "Request body present but not a JSON object, or force is not a boolean.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "401": { "description": "No operator credential presented.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "403": { "description": "Inference key only, or the caller is not a loopback peer.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
@@ -239,7 +302,7 @@
     },
     "/api/admin/quota": {
       "get": {
-        "summary": "Normalized quota-window evidence for every connection, the exact record shape from Account Scheduling Contract rule 1.",
+        "summary": "Passive quota evidence for every configured account, preserving unknown values, reported deadlines, separate percentage snapshots and stored observation age. No history or refresh is synthesized.",
         "readOnly": true,
         "stateChanging": false,
         "authClass": "operator",
@@ -264,6 +327,23 @@
           "401": { "description": "No operator credential presented.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "403": { "description": "Inference key only; operator class required.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "404": { "description": "connectionId does not exist.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/api/admin/eligibility": {
+      "get": {
+        "summary": "Passive account/model admission projection from persisted local gates. Returns every configured account and separate model support evidence without probing or changing selection.",
+        "readOnly": true, "stateChanging": false, "authClass": "operator", "loopbackBound": false,
+        "parameters": [
+          { "name": "provider", "in": "query", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+          { "name": "model", "in": "query", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 512 } }
+        ],
+        "responses": {
+          "200": { "description": "Passive projection.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EligibilityProjection" } } } },
+          "400": { "description": "Missing or invalid query identifiers.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "No operator credential.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "Inference key alone is insufficient.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "Stored state unavailable; no upstream contact attempted.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         }
       }
     },

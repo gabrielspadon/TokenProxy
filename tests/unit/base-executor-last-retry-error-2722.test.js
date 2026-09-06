@@ -17,12 +17,12 @@ const { BaseExecutor } = await import('../../open-sse/executors/base.js');
 const { parseUpstreamError } = await import('../../open-sse/utils/error.js');
 
 function realRes(status, body = '') {
-  return new Response(body, { status });
+  return new Response(body, { status, headers: { 'x-tokenproxy-replay-safe': 'true' } });
 }
 
 // Minimal fake matching the existing retry-behavior test suite (no clone()).
 function fakeRes(status) {
-  return { status, headers: { get: () => '' } };
+  return { status, headers: new Headers({ 'x-tokenproxy-replay-safe': 'true' }) };
 }
 
 const creds = { apiKey: 'k' };

@@ -15,6 +15,9 @@ import cp from 'node:child_process';
 import fs from 'node:fs';
 
 const HOSTS = '/etc/hosts';
+const FLUSH_COMMAND = process.platform === 'darwin'
+  ? 'dscacheutil -flushcache && killall -HUP mDNSResponder'
+  : 'resolvectl flush-caches 2>/dev/null || true';
 const realReadFileSync = fs.readFileSync.bind(fs);
 const realExistsSync = fs.existsSync.bind(fs);
 
@@ -153,7 +156,7 @@ describe('addDNSEntry', () => {
     expect(teeCmd).toContain('127.0.0.1 api2.cursor.sh');
     expect(teeCmd).toContain('127.0.0.1 localhost'); // pre-existing content preserved
     const flushCmd = spawnSpy.mock.calls[1][1][3];
-    expect(flushCmd).toContain('resolvectl flush-caches');
+    expect(flushCmd).toBe(FLUSH_COMMAND);
   });
 
   it('is idempotent: no child process when every host is already present', async () => {
@@ -233,7 +236,7 @@ describe('removeAllDNSEntriesSync', () => {
     expect(written).toContain('127.0.0.1 localhost');
     expect(written.endsWith('\n')).toBe(true);
     expect(
-      execSyncSpy.mock.calls.some(([c]) => String(c).includes('resolvectl flush-caches'))
+      execSyncSpy.mock.calls.some(([c]) => c === FLUSH_COMMAND)
     ).toBe(true);
   });
 

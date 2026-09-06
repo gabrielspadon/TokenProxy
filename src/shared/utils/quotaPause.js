@@ -39,15 +39,33 @@ export function getWindowThresholds(connection) {
 }
 
 export function normalizeWindowThreshold(v) {
-  const t = Number(v);
-  if (!Number.isFinite(t) || t <= 0 || t > 100) return 0;
+  const t = finiteQuotaNumber(v);
+  if (t === null || t <= 0 || t > 100) return 0;
   return t;
+}
+
+function finiteQuotaNumber(value) {
+  if (typeof value !== "number" && (typeof value !== "string" || !value.trim())) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function windowPauseState(w, thresholds, now) {
+  const threshold = normalizeWindowThreshold(thresholds[w.key]);
+  const number = finiteQuotaNumber(w.remainingPercentage);
+  const remainingPercentage = number !== null && number <= 100 ? number : null;
+  const reset = typeof w.resetAt === "string" && w.resetAt ? Date.parse(w.resetAt) : NaN;
+  const resetPassed = Number.isFinite(reset) ? reset <= now : null;
+  return { key: w.key, remainingPercentage, threshold, configured: threshold > 0, resetPassed,
+    paused: threshold > 0 && w.unlimited !== true && resetPassed !== true
+      && remainingPercentage !== null && remainingPercentage <= threshold };
 }
 
 // Returns the window key that triggered a pause, or null when not paused.
 // A window triggers when it has a configured threshold (>0), is not unlimited,
-// and its remaining % <= that threshold.
-export function getPausedWindow(connection) {
+// and its known remaining % <= that threshold before a reported reset expires.
+// An expired snapshot is retained as evidence, never rewritten as replenished.
+export function getPausedWindow(connection, now = Date.now()) {
   if (!isQuotaEligible(connection)) return null;
   const thresholds = getWindowThresholds(connection);
   const windows = connection?.lastQuotaSnapshot?.windows;
@@ -55,44 +73,36 @@ export function getPausedWindow(connection) {
   let triggered = null;
   for (const w of windows) {
     if (!w || w.unlimited === true) continue;
-    const t = normalizeWindowThreshold(thresholds[w.key]);
-    if (!t) continue;
-    const remaining = Number(w.remainingPercentage);
-    if (!Number.isFinite(remaining)) continue;
-    if (remaining <= t) {
+    const state = windowPauseState(w, thresholds, now);
+    if (state.paused) {
       // Pick the most-depleted triggering window for the badge.
-      if (triggered === null || remaining < Number(triggered.remainingPercentage)) {
-        triggered = { key: w.key, remainingPercentage: remaining, threshold: t };
+      if (triggered === null || state.remainingPercentage < triggered.remainingPercentage) {
+        triggered = { key: w.key, remainingPercentage: state.remainingPercentage, threshold: state.threshold };
       }
     }
   }
   return triggered;
 }
 
-export function isQuotaPaused(connection) {
-  return getPausedWindow(connection) !== null;
+export function isQuotaPaused(connection, now = Date.now()) {
+  return getPausedWindow(connection, now) !== null;
 }
 
-export function getQuotaPauseInfo(connection) {
+export function getQuotaPauseInfo(connection, now = Date.now()) {
   const thresholds = getWindowThresholds(connection);
-  const windows = connection?.lastQuotaSnapshot?.windows || [];
+  const stored = connection?.lastQuotaSnapshot?.windows;
+  const windows = Array.isArray(stored) ? stored.filter((w) => w && typeof w === "object") : [];
   const enabled = Object.values(thresholds).some((v) => normalizeWindowThreshold(v) > 0);
-  const triggered = getPausedWindow(connection);
+  const triggered = getPausedWindow(connection, now);
+  const eligible = isQuotaEligible(connection);
   return {
     enabled,
     paused: triggered !== null,
     triggered,
-    eligible: isQuotaEligible(connection),
+    eligible,
     windows: windows.map((w) => {
-      const t = normalizeWindowThreshold(thresholds[w.key]);
-      const remaining = Number(w.remainingPercentage);
-      return {
-        key: w.key,
-        remainingPercentage: Number.isFinite(remaining) ? remaining : null,
-        threshold: t,
-        configured: t > 0,
-        paused: t > 0 && !w.unlimited && Number.isFinite(remaining) && remaining <= t,
-      };
+      const state = windowPauseState(w, thresholds, now);
+      return { ...state, paused: eligible && state.paused };
     }),
   };
 }
@@ -103,17 +113,18 @@ export function getQuotaPauseInfo(connection) {
 // per-window gating snapshot (one entry per quota window).
 
 function pct(used, total) {
-  const t = Number(total);
-  const u = Number(used);
-  if (!Number.isFinite(t) || t <= 0) return null;
-  if (!Number.isFinite(u) || u <= 0) return 100;
+  const t = finiteQuotaNumber(total);
+  const u = finiteQuotaNumber(used);
+  if (t === null || t <= 0 || u === null) return null;
+  if (u === 0) return 100;
   if (u >= t) return 0;
   return Math.max(0, Math.min(100, Math.round(((t - u) / t) * 100)));
 }
 
 function quotaRemainingPercentage(q) {
-  if (q && typeof q.remainingPercentage === "number" && Number.isFinite(q.remainingPercentage)) {
-    return Math.max(0, Math.min(100, Math.round(q.remainingPercentage)));
+  const remaining = finiteQuotaNumber(q?.remainingPercentage);
+  if (remaining !== null && remaining <= 100) {
+    return Math.round(remaining);
   }
   // Prefer used/total over a bare `remaining` (absolute count for some providers)
   // to avoid misreading it as a percentage.
@@ -135,7 +146,9 @@ export function deriveQuotaSnapshot(provider, rawUsage) {
   const entries = Array.isArray(quotas) ? quotas : Object.entries(quotas);
   if (entries.length === 0) return null;
 
-  const now = new Date().toISOString();
+  const sourceTime = rawUsage.quotaObservation?.observedAt;
+  const now = typeof sourceTime === "string" && Number.isFinite(Date.parse(sourceTime))
+    ? new Date(sourceTime).toISOString() : new Date().toISOString();
   const windows = [];
 
   for (const entry of entries) {

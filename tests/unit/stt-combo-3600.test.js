@@ -64,7 +64,7 @@ describe('STT combo expansion (#3600)', () => {
   it('falls back to the next combo member when the first fails', async () => {
     modelMocks.getComboModels.mockResolvedValue(['demo/whisper-a', 'demo/whisper-b']);
     coreMocks.handleSttCore
-      .mockResolvedValueOnce({ success: false, status: 500, error: 'upstream down' })
+      .mockResolvedValueOnce({ success: false, failureMetadata: { safeToReplay: true }, status: 500, error: 'upstream down' })
       .mockResolvedValueOnce({ success: true, response: Response.json({ text: 'ok' }) });
 
     const response = await handleStt(sttRequest('my-stt-combo'));

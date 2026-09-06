@@ -1,6 +1,8 @@
 import { EventEmitter } from "events";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { getAdapter } from "../driver.js";
+import { captureUsagePricing, persistUsagePricing, priceUsage, usageQuantityPresence } from "./usagePricing.js";
+import { prepareBudgetUsage, recordBudgetUsage } from "./budgetRepo.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 // periodCutoffIso gives the oldest timestamp a period includes,
 // or null for "all", which is an unbounded range. It lives in
@@ -268,23 +270,6 @@ async function ensureRingInitialized() {
   } catch {}
 }
 
-async function calculateCost(provider, model, tokens) {
-  if (!tokens) return 0;
-  try {
-    // Delegate the actual math to the single source of truth (avoids the two
-    // copies drifting apart — see open-sse/providers/pricing.js for the
-    // cache-inclusive prompt_tokens convention this assumes).
-    const { calculateCostFromTokens } = await import("open-sse/providers/pricing.js");
-    if (!provider || !model) return calculateCostFromTokens(tokens, null);
-    const { getPricingForModel } = await import("./pricingRepo.js");
-    const pricing = await getPricingForModel(provider, model);
-    return calculateCostFromTokens(tokens, pricing);
-  } catch (e) {
-    console.error("Error calculating cost:", e);
-    return 0;
-  }
-}
-
 export function trackPendingRequest(model, provider, connectionId, started, error = false) {
   const modelKey = provider ? `${model} (${provider})` : model;
   const timerKey = `${connectionId}|${modelKey}`;
@@ -508,17 +493,30 @@ export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
 
-    if (!entry.timestamp) entry.timestamp = new Date().toISOString();
+    entry = { ...entry, timestamp: entry.timestamp || new Date().toISOString() };
 
     // Cache read and cache write aliases normalize HERE, at the one boundary
     // every persistence path crosses — the chat handler, embeddings and rerank
     // alike — so the request row, the daily aggregate, the per-account bucket
     // and the cost below all read the same two canonical fields. canonicalizeUsage
     // is idempotent, so a caller that already normalized is not normalized twice.
+    const presence = entry.usagePresence || usageQuantityPresence(entry.tokens);
     if (entry.tokens && typeof entry.tokens === "object") {
       entry.tokens = canonicalizeUsage(entry.tokens) || entry.tokens;
+      entry.tokens.input_tokens_present = presence.input;
+      entry.tokens.output_tokens_present = presence.output;
     }
-    entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
+    const context = entry.contextTelemetry;
+    const requestId = context?.requestId || entry.requestId || null;
+    const snapshot = context?.pricingSnapshot || await captureUsagePricing(entry.provider, entry.model);
+    Object.assign(entry, priceUsage(entry.tokens, snapshot, presence.input && presence.output));
+    if (!entry.costEvidence && entry.estimatedCostUsd !== null) {
+      entry.costEvidence = { source: "application-rate-card", currency: "USD",
+        captureBoundary: context?.pricingSnapshot ? "before-dispatch" : "usage-recording" };
+    }
+    const logicalRequestId = context?.logicalRequestId || entry.logicalRequestId || null;
+    const attempt = context?.attempt ?? entry.attempt ?? null;
+    const usageSource = presence.input || presence.output ? (entry.tokens?.estimated === true ? "estimated" : "provider") : "missing";
 
     const tokens = entry.tokens || {};
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
@@ -529,49 +527,36 @@ export async function saveRequestUsage(entry) {
     // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
     db.transaction(() => {
-      // Back-fill only: a row written earlier without its endpoint is the same
-      // request arriving again with one, so complete it instead of inserting.
-      //
-      // The match is deliberately limited to endpoint-less rows. `timestamp` is
-      // an ISO string with millisecond resolution, so matching on the value
-      // tuple alone also swallows genuinely distinct requests that share a
-      // millisecond — same provider, model, connection and token counts. That is
-      // ordinary under parallel load and cost real usage rows plus their
-      // totalRequestsLifetime increments.
-      const backfill = entry.endpoint
-        ? db.get(
-          `SELECT id FROM usageHistory
-           WHERE timestamp = ?
-             AND COALESCE(provider, '') = COALESCE(?, '')
-             AND COALESCE(model, '') = COALESCE(?, '')
-             AND COALESCE(connectionId, '') = COALESCE(?, '')
-             AND COALESCE(apiKey, '') = COALESCE(?, '')
-             AND promptTokens = ?
-             AND completionTokens = ?
-             AND COALESCE(endpoint, '') = ''
-           ORDER BY id DESC LIMIT 1`,
-          [
-            entry.timestamp, entry.provider || null, entry.model || null,
-            entry.connectionId || null, entry.apiKey || null,
-            promptTokens, completionTokens,
-          ]
-        )
-        : null;
-
-      if (backfill) {
-        db.run(`UPDATE usageHistory SET endpoint = ? WHERE id = ?`, [entry.endpoint, backfill.id]);
+      // Only an exact recorded attempt may complete an existing row. Similar
+      // timestamps, models and counts are never evidence of request identity.
+      const existing = requestId ? db.get(`SELECT id FROM usageHistory WHERE requestId=?`, [requestId]) : null;
+      if (existing) {
+        if (entry.endpoint) db.run(`UPDATE usageHistory SET endpoint=COALESCE(NULLIF(endpoint,''),?) WHERE id=?`, [entry.endpoint, existing.id]);
         return;
       }
-
-      db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
-          promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({ requestedModel: entry.requestedModel || null, reasoningEffort: entry.reasoningEffort || null }),
-        ]
+      const rateSnapshotId = persistUsagePricing(db, snapshot);
+      const budgetKeyId = prepareBudgetUsage(db, entry.apiKey, requestId, context?.apiKeyId);
+      const session = requestId && context?.identitySource === "explicit" ? db.get(`SELECT r.contextSessionId FROM requestStats r
+        JOIN contextSessions s ON s.id=r.contextSessionId WHERE r.id=? AND s.identitySource='explicit' AND s.sessionHash=?`, [requestId, context.sessionHash]) : null;
+      const insertedUsage = db.run(
+        `INSERT INTO usageHistory(timestamp,provider,model,connectionId,apiKey,endpoint,promptTokens,completionTokens,cost,status,tokens,meta,
+          requestId,logicalRequestId,attempt,contextSessionId,projectId,rateSnapshotId,pricingCapturedAt,costSource,costEvidence,usageSource,estimatedCostUsd,reportedCostUsd,dispatchCoverage)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [entry.timestamp, entry.provider || null, entry.model || null, entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
+          promptTokens, completionTokens, entry.cost, entry.status || "ok", stringifyJson(tokens),
+          stringifyJson({ requestedModel: entry.requestedModel || null, reasoningEffort: entry.reasoningEffort || null,
+            ...(entry.receiptEvidence ? { reconciliation: entry.receiptEvidence } : {}) }),
+          requestId, logicalRequestId, attempt, session?.contextSessionId ?? null, null, rateSnapshotId, snapshot.capturedAt,
+          entry.costSource, entry.costEvidence ? stringifyJson(entry.costEvidence) : null, usageSource, entry.estimatedCostUsd, entry.reportedCostUsd, ["physical-dispatch", "executor-invocation"].includes(context?.dispatchCoverage) ? context.dispatchCoverage : null]
       );
+
+      recordBudgetUsage(db, { apiKeyId: budgetKeyId, requestId, usageRowId: insertedUsage.lastInsertRowid,
+        promptTokens: presence.input && usageSource !== "estimated" ? promptTokens : null,
+        completionTokens: presence.output && usageSource !== "estimated" ? completionTokens : null,
+        costUsd: usageSource !== "estimated" ? entry.cost : null,
+        recorded: { promptTokens, completionTokens, costUsd: entry.cost },
+        receiptEvidence: entry.receiptEvidence,
+        final: entry.usageFinality !== "partial" && context?.usageFinality !== "partial" });
 
       const dateKey = getLocalDateKey(entry.timestamp);
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
@@ -600,6 +585,85 @@ export async function saveRequestUsage(entry) {
   } catch (e) {
     console.error("Failed to save usage stats:", e);
   }
+}
+
+// A later, explicit provider-usage receipt may complete uncertain exposure.
+// Ordinary duplicate finalizers never enter this path. Keep the exact row and
+// rate version, adjust its daily/lifetime quantities once, and retain evidence.
+export async function reconcileBudgetUsage(apiKeyId, requestId, evidence) {
+  if (evidence?.kind !== "provider-usage" || typeof evidence.reference !== "string"
+    || !evidence.reference.trim() || evidence.reference.length > 500 || !evidence.tokens
+    || typeof evidence.tokens !== "object" || Array.isArray(evidence.tokens)) throw new TypeError("A provider-usage receipt and token or USD quantities are required");
+  const allowed = new Set(["prompt_tokens", "input_tokens", "completion_tokens", "output_tokens", "cached_tokens", "cache_creation_input_tokens", "reasoning_tokens", "cost_usd", "cost_in_usd"]);
+  for (const [key, value] of Object.entries(evidence.tokens)) {
+    if (!allowed.has(key) || typeof value !== "number" || !Number.isFinite(value) || value < 0
+      || (!key.includes("cost") && !Number.isSafeInteger(value))) throw new TypeError("Receipt quantities must be finite nonnegative counts or explicit USD amounts");
+  }
+  const db = await getAdapter();
+  const reservation = db.get("SELECT * FROM apiKeyBudgetReservations WHERE apiKeyId=? AND requestId=?", [apiKeyId, requestId]);
+  if (!reservation) return null;
+  const snapshotRow = reservation.rateSnapshotId ? db.get("SELECT * FROM usageRateSnapshots WHERE id=?", [reservation.rateSnapshotId]) : null;
+  const snapshot = snapshotRow ? { ...snapshotRow, rates: parseJson(snapshotRow.rates, null) } : { rates: null };
+  const presence = usageQuantityPresence(evidence.tokens);
+  const tokens = canonicalizeUsage(evidence.tokens) || {};
+  tokens.input_tokens_present = presence.input; tokens.output_tokens_present = presence.output;
+  const costs = priceUsage(evidence.tokens, snapshot, presence.input && presence.output);
+  if (!presence.input && !presence.output && costs.reportedCostUsd === null) throw new TypeError("Receipt contains no measured quantity");
+  const descriptor = { source: "operator-supplied-provider-usage", reference: evidence.reference.trim(), currency: costs.reportedCostUsd !== null ? "USD" : null };
+  let result;
+  const existing = db.get("SELECT * FROM usageHistory WHERE requestId=?", [requestId]);
+  if (!existing) {
+    const attempt = db.get("SELECT * FROM requestStats WHERE id=?", [requestId]);
+    if (!attempt) throw new TypeError("The original attempt is unavailable; receipt cannot be attributed safely");
+    const key = db.get("SELECT key FROM apiKeys WHERE id=?", [apiKeyId]);
+    await saveRequestUsage({ provider: attempt.provider, model: attempt.model, connectionId: attempt.connectionId,
+      apiKey: key?.key, receiptEvidence: descriptor, contextTelemetry: { requestId, logicalRequestId: reservation.logicalRequestId,
+        pricingSnapshot: snapshotRow ? snapshot : { rates: null, capturedAt: reservation.createdAt },
+        attempt: attempt.attempt, dispatchCoverage: reservation.dispatchCoverage }, tokens: evidence.tokens });
+    result = db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=?", [requestId]);
+    if (result?.usageRowId == null) throw new Error("Receipt usage did not persist");
+    return db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=?", [requestId]);
+  }
+  db.transaction(() => {
+    const current = db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=?", [requestId]);
+    const row = db.get("SELECT * FROM usageHistory WHERE requestId=?", [requestId]);
+    if (current.state === "settled") {
+      if (current.actualPromptTokens !== (presence.input ? tokens.prompt_tokens : null)
+        || current.actualCompletionTokens !== (presence.output ? tokens.completion_tokens : null)
+        || current.actualCostUsd !== costs.cost) throw new TypeError("This attempt already has different settled quantities");
+      result = current; return;
+    }
+    const oldEntry = { ...row, tokens: parseJson(row.tokens, {}), ...parseJson(row.meta, {}) };
+    const newEntry = { ...oldEntry, tokens, ...costs };
+    db.run(`UPDATE usageHistory SET promptTokens=?,completionTokens=?,cost=?,tokens=?,meta=?,status='ok',
+      costSource=?,costEvidence=?,usageSource='provider',estimatedCostUsd=?,reportedCostUsd=? WHERE id=?`,
+    [tokens.prompt_tokens ?? 0, tokens.completion_tokens ?? 0, costs.cost, stringifyJson(tokens),
+      stringifyJson({ ...parseJson(row.meta, {}), reconciliation: descriptor, previousResolution: parseJson(current.resolutionEvidence, null) }),
+      costs.costSource, stringifyJson(costs.costEvidence), costs.estimatedCostUsd, costs.reportedCostUsd, row.id]);
+    const dayKey = getLocalDateKey(row.timestamp);
+    const daily = db.get("SELECT data FROM usageDaily WHERE dateKey=?", [dayKey]);
+    if (daily) {
+      const day = parseJson(daily.data, {}), oldDelta = {}, nextDelta = {};
+      aggregateEntryToDay(oldDelta, oldEntry); aggregateEntryToDay(nextDelta, newEntry);
+      const fields = ["requests", "promptTokens", "completionTokens", "cachedTokens", "cacheCreationTokens", "cost"];
+      const apply = (target, old, next) => { for (const field of fields) target[field] = (target[field] || 0) + (next?.[field] || 0) - (old?.[field] || 0); };
+      apply(day, oldDelta, nextDelta);
+      for (const scope of ["byProvider", "byModel", "byAccount", "byApiKey", "byEndpoint", "byReasoning"]) {
+        for (const key of new Set([...Object.keys(oldDelta[scope] || {}), ...Object.keys(nextDelta[scope] || {})])) {
+          day[scope] ||= {}; day[scope][key] ||= {};
+          apply(day[scope][key], oldDelta[scope]?.[key], nextDelta[scope]?.[key]);
+        }
+      }
+      db.run("UPDATE usageDaily SET data=? WHERE dateKey=?", [stringifyJson(day), dayKey]);
+    }
+    recordBudgetUsage(db, { apiKeyId, requestId, usageRowId: row.id,
+      promptTokens: presence.input ? tokens.prompt_tokens : null, completionTokens: presence.output ? tokens.completion_tokens : null,
+      costUsd: costs.cost, final: true, previous: { ...row, ...current } });
+    db.run("UPDATE apiKeyBudgetReservations SET resolutionEvidence=? WHERE requestId=?", [JSON.stringify(descriptor), requestId]);
+    result = db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=?", [requestId]);
+  });
+  scheduleStatsEvent("update");
+  return result;
 }
 
 export async function getDailyConnectionUsage(connectionId, now = new Date()) {

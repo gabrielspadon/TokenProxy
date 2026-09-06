@@ -116,10 +116,11 @@ vi.mock("../../open-sse/utils/error.js", () => ({
     error: "Request aborted",
     response: Response.json({ error: { message: "Request aborted" } }, { status: 499 }),
   })),
-  createErrorResult: vi.fn((status, message) => ({
+  createErrorResult: vi.fn((status, message, _resetAt, failureMetadata) => ({
     success: false,
     status,
     error: message,
+    failureMetadata,
     response: Response.json({ error: { message } }, { status }),
   })),
   formatProviderError: vi.fn((error) => error.message),
@@ -312,6 +313,28 @@ describe("chat connect timeout propagation", () => {
     await expect(handleChatCore(options())).resolves.toMatchObject({ success: false, status: 502 });
   });
 
+  it.each([400, 401, 403, 503])("preserves non-replayable provenance on an executor's synthetic HTTP %s", async (status) => {
+    const result = response(status);
+    result.response.headers.set("x-tokenproxy-replay-safe", "false");
+    mocks.execute.mockResolvedValueOnce(result);
+    await expect(handleChatCore(options({ body: { verbosity: "high" } }))).resolves.toMatchObject({
+      success: false,
+      failureMetadata: { safeToReplay: false },
+    });
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.refreshWithRetry).not.toHaveBeenCalled();
+  });
+
+  it("forbids another replay after an accepted field-strip retry returns a synthetic failure", async () => {
+    const rejected = response(503);
+    rejected.response.headers.set("x-tokenproxy-replay-safe", "false");
+    mocks.execute.mockResolvedValueOnce(response(400)).mockResolvedValueOnce(rejected);
+    await expect(handleChatCore(options({ body: { verbosity: "high" } }))).resolves.toMatchObject({
+      success: false, status: 503, failureMetadata: { safeToReplay: false },
+    });
+    expect(mocks.execute).toHaveBeenCalledTimes(2);
+  });
+
   it("maps an initial caller abort to 499", async () => {
     mocks.execute.mockRejectedValueOnce(new DOMException("client left", "AbortError"));
     await expect(handleChatCore(options())).resolves.toMatchObject({ success: false, status: 499 });
@@ -341,13 +364,14 @@ describe("chat connect timeout propagation", () => {
     });
   });
 
-  it("retains the original 400 for an unrelated field-strip retry error", async () => {
+  it("forbids replay after a field-strip retry loses its transport outcome", async () => {
     mocks.execute.mockResolvedValueOnce(response(400)).mockRejectedValueOnce(new Error("socket closed"));
     await expect(handleChatCore(options({ body: { verbosity: "high" } }))).resolves.toMatchObject({
       success: false,
-      status: 400,
+      status: 502,
+      failureMetadata: { safeToReplay: false },
     });
-    expect(mocks.warn).toHaveBeenCalledWith("FIELDSTRIP", "Retry threw: socket closed");
+    expect(mocks.execute).toHaveBeenCalledTimes(2);
   });
 });
 

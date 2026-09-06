@@ -1,6 +1,6 @@
 // Branch coverage for open-sse/services/combo.js paths the existing suites miss:
 // audio/video/pdf capability detection shapes, retry-after HTTP-date parsing via
-// the 503 retry loop, upstream-error-as-content rotation, all-members-cooling
+// the 503 retry loop, accepted-stream terminality, all-members-cooling
 // unavailable response, extractPanelText shapes, cycle detection, and the fusion
 // panel error/timeout/empty logging paths. All upstream traffic is mocked at
 // handleSingleModel; nothing leaves the process.
@@ -234,13 +234,13 @@ function sseResponse(text, status = 200, headers = {}) {
 describe('handleComboChat', () => {
   const models = ['provA/m1', 'provB/m2'];
 
-  it('retries a 503 carrying an HTTP-date retry-after, then succeeds on the same member', async () => {
+  it('retries an explicitly rejected 503 after its HTTP-date delay on the same member', async () => {
     const httpDate = new Date(Date.now() + 1000).toUTCString();
     let calls = 0;
     const handleSingleModel = vi.fn(async () => {
       calls++;
       if (calls === 1)
-        return new Response('overloaded', { status: 503, headers: { 'retry-after': httpDate } });
+        return new Response('overloaded', { status: 503, headers: { 'retry-after': httpDate, 'x-tokenproxy-replay-safe': 'true' } });
       return jsonResponse({ choices: [{ message: { content: 'ok' } }] });
     });
     const res = await handleComboChat({
@@ -272,7 +272,7 @@ describe('handleComboChat', () => {
     expect(res.headers.get('x-tokenproxy-combo')).toBeNull(); // preserved exactly
   });
 
-  it('an OK stream carrying an upstream error frame rotates to the next member', async () => {
+  it('an accepted stream carrying an upstream error returns its error without rotating', async () => {
     const errFrame =
       'data: ' +
       JSON.stringify({ choices: [{ delta: { content: '[qoder error 429: rate limited]' } }] }) +
@@ -289,13 +289,14 @@ describe('handleComboChat', () => {
       log,
       comboName: 'duo',
     });
-    expect(res.status).toBe(200);
-    expect(handleSingleModel).toHaveBeenCalledTimes(2);
-    expect(res.headers.get('x-tokenproxy-model')).toBe('provB/m2');
-    expect(await res.text()).toContain('fine');
+    expect(res.status).toBe(429);
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(res.headers.get('x-tokenproxy-model')).toBe('provA/m1');
+    expect(res.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(await res.text()).toContain('rate limited');
   });
 
-  it('empty stream falls through; all members failing with retryAfter yields the unavailable response', async () => {
+  it('an accepted empty stream is terminal before any later member is attempted', async () => {
     const retryIso = new Date(Date.now() + 60000).toISOString();
     const later = new Date(Date.now() + 120000).toISOString();
     let call = 0;
@@ -315,37 +316,55 @@ describe('handleComboChat', () => {
       log,
       comboName: 'trio',
     });
-    // first member's empty stream pinned lastStatus at 503 before the 429s arrived
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(502);
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
     expect(res.headers.get('x-tokenproxy-combo')).toBe('true');
-    expect(res.headers.get('x-tokenproxy-model')).toBeNull(); // no member served it
+    expect(res.headers.get('x-tokenproxy-model')).toBe('provA/m1');
+    expect(res.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     const body = await res.json();
-    expect(JSON.stringify(body)).toContain('cooling down');
+    expect(body.error.message).toContain('no usable content');
   });
 
-  it('non-string error payloads are stringified; a thrown member falls through to the final error', async () => {
+  it('a rejected structured error permits fallback, but a thrown next member stops further replay', async () => {
     let call = 0;
     const handleSingleModel = vi.fn(async () => {
       call++;
-      if (call === 1) return jsonResponse({ error: { code: 42, reason: 'objecty' } }, 500);
+      if (call === 1) return jsonResponse({ error: { code: 42, reason: 'objecty' } }, 500, { 'x-tokenproxy-replay-safe': 'true' });
       throw new Error('member exploded');
     });
     const res = await handleComboChat({
       body: {},
-      models,
+      models: [...models, 'provC/m3'],
       handleSingleModel,
       log,
       comboName: 'duo',
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(502);
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+    expect(res.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     const body = await res.json();
     expect(body.error.message).toBe('member exploded');
+  });
+
+  it('reports the earliest reset when all members explicitly reject for quota depletion', async () => {
+    const earliest = new Date(Date.now() + 60000).toISOString();
+    const later = new Date(Date.now() + 120000).toISOString();
+    const handleSingleModel = vi.fn(async (_body, model) => jsonResponse({
+      error: { message: 'quota exhausted' }, retryAfter: model === 'provA/m1' ? later : earliest,
+    }, 429, { 'x-tokenproxy-replay-safe': 'true' }));
+    const response = await handleComboChat({ body: {}, models, handleSingleModel, log, comboName: 'depleted' });
+    expect(response.status).toBe(429);
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+    expect(response.headers.get('x-tokenproxy-model')).toBeNull();
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThanOrEqual(59);
+    expect(Number(response.headers.get('retry-after'))).toBeLessThanOrEqual(60);
+    expect((await response.json()).error.message).toContain('quota exhausted');
   });
 
   it('round-robin fallback success advances the rotation cursor past the served member', async () => {
     const handleSingleModel = vi.fn(async (body, modelStr) =>
       modelStr === 'provA/m1'
-        ? jsonResponse({ error: { message: 'context_length exceeded' } }, 400)
+        ? jsonResponse({ error: { message: 'context_length exceeded' } }, 400, { 'x-tokenproxy-replay-safe': 'true' })
         : jsonResponse({ choices: [{ message: { content: 'ok' } }] })
     );
     const res = await handleComboChat({

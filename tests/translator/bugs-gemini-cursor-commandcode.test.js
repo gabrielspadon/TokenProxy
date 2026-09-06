@@ -9,9 +9,7 @@ const O2C = (body) => translateRequest(FORMATS.OPENAI, FORMATS.CURSOR, "m", body
 const O2CC = (body) => translateRequest(FORMATS.OPENAI, FORMATS.COMMANDCODE, "m", body, true, null, "commandcode");
 
 describe("OpenAI → Gemini", () => {
-  // openai-to-gemini.js:92-96 — each system message overwrites systemInstruction → only last kept
-  // KNOWN BUG
-  it.fails("multiple system messages are all kept", () => {
+  it("multiple system messages are all kept in order", () => {
     const out = O2G({
       messages: [
         { role: "system", content: "RULE_ONE" },
@@ -19,21 +17,26 @@ describe("OpenAI → Gemini", () => {
         { role: "user", content: "hi" },
       ],
     });
-    expect(JSON.stringify(out.systemInstruction), "earlier system lost").toContain("RULE_ONE");
+    expect(out.systemInstruction.parts).toEqual([{ text: "RULE_ONE" }, { text: "RULE_TWO" }]);
+  });
+
+  it("retains system and developer text bytes including identity and Unicode", () => {
+    const texts = ["You are Hermes Agent, an intelligent AI assistant created by Nous Research.", "\n规则 α 🧪\t-0 1e-09 9007199254740993\n"];
+    const out = O2G({ messages: [
+      { role: "system", content: texts[0] }, { role: "developer", content: texts[1] }, { role: "user", content: "hi" },
+    ] });
+    expect(out.systemInstruction.parts).toEqual(texts.map((text) => ({ text })));
   });
 });
 
 describe("OpenAI → Cursor", () => {
-  // openai-to-cursor.js:12-24 — image content fully dropped (text only)
-  // KNOWN BUG
-  it.fails("image content is preserved", () => {
-    const out = O2C({
+  it("rejects images unsupported by the implemented Cursor transport", () => {
+    expect(() => O2C({
       messages: [{ role: "user", content: [
         { type: "text", text: "look" },
         { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
       ] }],
-    });
-    expect(JSON.stringify(out), "image dropped").toContain("AAAA");
+    })).toThrow(/messages\[0\].content\[1\].*Cursor transport accepts text only/);
   });
 
   it("respects client max_tokens", () => {
@@ -43,10 +46,8 @@ describe("OpenAI → Cursor", () => {
 });
 
 describe("OpenAI → CommandCode", () => {
-  // openai-to-commandcode.js:53-57 — safeParseJson returns {} on bad JSON (args silently lost)
-  // KNOWN BUG
-  it.fails("malformed tool arguments are not silently emptied", () => {
-    const out = O2CC({
+  it("rejects malformed tool arguments without substituting an empty object", () => {
+    expect(() => O2CC({
       messages: [
         { role: "user", content: "go" },
         { role: "assistant", content: "", tool_calls: [
@@ -54,10 +55,7 @@ describe("OpenAI → CommandCode", () => {
         ] },
         { role: "tool", tool_call_id: "c1", content: "r" },
       ],
-    });
-    const asst = out.params.messages.find((m) => m.role === "assistant");
-    const call = asst.content.find((b) => b.type === "tool-call");
-    expect(Object.keys(call.input).length, "arguments silently dropped to {}").toBeGreaterThan(0);
+    })).toThrow(/messages\[1\].tool_calls\[0\].function.arguments.*valid JSON/);
   });
 
   it("image content is preserved", () => {

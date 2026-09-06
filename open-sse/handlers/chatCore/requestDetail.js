@@ -2,6 +2,7 @@ import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage, clampReasoningTokens } from "../../utils/usageTracking.js";
+import { priceUsage, usageQuantityPresence } from "../../../src/lib/db/repos/usagePricing.js";
 
 const OPTIONAL_PARAMS = [
   "temperature", "top_p", "top_k",
@@ -27,9 +28,9 @@ export function extractUsageFromResponse(responseBody) {
 
   // Claude format
   if (responseBody.usage?.input_tokens !== undefined) {
-    const completionTokens = responseBody.usage.output_tokens || 0;
+    const completionTokens = responseBody.usage.output_tokens;
     return {
-      prompt_tokens: responseBody.usage.input_tokens || 0,
+      prompt_tokens: responseBody.usage.input_tokens,
       completion_tokens: completionTokens,
       cached_tokens: responseBody.usage.input_tokens_details?.cached_tokens,
       cache_read_input_tokens: responseBody.usage.cache_read_input_tokens,
@@ -47,8 +48,8 @@ export function extractUsageFromResponse(responseBody) {
   // OpenAI format
   if (responseBody.usage?.prompt_tokens !== undefined) {
     return {
-      prompt_tokens: responseBody.usage.prompt_tokens || 0,
-      completion_tokens: responseBody.usage.completion_tokens || 0,
+      prompt_tokens: responseBody.usage.prompt_tokens,
+      completion_tokens: responseBody.usage.completion_tokens,
       cached_tokens: responseBody.usage.prompt_tokens_details?.cached_tokens,
       reasoning_tokens: responseBody.usage.completion_tokens_details?.reasoning_tokens,
       cost_usd: responseBody.usage.cost_usd,
@@ -61,10 +62,10 @@ export function extractUsageFromResponse(responseBody) {
   const usageMetadata = responseBody.usageMetadata || responseBody.response?.usageMetadata;
   if (usageMetadata) {
     return {
-      prompt_tokens: usageMetadata.promptTokenCount || 0,
-      completion_tokens: usageMetadata.candidatesTokenCount || 0,
-      cached_tokens: usageMetadata.cachedContentTokenCount || 0,
-      reasoning_tokens: usageMetadata.thoughtsTokenCount || 0
+      prompt_tokens: usageMetadata.promptTokenCount,
+      completion_tokens: usageMetadata.candidatesTokenCount,
+      cached_tokens: usageMetadata.cachedContentTokenCount,
+      reasoning_tokens: usageMetadata.thoughtsTokenCount
     };
   }
 
@@ -76,9 +77,11 @@ export function buildRequestDetail(base, overrides = {}) {
     provider: base.provider || "unknown",
     model: base.model || "unknown",
     connectionId: base.connectionId || undefined,
-    timestamp: new Date().toISOString(),
+    id: base.contextTelemetry?.requestId,
+    contextTelemetry: base.contextTelemetry,
+    timestamp: base.contextTelemetry?.timestamp || new Date().toISOString(),
     latency: base.latency || { ttft: 0, total: 0 },
-    tokens: base.tokens || { prompt_tokens: 0, completion_tokens: 0 },
+    tokens: base.tokens ?? null,
     request: base.request,
     providerRequest: base.providerRequest || null,
     providerResponse: base.providerResponse || null,
@@ -104,6 +107,11 @@ export function doneFields({ usage, latency }) {
     cr: u.cache_read_input_tokens ?? u.cached_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0,
     cw: u.cache_creation_input_tokens ?? 0,
   };
+  // Only observed, cache-inclusive input can calibrate the next request.
+  // The display fields above preserve the provider convention.
+  if (!u.estimated && typeof (u.prompt_tokens ?? u.input_tokens) === "number") {
+    fields.ctx = canonicalizeUsage(u)?.prompt_tokens;
+  }
   if (latency?.ttft != null) fields.ttft = latency.ttft;
   return fields;
 }
@@ -151,13 +159,16 @@ export function summarizeReasoning(translatedBody) {
   return undefined;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid }) {
-  if (!tokens || typeof tokens !== "object") return;
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid, contextTelemetry, usageFinality = "final" }) {
+  if (!tokens || typeof tokens !== "object") {
+    if (contextTelemetry?.budgetReservationId) return saveRequestUsage({ provider, model, tokens: null, apiKey, contextTelemetry, usageFinality });
+    return;
+  }
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
   const outTokens = tokens.output_tokens ?? tokens.completion_tokens ?? 0;
 
-  if (inTokens === 0 && outTokens === 0) return;
+  if (inTokens === 0 && outTokens === 0 && priceUsage(tokens, null).costEvidence === null && !contextTelemetry?.budgetReservationId) return;
 
   if (!silent) {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -172,10 +183,13 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
 
-  saveRequestUsage({
+  return saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
     tokens: normalized,
+    usagePresence: usageQuantityPresence(tokens),
+    contextTelemetry,
+    usageFinality,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
     apiKey: apiKey || undefined,

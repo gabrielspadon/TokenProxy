@@ -16,6 +16,7 @@ import {
 } from "open-sse/services/model.js";
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { getFreeModelsForProvider } from "@/lib/db/repos/freeModelsRepo.js";
+import { isAccountModelDisabled } from "@/shared/utils/disabledModelPolicy.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -238,44 +239,39 @@ export async function getComboModels(modelStr) {
   return null;
 }
 
-/**
- * Drop members the operator has disabled in the dashboard.
- *
- * getDisabledModels was consulted only by /v1/models, so a disabled model
- * vanished from the listing and kept being routed to as a combo member. The
- * control is labelled "Disable", not "Hide", so that is a defect (#1521).
- *
- * If every member is disabled the ORIGINAL list is kept and a warning logged.
- * A combo that starts answering "no models" because of an unrelated disable
- * elsewhere is a worse surprise than one that still works, and the log tells the
- * operator which combo to fix.
- */
-/**
- * Is this exact "alias/model" disabled by the operator?
- *
- * filterDisabledComboMembers closed the combo half of this (#1521), but a
- * DIRECT request for a disabled model still routed: getModelInfo never consults
- * the disabled list, so the model vanished from /v1/models and kept answering
- * when asked for by name (#577). The control says Disable, not Hide.
- *
- * Fails OPEN. An unreadable disabled list must not take routing down with it,
- * which is the same rule filterDisabledComboMembers already follows.
- */
-export async function isModelDisabled(modelStr) {
-  if (typeof modelStr !== "string") return false;
-  const slash = modelStr.indexOf("/");
-  if (slash < 1) return false;
-  let disabledByAlias;
+// Preflight may refuse a model only when no active account overrides its
+// disable. Credential admission repeats the check for the selected account.
+// Resolve using the same path as routing, including user model aliases and
+// custom provider nodes, rather than trusting the caller's prefix spelling.
+async function disabledForEveryAccount(modelStr, disabledModels) {
+  if (typeof modelStr !== "string" || !modelStr || modelStr.startsWith("/")) return false;
+  if (!disabledModels || typeof disabledModels !== "object" || Object.keys(disabledModels).length === 0) return false;
   try {
-    disabledByAlias = await getDisabledModels();
+    const { provider, model } = await getModelInfo(modelStr);
+    if (!provider || !model) return false; // combos and unknown virtual IDs
+    const providerNodes = await getProviderNodes();
+    const providerNode = providerNodes.find((node) => node.id === provider);
+    const providerAliases = providerNode?.prefix ? [providerNode.prefix] : [];
+    const connections = await getProviderConnections({ provider, isActive: true });
+    if (!connections.length) return isAccountModelDisabled(disabledModels, provider, model, null, providerAliases, providerNodes);
+    return connections.every((connection) =>
+      isAccountModelDisabled(disabledModels, provider, model, connection.id, providerAliases, providerNodes));
   } catch {
+    // Resolution/admission owns the final error. A failed preflight never
+    // substitutes a model or fabricates a disabled verdict.
     return false;
   }
-  if (!disabledByAlias || typeof disabledByAlias !== "object") return false;
-  const list = disabledByAlias[modelStr.slice(0, slash)];
-  return Array.isArray(list) && list.includes(modelStr.slice(slash + 1));
 }
 
+export async function isModelDisabled(modelStr) {
+  try {
+    return await disabledForEveryAccount(modelStr, await getDisabledModels());
+  } catch {
+    return false; // authoritative credential admission still requires this policy
+  }
+}
+
+/** Drop disabled combo members, including when every member is disabled. */
 export async function filterDisabledComboMembers(models, comboName) {
   let disabledByAlias;
   try {
@@ -285,22 +281,9 @@ export async function filterDisabledComboMembers(models, comboName) {
   }
   if (!disabledByAlias || typeof disabledByAlias !== "object") return models;
 
-  const isDisabled = (entry) => {
-    if (typeof entry !== "string") return false;
-    const slash = entry.indexOf("/");
-    if (slash < 1) return false;
-    const alias = entry.slice(0, slash);
-    const modelId = entry.slice(slash + 1);
-    const list = disabledByAlias[alias];
-    return Array.isArray(list) && list.includes(modelId);
-  };
-
-  const kept = models.filter((m) => !isDisabled(m));
+  const disabled = await Promise.all(models.map((model) => disabledForEveryAccount(model, disabledByAlias)));
+  const kept = models.filter((_, index) => !disabled[index]);
   if (kept.length === models.length) return models;
-  if (kept.length === 0) {
-    console.warn(`[Combo] "${comboName}": every member is disabled; routing to them anyway rather than failing the combo`);
-    return models;
-  }
   console.log(`[Combo] "${comboName}": skipping ${models.length - kept.length} disabled member(s)`);
   return kept;
 }

@@ -1,3 +1,5 @@
+import { isErrorResult } from "./errorFlags.js";
+import { currentUserRequestMatches, validateCompressedMessages } from "./contentPolicy.js";
 // ponytail: Claude OpenAI-pivot imports dropped — direct Claude path ships;
 // re-enable only with a round-trip no-loss proof (tool ids, is_error, cache_control).
 import {
@@ -388,55 +390,17 @@ function restoreResponsesInstructionItems(originalInput, rebuiltInput) {
   return remaining.length === 0 ? merged : null;
 }
 
-// Detect an explicit error tool result anywhere in the request. Only explicit
-// error shapes count (is_error / status:"error") — never infer from content text.
-function hasErrorToolBlock(body, format) {
-  try {
-    // Claude: tool_result blocks carry is_error on the block.
-    const hasClaudeToolResult = format === "claude";
-    // CommandCode carries the same Anthropic-style block list one level down,
-    // so reading only body.messages let an is_error tool_result through.
-    const chatMessages = Array.isArray(body?.messages) ? body.messages
-      : Array.isArray(body?.params?.messages) ? body.params.messages
-      : [];
-    for (const message of chatMessages) {
-      const content = message?.content;
-      const parts = Array.isArray(content)
-        ? content
-        : typeof content === "object" && content !== null ? [content] : [];
-      for (const part of parts) {
-        if (part?.type === "tool_result" && (hasClaudeToolResult || message?.role === "tool")) {
-          if (part.is_error === true) return true;
-        }
-        // R-F3: part-level isError joins is_error/status for parity with rtk's vocabulary.
-        if ((part?.is_error === true || part?.isError === true || part?.status === "error") && (part?.type === "tool_result" || message?.role === "tool")) {
-          return true;
-        }
-      }
-      if (message?.role === "tool") {
-        if (message.is_error === true || message.status === "error") return true;
-      }
-    }
-    // Kiro: toolResults carry status.
-    const state = body?.conversationState;
-    if (state && typeof state === "object") {
-      const items = [...(Array.isArray(state.history) ? state.history : []), state.currentMessage].filter(Boolean);
-      for (const item of items) {
-        const toolResults = item?.userInputMessage?.userInputMessageContext?.toolResults;
-        if (!Array.isArray(toolResults)) continue;
-        for (const tr of toolResults) {
-          if (tr?.status === "error" || tr?.isError === true) return true;
-        }
-      }
-    }
-    // OpenAI Responses: function_call_output items carry status/is_error.
-    if (format === "openai-responses" && Array.isArray(body?.input)) {
-      for (const item of body.input) {
-        if (item?.type === "function_call_output" && (item.status === "error" || item.is_error === true)) return true;
-      }
-    }
-  } catch { /* fail-open */ }
-  return false;
+// Scan only tool-result envelopes and their content. Malformed/cyclic bodies
+// are refused rather than treating an unreadable subtree as evidence-free.
+function hasErrorToolBlock(body) {
+  const visit = (node, inResult = false) => {
+    if (!node || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some((part) => visit(part, inResult));
+    const tool = inResult || node.role === "tool" || node.type === "tool_result" || node.type === "function_call_output";
+    if (tool && isErrorResult(node)) return true;
+    return Object.entries(node).some(([key, value]) => visit(value, tool || key === "toolResults"));
+  };
+  try { return visit(body); } catch { return true; }
 }
 
 function collectKiroHeadroomMessages(body) {
@@ -600,7 +564,7 @@ export function resetHeadroomCircuitBreaker() {
 }
 
 // POST messages to Headroom /v1/compress; returns compressed messages + stats or null.
-async function callCompress(url, messages, model, timeoutMs, compressUserMessages, diagnostics) {
+async function callCompress(url, messages, model, timeoutMs, compressUserMessages, diagnostics, allowLossy) {
   const endpoint = buildCompressEndpoint(url);
   diagnostics.endpoint = maskEndpoint(endpoint);
   const cb = CIRCUIT_BREAKER.get(endpoint);
@@ -681,14 +645,45 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
       return null;
     }
   }
+  if (!validateCompressedMessages(messages, data.messages, { allowLossy, compressUserMessages })) {
+    setDiagnostic(diagnostics, "proxy changed protected content or metadata (tool pairing identity/message count or order)");
+    return null;
+  }
+  data.mode = allowLossy ? "lossy-opt-in" : "semantic-preserving";
+  data.semanticPreserving = !allowLossy;
   CIRCUIT_BREAKER.delete(endpoint);
   return data;
 }
 
-// Compress request body via Headroom proxy. Fail-open: returns null on any error.
-// /v1/compress only understands OpenAI shape, so Claude bodies are translated
-// to OpenAI, compressed, then translated back using TokenProxy's own translators.
-export async function compressWithHeadroom(body, { enabled, url, model, format, compressUserMessages, timeoutMs = DEFAULT_TIMEOUT_MS, contextPressure = null, diagnostics = null } = {}) {
+// Work on private data and commit only after every guard and diagnostic ran.
+// Failed Kiro/Gemini projection previously left replacement containers behind.
+export async function compressWithHeadroom(body, options = {}) {
+  if (!body || !options.enabled) return compressCandidate(body, options);
+  try {
+    const candidate = structuredClone(body);
+    const result = await compressCandidate(candidate, options);
+    if (!result) return null;
+    if (!currentUserRequestMatches(body, candidate)) {
+      setDiagnostic(options.diagnostics, "proxy changed the current user request");
+      return null;
+    }
+    const keys = Object.keys(candidate).filter((key) => JSON.stringify(body[key]) !== JSON.stringify(candidate[key]));
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(body, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.writable) {
+        setDiagnostic(options.diagnostics, "request target is not a writable data property");
+        return null;
+      }
+    }
+    for (const key of keys) body[key] = candidate[key];
+    return result;
+  } catch (error) {
+    setDiagnostic(options.diagnostics, `unexpected error: ${error?.message || String(error)}`);
+    return null;
+  }
+}
+
+async function compressCandidate(body, { allowLossy = false, enabled, url, model, format, compressUserMessages, timeoutMs = DEFAULT_TIMEOUT_MS, contextPressure = null, diagnostics = null } = {}) {
   if (!enabled) {
     setDiagnostic(diagnostics, "disabled");
     return null;
@@ -776,7 +771,7 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
         }
       }
       const sourceMessages = allMessages.slice(0, sliceEnd);
-      const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {});
+      const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
       if (!data) return null;
       // Validate response preserves identity (count + ordered roles) before commit.
       const compressed = data.messages;
@@ -823,7 +818,8 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
       // Byte-gain guard — candidate bytes compared to before snapshot. On a
       // sliced body the guard reads the slice: a 5% cut of the head is real
       // even when it is 1% of the whole request.
-      const merged = sliceEnd < allMessages.length ? [...compressed, ...allMessages.slice(sliceEnd)] : compressed;
+      const restored = mergeCompressedContent(sourceMessages, compressed);
+      const merged = sliceEnd < allMessages.length ? [...restored, ...allMessages.slice(sliceEnd)] : restored;
       const candidateBytes = sliceEnd < allMessages.length ? jsonBytes(compressed) : jsonBytes({ ...body, messages: merged });
       const beforeBytes = sliceEnd < allMessages.length ? jsonBytes(sourceMessages) : (diagnostics?.before?.bodyBytes ?? jsonBytes(body));
       if (candidateBytes >= beforeBytes * 0.95) {
@@ -856,7 +852,7 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
         setDiagnostic(diagnostics, "openai-responses request did not translate to messages[]");
         return null;
       }
-      const data = await callCompress(url, oai.messages, model, timeoutMs, compressUserMessages, diagnostics || {});
+      const data = await callCompress(url, oai.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
       if (!data) return null;
       // Candidate-before-mutate guard: require >5% byte shrink before committing input rewrite.
       const candidateResponses = openaiToOpenAIResponsesRequest(model, { ...oai, input: undefined, messages: data.messages }, false);
@@ -912,7 +908,7 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
         setDiagnostic(diagnostics, "Kiro request did not project to messages[]");
         return null;
       }
-      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {});
+      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
       if (!data) return null;
       // Byte-shrink guard BEFORE mutating any Kiro state: projected-message sizes
       // proxy for body shrink (targets are unchanged by compression).
@@ -961,7 +957,7 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
         setDiagnostic(diagnostics, `${format} request did not project to messages[]`);
         return null;
       }
-      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {});
+      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
       if (!data) return null;
       // Byte-shrink guard BEFORE mutating any part: projected-message sizes
       // proxy for body shrink (targets are unchanged by compression).
@@ -992,7 +988,7 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
       return null;
     }
     const sourceMessages = container[key];
-    const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {});
+    const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
     if (!data) return null;
     // Structural guard BEFORE any byte math or mutation: a buggy/compromised
     // proxy must not be able to drop/reorder/retag history (silent context loss).
@@ -1010,13 +1006,15 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
     // Measured by writing the merged array in and reading the whole body, so the
     // number gates what actually commits even when the container is body.params.
     const expectedBeforeBytes = diagnostics?.before?.bodyBytes ?? jsonBytes(body);
-    container[key] = candidateMessages;
-    const candidateBytes = jsonBytes(body);
+    const candidateBody = container === body
+      ? { ...body, [key]: candidateMessages }
+      : { ...body, params: { ...container, [key]: candidateMessages } };
+    const candidateBytes = jsonBytes(candidateBody);
     if (candidateBytes >= expectedBeforeBytes * 0.95) {
-      container[key] = sourceMessages;
       setDiagnostic(diagnostics, "phantom savings — keeping original (>95% size)");
       return null;
     }
+    container[key] = candidateMessages;
     if (diagnostics) diagnostics.after = captureSizeSnapshot(body);
     return data;
   } catch (error) {

@@ -139,7 +139,7 @@ describe('interrupted streaming request detail', () => {
     expect(detail.id).toBe(streamDetailId);
     expect(detail.status).toBe('cancelled');
     expect(detail.response.content).toContain('interrupted');
-    expect(detail.tokens).toEqual({ prompt_tokens: 0, completion_tokens: 0 });
+    expect(detail.tokens).toBeNull();
     expect(mocks.saveRequestUsage).not.toHaveBeenCalled();
   });
 });

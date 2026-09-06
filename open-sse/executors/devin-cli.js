@@ -319,6 +319,9 @@ export class DevinCliExecutor extends BaseExecutor {
     return null;
   }
 
+  get supportsBudgetDispatch() { return false; }
+  get budgetDispatchUnsupportedReason() { return "The subprocess owns opaque model calls and tool-driven generation loops."; }
+
   async execute({ model, body, credentials, signal, log }) {
     const b = body ?? {};
     const messages = Array.isArray(b.messages)

@@ -21,9 +21,10 @@ export function createBetterSqliteAdapter(filePath) {
     return stmt;
   }
 
-  // Truncate WAL periodically so file stays small for backup/copy
+  // Checkpoint committed WAL frames without waiting for readers.
   const checkpointTimer = setInterval(() => {
-    try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+    // Never wait on an analytics snapshot from the request-serving thread.
+    try { db.pragma("wal_checkpoint(PASSIVE)"); } catch {}
   }, CHECKPOINT_INTERVAL_MS);
   if (typeof checkpointTimer.unref === "function") checkpointTimer.unref();
 

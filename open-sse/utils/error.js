@@ -7,6 +7,7 @@ import {
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { redactSecretsText } from "./redact.js";
 import { RID_HEADER } from "../../src/shared/observability/decide.js";
+import { inspectErrorBody } from "./inspectErrorBody.js";
 
 /**
  * Build OpenAI-compatible error response body
@@ -135,15 +136,22 @@ export function createCallerAbortResult() {
   };
 }
 
-/**
- * Best-effort extraction of a precise rate-limit reset time from common
- * provider error shapes. GLM/Z.AI: "Your limit will reset at 2026-08-17 02:56:15"
- * (UTC). Also handles "retry in N seconds", "resets in Ns" and Retry-After.
- * Returns epoch ms or null.
- */
+/** Parse a future Retry-After deadline in epoch milliseconds, or null. */
+export function extractRetryAfterDeadline(response) {
+  const value = response?.headers?.get?.('retry-after');
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    const deadline = Date.now() + seconds * 1000;
+    return seconds > 0 && Number.isFinite(deadline) ? deadline : null;
+  }
+  const deadline = Date.parse(value);
+  return Number.isFinite(deadline) && deadline > Date.now() ? deadline : null;
+}
+
+/** Extract provider reset evidence from error text and response headers. */
 export function extractResetsAtMs(response, message) {
-  if (!message) return null;
-  const text = typeof message === "string" ? message : JSON.stringify(message);
+  const text = typeof message === "string" ? message : JSON.stringify(message || '');
 
   // GLM/Z.AI: "reset at 2026-08-17 02:56:15" (provider sends UTC without suffix)
   const resetAt = text.match(/reset at\s+(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/i);
@@ -163,13 +171,8 @@ export function extractResetsAtMs(response, message) {
   }
 
   // Retry-After header (seconds or HTTP-date)
-  const ra = response?.headers?.get?.("retry-after");
-  if (ra) {
-    const secs = Number(ra);
-    if (Number.isFinite(secs) && secs > 0) return Date.now() + secs * 1000;
-    const dateMs = Date.parse(ra);
-    if (Number.isFinite(dateMs) && dateMs > Date.now()) return dateMs;
-  }
+  const retryAfter = extractRetryAfterDeadline(response);
+  if (retryAfter) return retryAfter;
 
   return extractRateLimitWindowMs(response);
 }
@@ -273,12 +276,21 @@ function extractBodyResetsAtMs(errorPayload) {
  * @param {object} [executor] - Optional executor with parseError() override for provider-specific parsing
  * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number, errorPayload?: object|null}>}
  */
-export async function parseUpstreamError(response, executor = null) {
+export async function parseUpstreamError(response, executor = null, { signal } = {}) {
   let bodyText = "";
   try {
-    bodyText = await response.text();
-  } catch {
+    if (typeof response.clone === 'function') {
+      const inspected = await inspectErrorBody(response, { signal });
+      if (inspected.complete) bodyText = inspected.text;
+    } else {
+      // Test/adapter response doubles have no native stream to inspect.
+      bodyText = await response.text();
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
     bodyText = "";
+  } finally {
+    try { Promise.resolve(response.body?.cancel()).catch(() => {}); } catch {}
   }
 
   let errorPayload = null;
@@ -349,9 +361,9 @@ export async function parseUpstreamError(response, executor = null) {
   }
 
   // Generic reset-time extraction for rate limits (GLM "reset at ...", Retry-After, ...)
-  if (response.status === 429) {
+  if (response.status === 429 || response.status === 503) {
     const resetsAtMs = extractResetsAtMs(response, finalMessage) ?? extractBodyResetsAtMs(errorPayload);
-    if (resetsAtMs) return { statusCode: 429, message: finalMessage, resetsAtMs, errorPayload };
+    if (resetsAtMs) return { statusCode: response.status, message: finalMessage, resetsAtMs, errorPayload };
   }
 
   return { statusCode: response.status, message: finalMessage, errorPayload };

@@ -1,3 +1,4 @@
+import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   isValidApiKey,
   getProviderCredentials,
@@ -13,6 +14,7 @@ import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleSttCore } from "open-sse/handlers/sttCore.js";
 import { handleComboChat } from "open-sse/services/combo.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import * as log from "../utils/logger.js";
@@ -39,8 +41,11 @@ export async function handleStt(request) {
 
   const settings = await getSettings();
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
+  const budgetRefusal = await refuseUncoveredBudget(apiKey);
+  if (budgetRefusal) return budgetRefusal;
   if (settings.requireApiKey) {
     const authorized = await isInternalModelTestAuthorized(request, apiKey, isValidApiKey);
     if (!authorized) return errorResponse(HTTP_STATUS.UNAUTHORIZED, presentedApiKey ? "Invalid API key" : "Missing API key");
@@ -98,7 +103,7 @@ async function handleSingleModelStt(formData, modelStr) {
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
     const result = await handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig });
     if (result.success) return result.response;
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
+    return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed"), result.failureMetadata?.safeToReplay);
   }
 
   // Credentialed — fallback loop
@@ -122,10 +127,10 @@ async function handleSingleModelStt(formData, modelStr) {
         if (credentials?.allRateLimited) {
           const msg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
-        if (excludeConnectionIds.size === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
-        return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+        if (excludeConnectionIds.size === 0) return withReplaySafety(errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`), true);
+        return withReplaySafety(errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable"), true);
       }
 
       log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
@@ -134,14 +139,16 @@ async function handleSingleModelStt(formData, modelStr) {
 
       if (result.success) return result.response;
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status, result.error));
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status, result.error), false, cooldownMs, true);
       if (shouldFallback) {
         excludeConnectionIds.add(credentials.connectionId);
         lastError = result.error;
         lastStatus = result.status;
         continue;
       }
-      return result.response || errorResponse(result.status, result.error);
+      return withReplaySafety(result.response || errorResponse(result.status, result.error), true);
     } finally {
       releaseAccountLease(accountLease);
     }

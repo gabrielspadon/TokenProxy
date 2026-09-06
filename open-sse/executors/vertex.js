@@ -2,6 +2,7 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { parseVertexSaJson, refreshVertexToken, refreshGoogleToken } from "../services/tokenRefresh.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { createExecutorResponseHeaderTimeout } from "../utils/responseHeaderTimeout.js";
 
@@ -130,7 +131,9 @@ export class VertexExecutor extends BaseExecutor {
     return { accessToken: result.accessToken, expiresAt: result.expiresAt };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch = null, afterDispatch = null }) {
     const effectiveCredentials = credentials
       ? {
           ...credentials,
@@ -174,6 +177,7 @@ export class VertexExecutor extends BaseExecutor {
     const url = this.buildUrl(model, stream, 0, effectiveCredentials);
     const headers = this.buildHeaders(effectiveCredentials, stream);
     const transformedBody = this.transformRequest(model, body, stream, effectiveCredentials);
+    const serialized = JSON.stringify(transformedBody);
 
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
@@ -183,12 +187,15 @@ export class VertexExecutor extends BaseExecutor {
     });
     let response;
     try {
+      signal?.throwIfAborted();
+      if (beforeDispatch) await beforeDispatch({ body: transformedBody, serialized, url });
       response = await proxyAwareFetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify(transformedBody),
+        body: serialized,
         signal: deadline.signal,
       }, proxyOptions);
+      await notifyDispatchResponse(afterDispatch, response);
     } catch (error) {
       throw deadline.classify(error);
     } finally {

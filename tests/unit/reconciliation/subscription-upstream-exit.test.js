@@ -72,7 +72,7 @@ describe('subscription.upstream.exit: "route subscription lane through metered p
 });
 
 describe("subscription.upstream.exit: receipt has configured connection and null metered cost (live_gate)", () => {
-  it("a subscription connection with no configured per-token price bills nothing, not a fabricated estimate", async () => {
+  it("a subscription connection with no configured per-token price retains unknown cost", async () => {
     const connectionId = "subscription-configured-conn";
     saveUsageStats({
       provider: "kimi",
@@ -86,7 +86,7 @@ describe("subscription.upstream.exit: receipt has configured connection and null
     });
     const row = await waitForRow(connectionId);
     expect(row.connectionId).toBe(connectionId); // the configured connection, unchanged
-    expect(row.cost).toBe(0); // null metered cost: nothing billed for the subscription lane
+    expect(row.cost).toBeNull();
   });
 });
 

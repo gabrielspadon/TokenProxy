@@ -207,6 +207,7 @@ describe('E1.1w: getProviderCredentials selects through the scheduler', () => {
 
     const first = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
     expect(first.connectionId).toBe('alpha');
+    expect(first.sessionIdentitySource).toBe('explicit');
     leases.releaseAccountLease(first.accountLease);
 
     // The pin is on disk now. INVERT the ranking key itself, not the headroom:
@@ -687,6 +688,7 @@ describe('E1.1w: the persisted session identity is a HASH (W4)', () => {
 
     for (let i = 0; i < 3; i += 1) {
       const picked = await auth.getProviderCredentials(PROVIDER, null, MODEL, {});
+      expect(picked.sessionIdentitySource).toBe('inferred');
       leases.releaseAccountLease(picked.accountLease);
     }
     // One row, not three: an anonymous caller is pinned, not re-rolled.
@@ -746,10 +748,9 @@ describe('E1.1w: a mixed-shape pool still ranks, and never serves a depleted acc
 
     const picked = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
 
-    // alpha, because its binding window is the 5h one and it expires in five
-    // hours; gamma's binding window is a weekly that runs for two more days.
-    // beta is excluded outright: its 5h window has nothing left.
-    expect(picked?.connectionId).toBe('alpha');
+    // Gamma has a known weekly deadline; alpha has no weekly evidence.
+    // Beta is excluded because its 5h quota is depleted.
+    expect(picked?.connectionId).toBe('gamma');
     expect(picked.allRateLimited).toBeUndefined();
     leases.releaseAccountLease(picked.accountLease);
 
@@ -827,5 +828,56 @@ describe('E1.1w: a mixed-shape pool still ranks, and never serves a depleted acc
     // Held, not moved: no second receipt.
     const triggers = rows('SELECT trigger FROM accountSwitches').map((r) => r.trigger);
     expect(triggers).toEqual(['first-pin']);
+  });
+});
+
+describe('model entitlement and temporary pin recovery', () => {
+  it('marks capacity waits as terminal across model fallback boundaries', async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([
+      connection('alpha', { maxConcurrent: 1, snapshot: snapshot(90) }),
+      connection('beta', { maxConcurrent: 1, snapshot: snapshot(90) }),
+    ]);
+    const first = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    const wait = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    expect(wait).toMatchObject({ allRateLimited: true, mustWait: true });
+    expect(rows('SELECT connectionId FROM sessionAffinity')[0].connectionId).toBe(first.connectionId);
+    leases.releaseAccountLease(first.accountLease);
+  });
+  it('skips an account whose configured model list excludes the requested model', async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([
+      connection('alpha', { snapshot: snapshot(90), extra: { providerSpecificData: { enabledModels: ['claude-opus-5'] } } }),
+      connection('beta', { snapshot: snapshot(90), extra: { providerSpecificData: { enabledModels: [MODEL] } } }),
+    ]);
+    const picked = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    expect(picked.connectionId).toBe('beta');
+    expect(quotaMocks.evaluateQuota).toHaveBeenCalledTimes(1);
+    leases.releaseAccountLease(picked.accountLease);
+  });
+
+  it.each([429, 503])('waits on a temporary %i lock and recovers the same pin', async (status) => {
+    const pool = [connection('alpha', { snapshot: snapshot(90) }), connection('beta', { snapshot: snapshot(90) })];
+    dbMocks.getProviderConnections.mockResolvedValue(pool);
+    const first = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    leases.releaseAccountLease(first.accountLease);
+    const pinned = pool.find((c) => c.id === first.connectionId);
+    const until = iso(30_000);
+    Object.assign(pinned, {
+      [`modelLock_${MODEL}`]: until,
+      [`modelFailure_${MODEL}`]: { status, until, message: 'Temporary limit', failureClass: status === 429 ? 'rate' : 'transient' },
+    });
+    const wait = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    expect(wait).toMatchObject({ allRateLimited: true, mustWait: true, retryAfter: until });
+    expect(rows('SELECT connectionId FROM sessionAffinity')[0].connectionId).toBe(first.connectionId);
+    vi.setSystemTime(NOW + 30_001);
+    const recovered = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    expect(recovered.connectionId).toBe(first.connectionId);
+    leases.releaseAccountLease(recovered.accountLease);
+  });
+
+  it('releases a reserved lease when proxy resolution throws', async () => {
+    dbMocks.getProviderConnections.mockResolvedValue([connection('alpha', { snapshot: snapshot(90) })]);
+    proxyMocks.resolveConnectionProxyConfig.mockRejectedValue(new Error('proxy unavailable'));
+    await expect(auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions())).rejects.toThrow('proxy unavailable');
+    expect(leases._getLeaseRegistry().inFlight()).toBe(0);
   });
 });

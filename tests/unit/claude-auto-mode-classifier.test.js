@@ -2340,7 +2340,7 @@ describe("Task 3 caller-abort terminality", () => {
     try {
       const response = await handleChat(terminalChatRequest());
 
-      expect(response).toBe(failureResponse);
+      expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
       expect(response.status).toBe(502);
       expect(await response.text()).toBe("Classifier rejected");
       expect(mocks.handleChatCore).toHaveBeenCalledOnce();
@@ -2402,7 +2402,7 @@ const canonicalClassifierHandlerResponse = async () => {
 };
 
 describe("Task 3 combo classifier terminality", () => {
-  it("falls back from a real classifier 502 to a canonical decision", async () => {
+  it("returns an accepted malformed classifier result without generating on a different model", async () => {
     const malformed = await malformedClassifierHandlerResponse();
     const canonical = await canonicalClassifierHandlerResponse();
     const handleSingleModel = vi.fn(async (_body, model) => (
@@ -2423,16 +2423,10 @@ describe("Task 3 combo classifier terminality", () => {
       await vi.advanceTimersByTimeAsync(5000);
       const response = await pending;
 
-      expect(response.status).toBe(200);
-      expect(response.headers.get("x-tokenproxy-model")).toBe("cc/claude-opus-4-8");
-      expect(handleSingleModel).toHaveBeenCalledTimes(2);
-      expect(handleSingleModel.mock.calls.map(([, model]) => model)).toEqual([
-        "cx/gpt-5.6-sol",
-        "cc/claude-opus-4-8",
-      ]);
-      expect(await response.json()).toMatchObject({
-        content: [{ type: "text", text: "<block>no</block>" }],
-      });
+      expect(response.status).toBe(502);
+      expect(handleSingleModel).toHaveBeenCalledTimes(1);
+      expect(handleSingleModel.mock.calls[0][1]).toBe("cx/gpt-5.6-sol");
+      expect(response.headers.get("x-tokenproxy-replay-safe")).not.toBe("true");
     } finally {
       vi.useRealTimers();
       resetComboRotation();

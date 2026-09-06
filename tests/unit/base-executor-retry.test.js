@@ -9,8 +9,8 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 
-function res(status) {
-  return { status, headers: { get: () => "" } };
+function res(status, permission = 'true') {
+  return { status, headers: new Headers({ 'x-tokenproxy-replay-safe': permission }) };
 }
 
 function makeExec(config) {
@@ -59,14 +59,13 @@ describe("BaseExecutor.execute — baseUrls fallback", () => {
 });
 
 describe("BaseExecutor.execute — network error retry/fallback", () => {
-  it("maps network exception to 502 retry config", async () => {
+  it("does not map an uncertain POST exception to a replayable HTTP rejection", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 1, delayMs: 0 } } });
     fetchMock
       .mockImplementationOnce(async () => { throw new Error("ECONNRESET"); })
       .mockResolvedValueOnce(res(200));
-    const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
-    expect(out.response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(ex.execute({ model: "m", body: {}, stream: false, credentials: creds })).rejects.toThrow('ECONNRESET');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws when the only url fails with network error and no retries left", async () => {

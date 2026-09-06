@@ -64,7 +64,70 @@ function stubUpstream(responses) {
 }
 
 describe("Codex recovers from a stale encrypted-reasoning 400 (#2667)", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it.each(['x-tokenproxy-replay-safe','x-should-retry'])('does not repair or resend when %s denies replay',async header=>{
+    const upstream=new Response(STALE_CIPHERTEXT_BODY,{status:400,headers:{[header]:'false'}});
+    const seen=stubUpstream([upstream,emptySseResponse()]);
+    const body=bodyWithCiphertext();
+    const result=await new CodexExecutor().execute({model:'gpt-5.3-codex',body});
+    expect(seen).toEqual([1]);expect(result.response).toBe(upstream);
+    expect(body.input.some(item=>item.encrypted_content)).toBe(true);
+    expect(await result.response.text()).toBe(STALE_CIPHERTEXT_BODY);
+  });
+
+  it('does not use an oversized diagnostic as proof of a repairable rejection',async()=>{
+    const text=JSON.stringify({error:{message:'the encrypted content could not be decrypted '+ 'x'.repeat(20*1024)}});
+    const upstream=jsonResponse(400,text);
+    const seen=stubUpstream([upstream,emptySseResponse()]);
+    const result=await new CodexExecutor().execute({model:'gpt-5.3-codex',body:bodyWithCiphertext()});
+    expect(seen).toEqual([1]);expect(result.response).toBe(upstream);
+    expect(await result.response.text()).toBe(text);
+  });
+
+  it('returns a stalled diagnostic after the inspection deadline without a second dispatch',async()=>{
+    vi.useFakeTimers();
+    const upstream=new Response(new ReadableStream(),{status:400});
+    const seen=stubUpstream([upstream]);
+    const pending=new CodexExecutor().execute({model:'gpt-5.3-codex',body:bodyWithCiphertext()});
+    await vi.advanceTimersByTimeAsync(1001);
+    expect((await pending).response).toBe(upstream);expect(seen).toEqual([1]);
+    await upstream.body.cancel();
+  });
+
+  it('cancels the discarded rejected body before the repaired dispatch',async()=>{
+    const upstream=jsonResponse(400,STALE_CIPHERTEXT_BODY);
+    let calls=0;
+    vi.spyOn(BaseExecutor.prototype,'execute').mockImplementation(async args=>{
+      calls++;
+      if(calls===1)return {response:upstream,transformedBody:args.body};
+      expect(upstream.bodyUsed).toBe(true);
+      return {response:emptySseResponse(),transformedBody:args.body};
+    });
+    await new CodexExecutor().execute({model:'gpt-5.3-codex',body:bodyWithCiphertext()});
+    expect(calls).toBe(2);
+  });
+
+  it('cancels both diagnostic branches and never resends when the caller aborts inspection',async()=>{
+    const controller=new AbortController();
+    let cancelled=false;
+    const upstream=new Response(new ReadableStream({cancel(){cancelled=true;}}),{status:400});
+    const clone=upstream.clone.bind(upstream);
+    vi.spyOn(upstream,'clone').mockImplementation(()=>{controller.abort();return clone();});
+    const seen=stubUpstream([upstream]);
+    const body=bodyWithCiphertext();
+    await expect(new CodexExecutor().execute({model:'gpt-5.3-codex',body,signal:controller.signal})).rejects.toMatchObject({name:'AbortError'});
+    expect(seen).toEqual([1]);expect(body.input.some(item=>item.encrypted_content)).toBe(true);
+    await vi.waitFor(()=>expect(cancelled).toBe(true));
+  });
+
+  it('does not reuse the original400 after the repaired attempt loses its transport outcome',async()=>{
+    vi.spyOn(BaseExecutor.prototype,'execute')
+      .mockResolvedValueOnce({response:jsonResponse(400,STALE_CIPHERTEXT_BODY)})
+      .mockRejectedValueOnce(new Error('second attempt outcome unknown'));
+    await expect(new CodexExecutor().execute({model:'gpt-5.3-codex',body:bodyWithCiphertext()})).rejects.toThrow('second attempt outcome unknown');
+    expect(BaseExecutor.prototype.execute).toHaveBeenCalledTimes(2);
+  });
 
   it("strips the ciphertext and retries once", async () => {
     const seen = stubUpstream([

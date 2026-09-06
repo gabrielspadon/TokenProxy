@@ -76,7 +76,7 @@ describe("Codex fast tier and capacity handling", () => {
     expect(headers["ChatGPT-Account-ID"]).toBe("acct_1");
   });
 
-  it("classifies 200-SSE model capacity as account fallback", async () => {
+  it("classifies structured 200-SSE model capacity", async () => {
     const executor = new CodexExecutor();
     const response = new Response(streamFromText([
       "event: error",
@@ -92,18 +92,18 @@ describe("Codex fast tier and capacity handling", () => {
     expect(peek.message).toBe("Selected model is at capacity. Please try a different model.");
   });
 
-  it("preserves non-JSON SSE capacity and retry detection", async () => {
+  it("leaves untyped non-JSON SSE words unclassified", async () => {
     const executor = new CodexExecutor();
     const capacity = new Response(streamFromText("data: Selected model is at capacity\n\n"), { status: 200 });
     const retry = new Response(streamFromText("data: server_is_overloaded\n\n"), { status: 200 });
 
     await expect(executor._peekSseTransientError(capacity)).resolves.toMatchObject({
-      matched: "selected model is at capacity",
-      accountFallback: true,
+      matched: null,
+      accountFallback: false,
       contextOverflow: false,
     });
     await expect(executor._peekSseTransientError(retry)).resolves.toMatchObject({
-      matched: "server_is_overloaded",
+      matched: null,
       accountFallback: false,
       contextOverflow: false,
     });
@@ -183,6 +183,7 @@ describe("Codex fast tier and capacity handling", () => {
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(result.response.status).toBe(413);
+    expect(result.response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
     await expect(result.response.json()).resolves.toEqual({
       error: {
         message: "Your input exceeds the context window of this model.",

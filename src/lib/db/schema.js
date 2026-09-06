@@ -3,7 +3,19 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 2;
+import { QUOTA_HISTORY_TABLES } from "./schema/quotaHistory.js";
+import { CONFIG_VERSION_TABLES } from "./configVersionSchema.js";
+import { CONTEXT_EVIDENCE_TABLES, REQUEST_IDENTITY_COLUMNS, REQUEST_IDENTITY_INDEXES } from "./contextEvidenceSchema.js";
+import { API_KEY_BUDGET_COLUMNS, BUDGET_TABLES } from "./budgetSchema.js";
+import { INVESTIGATION_TABLES } from "./investigationSchema.js";
+import { SESSION_PIN_COLUMNS, SESSION_PIN_TABLES } from "./sessionPinSchema.js";
+import { SHAPING_TABLES } from "./shapingSchema.js";
+import { COMPATIBILITY_TABLES } from "./compatibilitySchema.js";
+import { OPERATION_TABLES } from "./operationSchema.js";
+
+// 14 = operation events (durable operation evidence). 15 is reserved for
+// project budgets - do not reuse it.
+export const SCHEMA_VERSION = 14;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -19,6 +31,15 @@ PRAGMA busy_timeout = 5000;
 // auto-add missing tables/columns/indexes after versioned migrations.
 // For destructive changes (drop/rename/type-change), write a migration file.
 export const TABLES = {
+  ...QUOTA_HISTORY_TABLES,
+  ...CONFIG_VERSION_TABLES,
+  ...CONTEXT_EVIDENCE_TABLES,
+  ...BUDGET_TABLES,
+  ...INVESTIGATION_TABLES,
+  ...SESSION_PIN_TABLES,
+  ...SHAPING_TABLES,
+  ...COMPATIBILITY_TABLES,
+  ...OPERATION_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
@@ -77,6 +98,7 @@ export const TABLES = {
   },
   apiKeys: {
     columns: {
+      ...API_KEY_BUDGET_COLUMNS,
       id: "TEXT PRIMARY KEY",
       key: "TEXT UNIQUE NOT NULL",
       name: "TEXT",
@@ -132,6 +154,19 @@ export const TABLES = {
       status: "TEXT",
       tokens: "TEXT",
       meta: "TEXT",
+      requestId: "TEXT",
+      logicalRequestId: "TEXT",
+      attempt: "INTEGER",
+      contextSessionId: "INTEGER",
+      projectId: "TEXT",
+      rateSnapshotId: "TEXT",
+      pricingCapturedAt: "TEXT",
+      dispatchCoverage: "TEXT",
+      costSource: "TEXT",
+      costEvidence: "TEXT",
+      usageSource: "TEXT",
+      estimatedCostUsd: "REAL",
+      reportedCostUsd: "REAL",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_uh_ts ON usageHistory(timestamp DESC)",
@@ -141,7 +176,24 @@ export const TABLES = {
       // Enforcing an API key's ceiling sums this table for one key on the auth
       // path. Without this index that is a full scan of a table nothing prunes.
       "CREATE INDEX IF NOT EXISTS idx_uh_apikey ON usageHistory(apiKey)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_uh_request_id ON usageHistory(requestId) WHERE requestId IS NOT NULL",
+      "CREATE INDEX IF NOT EXISTS idx_uh_logical ON usageHistory(logicalRequestId, id)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_session ON usageHistory(contextSessionId, id)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_project ON usageHistory(projectId, id)",
     ],
+  },
+  usageRateSnapshots: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      provider: "TEXT",
+      model: "TEXT",
+      currency: "TEXT NOT NULL",
+      unit: "TEXT NOT NULL",
+      calculatorVersion: "TEXT NOT NULL",
+      source: "TEXT NOT NULL",
+      rates: "TEXT",
+      capturedAt: "TEXT NOT NULL",
+    },
   },
   usageDaily: {
     columns: {
@@ -186,8 +238,36 @@ export const TABLES = {
   // Full-history statistics source (45-day retention). Written once per
   // request from the same detail used for requestDetails; the Statistics page
   // reads all aggregation from this table only.
+  contextSessions: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      sessionHash: "TEXT UNIQUE NOT NULL",
+      identitySource: "TEXT NOT NULL",
+      projectLabel: "TEXT",
+      firstSeenAt: "TEXT NOT NULL",
+      lastSeenAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_cs_seen ON contextSessions(lastSeenAt DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_cs_project ON contextSessions(projectLabel)",
+    ],
+  },
+  contextStages: {
+    columns: {
+      requestId: "TEXT NOT NULL REFERENCES requestStats(id) ON DELETE CASCADE",
+      ordinal: "INTEGER NOT NULL",
+      stage: "TEXT NOT NULL",
+      beforeBytes: "INTEGER NOT NULL",
+      afterBytes: "INTEGER NOT NULL",
+      deltaBytes: "INTEGER NOT NULL",
+      outcome: "TEXT NOT NULL",
+      risk: "TEXT NOT NULL",
+    },
+    primaryKey: "PRIMARY KEY (requestId, ordinal)",
+  },
   requestStats: {
     columns: {
+      ...REQUEST_IDENTITY_COLUMNS,
       id: "TEXT PRIMARY KEY",
       timestamp: "TEXT NOT NULL",
       provider: "TEXT",
@@ -201,9 +281,39 @@ export const TABLES = {
       reasoningTokens: "INTEGER DEFAULT 0",
       latencyTotal: "INTEGER DEFAULT 0",
       latencyTtft: "INTEGER DEFAULT 0",
+      contextSessionId: "INTEGER",
+      contextTelemetryError: "TEXT",
+      logicalRequestId: "TEXT",
+      rateSnapshotId: "TEXT",
+      pricingCapturedAt: "TEXT",
+      dispatchCoverage: "TEXT",
+      requestedModel: "TEXT",
+      clientTool: "TEXT",
+      contextEstimate: "INTEGER",
+      inputEstimate: "INTEGER",
+      bodyBeforeBytes: "INTEGER",
+      bodyAfterBytes: "INTEGER",
+      cachePrefixBytes: "INTEGER",
+      compactHint: "INTEGER",
+      usageSource: "TEXT",
+      usageInputPresent: "INTEGER",
+      usageOutputPresent: "INTEGER",
+      cacheReadPresent: "INTEGER",
+      cacheWritePresent: "INTEGER",
+      messageCount: "INTEGER",
+      toolCount: "INTEGER",
+      routeKind: "TEXT",
+      formatPair: "TEXT",
+      selection: "TEXT",
+      contextControls: "TEXT",
+      attempt: "INTEGER",
     },
     indexes: [
+      ...REQUEST_IDENTITY_INDEXES,
       "CREATE INDEX IF NOT EXISTS idx_rs_ts ON requestStats(timestamp DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_rs_context_session ON requestStats(contextSessionId, timestamp, id)",
+      "CREATE INDEX IF NOT EXISTS idx_rs_context_request ON requestStats(logicalRequestId)",
+      "CREATE INDEX IF NOT EXISTS idx_rs_context_client ON requestStats(clientTool, timestamp)",
       "CREATE INDEX IF NOT EXISTS idx_rs_provider ON requestStats(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rs_model ON requestStats(model)",
       "CREATE INDEX IF NOT EXISTS idx_rs_conn ON requestStats(connectionId)",
@@ -245,6 +355,7 @@ export const TABLES = {
   // a session that re-pins on every boot is round-robin with extra steps.
   sessionAffinity: {
     columns: {
+      ...SESSION_PIN_COLUMNS,
       // Salted hash of the client session identity. Never the raw identity,
       // never a credential, never a prompt body (rule 8).
       sessionHash: "TEXT NOT NULL",
@@ -299,5 +410,6 @@ export const TABLES = {
 export function buildCreateTableSql(name, def) {
   const cols = Object.entries(def.columns).map(([k, v]) => `${k} ${v}`);
   if (def.primaryKey) cols.push(def.primaryKey);
+  if (def.constraints) cols.push(...def.constraints);
   return `CREATE TABLE IF NOT EXISTS ${name} (${cols.join(", ")})`;
 }

@@ -1,17 +1,19 @@
 // MAX_COMPRESS_BODY_BYTES gate: open-sse/rtk/headroom.js compressWithHeadroom
 // skips compression when the WHOLE request body serializes past 256 KiB
 // (`sizeSnapshot.bodyBytes > MAX_COMPRESS_BODY_BYTES`, 262144 bytes). Bodies
-// are built by padding a tool result; jsonBytes == byte length of
+// are built by padding historical assistant text; jsonBytes == byte length of
 // JSON.stringify, so padding chars are solved arithmetically.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { compressWithHeadroom } from '../../open-sse/rtk/headroom.js';
+import { compressWithHeadroom as compressWithPolicy } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const PROXY = 'http://127.0.0.1:8787';
 const LIMIT = 256 * 1024; // MAX_COMPRESS_BODY_BYTES
 
 function bodyAtBytes(target) {
-  const body = { model: 'm', messages: [{ role: 'user', content: '' }] };
+  const body = { model: 'm', messages: [{ role: 'assistant', content: '' }, { role: 'user', content: 'Current request.' }] };
   const base = new TextEncoder().encode(JSON.stringify(body)).length;
   const pad = target - base; // 'x' is 1 byte/char and never escapes
   if (pad < 1) throw new Error('target too small');
@@ -35,7 +37,7 @@ afterEach(() => {
 describe('MAX_COMPRESS_BODY_BYTES size gate', () => {
   it('body at LIMIT-1 compresses', async () => {
     const body = bodyAtBytes(LIMIT - 1);
-    const fetchMock = vi.fn(async () => okRes([{ role: 'user', content: 'ok' }]));
+    const fetchMock = vi.fn(async () => okRes([{ role: 'assistant', content: 'ok' }, body.messages[1]]));
     global.fetch = fetchMock;
     const diagnostics = {};
     const result = await compressWithHeadroom(body, {
@@ -52,7 +54,7 @@ describe('MAX_COMPRESS_BODY_BYTES size gate', () => {
 
   it('body exactly at LIMIT compresses (gate is strictly-greater)', async () => {
     const body = bodyAtBytes(LIMIT);
-    const fetchMock = vi.fn(async () => okRes([{ role: 'user', content: 'ok' }]));
+    const fetchMock = vi.fn(async () => okRes([{ role: 'assistant', content: 'ok' }, body.messages[1]]));
     global.fetch = fetchMock;
     const result = await compressWithHeadroom(body, {
       enabled: true,
@@ -131,7 +133,7 @@ describe('claude format: oversized body slices instead of skipping', () => {
     const fetchMock = vi.fn(async (_url, opts) => {
       const payload = JSON.parse(opts.body);
       // Small compressed stand-in so the byte-gain guard commits the result.
-      return okRes(payload.messages.map((m) => ({ role: m.role, content: 'c' })));
+      return okRes(payload.messages.map((m) => m.role === 'assistant' ? { ...m, content: 'c' } : m));
     });
     global.fetch = fetchMock;
     const diagnostics = {};

@@ -12,7 +12,9 @@
 // so an `Agent` imported here would be a different class than the one
 // `open-sse/rtk/headroom.js` constructs against its own copy.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { compressWithHeadroom, resetHeadroomCircuitBreaker } from '../../open-sse/rtk/headroom.js';
+import { compressWithHeadroom as compressWithPolicy, resetHeadroomCircuitBreaker } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 import { probeProxyRunning } from '../../src/lib/headroom/detect.js';
 
 afterEach(() => {

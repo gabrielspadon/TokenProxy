@@ -156,6 +156,7 @@ async function drive(overrides = {}) {
     connectionId: "sd-conn",
     rtkEnabled: false,
     schemaDistillEnabled: false,
+    schemaAllowLossy: true,
     headroomEnabled: false,
     cavemanEnabled: false,
     ponytailEnabled: false,
@@ -174,6 +175,12 @@ function reqLines() {
 }
 
 describe("schema distillation saver stage (chatCore pipeline)", () => {
+  it("safe mode preserves schema values when enabled without lossy consent", async () => {
+    await drive({ schemaDistillEnabled: true, schemaAllowLossy: false });
+    expect(JSON.parse(mocks.dispatched).tools[0].input_schema).toEqual(fatToolsBody().tools[0].input_schema);
+    expect(reqLines()[0]).not.toMatch(/schema:/);
+  });
+
   it("flag on: dispatched tools are distilled, ledger records the schema stage", async () => {
     const result = await drive({ schemaDistillEnabled: true, requestId: "sd000101" });
     expect(result.success).toBe(true);
@@ -183,9 +190,9 @@ describe("schema distillation saver stage (chatCore pipeline)", () => {
     expect(dispatched.tools[0].description).toBe("Reads a file  from disk");
     expect(JSON.stringify(dispatched.tools[0].input_schema)).not.toContain('"default"');
     expect(JSON.stringify(dispatched.tools[0].input_schema)).not.toContain('"title"');
-    expect(JSON.stringify(dispatched.tools[0].input_schema)).not.toContain('"$schema"');
+    expect(dispatched.tools[0].input_schema.$schema).toBe("http://json-schema.org/draft-07/schema#");
     expect(dispatched.tools[0].input_schema.properties.path.description).toBe(
-      "The file path to read",
+      "The file   path\n\nto read",
     );
     expect(dispatched.tools[0].input_schema.required).toEqual(["path"]);
     expect(dispatched.tools[0].input_schema.additionalProperties).toBe(false);

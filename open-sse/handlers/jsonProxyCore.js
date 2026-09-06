@@ -1,6 +1,7 @@
 import { HTTP_STATUS, JSON_PROXY_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { PROVIDER_MEDIA } from "../providers/index.js";
-import { createErrorResult } from "../utils/error.js";
+import { createErrorResult, parseUpstreamError } from "../utils/error.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 const KIND_CONFIG_KEYS = {
@@ -128,6 +129,12 @@ export async function handleJsonProxyCore({
 
   let responseBody;
   try {
+    if (!upstream.ok) {
+      const parsed = await parseUpstreamError(upstream, null, { signal });
+      const message = sanitizeSecrets(parsed.message, credentials);
+      return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`, parsed.resetsAtMs,
+        { safeToReplay: isReplaySafeRejection(upstream) });
+    }
     responseBody = await upstream.text();
   } catch (error) {
     return classifyTransportError(error, {
@@ -138,10 +145,6 @@ export async function handleJsonProxyCore({
       credentials,
       phase: "response body",
     });
-  }
-  if (!upstream.ok) {
-    const message = sanitizeSecrets(responseBody || `HTTP ${upstream.status}`, credentials);
-    return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`);
   }
 
   return {

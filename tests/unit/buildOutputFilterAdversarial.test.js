@@ -7,7 +7,9 @@ import { gitDiff } from "../../open-sse/rtk/filters/gitDiff.js";
 import { gitLog } from "../../open-sse/rtk/filters/gitLog.js";
 import { gitStatus } from "../../open-sse/rtk/filters/gitStatus.js";
 import { safeApply } from "../../open-sse/rtk/applyFilter.js";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { DETECT_WINDOW, MIN_COMPRESS_SIZE } from "../../open-sse/rtk/constants.js";
 
 // ============================================================

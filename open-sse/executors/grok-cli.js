@@ -360,6 +360,7 @@ function resolveEffortFromModel(modelId) {
  * Auth: OAuth device-code access token (xai-grok-cli).
  */
 export class GrokCliExecutor extends BaseExecutor {
+  get supportsBudgetDispatch() { return true; }
   constructor() {
     super("grok-cli", PROVIDERS["grok-cli"]);
   }

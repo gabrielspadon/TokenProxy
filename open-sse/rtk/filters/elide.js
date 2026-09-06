@@ -1,7 +1,7 @@
 // Size-based catch-all, NOT content-sniffed: for oversized blobs that match no
 // structured filter, keep head+tail verbatim, elide the middle, and record an
-// integrity marker (char count + HMAC of the elided span) so nothing is
-// silently lost. Wired in index.js only after autoDetectFilter returns null.
+// integrity marker (char count + HMAC of the elided span). This is lossy;
+// the marker cannot recover the removed content. Explicit opt-in only.
 // Contract: returns null on no-match (len <= ELIDE_MIN_CHARS, degenerate
 // overlap, or would-grow), same convention as the autodetect chain's no-match.
 import { createHmac, randomBytes } from "crypto";
@@ -77,9 +77,15 @@ export function elide(input) {
   if (tailNl !== -1 && tailNl <= tailStart + ELIDE_NEWLINE_WINDOW - 1) {
     tailStart = tailNl + 1;
   }
-  // Never split a UTF-16 surrogate pair: if the tail starts on a low
+  // Never split a UTF-16 surrogate pair at either boundary.
+  if (headEnd > 0 && headEnd < len &&
+      input.charCodeAt(headEnd - 1) >= 0xd800 && input.charCodeAt(headEnd - 1) <= 0xdbff &&
+      input.charCodeAt(headEnd) >= 0xdc00 && input.charCodeAt(headEnd) <= 0xdfff) {
+    headEnd--;
+  }
+  // If the tail starts on a low
   // surrogate, the boundary landed between the pair's halves, so advance past
-  // the whole pair (the pair then elides into the middle, which is lossless).
+  // the whole pair. The omitted pair remains part of the lossy middle.
   if (
     tailStart > 0 &&
     tailStart < len &&

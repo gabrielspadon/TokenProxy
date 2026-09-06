@@ -16,7 +16,7 @@ const certInstallPath = fileURLToPath(new URL('../../src/mitm/cert/install.js', 
 // never through a real sudo/exec/spawn. A guaranteed-dead pid (0x7fffffff, above
 // any real pid_max) stands in for "process is gone" the same way
 // mitm-stale-handle-1462.test.js does.
-function run(body, { dns = {}, cert = {}, files = {}, settingsSeed = {} } = {}) {
+function run(body, { dns = {}, cert = {}, files = {}, settingsSeed = {}, platform = 'linux' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'tokenproxy-mitm-lifecycle-'));
   try {
     const script = `
@@ -24,6 +24,11 @@ function run(body, { dns = {}, cert = {}, files = {}, settingsSeed = {} } = {}) 
     const path = require("node:path");
     const root = ${JSON.stringify(root)};
     process.env.DATA_DIR = root;
+    Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });
+    const cp = require("node:child_process");
+    for (const method of ["exec", "execSync", "spawn"]) {
+      cp[method] = () => { throw new Error("Unexpected child_process." + method); };
+    }
     const events = [];
     const settings = ${JSON.stringify(settingsSeed)};
 
@@ -145,13 +150,14 @@ describe('trustCert', () => {
     expect(out.error).toMatch(/Root CA not found/);
   });
 
-  it('skips system trust with no sudo and does not throw', () => {
+  it.each([['linux', false], ['darwin', true]])('handles system trust without sudo on %s', (platform, installs) => {
     const { out, events } = run('await manager.trustCert(null); out = { ok: true };', {
       files: { rootCA: true },
       dns: { sudoAvailable: false },
+      platform,
     });
     expect(out.ok).toBe(true);
-    expect(events).not.toContain('cert-installed');
+    expect(events.includes('cert-installed')).toBe(installs);
   });
 
   it('refuses when a sudo password is required and none is available', () => {

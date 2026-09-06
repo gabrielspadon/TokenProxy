@@ -1,5 +1,9 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    if (process.env.TOKENPROXY_TELEMETRY === "otlp") {
+      const { initializeTechnicalTelemetry } = await import("@/lib/observability/technicalTelemetry.js");
+      await initializeTechnicalTelemetry();
+    }
     // Rename process to distinguish tokenproxy from generic next-server
     if (process.title.startsWith("next-server")) {
       process.title = process.title.replace("next-server", "tokenproxy");

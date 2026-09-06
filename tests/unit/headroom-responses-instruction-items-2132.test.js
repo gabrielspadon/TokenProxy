@@ -15,7 +15,9 @@
 // The saver still runs; instruction items are simply kept local, the same rule
 // the Claude branch already applies to `system`.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { compressWithHeadroom, resetHeadroomCircuitBreaker } from '../../open-sse/rtk/headroom.js';
+import { compressWithHeadroom as compressWithPolicy, resetHeadroomCircuitBreaker } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -26,14 +28,14 @@ const URL_ = 'http://localhost:8787';
 const PAD = ' padding'.repeat(200);
 const PLAN_DIRECTIVE = `## Plan mode\nYou MUST call update_plan before acting.${PAD}`;
 
-// Stand-in proxy: replaces every message body with "C" so any surviving
-// original text proves the item never went through the round trip.
+// Stand-in proxy compresses historical assistant text; instructions and current
+// user requests stay exact even with lossy compression enabled.
 function proxyCompressingEverything(transform = (m) => ({ ...m, content: 'C' })) {
   const fn = vi.fn(async (_url, init) => {
     fn.lastPayload = JSON.parse(init.body);
     return new Response(
       JSON.stringify({
-        messages: fn.lastPayload.messages.map(transform),
+        messages: fn.lastPayload.messages.map((m) => m.role !== "assistant" ? m : transform(m)),
         tokens_before: 1000,
         tokens_after: 100,
         tokens_saved: 900,
@@ -52,7 +54,7 @@ function codexPlanModeBody() {
   return {
     model: 'gpt-5-codex',
     instructions: `You are Codex, based on GPT-5.${PAD}`,
-    input: [message('developer', PLAN_DIRECTIVE), message('user', `build the feature${PAD}`)],
+    input: [message('developer', PLAN_DIRECTIVE), message('assistant', `historical answer${PAD}`), message('user', 'build the feature')],
     tools: [
       { type: 'function', name: 'update_plan', parameters: { type: 'object', properties: {} } },
     ],
@@ -62,18 +64,19 @@ function codexPlanModeBody() {
 const options = { enabled: true, url: URL_, model: 'gpt-5-codex', format: 'openai-responses' };
 
 describe('#2132 headroom must not drop Responses instruction items', () => {
-  it('keeps a developer item verbatim while still compressing the user turn', async () => {
+  it('keeps developer and current user items while compressing historical output', async () => {
     global.fetch = proxyCompressingEverything();
     const body = codexPlanModeBody();
 
     const stats = await compressWithHeadroom(body, options);
 
     expect(stats?.tokens_saved).toBe(900);
-    expect(body.input.map((i) => i.role)).toEqual(['developer', 'user']);
+    expect(body.input.map((i) => i.role)).toEqual(['developer', 'assistant', 'user']);
     // The plan-mode directive is byte-for-byte what the client sent.
     expect(body.input[0].content[0].text).toBe(PLAN_DIRECTIVE);
     // Compression still happened on the turn that is safe to compress.
     expect(body.input[1].content[0].text).toBe('C');
+    expect(body.input[2].content[0].text).toBe('build the feature');
     // Top-level instructions were never in input and stay untouched.
     expect(body.instructions).toBe(`You are Codex, based on GPT-5.${PAD}`);
   });
@@ -103,9 +106,9 @@ describe('#2132 headroom must not drop Responses instruction items', () => {
     ]);
     expect(body.input[0].content[0].text).toBe(`first directive${PAD}`);
     expect(body.input[2].content[0].text).toBe(`second directive${PAD}`);
-    expect(body.input[1].content[0].text).toBe('C');
+    expect(body.input[1].content[0].text).toBe(`hello${PAD}`);
     expect(body.input[3].content[0].text).toBe('C');
-    expect(body.input[4].content[0].text).toBe('C');
+    expect(body.input[4].content[0].text).toBe(`now do it${PAD}`);
   });
 
   it('leaves an instruction-free body compressing exactly as before', async () => {
@@ -120,7 +123,7 @@ describe('#2132 headroom must not drop Responses instruction items', () => {
 
     expect(stats?.tokens_saved).toBe(900);
     expect(body.input.map((i) => i.role)).toEqual(['user', 'assistant']);
-    expect(body.input.map((i) => i.content[0].text)).toEqual(['C', 'C']);
+    expect(body.input.map((i) => i.content[0].text)).toEqual([`q${PAD}`, 'C']);
   });
 
   it('fails open when the round trip loses a non-instruction item', async () => {
@@ -145,7 +148,7 @@ describe('#2132 headroom must not drop Responses instruction items', () => {
 
     expect(stats).toBeNull();
     expect(body.input).toEqual(before);
-    expect(diagnostics.reason).toBe('Responses round trip did not preserve input items');
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it('still refuses a body carrying non-message input items', async () => {

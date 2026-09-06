@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { compressWithPxpipe, formatPxpipeLog } from "../../open-sse/rtk/pxpipe.js";
+import { compressWithPxpipe as compressVisual, formatPxpipeLog } from "../../open-sse/rtk/pxpipe.js";
+// These visual compression fixtures explicitly accept lossy conversion.
+const compressWithPxpipe = (body, options) => compressVisual(body, { ...options, allowLossy: true });
 
 const bigText = "x".repeat(30000);
 const claudeBody = () => ({
   model: "claude-fable-5",
   max_tokens: 100,
-  messages: [{ role: "user", content: bigText }],
+  messages: [{ role: "assistant", content: bigText }, { role: "user", content: "Current request" }],
 });
 
 // A transform double mimicking pxpipe-proxy/transform's contract.
@@ -48,7 +50,7 @@ describe("compressWithPxpipe gates", () => {
   });
 
   it("applies the transform and reports savings", async () => {
-    const compressed = { model: "claude-fable-5", messages: [{ role: "user", content: "imaged" }] };
+    const compressed = { model: "claude-fable-5", max_tokens: 100, messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }, { type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }, { role: "user", content: "Current request" }] };
     const { body, summary } = await compressWithPxpipe(claudeBody(), {
       enabled: true, format: "claude", minChars: 1000, transform: appliedTransform(compressed),
     });

@@ -214,3 +214,22 @@ describe('429 retry-after naming a window reset', () => {
     expect(lockMs()).toBeLessThanOrEqual(6 * 60 * 60 * 1000);
   });
 });
+
+describe('quota and temporary failure classification', () => {
+  it('honors a verified weekly depletion beyond the generic six-hour ceiling', async () => {
+    windowMocks.getWindows.mockResolvedValue([win('weekly (7d)', 90, WEEKLY_RESET)]);
+    const result = await markAccountUnavailable(CONN, 429, '{"error":{"code":"usage_limit_reached"}}', 'claude', MODEL, NOW.getTime() + 143 * 3600_000);
+    expect(result).toMatchObject({ failureClass: 'quota', mustWait: false, retrySameAccount: false });
+    expect(lockMs()).toBe(143 * 3600_000);
+  });
+  it('requires waiting for a temporary rate limit without replaying generation', async () => {
+    windowMocks.getWindows.mockResolvedValue([win('weekly (7d)', 90, WEEKLY_RESET)]);
+    const result = await markAccountUnavailable(CONN, 429, 'rate limit', 'claude', MODEL);
+    expect(result).toMatchObject({ failureClass: 'rate', mustWait: true, retrySameAccount: false });
+    expect(result.cooldownMs).toBeGreaterThan(0);
+  });
+  it('marks 503 as temporary without guessing that generation is safe to replay', async () => {
+    const result = await markAccountUnavailable(CONN, 503, 'overloaded', 'claude', MODEL);
+    expect(result).toMatchObject({ failureClass: 'transient', mustWait: true, retrySameAccount: false });
+  });
+});

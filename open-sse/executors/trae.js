@@ -202,6 +202,9 @@ export default class TraeExecutor extends BaseExecutor {
     }
   }
 
+  get supportsBudgetDispatch() { return false; }
+  get budgetDispatchUnsupportedReason() { return "Opaque remote-agent sessions can perform internal generations after acceptance."; }
+
   async execute({ model, body, stream, credentials, signal, connectTimeout = null }) {
     const headers = this.buildHeaders(credentials, stream !== false);
     const psd = credentials?.providerSpecificData || {};
@@ -211,7 +214,7 @@ export default class TraeExecutor extends BaseExecutor {
 
     const errResponse = (status, message) => new Response(
       JSON.stringify({ error: { message, type: "api_error", code: "" } }),
-      { status, headers: { "Content-Type": "application/json" } }
+      { status, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } }
     );
 
     let session;

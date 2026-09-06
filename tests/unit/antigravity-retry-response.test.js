@@ -96,7 +96,7 @@ describe("Antigravity refreshed response replacement", () => {
     mocks.execute.mockResolvedValueOnce(result(401)).mockResolvedValueOnce(result(403));
 
     await expect(handleChatCore(options())).resolves.toMatchObject({ success: false, status: 403 });
-    expect(mocks.parseUpstreamError).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }), expect.anything());
+    expect(mocks.parseUpstreamError).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }), expect.anything(), expect.objectContaining({signal:undefined}));
   });
 
   it("replaces the original response with a generic retry HTTP error", async () => {

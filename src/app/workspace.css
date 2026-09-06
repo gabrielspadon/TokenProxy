@@ -1,0 +1,78 @@
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-sans-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-400.woff2') format('woff2');
+}
+:root:root {
+  color-scheme: light;
+  --paper: #f3f5f8;
+  --raised: #ffffff;
+  --ink: #202d43;
+  --slate: #617087;
+  --rule: #dbe1ea;
+  --signal: #455bca;
+  --signal-deep: #3348b1;
+  --signal-wash: #edf0ff;
+  --navy: #142038;
+  --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --metric-input: #5c72c5;
+  --metric-cache: #17887d;
+  --metric-write: #b77a13;
+  --metric-output: #8060b9;
+}
+html {
+  font-size: 16px;
+}
+body {
+  letter-spacing: 0;
+  background: var(--paper);
+}
+.mantine-Input-input,
+.mantine-Button-root,
+.mantine-Select-option,
+.mantine-Checkbox-label,
+.mantine-Tabs-tab,
+.mantine-Menu-item,
+.mantine-Tooltip-tooltip {
+  font-size: 13px;
+}
+.mantine-Modal-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+.mantine-Input-input::placeholder {
+  color: #65728a;
+  opacity: 1;
+}
+.mantine-Badge-label {
+  font-size: 13px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

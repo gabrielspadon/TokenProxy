@@ -358,11 +358,11 @@ describe('auth.js LOCK emissions (markAccountUnavailable)', () => {
     expect(emitted().some((l) => l.includes('locked modelLock_'))).toBe(false);
   });
 
-  it('LOCK.applied class=quota on a 429 has expect_reset=true', async () => {
+  it('LOCK.applied class=rate on a temporary 429 has expect_reset=true', async () => {
     await unavailable(429, 'rate limit exceeded', 'claude');
     const line = findLine('LOCK.applied');
     expect(line).toContain('status=429');
-    expect(line).toContain('class=quota');
+    expect(line).toContain('class=rate');
     expect(line).toContain('why=retry-after');
     expect(line).toContain('expect_reset=true');
   });

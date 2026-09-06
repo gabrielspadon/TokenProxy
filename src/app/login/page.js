@@ -1,367 +1,117 @@
 "use client";
+import { useEffect, useState } from "react";
+import { Notice } from "@/shared/components/Notice";
+import { LocaleSelect } from "@/shared/components/LocaleSelect";
+import { useSearch } from "@/shared/hooks/useSearch";
+import { refusal } from "@/shared/refusal";
+import { fmtUnit } from "@/shared/format";
+import { Brand } from '@/shared/components/Brand';
 
-import { useState, useEffect } from "react";
-import { Card, Button, Input, AuthLayout } from "@/shared/components";
-
-// Every SSO failure path redirects to /login?error=..., and nothing here read it:
-// a provider that returns no id_token bounced the user back to a blank form with
-// the reason visible only in the address bar (#3642). These are the codes the
-// OIDC and SAML routes emit; anything else is already a sentence they built.
-const SSO_ERRORS = {
-  oidc_not_configured: "Single sign-on is not configured. Set the OIDC issuer, client ID and client secret first.",
-  oidc_missing_code: "The identity provider did not return an authorization code.",
-  oidc_invalid_state: "The sign-in request expired or did not match. Try signing in again.",
-  oidc_start_failed: "Single sign-on could not be started. Check the OIDC issuer URL.",
-  oidc_callback_failed: "Single sign-on failed while completing the callback.",
-  saml_not_configured: "SAML single sign-on is not configured.",
-  saml_missing_response: "The identity provider did not return a SAML response.",
-  saml_start_failed: "SAML single sign-on could not be started.",
-  saml_acs_failed: "SAML single sign-on failed while completing the callback.",
+const START_ERRORS = {
+  oidc_not_configured: "OIDC is not configured on this gateway.",
+  saml_not_configured: "SAML is not configured on this gateway.",
+  oidc_start_failed: "OIDC sign-in could not start.",
+  saml_start_failed: "SAML sign-in could not start.",
 };
 
+function loginRefusal(status, body) {
+  if (status === 401) {
+    return { tone: "warn", title: "That password is not right.", attempts: body?.remainingBeforeLock };
+  }
+  if (status === 429) {
+    return { tone: "bad", title: "Too many failed attempts from this address.", retryAfter: body?.retryAfter ?? 30 };
+  }
+  if (status === 403 && body?.mustChangePassword) {
+    return { tone: "bad", title: "The default password is still set, so remote sign-in is refused.", next: "Change the password from the machine that runs the gateway, or set INITIAL_PASSWORD before starting it." };
+  }
+  if (status === 403 && /tunnel/i.test(body?.error || "")) {
+    return { tone: "bad", title: "Dashboard access through the tunnel is turned off.", next: "Open the dashboard from the machine that runs the gateway, or turn tunnel access on there." };
+  }
+  if (status === 403 && /disabled/i.test(body?.error || "")) {
+    return { tone: "warn", title: "Password sign-in is turned off.", next: "Use single sign-on below.", sso: /SAML/i.test(body.error) ? "saml" : "oidc" };
+  }
+  if (status === 500) return { tone: "bad", title: "The gateway could not check the password.", next: "Try again in a moment.", detail: body?.error };
+  return refusal(status, body);
+}
+
 export default function LoginPage() {
+  const [auth, setAuth] = useState(null);
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [resetHint, setResetHint] = useState("");
-  const [retryAfter, setRetryAfter] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [hasPassword, setHasPassword] = useState(null);
-  const [authMode, setAuthMode] = useState("password");
-  const [ssoType, setSsoType] = useState("oidc");
-  const [oidcConfigured, setOidcConfigured] = useState(false);
-  const [oidcLoginLabel, setOidcLoginLabel] = useState("Sign in with OIDC");
-  const [samlConfigured, setSamlConfigured] = useState(false);
-  const [samlLoginLabel, setSamlLoginLabel] = useState("Sign in with SAML SSO");
-  const [mustChange, setMustChange] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [left, setLeft] = useState(0);
 
-  // Countdown for rate-limit
-  useEffect(() => {
-    if (retryAfter <= 0) return;
-    const id = setInterval(() => setRetryAfter((s) => (s > 0 ? s - 1 : 0)), 1000);
-    return () => clearInterval(id);
-  }, [retryAfter]);
+  const search = useSearch();
+  const startCode = search ? new URLSearchParams(search).get("error") : null;
+  const startError = !startCode ? null : START_ERRORS[startCode] ? { title: START_ERRORS[startCode] } : { title: "Single sign-on failed.", detail: startCode };
 
   useEffect(() => {
-    async function checkAuth() {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
-
-      try {
-        const res = await fetch(`${baseUrl}/api/auth/status`, {
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.authenticated === true || data.requireLogin === false) {
-            window.location.assign("/dashboard");
-            return;
-          }
-          setHasPassword(!!data.hasPassword);
-          setAuthMode(data.authMode || "password");
-          setSsoType(data.ssoType || "oidc");
-          setOidcConfigured(data.oidcConfigured === true);
-          setOidcLoginLabel(data.oidcLoginLabel || "Sign in with OIDC");
-          setSamlConfigured(data.samlConfigured === true);
-          setSamlLoginLabel(data.samlLoginLabel || "Sign in with SAML SSO");
-        } else {
-          // Safe fallback on non-OK response to avoid infinite loading state.
-          setHasPassword(true);
-        }
-      } catch (err) {
-        clearTimeout(timeoutId);
-        setHasPassword(true);
-      }
-
-      // Only reached when the login form is actually shown; a session that
-      // redirects to /dashboard above has nothing to report (#3642).
-      const reason = new URLSearchParams(window.location.search).get("error");
-      if (!reason) return;
-      setError(SSO_ERRORS[reason] || reason);
-      const cleaned = new URL(window.location.href);
-      cleaned.searchParams.delete("error");
-      window.history.replaceState({}, "", cleaned.pathname + cleaned.search + cleaned.hash);
-    }
-    checkAuth();
+    fetch("/api/auth/status", { cache: "no-store" }).then((r) => r.json()).then(setAuth).catch(() => setAuth({ authMode: "password", hasPassword: true }));
   }, []);
 
-  const handleLogin = async (e) => {
+  useEffect(() => {
+    if (!left) return undefined;
+    const t = setTimeout(() => setLeft(left - 1), 1000);
+    return () => clearTimeout(t);
+  }, [left]);
+
+  const submit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setError("");
-    setResetHint("");
-
+    setBusy(true);
+    setResult(null);
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.mustChangePassword) {
-          setMustChange(true);
-          return;
-        }
+      const res = await fetch("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.success) {
         window.location.assign("/dashboard");
-      } else {
-        const data = await res.json();
-        setError(data.error || "Invalid password");
-        if (data.resetHint) setResetHint(data.resetHint);
-        if (data.retryAfter) setRetryAfter(Number(data.retryAfter));
+        return;
       }
+      const r = loginRefusal(res.status, body);
+      setResult(r);
+      if (r.retryAfter) setLeft(r.retryAfter);
     } catch (err) {
-      setError("An error occurred. Please try again.");
+      setResult(refusal(0, { error: err.message, code: "network" }));
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
-  // Force a new password before entering the dashboard (default + remote).
-  const handleSetNewPassword = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword: password, newPassword }),
-      });
-      if (res.ok) {
-        window.location.assign("/dashboard");
-      } else {
-        const data = await res.json();
-        setError(data.error || "Failed to set password");
-      }
-    } catch (err) {
-      setError("An error occurred. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleOidcLogin = () => {
-    window.location.href = "/api/auth/oidc/start";
-  };
-
-  const handleSamlLogin = () => {
-    window.location.href = "/api/auth/saml/start";
-  };
-
-  const isSsoEnabled = ["sso", "oidc", "saml", "both"].includes(authMode);
-  const activeSsoType = ssoType || (authMode === "saml" ? "saml" : "oidc");
-
-  const samlAvailable = isSsoEnabled && activeSsoType === "saml" && samlConfigured;
-  const oidcAvailable = isSsoEnabled && activeSsoType === "oidc" && oidcConfigured;
-  const ssoAvailable = samlAvailable || oidcAvailable;
-
-  const passwordAvailable = authMode === "password" || authMode === "both" || !ssoAvailable;
-
-  // Show loading state while checking password
-  if (hasPassword === null) {
-    return (
-      <AuthLayout>
-        <div className="text-center">
-          <div
-            className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-brand"
-            role="status"
-            aria-label="Loading"
-          ></div>
-          <p className="text-sm text-text-muted mt-4">Loading...</p>
-        </div>
-      </AuthLayout>
-    );
-  }
+  const mode = auth?.authMode || "password";
+  const showSaml = mode === "saml" || (mode === "sso" && auth?.ssoType === "saml") || auth?.samlConfigured || result?.sso === "saml";
+  const showOidc = mode === "oidc" || (mode === "sso" && auth?.ssoType === "oidc") || auth?.oidcConfigured || result?.sso === "oidc";
+  const showPassword = auth === null || mode === "password" || result?.sso === undefined && !(mode === "saml" || mode === "oidc" || mode === "sso");
+  const locked = left > 0;
 
   return (
-    <AuthLayout>
-      <div className="w-full max-w-md">
-        <div className="flex flex-col items-center text-center gap-3 mb-5.5">
-          <div className="flex items-center gap-3">
-            <span
-              className="flex size-8 items-center justify-center rounded-[var(--radius-brand)] bg-brand-soft border border-brand-line text-brand"
-              aria-hidden="true"
-            >
-              <span aria-hidden="true" className="material-symbols-outlined text-[18px]">hub</span>
-            </span>
-            <h1 className="text-lg font-semibold text-text-main">TokenProxy</h1>
-          </div>
-          <p className="text-sm text-text-muted">
-            {samlAvailable
-              ? "Sign in with SAML 2.0 Single Sign-On"
-              : oidcAvailable
-              ? "Sign in with your OIDC provider to access the dashboard"
-              : "Enter your password to access the dashboard"}
-          </p>
-        </div>
-
-        <Card padding="none" className="p-5.5">
-          {mustChange ? (
-            <form onSubmit={handleSetNewPassword} className="flex flex-col gap-4">
-              <p className="flex items-start gap-1.5 text-xs text-warning">
-                <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                  key
-                </span>
-                <span className="min-w-0">Set a new password before accessing the dashboard remotely.</span>
-              </p>
-              <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-text-main" htmlFor="new-password">
-                  New password
-                </label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  placeholder="Enter new password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  autoFocus
-                  inputClassName="focus-ring"
-                />
-                {error && (
-                  <p className="flex items-start gap-1.5 text-xs text-danger" role="alert">
-                    <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                      error
-                    </span>
-                    <span className="min-w-0">{error}</span>
-                  </p>
-                )}
-              </div>
-              <Button
-                type="submit"
-                variant="primary"
-                className="w-full focus-ring"
-                loading={loading}
-                disabled={!newPassword}
-              >
-                Set password
-              </Button>
-            </form>
-          ) : (
-          <div className="flex flex-col gap-4">
-            {samlAvailable && (
-              <Button type="button" variant="primary" className="w-full focus-ring" onClick={handleSamlLogin}>
-                {samlLoginLabel}
-              </Button>
-            )}
-
-            {oidcAvailable && (
-              <Button type="button" variant="primary" className="w-full focus-ring" onClick={handleOidcLogin}>
-                {oidcLoginLabel}
-              </Button>
-            )}
-
-            {ssoAvailable && passwordAvailable && <div className="h-px bg-border/60" />}
-
-            {passwordAvailable ? (
-              <form onSubmit={handleLogin} className="flex flex-col gap-4">
-                {isSsoEnabled && !ssoAvailable && (
-                  <p className="flex items-start gap-1.5 text-xs text-warning">
-                    <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                      warning
-                    </span>
-                    <span className="min-w-0">
-                      {activeSsoType === "saml" ? "SAML SSO" : "OIDC"} login is enabled, but configuration is incomplete. Password login is still available for recovery.
-                    </span>
-                  </p>
-                )}
-
-                {authMode === "both" && ssoAvailable && (
-                  <p className="text-xs text-text-muted">
-                    Password and {activeSsoType === "saml" ? "SAML SSO" : "OIDC"} login are both enabled.
-                  </p>
-                )}
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-text-main" htmlFor="password">
-                    Password
-                  </label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="Enter password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    autoFocus={!oidcAvailable}
-                    inputClassName="focus-ring"
-                  />
-                  {error && (
-                    <p className="flex items-start gap-1.5 text-xs text-danger" role="alert">
-                      <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                        error
-                      </span>
-                      <span className="min-w-0">{error}</span>
-                    </p>
-                  )}
-                  {retryAfter > 0 && (
-                    <p className="flex items-start gap-1.5 text-xs text-warning">
-                      <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                        lock_clock
-                      </span>
-                      <span className="min-w-0">
-                        Locked. Retry in <span className="font-mono metric">{retryAfter}s</span>.
-                      </span>
-                    </p>
-                  )}
-                  {resetHint && (
-                    <p className="text-xs text-text-muted">
-                      Forgot password? Open <code className="bg-surface-2 px-1 rounded">tokenproxy</code> CLI on the host → <b>Settings</b> → <b>Reset Password to Default</b>.
-                    </p>
-                  )}
-                </div>
-
-                <Button
-                  type="submit"
-                  variant="primary"
-                  className="w-full focus-ring"
-                  loading={loading}
-                  disabled={retryAfter > 0}
-                >
-                  {retryAfter > 0 ? `Wait ${retryAfter}s` : "Login"}
-                </Button>
-
-                {/* Only advertise the default while it is still what logs you
-                    in: hasPassword false is exactly the case where the server
-                    falls back to INITIAL_PASSWORD or the built-in default.
-                    A failed status check leaves hasPassword true, so the hint
-                    stays hidden when we cannot tell. */}
-                {hasPassword === false && (
-                  <p className="text-xs text-center text-text-muted mt-2">
-                    No password set yet, so <code className="bg-surface-2 px-1 rounded">123456</code>{" "}
-                    still works (or INITIAL_PASSWORD, if it was set before first launch).
-                  </p>
-                )}
-                {hasPassword === false && (
-                  <p className="flex items-start gap-1.5 text-xs text-warning">
-                    <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                      warning
-                    </span>
-                    <span className="min-w-0">
-                      Security risk: no password set. You will be asked to set one when logging in remotely.
-                    </span>
-                  </p>
-                )}
-              </form>
-            ) : (
-              error && (
-                <p className="flex items-start gap-1.5 text-xs text-danger" role="alert">
-                  <span className="material-symbols-outlined text-[14px] shrink-0" aria-hidden="true">
-                    error
-                  </span>
-                  <span className="min-w-0">{error}</span>
-                </p>
-              )
-            )}
-          </div>
-          )}
-        </Card>
+    <main className="login">
+      <div className="login-card">
+        <span className="brand" data-i18n-skip><Brand /></span>
+        <h1>Sign in</h1>
+        <p className="caption">Your models, connections, and context. Sign in to the gateway control room.</p>
+        {startError ? <Notice tone="bad" title={startError.title} detail={startError.detail} /> : null}
+        {showPassword ? (
+          <form onSubmit={submit}>
+            <label className="field">
+              <span>Password</span>
+              <input className="input" type="password" name="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} disabled={locked} />
+            </label>
+            <button className="button" type="submit" disabled={busy || locked}>{busy ? "Signing in" : "Sign in"}</button>
+          </form>
+        ) : null}
+        {result ? (
+          <Notice tone={result.tone} title={result.title} next={result.next} detail={result.detail}>
+            {result.attempts !== undefined && result.attempts !== null ? (
+              <dl className="facts"><dt>Attempts left before lockout</dt><dd data-i18n-skip>{result.attempts}</dd></dl>
+            ) : null}
+            {result.retryAfter ? (
+              <dl className="facts"><dt>Try again in</dt><dd data-i18n-skip>{fmtUnit(left, "second")}</dd></dl>
+            ) : null}
+          </Notice>
+        ) : null}
+        {showSaml ? <a className="button quiet" href="/api/auth/saml/start">{auth?.samlLoginLabel ? <span data-i18n-skip>{auth.samlLoginLabel}</span> : "Sign in with SAML"}</a> : null}
+        {showOidc ? <a className="button quiet" href="/api/auth/oidc/start">{auth?.oidcLoginLabel ? <span data-i18n-skip>{auth.oidcLoginLabel}</span> : "Sign in with OIDC"}</a> : null}
+        <LocaleSelect />
       </div>
-    </AuthLayout>
+    </main>
   );
 }

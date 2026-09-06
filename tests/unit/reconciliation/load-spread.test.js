@@ -64,14 +64,14 @@ describe('rankAccounts: load spread for a NEW pin', () => {
     expect(win(res).fields.key).toBe('pinned-continuity');
   });
 
-  it('(c) a fresh account already carrying load loses a new pin to an idle unknown-band account (explore)', () => {
+  it('(c) fresh quota evidence outranks an idle account with unknown evidence', () => {
     const res = rankAccounts([fresh('aaaaaaaa-1'), unknown('cccccccc-3')], {
       now: NOW,
       previousPinId: null,
       activeLoad: load({ 'aaaaaaaa-1': 1 }),
     });
-    expect(res.winner.id).toBe('cccccccc-3');
-    expect(win(res).fields.key).toBe('explore');
+    expect(res.winner.id).toBe('aaaaaaaa-1');
+    expect(win(res).fields.key).toBe('evidence-band');
   });
 
   it('(c, existing pin) unknown never outranks fresh for a pinned session even when the pin is loaded', () => {
@@ -113,7 +113,7 @@ describe('rankAccounts: load spread for a NEW pin', () => {
         })
       ).fields.key
     );
-    expect([...keys].sort()).toEqual(['explore', 'headroom', 'load-spread']);
+    expect([...keys].sort()).toEqual(['evidence-band', 'headroom', 'load-spread']);
   });
 
   it('an alt with no load prints no load token, so a nominal line costs no extra bytes', () => {

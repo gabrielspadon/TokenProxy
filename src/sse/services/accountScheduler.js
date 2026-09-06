@@ -23,11 +23,8 @@
  * Neither rule is restated here.
  */
 
-import {
-  rankAccounts,
-  normalizeAccountWindows,
-  effectiveResetAt,
-} from '@/shared/utils/quotaRanking.js';
+import { rankAccounts, normalizeAccountWindows } from '@/shared/utils/quotaRanking.js';
+import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
 import { buildSwitchReceipt } from '@/shared/utils/switchReceipt.js';
 import { decideRepin, TRIGGERS } from '@/shared/utils/repinPolicy.js';
 
@@ -39,29 +36,35 @@ const RETRY_AFTER_SECONDS = 1;
 // src/lib/db/adapters/ (better-sqlite3, bun:sqlite, node:sqlite, sql.js all
 // take a sync fn). Nothing below awaits, which is what keeps the read of a
 // free slot and the taking of it indivisible.
-function runInTransaction(repos, fn) {
+function runInTransaction(repos, fn, rollbackReservation) {
   if (typeof repos?.transaction !== 'function') {
     throw new TypeError('selectAndReserve requires an injected repos.transaction(fn)');
   }
-  return repos.transaction(fn);
+  try {
+    return repos.transaction(fn);
+  } catch (error) {
+    // SQLite cannot roll back a process-local lease, including commit failures.
+    rollbackReservation();
+    throw error;
+  }
 }
 
 /**
- * The soonest projected reset across a candidate set, as an ISO string, or null
- * when no candidate carries a readable deadline. This is the honest answer to
- * "when should the caller come back" once every account is depleted; the
- * one-second admission floor is for a capacity wait, not for an empty pool.
+ * First time an account can clear ALL of its currently exhausted windows.
+ * A short window resetting while a monthly window stays empty cannot serve.
  */
-function earliestReset(candidates, nowMs) {
+function earliestReset(candidates, nowMs, model) {
   let soonest = null;
   for (const account of candidates) {
-    const norm = normalizeAccountWindows(account?.windows);
-    if (!norm.ok) continue;
+    if (!accountSupportsModel(account, model)) continue;
+    const norm = normalizeAccountWindows(account?.windows, { model });
+    if (!norm.ok || norm.blocked) continue;
+    let readyAt = null;
     for (const w of norm.windows) {
-      const at = effectiveResetAt(w.resetAt, w.horizonMs, nowMs);
-      if (at === null) continue;
-      if (soonest === null || at < soonest) soonest = at;
+      if (w.remaining > 0 || w.resetAt <= nowMs) continue;
+      readyAt = Math.max(readyAt ?? 0, w.resetAt);
     }
+    if (readyAt !== null && (soonest === null || readyAt < soonest)) soonest = readyAt;
   }
   return soonest === null ? null : new Date(soonest).toISOString();
 }
@@ -85,6 +88,70 @@ function activeLoadFor(candidates, model, nowMs, registry, repos) {
     });
   }
   return load;
+}
+
+/** Pure ordering shared by live admission and the offline simulator. No leases or writes. */
+export function planAccountSelection({ accounts = [], pin = null, activeLoad = null, model = null, now } = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(nowMs)) throw new TypeError('planAccountSelection requires an injected clock');
+  const candidates = accounts;
+  const previousPinId = pin?.connectionId ?? null;
+  const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad, model });
+
+  // Pin health decides whether placement is allowed at all. Recovered accounts
+  // rejoin the order only when the old pin cannot serve. Healthy pins also
+  // survive capacity pressure, with a retry hint instead of a cache re-prime.
+  const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad, model });
+  // The repin verdict as a trace entry, in the design's vocabulary. The
+  // scheduler never prints: auth.js walks `trace` and calls decide().
+  // pin-hit is NOMINAL (row 29: silent, carried to the caller for REQ sel=).
+  const id8 = (v) => String(v ?? '').slice(0, 8);
+  const SEL_TRIGGER = {
+    [TRIGGERS.INITIAL_PIN]: 'initial-pin',
+    [TRIGGERS.RESET]: 'quota-reset',
+    [TRIGGERS.UNAVAILABLE]: 'unavailable',
+  };
+  // action 'none' contributes nothing on the success path: a degraded
+  // cohort still serves from the fallback order, so a refusal line here
+  // would describe a refusal that never happened. The refusal entries are
+  // added at the two exits that actually refuse (below).
+  const repinTrace = repin.action === 'keep'
+    ? [{ cls: 'SEL', verdict: 'pin-hit', fields: { conn: id8(repin.to), why: repin.reason } }]
+    : repin.action === 'none'
+      ? []
+      : [{
+          cls: 'SEL',
+          verdict: repin.trigger === TRIGGERS.EXHAUSTION ? 'pin-expired' : 'repin',
+          fields: {
+            from: repin.from ? id8(repin.from) : 'none',
+            to: id8(repin.to),
+            trigger: SEL_TRIGGER[repin.trigger] ?? repin.trigger,
+            why: repin.reason,
+          },
+        }];
+  // ELIGIBILITY IS NOT NEGOTIABLE, degraded or not. This read `degraded ?
+  // ranked : eligible`, and `ranked` carries every record including the ones
+  // whose quota is provably at its limit, so a pool whose accounts disagreed
+  // about window shape (the common case: ten Claude connections reported four
+  // shapes) selected depleted accounts and paid a 429 to discover it.
+  // rankAccounts now degrades ORDERING only and still answers `eligible`
+  // truthfully, so there is one list to walk.
+  const order = eligible;
+  const decidedId = repin.connectionId;
+  // The policy layer may NAME one account the ranker calls ineligible: the
+  // all-depleted hold, where every reading says depleted and the pin is held
+  // so the upstream — not an aging snapshot — decides. That is a decision
+  // about one specific account, so it is looked up in `ranked` only after
+  // `eligible` misses, and everything else that gets tried still comes from
+  // `eligible`. The old code took `ranked` wholesale whenever the pool
+  // degraded, which is how list order replaced quota order.
+  const decided = decidedId
+    ? order.find((r) => r.id === decidedId) ?? ranked.find((r) => r.id === decidedId) ?? null
+    : null;
+  const preferred = decided
+    ? repin.action === 'keep' ? [decided] : [decided, ...order.filter((r) => r.id !== decidedId)]
+    : order;
+  return { ranked, eligible, degraded, rankReason, rankingTrace, repin, repinTrace, preferred };
 }
 
 /**
@@ -116,6 +183,7 @@ export function selectAndReserve({
   now,
   registry,
   repos,
+  pinActionId,
 } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
   if (!Number.isFinite(nowMs)) {
@@ -139,12 +207,18 @@ export function selectAndReserve({
     .filter((a) => a && typeof a.id === 'string' && a.id !== '')
     .map((a) => ({ ...a, windows: windowsFor(a) }));
 
+  let reservedLease = null;
   return runInTransaction(repos, () => {
+    const pinAction = repos.getPendingPinAction?.({ sessionHash, model }) ?? null;
+    if (pinAction?.storageUnavailable || (pinActionId !== undefined && (pinAction?.id ?? null) !== pinActionId)) {
+      return { unavailable: true, mustWait: true, retryAfter: RETRY_AFTER_SECONDS, reason: 'pin-command-changed', trace: [] };
+    }
     if (candidates.length === 0) {
       return {
         unavailable: true,
         retryAfter: RETRY_AFTER_SECONDS,
         reason: 'no-accounts',
+        ...(pinAction ? { mustWait: true } : {}),
         trace: [{ cls: 'SEL', verdict: 'refused', fields: { why: 'no-accounts' } }],
       };
     }
@@ -173,80 +247,23 @@ export function selectAndReserve({
     // read ever shows up in a profile.
     const activeLoad = activeLoadFor(candidates, model, nowMs, registry, repos);
 
-    const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad });
-
-    // Rule 4 (keep a healthy pin) AND rule 5 (atomically return to the
-    // earliest account that restored while a later one was serving) are
-    // decideRepin's job (repinPolicy.js) — "is the pin still eligible" can
-    // only express rule 4. Only decideRepin re-asks the ranker at the pin's
-    // own timestamp to tell a genuine reset apart from an account that was
-    // merely available all along, which is what keeps rule 5 from spraying a
-    // session across every account that ever edges ahead on ranking.
-    // The same activeLoad the ranker saw: the policy re-asks the ranker, and
-    // its INITIAL_PIN answer is what the slot walk below puts first, so a
-    // policy ranking without the load would undo the spread it just computed.
-    const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad });
-    // The repin verdict as a trace entry, in the design's vocabulary. The
-    // scheduler never prints: auth.js walks `trace` and calls decide().
-    // pin-hit is NOMINAL (row 29: silent, carried to the caller for REQ sel=).
-    const id8 = (v) => String(v ?? '').slice(0, 8);
-    const SEL_TRIGGER = {
-      [TRIGGERS.INITIAL_PIN]: 'initial-pin',
-      [TRIGGERS.RESET]: 'quota-reset',
-      [TRIGGERS.UNAVAILABLE]: 'unavailable',
-    };
-    // action 'none' contributes nothing on the success path: a degraded
-    // cohort still serves from the fallback order, so a refusal line here
-    // would describe a refusal that never happened. The refusal entries are
-    // added at the two exits that actually refuse (below).
-    const repinTrace = repin.action === 'keep'
-      ? [{ cls: 'SEL', verdict: 'pin-hit', fields: { conn: id8(repin.to), why: repin.reason } }]
-      : repin.action === 'none'
-        ? []
-        : [{
-            cls: 'SEL',
-            verdict: repin.trigger === TRIGGERS.EXHAUSTION ? 'pin-expired' : 'repin',
-            fields: {
-              from: repin.from ? id8(repin.from) : 'none',
-              to: id8(repin.to),
-              trigger: SEL_TRIGGER[repin.trigger] ?? repin.trigger,
-              why: repin.reason,
-            },
-          }];
-    // ELIGIBILITY IS NOT NEGOTIABLE, degraded or not. This read `degraded ?
-    // ranked : eligible`, and `ranked` carries every record including the ones
-    // whose quota is provably at its limit, so a pool whose accounts disagreed
-    // about window shape (the common case: ten Claude connections reported four
-    // shapes) selected depleted accounts and paid a 429 to discover it.
-    // rankAccounts now degrades ORDERING only and still answers `eligible`
-    // truthfully, so there is one list to walk.
-    const order = eligible;
-    const decidedId = repin.connectionId;
-    // The policy layer may NAME one account the ranker calls ineligible: the
-    // all-depleted hold, where every reading says depleted and the pin is held
-    // so the upstream — not an aging snapshot — decides. That is a decision
-    // about one specific account, so it is looked up in `ranked` only after
-    // `eligible` misses, and everything else that gets tried still comes from
-    // `eligible`. The old code took `ranked` wholesale whenever the pool
-    // degraded, which is how list order replaced quota order.
-    const decided = decidedId
-      ? order.find((r) => r.id === decidedId) ?? ranked.find((r) => r.id === decidedId) ?? null
-      : null;
-    const preferred = decided
-      ? [decided, ...order.filter((r) => r.id !== decidedId)]
-      : order;
+    const { degraded, rankReason, rankingTrace, repin, repinTrace, preferred } = planAccountSelection({
+      accounts: pinAction ? candidates.filter(c => c.id === pinAction.targetConnectionId) : candidates,
+      pin: pinAction ? null : pin, activeLoad, model, now: nowMs,
+    });
 
     if (preferred.length === 0) {
       const detail = rankReason ? `:${rankReason}` : '';
       return {
         unavailable: true,
         retryAfter: RETRY_AFTER_SECONDS,
-        reason: `no-eligible-account${detail}`,
+        reason: pinAction ? 'operator-target-unavailable' : `no-eligible-account${detail}`,
+        ...(pinAction ? { mustWait: true } : {}),
         degraded,
         // Every account is out of headroom, and the ranker knows when the first
         // of them comes back. Handing that up is what lets the caller quote a
         // real reset instead of the one-second floor.
-        earliestResetAt: earliestReset(candidates, nowMs),
+        earliestResetAt: earliestReset(candidates, nowMs, model),
         trace: [
           ...(rankingTrace || []),
           ...repinTrace,
@@ -267,6 +284,7 @@ export function selectAndReserve({
         skipped.push(`${String(record.id).slice(0, 8)}:capacity`);
         continue;
       }
+      reservedLease = lease;
 
       const switched = previousPinId !== null && previousPinId !== record.id;
       const isFirstPin = previousPinId === null;
@@ -299,7 +317,7 @@ export function selectAndReserve({
           from: previousPinId,
           to: record.id,
           windows: record.account?.windows ?? [],
-          trigger: isFirstPin ? 'first-pin' : repin.trigger || TRIGGERS.EXHAUSTION,
+          trigger: pinAction ? 'operator-reassignment' : isFirstPin ? 'first-pin' : repin.trigger || TRIGGERS.EXHAUSTION,
           model,
           sessionHash,
           now: nowMs,
@@ -312,6 +330,8 @@ export function selectAndReserve({
           if (recorded?.id) receipt = { ...receipt, id: recorded.id };
         }
       }
+
+      if (pinAction) repos.completePinAction(pinAction);
 
       const skippedTrace = skipped.length
         ? [{
@@ -328,7 +348,7 @@ export function selectAndReserve({
         connection: record.account,
         lease,
         receipt,
-        reason: isFirstPin ? 'first-pin' : switched ? 'repin' : 'pinned',
+        reason: pinAction ? 'operator-reassignment' : isFirstPin ? 'first-pin' : switched ? 'repin' : 'pinned',
         repin,
         skipped,
         trace: [...(rankingTrace || []), ...repinTrace, ...skippedTrace],
@@ -342,6 +362,7 @@ export function selectAndReserve({
       unavailable: true,
       retryAfter: RETRY_AFTER_SECONDS,
       reason: 'at-capacity',
+      ...(pinAction ? { mustWait: true } : {}),
       trace: [
         ...(rankingTrace || []),
         ...repinTrace,
@@ -362,5 +383,7 @@ export function selectAndReserve({
         },
       ],
     };
+  }, () => {
+    if (reservedLease) registry.release(reservedLease);
   });
 }

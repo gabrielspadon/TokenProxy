@@ -7,11 +7,10 @@ const { pathToFileURL } = require('url');
 
 const origCreate = http.createServer.bind(http);
 
-// Next 16 requires Node >=20.9.0. Below it the server still starts and then
-// answers 500 on a dashboard page with nothing naming the runtime as the cause,
-// which is how #2362 was reported. Refuse at boot instead, where the message can
-// be read. Kept in step with the engines floor in package.json and cli/package.json.
-const MIN_NODE_VERSION = '20.9.0';
+// Undici 7 requires Node >=20.18.1, above Next 16's >=20.9.0 requirement.
+// Refuse unsupported transport runtimes at boot rather than during a request.
+// Kept in step with package.json and cli/package.json.
+const MIN_NODE_VERSION = '20.18.1';
 
 function nodeBelowMinimum(current, minimum) {
   const parse = (v) => String(v).split('.').map((n) => parseInt(n, 10) || 0);
@@ -339,6 +338,14 @@ http.createServer = (...args) => {
   const rest = args.filter((a) => typeof a !== 'function');
   if (!handler) return origCreate(...args);
   const wrapped = (req, res) => {
+    if (String(req.headers.upgrade || '').toLowerCase() === 'h2c') {
+      delete req.headers.upgrade;
+      delete req.headers['http2-settings'];
+      req.headers.connection = 'close';
+      res.shouldKeepAlive = false;
+    }
+    try { globalThis.__tokenproxyTechnicalTelemetry?.observe(req,res); }
+    catch { /* Optional technical instrumentation cannot reject HTTP work. */ }
     const socketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '';
     const xff = req.headers['x-forwarded-for'];
     const xRealIp = req.headers['x-real-ip'];
@@ -400,7 +407,26 @@ http.createServer = (...args) => {
       });
   }
 
-  const server = origCreate(...rest, wrapped);
+  const options = rest[0];
+  let server;
+  if (options == null || (typeof options === 'object' && !Array.isArray(options))) {
+    const configuredUpgrade = options?.shouldUpgradeCallback;
+    const nativeOptions = { ...options };
+    if (configuredUpgrade === undefined || typeof configuredUpgrade === 'function') {
+      // Supported by Node 22.21+/24.9+; older runtimes ignore this option.
+      // Keep h2c with the native HTTP/1.1 parser, including its body lifecycle.
+      nativeOptions.shouldUpgradeCallback = function (req) {
+        if (String(req.headers.upgrade || '').toLowerCase() === 'h2c') return false;
+        return configuredUpgrade
+          ? configuredUpgrade.call(this, req)
+          : this.listenerCount('upgrade') > 0;
+      };
+    }
+    server = origCreate(nativeOptions, wrapped);
+  } else {
+    // Preserve Node's validation for invalid createServer option types.
+    server = origCreate(...rest, wrapped);
+  }
   // Without a listener Node's default is to destroy the socket, which is right,
   // but a malformed or abandoned request then logs nothing at all. Keep the
   // destroy and say which it was, at most once per socket.
@@ -414,60 +440,82 @@ http.createServer = (...args) => {
     emitBootLine();
     startBackgroundTokenRefreshFromCustomServer();
   });
-  const origEmit = server.emit;
-  // JBR 25 sends h2c upgrades that the HTTP/1.1 server would otherwise close.
-  server.emit = function (event, ...eventArgs) {
-    const [req, socket, head] = eventArgs;
-    if (event !== 'upgrade' || String(req.headers.upgrade || '').toLowerCase() !== 'h2c') {
-      return origEmit.call(this, event, ...eventArgs);
-    }
+  // Node 20 has no native upgrade policy. Retain only its raw-socket fallback.
+  // Node 26 upgrade streams no longer carry request-body bytes; never parse
+  // those streams as if they used the older raw-socket contract.
+  if (typeof server.shouldUpgradeCallback !== 'function') {
+    const maxReplayBodyBytes = require('./open-sse/config/proxyBodyLimit.cjs').proxyClientMaxBodyBytes();
+    const origEmit = server.emit;
+    server.emit = function (event, ...eventArgs) {
+      const [req, socket, head] = eventArgs;
+      if (event !== 'upgrade' || String(req.headers.upgrade || '').toLowerCase() !== 'h2c') {
+        return origEmit.call(this, event, ...eventArgs);
+      }
 
-    const contentLength = Number(req.headers['content-length'] || 0);
-    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
-      socket.destroy();
-      return true;
-    }
-    const chunks = [head];
-    let received = head.length;
+      socket.once('error', () => socket.destroy());
+      if (req.headers['transfer-encoding']) {
+        // The old raw-socket fallback cannot decode HTTP transfer framing.
+        // Refuse before the handler sees an empty or partially decoded body.
+        socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+        return true;
+      }
+      const contentLength = Number(req.headers['content-length'] || 0);
+      if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+        socket.destroy();
+        return true;
+      }
+      if (contentLength > maxReplayBodyBytes) {
+        socket.end('HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+        return true;
+      }
+      // Ignore pipelined bytes after this Connection: close request. Retain
+      // at most the admitted Content-Length, including a coalesced head.
+      const chunks = [head.subarray(0, contentLength)];
+      let received = chunks[0].length;
 
-const serve = () => {
-      // Replay the upgraded request through the existing HTTP/1.1 handler.
-      const replay = new http.IncomingMessage(socket);
-      Object.assign(replay, {
-        method: req.method,
-        url: req.url,
-        headers: req.headers,
-        complete: true,
-      });
-      if (received) replay.push(Buffer.concat(chunks, received).subarray(0, contentLength));
-      replay.push(null);
-      const res = new http.ServerResponse(replay);
-      res.shouldKeepAlive = false;
-      res.assignSocket(socket);
-      res.once('finish', () => socket.end());
-      Promise.resolve()
-        .then(() => wrapped(replay, res))
-        .catch((error) => {
-          console.error('Failed to downgrade h2c request', error);
-          socket.destroy();
+      const serve = () => {
+        // Replay the upgraded request through the existing HTTP/1.1 handler.
+        const replay = new http.IncomingMessage(socket);
+        Object.assign(replay, {
+          method: req.method,
+          url: req.url,
+          headers: req.headers,
+          complete: true,
         });
+        if (received) replay.push(Buffer.concat(chunks, received).subarray(0, contentLength));
+        replay.push(null);
+        const res = new http.ServerResponse(replay);
+        res.shouldKeepAlive = false;
+        res.assignSocket(socket);
+        res.once('finish', () => socket.end());
+        Promise.resolve()
+          .then(() => wrapped(replay, res))
+          .catch((error) => {
+            console.error('Failed to downgrade h2c request', error);
+            socket.destroy();
+          });
+      };
+      if (received >= contentLength) serve();
+      else {
+        const abandon = () => socket.destroy();
+        socket.once('end', abandon);
+        socket.on('data', function readBody(chunk) {
+          const bodyChunk = chunk.subarray(0, contentLength - received);
+          chunks.push(bodyChunk);
+          received += bodyChunk.length;
+          if (received < contentLength) return;
+          socket.off('data', readBody);
+          socket.off('end', abandon);
+          serve();
+        });
+        socket.resume();
+      }
+      delete req.headers.upgrade;
+      delete req.headers['http2-settings'];
+      req.headers.connection = 'close';
+      return true;
     };
-    if (received >= contentLength) serve();
-    else {
-      socket.on('data', function readBody(chunk) {
-        chunks.push(chunk);
-        received += chunk.length;
-        if (received < contentLength) return;
-        socket.off('data', readBody);
-        serve();
-      });
-      socket.resume();
-    }
-    delete req.headers.upgrade;
-    delete req.headers['http2-settings'];
-    req.headers.connection = 'close';
-    return true;
-  };
+  }
   return server;
 };
 

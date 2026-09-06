@@ -428,6 +428,7 @@ describe('G7.6 an exact account pin is honored or refused, never substituted', (
 
   const failure = (status, error) => ({
     success: false,
+    failureMetadata: { safeToReplay: true },
     status,
     error,
     response: Response.json({ error: { message: error } }, { status }),

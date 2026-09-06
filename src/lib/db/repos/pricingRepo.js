@@ -49,11 +49,18 @@ export async function getPricing() {
 }
 
 export async function getPricingForModel(provider, model) {
-  if (!model) return null;
+  return (await getPricingRecordForModel(provider, model)).rates;
+}
+
+export async function getPricingRecordForModel(provider, model) {
+  if (!model) return { rates: null, source: "unknown" };
   const userPricing = await getUserPricing();
-  if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
   const { getPricingForModel: resolveConst } = await import("open-sse/providers/pricing.js");
-  return resolveConst(provider, model);
+  const defaults = resolveConst(provider, model);
+  const override = provider && userPricing[provider]?.[model];
+  return override
+    ? { rates: { ...defaults, ...override }, source: "operator-override" }
+    : { rates: defaults, source: defaults ? "built-in-catalog" : "unknown" };
 }
 
 // Atomic merge inside transaction (per-provider read-modify-write)

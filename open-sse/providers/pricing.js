@@ -2151,8 +2151,13 @@ export const PATTERN_PRICING = [
  * Match a model ID against a glob pattern (* = wildcard). Case-insensitive:
  * registry ids mix casing (e.g. "MiniMax-M2.5" vs "minimax-m2.5").
  */
+const compiledPatterns = new Map();
+const MAX_COMPILED_PATTERNS = 256;
+
 export function matchPattern(pattern, model) {
-  const regex = new RegExp(
+  let regex = typeof pattern === 'string' ? compiledPatterns.get(pattern) : null;
+  if (!regex) {
+    regex = new RegExp(
     "^" +
       pattern
         .split("*")
@@ -2160,7 +2165,14 @@ export function matchPattern(pattern, model) {
         .join(".*") +
       "$",
     "i",
-  );
+    );
+    // Cache the policy expression only. Model names and request content never
+    // enter this bounded cache; changing a pattern produces a different key.
+    if (typeof pattern === 'string') {
+      if (compiledPatterns.size >= MAX_COMPILED_PATTERNS) compiledPatterns.delete(compiledPatterns.keys().next().value);
+      compiledPatterns.set(pattern, regex);
+    }
+  }
   return regex.test(model);
 }
 
@@ -2254,7 +2266,7 @@ export function calculateCostFromTokens(tokens, pricing) {
   cost += nonCachedInput * (pricing.input / 1000000);
 
   if (cachedTokens > 0) {
-    cost += cachedTokens * ((pricing.cached || pricing.input) / 1000000);
+    cost += cachedTokens * ((pricing.cached ?? pricing.input) / 1000000);
   }
 
   const outputTokens = tokens.completion_tokens || tokens.output_tokens || 0;
@@ -2269,7 +2281,7 @@ export function calculateCostFromTokens(tokens, pricing) {
   const reasoningTokens = Math.min(tokens.reasoning_tokens || 0, outputTokens);
   if (
     reasoningTokens > 0 &&
-    pricing.reasoning &&
+    pricing.reasoning != null &&
     pricing.reasoning !== pricing.output
   ) {
     cost += reasoningTokens * ((pricing.reasoning - pricing.output) / 1000000);
@@ -2278,7 +2290,7 @@ export function calculateCostFromTokens(tokens, pricing) {
   if (cacheCreationTokens > 0) {
     cost +=
       cacheCreationTokens *
-      ((pricing.cache_creation || pricing.input) / 1000000);
+      ((pricing.cache_creation ?? pricing.input) / 1000000);
   }
 
   return cost;

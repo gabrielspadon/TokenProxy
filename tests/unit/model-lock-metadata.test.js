@@ -98,7 +98,7 @@ describe("model-keyed failure metadata", () => {
       "claude-fable-5-1",
       null,
       { clientErrorStatus: 404, unknownModelVerified: true },
-    )).resolves.toEqual({ shouldFallback: true, cooldownMs: 0 });
+    )).resolves.toEqual({ shouldFallback: true, cooldownMs: 0, failureClass: 'capability', retrySameAccount: false, mustWait: false });
 
     const write = dbMocks.updateProviderConnection.mock.calls[0][1];
     const lockKey = getModelLockKey("claude-fable-5-1");
@@ -132,7 +132,7 @@ describe("model-keyed failure metadata", () => {
       "claude-fable-5",
       null,
       { clientErrorStatus, unknownModelVerified },
-    )).resolves.toEqual({ shouldFallback: true, cooldownMs: 0 });
+    )).resolves.toEqual({ shouldFallback: true, cooldownMs: 0, failureClass: 'capability', retrySameAccount: false, mustWait: false });
 
     const write = dbMocks.updateProviderConnection.mock.calls[0][1];
     expect(write).toHaveProperty(getModelLockKey("claude-fable-5"));

@@ -4,9 +4,11 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
-  compressWithHeadroom,
+  compressWithHeadroom as compressWithPolicy,
   isHeadroomPhantomSavings,
 } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const PROXY = "http://127.0.0.1:8787";
 const BIG = "x".repeat(2000);
@@ -91,11 +93,11 @@ describe("isHeadroomPhantomSavings unit contract", () => {
 
 describe("in-band phantom gate: proxy claims savings but body barely shrinks", () => {
   it("keeps original when claimed token shrink is under 5%", async () => {
-    const body = { model: "m", messages: [{ role: "user", content: BIG }] };
+    const body = { model: "m", messages: [{ role: "assistant", content: BIG }, { role: "user", content: "Current request." }] };
     const original = JSON.parse(JSON.stringify(body));
     global.fetch = vi.fn(async () =>
       res({
-        messages: [{ role: "user", content: "shrunk a little" }],
+        messages: [{ role: "assistant", content: "shrunk a little" }, body.messages[1]],
         tokens_before: 1000,
         tokens_after: 980,
         tokens_saved: 20,
@@ -113,11 +115,11 @@ describe("in-band phantom gate: proxy claims savings but body barely shrinks", (
   it("keeps original on conflicting metrics: big token claim, <5% byte shrink", async () => {
     // Proxy claims 50% token savings but the committed body only loses ~2% of
     // its bytes — the byte phantom gate catches the lie.
-    const body = { model: "m", messages: [{ role: "user", content: BIG }] };
+    const body = { model: "m", messages: [{ role: "assistant", content: BIG }, { role: "user", content: "Current request." }] };
     const original = JSON.parse(JSON.stringify(body));
     global.fetch = vi.fn(async () =>
       res({
-        messages: [{ role: "user", content: "x".repeat(1900) }],
+        messages: [{ role: "assistant", content: "x".repeat(1900) }, body.messages[1]],
         tokens_before: 100000,
         tokens_after: 50000,
         tokens_saved: 50000,
@@ -133,11 +135,11 @@ describe("in-band phantom gate: proxy claims savings but body barely shrinks", (
   });
 
   it("keeps original when proxy reports zero/negative savings", async () => {
-    const body = { model: "m", messages: [{ role: "user", content: BIG }] };
+    const body = { model: "m", messages: [{ role: "assistant", content: BIG }, { role: "user", content: "Current request." }] };
     const original = JSON.parse(JSON.stringify(body));
     global.fetch = vi.fn(async () =>
       res({
-        messages: [{ role: "user", content: "ok" }],
+        messages: [{ role: "assistant", content: "ok" }, body.messages[1]],
         tokens_before: 1000,
         tokens_after: 990,
         tokens_saved: 0,

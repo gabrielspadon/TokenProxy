@@ -93,10 +93,12 @@ describe("QoderExecutor response-header timeout", () => {
   it("restores caller cancellation when transport wraps the rejection", async () => {
     const caller = new AbortController();
     const executor = new QoderExecutor();
+    const dispatched = Promise.withResolvers();
     mocks.fetch.mockImplementation((_url, options) => new Promise((_resolve, reject) => {
       const rejectWrapped = () => reject(new Error("[ProxyFetch] strict proxy wrapped abort"));
       if (options.signal.aborted) rejectWrapped();
       else options.signal.addEventListener("abort", rejectWrapped, { once: true });
+      dispatched.resolve();
     }));
     const pending = executor.execute({
       model: "auto",
@@ -106,6 +108,7 @@ describe("QoderExecutor response-header timeout", () => {
       signal: caller.signal,
       connectTimeout: { globalTimeout: 15000 },
     });
+    await dispatched.promise;
     const reason = new DOMException("client left", "AbortError");
     caller.abort(reason);
 

@@ -174,7 +174,7 @@ describe('E1.1w: handleSingleModelChat releases its lease on every exit', () => 
     expect(registry.snapshot()).toEqual({});
   });
 
-  it('empty-stream rotation: the abandoned account keeps no slot', async () => {
+  it('empty accepted stream returns without replay and releases its slot', async () => {
     const seen = [];
     authMocks.getProviderCredentials.mockImplementation(async (_p, exclude) => {
       const id = exclude?.has('account-a') ? 'account-b' : 'account-a';
@@ -188,11 +188,12 @@ describe('E1.1w: handleSingleModelChat releases its lease on every exit', () => 
     );
 
     const response = await handleChat(request());
-    expect(seen).toEqual(['account-a', 'account-b']);
-    expect(response.status).toBe(200);
-    // account-a rotated away and must hold nothing; account-b owns the stream.
+    expect(seen).toEqual(['account-a']);
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
     expect(registry.inFlight('account-a')).toBe(0);
-    expect(registry.inFlight('account-b')).toBe(1);
+    expect(registry.inFlight('account-b')).toBe(0);
 
     await drain(response);
     expect(registry.snapshot()).toEqual({});
@@ -207,6 +208,7 @@ describe('E1.1w: handleSingleModelChat releases its lease on every exit', () => 
         return {
           success: false,
           status: 507,
+          failureMetadata: { safeToReplay: true },
           error,
           response: Response.json({ error: { message: error } }, { status: 507 }),
         };
@@ -231,6 +233,7 @@ describe('E1.1w: handleSingleModelChat releases its lease on every exit', () => 
     dispatchMocks.handleChatCore.mockImplementation(() => ({
       success: false,
       status: 500,
+      failureMetadata: { safeToReplay: true },
       error: 'upstream boom',
       response: Response.json({ error: { message: 'upstream boom' } }, { status: 500 }),
     }));

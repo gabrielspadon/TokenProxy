@@ -289,11 +289,11 @@ function claudeSse({ usage = null, deltaUsage = null, text = "Hello from upstrea
   });
 }
 
-function rateLimited() {
+function quotaDepleted() {
   return new Response(
     JSON.stringify({
       type: "error",
-      error: { type: "rate_limit_error", message: "Number of request tokens has exceeded your rate limit" },
+      error: { type: "insufficient_quota", message: "Quota exhausted for this account" },
     }),
     { status: 429, headers: { "content-type": "application/json", "retry-after": "60" } }
   );
@@ -322,6 +322,24 @@ function serialize(ls) {
 }
 
 describe("incident replay: diagnose the quota lock + failover from the log alone", () => {
+  it("returns an ordinary rate cooldown without amplifying attempts", async () => {
+    harness.upstream = vi.fn(() => Response.json({
+      error: { type: "rate_limit_error", message: "Number of request tokens has exceeded your rate limit" },
+    }, { status: 429, headers: { "retry-after": "60" } }));
+    const response = await harness.handleChat(chatRequest({
+      rid: "aa000006", messages: [{ role: "user", content: "rate control" }],
+    }));
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("60");
+    expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
+    expect(harness.upstream).toHaveBeenCalledTimes(1);
+    await response.text();
+    const decisions = take();
+    expect(decisions.some((line) => line.includes("LOCK.applied") && line.includes("class=rate"))).toBe(true);
+    expect(decisions.some((line) => line.includes("UP.no-replay") && line.includes("why=account-cooldown"))).toBe(true);
+    expect(decisions.some((line) => line.includes("UP.failover"))).toBe(false);
+  });
+
   it("plays beats 1-5 and matches the golden capture", async () => {
     const captured = [];
 
@@ -351,7 +369,7 @@ describe("incident replay: diagnose the quota lock + failover from the log alone
     //    answers without usage fields ──
     harness.upstream = (url, opts) => {
       const key = opts?.headers?.["x-api-key"];
-      if (key === "key-aaaa1111") return rateLimited();
+      if (key === "key-aaaa1111") return quotaDepleted();
       return claudeSse({ usage: null, deltaUsage: null });
     };
     const res2 = await harness.handleChat(

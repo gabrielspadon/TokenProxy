@@ -47,8 +47,8 @@ describe('empty system block on the Claude request path (#2047)', () => {
     const out = toClaude(reportedBody());
     const anchored = systemBlocks(out).filter((b) => b.cache_control);
 
-    expect(anchored).toHaveLength(1);
-    expect(anchored[0].text.trim()).not.toBe('');
+    expect(anchored).toHaveLength(0);
+    expect(out.system).toBeUndefined();
   });
 
   it('keeps a system prompt that actually has text', () => {

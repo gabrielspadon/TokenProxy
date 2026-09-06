@@ -15,6 +15,7 @@
  *    error/timeout) the account is NEVER paused.
  */
 
+import { retainQuotaUsage } from "@/lib/db/repos/quotaHistoryRepo.js";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { resolveConnectionProxyConfig, toConnectionProxyOptions } from "@/lib/network/connectionProxy";
 import { updateProviderConnection } from "@/lib/localDb";
@@ -107,7 +108,7 @@ async function fetchLiveSnapshot(connection, providedProxyOptions = null) {
 }
 
 function storeSnapshot(connectionId, snapshot) {
-  memoryCache.set(connectionId, { snapshot, fetchedAt: Date.now() });
+  memoryCache.set(connectionId, { snapshot, fetchedAt: Date.parse(snapshot.fetchedAt) });
   // Best-effort persistence so the dashboard and subsequent routing reads stay warm.
   updateProviderConnection(connectionId, { lastQuotaSnapshot: snapshot }).catch(() => {});
 }
@@ -118,6 +119,7 @@ async function runLiveRefresh(connection, proxyOptions) {
   const fetched = await fetchLiveSnapshot(connection, proxyOptions);
   if (fetched?.snapshot?.kind === "required-unavailable") return fetched;
   if (fetched?.snapshot) storeSnapshot(connection.id, fetched.snapshot);
+  await retainQuotaUsage(connection, fetched?.rawUsage);
   return fetched;
 }
 

@@ -26,6 +26,7 @@ import { v4 as uuidv4 } from "uuid";
 import { createHash } from "crypto";
 
 import { BaseExecutor } from "./base.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
@@ -538,7 +539,9 @@ export class QoderExecutor extends BaseExecutor {
   //   - body encoded with QoderEncodeBody before signing
   //   - COSY headers built from the *encoded* body bytes
   //   - response stream re-wrapped from {statusCodeValue, body} to OpenAI SSE
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch, afterDispatch }) {
     // PAT (pt-...) → exchange for short-lived job token + resolve userId so
     // downstream COSY signing + catalog fetch work. Device tokens (dt-...) and
     // job tokens (jt-...) skip this and are used directly.
@@ -629,6 +632,9 @@ export class QoderExecutor extends BaseExecutor {
       ...cosyHeaders,
     };
 
+    signal?.throwIfAborted?.();
+    if (beforeDispatch) await beforeDispatch({ body: null, serialized: encodedBodyBuf, url, structuralEncoding: "binary", byteLength: encodedBodyBuf.byteLength });
+    signal?.throwIfAborted?.();
     let response;
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
@@ -647,6 +653,8 @@ export class QoderExecutor extends BaseExecutor {
     } finally {
       deadline.clear();
     }
+
+    await notifyDispatchResponse(afterDispatch, response);
 
     if (!response.ok) {
       // Pass error response through unchanged so chatCore can capture it.

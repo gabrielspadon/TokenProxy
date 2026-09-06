@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { distillToolSchemas } from "../../open-sse/utils/schemaDistiller.js";
+import { distillToolSchemas as distillWithPolicy } from "../../open-sse/utils/schemaDistiller.js";
 
-const NOISE_KEYS = ["default", "examples", "example", "$schema", "title"];
+// Annotation-removal fixtures exercise explicit lossy consent.
+const distillToolSchemas = (tools) => distillWithPolicy(tools, { allowLossy: true });
+
+const NOISE_KEYS = ["default", "examples", "example", "title"];
 
 function bigTool({ pad = 9000 } = {}) {
   return {
@@ -46,7 +49,7 @@ function bigToolsArray() {
 }
 
 describe("distillToolSchemas", () => {
-  it("strips all five keywords recursively, keeps structural keywords", () => {
+  it("strips four annotation keywords and keeps dialect and structural keywords", () => {
     const { tools, savedBytes, notes } = distillToolSchemas(bigToolsArray());
     expect(savedBytes).toBeGreaterThan(0);
     expect(notes.join(" ")).toContain("stripped:default");
@@ -63,9 +66,9 @@ describe("distillToolSchemas", () => {
     expect(schema.properties.nested.items.properties.deep.type).toBe("string");
   });
 
-  it("collapses whitespace runs inside input_schema descriptions only", () => {
+  it("preserves whitespace inside all descriptions", () => {
     const { tools } = distillToolSchemas(bigToolsArray());
-    expect(tools[0].input_schema.properties.path.description).toBe("The file path to read");
+    expect(tools[0].input_schema.properties.path.description).toBe("The file   path\n\nto read");
     // tool.description is outside input_schema: never touched, even with runs
     expect(tools[0].description).toBe("Reads a file  from disk");
     expect(tools[0].name).toBe("read_file");
@@ -188,7 +191,7 @@ describe("property names colliding with STRIP_KEYS", () => {
     // keyword stripping still applies inside each property value
     expect(schema.properties.title.default).toBeUndefined();
     expect(schema.properties.title.title).toBeUndefined();
-    expect(schema.properties.title.description).toBe("a property named title");
+    expect(schema.properties.title.description).toBe("a property   named title");
     expect(schema.properties.default.examples).toBeUndefined();
     expect(schema.properties.example.default).toBeUndefined();
     expect(schema.properties.examples.items.title).toBeUndefined();

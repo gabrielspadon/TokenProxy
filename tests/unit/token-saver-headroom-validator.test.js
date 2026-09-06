@@ -4,7 +4,9 @@
 // (content swapped in place) or left byte-identical.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compressWithHeadroom } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom as compressWithPolicy } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const PROXY = "http://127.0.0.1:8787";
 const BIG = "x".repeat(2000);
@@ -22,6 +24,14 @@ function okRes(messages, stats = {}) {
   );
 }
 
+// The current human request and instruction messages remain exact. Historical
+// user text is eligible only because run() explicitly enables it below.
+function compressHistoricalMessages(messages) {
+  const current = messages.findLastIndex((message) => message.role === "user");
+  return messages.map((message, index) => index === current || ["system", "developer"].includes(message.role)
+    ? message : { ...message, content: "s" });
+}
+
 async function run(body, format, fetchImpl) {
   global.fetch = vi.fn(fetchImpl);
   const before = JSON.parse(JSON.stringify(body));
@@ -31,6 +41,7 @@ async function run(body, format, fetchImpl) {
     url: PROXY,
     model: "m",
     format,
+    compressUserMessages: true,
     diagnostics,
   });
   return { body, before, result, diagnostics, fetchMock: global.fetch };
@@ -59,7 +70,7 @@ describe("openai chat.completions validator: tool pairing identity", () => {
       { role: "user", content: "ok" },
       { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "f", arguments: "{}" } }] },
       { role: "tool", tool_call_id: "call_1", content: "ok" },
-      { role: "user", content: "ok" },
+      { role: "user", content: "next" },
     ];
     const { body, result } = await run(sourceBody(), "openai", async () => okRes(candidate));
     expect(result).not.toBeNull();
@@ -74,7 +85,7 @@ describe("openai chat.completions validator: tool pairing identity", () => {
       { role: "user", content: "ok" },
       { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "f", arguments: "{}" } }] },
       { role: "tool", tool_call_id: "call_EVIL", content: "ok" },
-      { role: "user", content: "ok" },
+      { role: "user", content: "next" },
     ];
     const { body, before, result, diagnostics } = await run(sourceBody(), "openai", async () => okRes(candidate));
     expect(result).toBeNull();
@@ -91,7 +102,7 @@ describe("openai chat.completions validator: tool pairing identity", () => {
       { role: "user", content: "ok" },
       { role: "assistant", content: null, tool_calls: [{ id: "call_EVIL", type: "function", function: { name: "f", arguments: "{}" } }] },
       { role: "tool", tool_call_id: "call_1", content: "ok" },
-      { role: "user", content: "ok" },
+      { role: "user", content: "next" },
     ];
     const { body, before, result, diagnostics } = await run(sourceBody(), "openai", async () => okRes(candidate));
     expect(result).toBeNull();
@@ -105,7 +116,7 @@ describe("openai chat.completions validator: tool pairing identity", () => {
       { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "f", arguments: "{}" } }] },
       { role: "user", content: "ok" },
       { role: "tool", tool_call_id: "call_1", content: "ok" },
-      { role: "user", content: "ok" },
+      { role: "user", content: "next" },
     ];
     const { body, before, result } = await run(sourceBody(), "openai", async () => okRes(candidate));
     expect(result).toBeNull();
@@ -140,14 +151,15 @@ describe("claude shape validator", () => {
 
   it("commits when count/order/role/content-shape hold; system and tools stay local", async () => {
     const candidate = [
-      { role: "user", content: "ok" },
+      { role: "user", content: BIG },
       { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "f", input: {} }] },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }] },
     ];
     const original = claudeBody();
     const { body, result } = await run(original, "claude", async () => okRes(candidate));
     expect(result).not.toBeNull();
-    expect(body.messages[0].content).toBe("ok");
+    expect(body.messages[0].content).toBe(BIG);
+    expect(body.messages[2].content[0].content).toBe("ok");
     // system + tools are never sent to the proxy and survive untouched
     expect(body.system).toBe(original.system);
     expect(body.tools).toEqual(original.tools);
@@ -155,19 +167,19 @@ describe("claude shape validator", () => {
 
   it("rejects reordered claude messages", async () => {
     const candidate = [
-      { role: "user", content: "ok" },
+      { role: "user", content: BIG },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }] },
       { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "f", input: {} }] },
     ];
     const { body, before, result, diagnostics } = await run(claudeBody(), "claude", async () => okRes(candidate));
     expect(result).toBeNull();
     expect(body).toEqual(before);
-    expect(JSON.stringify(diagnostics)).toContain("Claude");
+    expect(JSON.stringify(diagnostics)).toContain("protected content");
   });
 
   it("rejects a dropped claude message", async () => {
     const candidate = [
-      { role: "user", content: "ok" },
+      { role: "user", content: BIG },
       { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "f", input: {} }] },
     ];
     const { body, before, result } = await run(claudeBody(), "claude", async () => okRes(candidate));
@@ -186,15 +198,10 @@ describe("claude shape validator", () => {
     expect(body).toEqual(before);
   });
 
-  // DEFECT hh-cld-1: the claude branch validates message count, ordered roles,
-  // and content shape ONLY. It never checks tool_use/tool_result id pairing,
-  // so a proxy that swaps or rewrites ids commits a body whose tool_result can
-  // no longer be matched to its tool_use. The openai branch rejects this exact
-  // candidate ("proxy response did not preserve tool pairing identity");
-  // the claude branch accepts it.
+  // Tool pairing remains protected under explicit historical compression.
   it("rejects a proxy that swaps tool_use/tool_result ids", async () => {
     const candidate = [
-      { role: "user", content: "ok" },
+      { role: "user", content: BIG },
       { role: "assistant", content: [{ type: "tool_use", id: "toolu_EVIL", name: "f", input: {} }] },
       { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_EVIL", content: "ok" }] },
     ];
@@ -272,7 +279,7 @@ describe("openai-responses: instruction items kept (fix #2132 shape)", () => {
       const sent = JSON.parse(init.body);
       // proxy echoes the projection with content swapped out
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        compressHistoricalMessages(sent.messages),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });
@@ -336,7 +343,7 @@ describe("openai-responses pivot guard (3571)", () => {
     const { result, fetchMock } = await run(body, "openai-responses", async (url, init) => {
       const sent = JSON.parse(init.body);
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        compressHistoricalMessages(sent.messages),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });
@@ -344,17 +351,12 @@ describe("openai-responses pivot guard (3571)", () => {
     expect(result).not.toBeNull();
   });
 
-  // DEFECT hh-rsp-1: an assistant message item with content: [] passes the
-  // type:"message" guard and the count/order validator (the Chat projection
-  // keeps it as an empty message), but the way-back translator emits NOTHING
-  // for it — the merged input has one fewer item. Verified against the real
-  // translators: openaiResponsesToOpenAIRequest projects 2 messages,
-  // openaiToOpenAIResponsesRequest rebuilds 1. The item is silently deleted
-  // from body.input whenever the proxy reports a real shrink.
+  // A lossy historical rewrite must not delete an empty native message item.
   it("keeps an assistant message item with empty content[]", async () => {
     const body = {
       model: "m",
       input: [
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: BIG }] },
         { type: "message", role: "user", content: [{ type: "input_text", text: BIG }] },
         { type: "message", role: "assistant", content: [] },
       ],
@@ -362,18 +364,14 @@ describe("openai-responses pivot guard (3571)", () => {
     const { result } = await run(body, "openai-responses", async (url, init) => {
       const sent = JSON.parse(init.body);
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        compressHistoricalMessages(sent.messages),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });
     expect(result).toBeNull(); // rejected rather than committing a dropped item
   });
 
-  // DEFECT hh-rsp-2: message-item fields the Chat projection has no slot for
-  // are dropped on the way back. `name` on a message item (Responses API
-  // custom-role/eval identity) survives neither direction. cache_control on a
-  // content part (prompt-caching directive) is also discarded — that one
-  // changes cost/latency behavior, not text. Both pass every guard.
+  // Native envelope and cache metadata survive the Chat projection.
   it("preserves message-item fields with no chat projection slot (name, cache_control)", async () => {
     const body = {
       model: "m",
@@ -390,7 +388,7 @@ describe("openai-responses pivot guard (3571)", () => {
     const { result } = await run(body, "openai-responses", async (url, init) => {
       const sent = JSON.parse(init.body);
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        compressHistoricalMessages(sent.messages),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });

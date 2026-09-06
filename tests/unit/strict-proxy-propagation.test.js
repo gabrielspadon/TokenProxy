@@ -295,10 +295,11 @@ describe('PR A: strictProxy Propagation', () => {
   describe('Full Propagation & Fetch Behavior (chatCore -> proxyAwareFetch)', () => {
     it('Case A: strictProxy=true + proxy failure -> direct fetch invocation count = 0', async () => {
       let callCount = 0;
+      const proxyFailure = new Error('connect ECONNREFUSED 127.0.0.1:19999');
       // Proxy fetch fails with connection error
       const mockProxyFetch = vi.fn(async () => {
         callCount++;
-        throw new Error('connect ECONNREFUSED 127.0.0.1:19999');
+        throw proxyFailure;
       });
 
       const origFetch = globalThis.fetch;
@@ -318,7 +319,7 @@ describe('PR A: strictProxy Propagation', () => {
       try {
         await expect(
           proxyAwareFetch('https://example.com/v1/chat/completions', { method: 'POST' }, proxyOptions)
-        ).rejects.toThrow(/strictProxy=true/);
+        ).rejects.toBe(proxyFailure);
 
         // When strictProxy=true and proxy fails, it MUST NOT fall back to direct fetch.
         // The single call that failed was the proxy fetch attempt.
@@ -331,7 +332,9 @@ describe('PR A: strictProxy Propagation', () => {
 
     it('preserves the exact caller abort reason through strict proxy wrapping', async () => {
       const caller = new AbortController();
+      const started = Promise.withResolvers();
       const fakeFetch = vi.fn((_url, init) => new Promise((_resolve, reject) => {
+        started.resolve();
         const rejectAbort = () => reject(init.signal.reason);
         if (init.signal.aborted) rejectAbort();
         else init.signal.addEventListener('abort', rejectAbort, { once: true });
@@ -356,6 +359,7 @@ describe('PR A: strictProxy Propagation', () => {
           proxyOptions,
         );
         const reason = new DOMException('client left', 'AbortError');
+        await started.promise;
         caller.abort(reason);
 
         await expect(pending).rejects.toBe(reason);
@@ -365,14 +369,15 @@ describe('PR A: strictProxy Propagation', () => {
       }
     });
 
-    it('Case B: strictProxy=false + proxy failure -> falls back to direct fetch (count = 1)', async () => {
+    it.each(['GET', 'POST'])('strictProxy=false preserves replay safety for %s after proxy failure', async (method) => {
       let proxyAttempts = 0;
       let directFallbackAttempts = 0;
+      const proxyFailure = new Error('connect ECONNREFUSED 127.0.0.1:19999');
 
       const fakeFetch = vi.fn(async (url, init) => {
         if (init?.dispatcher?.constructor?.name === 'ProxyAgent') {
           proxyAttempts++;
-          throw new Error('connect ECONNREFUSED 127.0.0.1:19999');
+          throw proxyFailure;
         }
         directFallbackAttempts++;
         return new Response('{"ok":true}', { status: 200 });
@@ -393,10 +398,15 @@ describe('PR A: strictProxy Propagation', () => {
       };
 
       try {
-        const res = await proxyAwareFetch('https://example.com/v1/chat/completions', { method: 'POST' }, proxyOptions);
-        expect(res.status).toBe(200);
-        // Direct fetch fallback MUST be invoked exactly once when strictProxy=false
-        expect(directFallbackAttempts).toBe(1);
+        const pending = proxyAwareFetch('https://example.com/v1/chat/completions', { method }, proxyOptions);
+        if (method === 'GET') {
+          expect((await pending).status).toBe(200);
+          expect(directFallbackAttempts).toBe(1);
+        } else {
+          await expect(pending).rejects.toBe(proxyFailure);
+          expect(directFallbackAttempts).toBe(0);
+        }
+        expect(proxyAttempts).toBe(1);
       } finally {
         globalThis.fetch = origFetch;
       }

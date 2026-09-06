@@ -52,9 +52,9 @@ describe("antigravity image adapter model resolution", () => {
     expect(modelSent()).toBe("gemini-3.1-flash-image");
   });
 
-  it("falls back to an image model when a non-image model reaches the handler", async () => {
-    await call("gemini-3.1-flash", { prompt: "a cat", size: "1792x1024" });
-    expect(modelSent()).toBe("gemini-3.1-flash-image-16x9");
+  it("rejects a non-image selection before any provider dispatch", async () => {
+    await expect(call("gemini-3.1-flash", { prompt: "a cat", size: "1792x1024" })).rejects.toMatchObject({ status: 400, failureMetadata: { safeToReplay: true } });
+    expect(mocks.execute).not.toHaveBeenCalled();
   });
 
   it("does not double-append a suffix the model already carries", async () => {

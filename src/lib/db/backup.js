@@ -31,25 +31,44 @@ export function makeBackupDir(label) {
 export function backupDbLite(adapter, destDir, destName = "data.sqlite") {
   const dest = path.join(destDir, destName);
   try { fs.rmSync(dest, { force: true }); } catch {}
-  const escaped = dest.replace(/'/g, "''");
-
-  adapter.exec(`ATTACH DATABASE '${escaped}' AS bak`);
+  fs.writeFileSync(dest, "", { flag: "wx", mode: SECRET_FILE_MODE });
+  adapter.run("ATTACH DATABASE ? AS bak", [dest]);
   try {
     const excluded = new Set(BACKUP_EXCLUDE_TABLES);
     const tables = adapter
       .all(`SELECT name, sql FROM main.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
       .filter((t) => !excluded.has(t.name));
+    const pending = new Map(tables.map((t) => [t.name, t]));
+    const ordered = [];
+    const visiting = new Set();
+    function visit(name) {
+      if (!pending.has(name)) return;
+      if (visiting.has(name)) throw new Error("Cannot back up cyclic foreign keys");
+      visiting.add(name);
+      for (const { parent } of adapter.all('SELECT "table" AS parent FROM pragma_foreign_key_list(?)', [name])) {
+        if (parent !== name) visit(parent);
+      }
+      ordered.push(pending.get(name));
+      pending.delete(name);
+      visiting.delete(name);
+    }
+    for (const t of tables) visit(t.name);
 
     adapter.transaction(() => {
+      // Create every referenced table before copying rows, then insert parents
+      // before children. SQLite can retain deferred violations across ATTACH.
       for (const t of tables) {
-        // Recreate table structure in backup DB, then copy rows.
         const createSql = t.sql.replace(/CREATE TABLE\s+/i, "CREATE TABLE bak.");
         adapter.exec(createSql);
-        adapter.exec(`INSERT INTO bak.${t.name} SELECT * FROM main.${t.name}`);
+      }
+      for (const t of ordered) {
+        const identifier = `"${t.name.replace(/"/g, '""')}"`;
+        adapter.exec(`INSERT INTO bak.${identifier} SELECT * FROM main.${identifier}`);
       }
     });
   } finally {
     try { adapter.exec("DETACH DATABASE bak"); } catch {}
+    chmodQuiet(dest, SECRET_FILE_MODE);
   }
   // SQLite creates the attached file itself, so it lands at 0644 under the
   // default umask even though it contains a full copy of the credential tables.

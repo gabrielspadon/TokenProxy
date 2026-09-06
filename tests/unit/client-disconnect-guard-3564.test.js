@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
@@ -50,7 +51,7 @@ describe("a client disconnect is not reported as a server error (#3564)", () => 
 
   it("parses as valid JavaScript", async () => {
     const { execFileSync } = await import("node:child_process");
-    const path = new URL("../../custom-server.js", import.meta.url).pathname;
+    const path = fileURLToPath(new URL("../../custom-server.js", import.meta.url));
     expect(() => execFileSync(process.execPath, ["--check", path])).not.toThrow();
   });
 });

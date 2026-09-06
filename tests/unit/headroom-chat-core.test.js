@@ -76,6 +76,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -117,6 +118,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "https://user:secret@example.com:8787/proxy?token=abc123",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -147,6 +149,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "https://user:secret@example.com:8787/proxy?token=abc123",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -179,7 +182,7 @@ describe("handleChatCore Headroom diagnostics", () => {
     global.fetch = vi.fn(async (url) => {
       if (String(url).includes("/v1/compress")) {
         return new Response(JSON.stringify({
-          messages: [{ role: "user", content: compressed }],
+          messages: [{ role: "assistant", content: compressed }, { role: "user", content: "Current request." }],
           tokens_before: 100,
           tokens_after: 10,
           tokens_saved: 90,
@@ -189,12 +192,13 @@ describe("handleChatCore Headroom diagnostics", () => {
     });
 
     await handleChatCore({
-      body: { model: "gpt-4o", stream: false, messages: [{ role: "user", content: original }] },
+      body: { model: "gpt-4o", stream: false, messages: [{ role: "assistant", content: original }, { role: "user", content: "Current request." }] },
       modelInfo: { provider: "openai", model: "gpt-4o" },
       credentials: { apiKey: "test-key", providerSpecificData: {} },
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -210,7 +214,7 @@ describe("handleChatCore Headroom diagnostics", () => {
 
     expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
-        messages: [{ role: "user", content: compressed }],
+        messages: [{ role: "assistant", content: compressed }, { role: "user", content: "Current request." }],
       }),
     }));
     expect(JSON.stringify(executeMock.mock.calls[0][0].body)).not.toContain(original);
@@ -231,7 +235,7 @@ describe("handleChatCore Headroom diagnostics", () => {
     global.fetch = vi.fn(async (url) => {
       if (String(url).includes("/v1/compress")) {
         return new Response(JSON.stringify({
-          messages: [{ role: "user", content: nearlySame }],
+          messages: [{ role: "assistant", content: nearlySame }, { role: "user", content: "Current request." }],
           tokens_before: 1000,
           tokens_after: 100,
           tokens_saved: 900,
@@ -241,12 +245,13 @@ describe("handleChatCore Headroom diagnostics", () => {
     });
 
     await handleChatCore({
-      body: { model: "gpt-4o", stream: false, messages: [{ role: "user", content: original }] },
+      body: { model: "gpt-4o", stream: false, messages: [{ role: "assistant", content: original }, { role: "user", content: "Current request." }] },
       modelInfo: { provider: "openai", model: "gpt-4o" },
       credentials: { apiKey: "test-key", providerSpecificData: {} },
       log,
       connectionId: "test-conn",
       headroomEnabled: true,
+      headroomAllowLossy: true,
       headroomUrl: "http://localhost:8787",
       headroomCompressUserMessages: false,
       memorySettings: OVER_BUDGET,
@@ -264,7 +269,7 @@ describe("handleChatCore Headroom diagnostics", () => {
     // executor must see the ORIGINAL payload, not the near-original compressed one.
     expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
-        messages: [{ role: "user", content: original }],
+        messages: [{ role: "assistant", content: original }, { role: "user", content: "Current request." }],
       }),
     }));
     // The old post-hoc warning is replaced by the pre-commit skip diagnostic.
@@ -308,6 +313,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       cavemanEnabled: false,
       ponytailEnabled: false,
       pxpipeEnabled: true,
+      pxpipeAllowLossy: true,
       pxpipeMinChars: 1000,
       pxpipeTransform,
       onPxpipeEvent,
@@ -340,7 +346,7 @@ describe("handleChatCore Headroom diagnostics", () => {
   it("pxpipe applies transform when no opt-out header is present", async () => {
     const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
     const onPxpipeEvent = vi.fn();
-    const transformedBody = { model: "claude-3-5-sonnet", stream: false, max_tokens: 100, system: "base", messages: [{ role: "user", content: [{ type: "text", text: "PXPIPE_SENTINEL" }] }] };
+    const transformedBody = { model: "claude-3-5-sonnet", stream: false, max_tokens: 100, system: "base", messages: [{ role: "assistant", content: [{ type: "text", text: "PXPIPE_SENTINEL" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "fixture" } }] }, { role: "user", content: "Current request." }] };
     const pxpipeTransform = vi.fn(async () => ({
       applied: true,
       reason: "applied",
@@ -355,7 +361,7 @@ describe("handleChatCore Headroom diagnostics", () => {
         stream: false,
         max_tokens: 100,
         system: "base",
-        messages: [{ role: "user", content: [{ type: "text", text: "x".repeat(30000) }] }],
+        messages: [{ role: "assistant", content: [{ type: "text", text: "x".repeat(30000) }] }, { role: "user", content: "Current request." }],
       },
       sourceFormatOverride: FORMATS.CLAUDE,
       modelInfo: { provider: "anthropic", model: "claude-3-5-sonnet" },
@@ -367,6 +373,7 @@ describe("handleChatCore Headroom diagnostics", () => {
       cavemanEnabled: false,
       ponytailEnabled: false,
       pxpipeEnabled: true,
+      pxpipeAllowLossy: true,
       pxpipeMinChars: 1000,
       pxpipeTransform,
       onPxpipeEvent,

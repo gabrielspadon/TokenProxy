@@ -79,16 +79,8 @@ describe("openaiToClaudeRequest", () => {
 
       const result = openaiToClaudeRequest("claude-sonnet-4.5", body, false);
 
-      // Should have system but without JSON instructions
-      expect(result.system).toBeDefined();
-      
-      const systemText = result.system
-        .filter(s => s.type === "text")
-        .map(s => s.text)
-        .join("\n");
-      
-      // Should NOT contain JSON-specific instructions
-      expect(systemText).not.toContain("You must respond with valid JSON");
+      expect(result.system).toBeUndefined();
+      expect(result.messages[0].content).toEqual([{ type: "text", text: "Hello" }]);
     });
 
     it("should preserve existing system messages when adding response_format", () => {
@@ -143,7 +135,7 @@ describe("openaiToClaudeRequest", () => {
 
     it("maps string tool_choice values", () => {
       expect(choiceOf("auto")).toEqual({ type: "auto" });
-      expect(choiceOf("none")).toEqual({ type: "auto" });
+      expect(choiceOf("none")).toEqual({ type: "none" });
       expect(choiceOf("required")).toEqual({ type: "any" });
     });
 

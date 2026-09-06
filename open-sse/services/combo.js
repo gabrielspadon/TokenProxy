@@ -4,7 +4,7 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
-import { unavailableResponse } from "../utils/error.js";
+import { errorResponse, unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { peekStreamForContent } from "../utils/streamContent.js";
@@ -674,23 +674,10 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-// Each attempt gets its own copy of the request body.
-//
-// The translators mutate what they are handed — prepareClaudeRequest rewrites
-// msg.content in place, stamps cache_control onto blocks and de-prefixes a
-// model sitting on a tool, and the Kiro and Gemini paths do the same kind of
-// thing — because for a single request the body is theirs to consume. A combo
-// hands the SAME object to every model in turn, so provider two received a
-// history already rewritten to suit provider one, and a chain that works model
-// by model fails as a combo (#3619). chat.js only spreads the top level, which
-// leaves messages, tools and system shared.
-//
-// Fusion is the sharper case: its panel runs concurrently on one body, so the
-// mutations interleave.
-//
-// Fails open. A body that cannot be cloned is passed through as before rather
-// than failing the request, since the sharing bug is worse than the clone but
-// not worse than a 500.
+// Each sequential or concurrent combo dispatch starts from the original body.
+// The chat coordinator and core also isolate their own nested request data.
+// Direct callers may attach non-cloneable handles; the core preserves those
+// handles while copying their surrounding JSON containers.
 function bodyForAttempt(body) {
   try {
     return structuredClone(body);
@@ -740,10 +727,14 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
     try {
       const result = await handleSingleModel(bodyForAttempt(body), modelStr);
+      if (result.headers.get("x-tokenproxy-replay-safe") === "false") {
+        const terminal = withComboTrackingHeaders(result, modelStr);
+        if (!terminal.headers.has("x-should-retry")) terminal.headers.set("x-should-retry", "false");
+        return terminal;
+      }
       
-      // Success (2xx) — but a 200 is not proof of a usable answer. A provider can
-      // open an SSE stream, send nothing but keepalives and close cleanly; that
-      // must fall through to the next model rather than be handed to the client.
+      // An accepted request can still be billable when its stream has no
+      // usable answer. Inspect it without dispatching a replacement generation.
       if (result.ok) {
         const { hasContent, body: replayBody, upstreamError } = await peekStreamForContent(result);
         if (hasContent) {
@@ -754,28 +745,23 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           return withComboTrackingHeaders(result, modelStr, replayBody || result.body);
         }
 
-        // The peek already refuses to treat an in-content upstream error as a
-        // usable answer, so fallback fired either way. What did not survive was
-        // WHY: a qoder `[qoder error 429: ...]` frame and a genuinely silent
-        // stream both reported "empty stream", so a combo that exhausted every
-        // member answered 503 with no trace of the rate limit that caused it
-        // (#1996).
-        if (upstreamError) {
-          lastError = upstreamError.reason;
-          if (!lastStatus) lastStatus = upstreamError.status || 502;
-          log.warn("COMBO", `Model ${modelStr} returned an upstream error as content, trying next: ${upstreamError.reason}`);
-          continue;
-        }
-
-        lastError = "provider returned an empty stream";
-        if (!lastStatus) lastStatus = 503;
-        log.warn("COMBO", `Model ${modelStr} returned an empty stream, trying next`);
-        continue;
+        // Preserve a typed upstream error instead of obscuring its cause with
+        // the empty-stream diagnosis. Neither outcome authorizes regeneration.
+        const response = errorResponse(upstreamError?.status || 502,
+          upstreamError?.reason || "Provider accepted the request but returned no usable content");
+        response.headers.set("x-tokenproxy-replay-safe", "false");
+        response.headers.set("x-should-retry", "false");
+        return withComboTrackingHeaders(response, modelStr);
       }
 
       // A caller abort is terminal, not a model result. Preserve its exact
       // response so outer abort handling cannot mistake it for a served combo.
       if (result.status === 499) return result;
+      if (result.headers.get("x-tokenproxy-replay-safe") !== "true") {
+        const terminal = withComboTrackingHeaders(result, modelStr);
+        terminal.headers.set("x-should-retry", "false");
+        return terminal;
+      }
 
       // Extract error info from response
       let errorText = result.statusText || "";
@@ -856,10 +842,10 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       if (!lastStatus) lastStatus = result.status;
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
-      // Catch unexpected exceptions to ensure fallback continues
-      lastError = error.message || String(error);
-      if (!lastStatus) lastStatus = 500;
-      log.warn("COMBO", `Model ${modelStr} threw error, trying next`, { error: lastError });
+      const response = errorResponse(502, error.message || "Provider attempt failed with an uncertain outcome");
+      response.headers.set("x-tokenproxy-replay-safe", "false");
+      response.headers.set("x-should-retry", "false");
+      return withComboTrackingHeaders(response);
     }
   }
 

@@ -1,0 +1,34 @@
+[
+ {
+  "id": "heading-order",
+  "impact": "moderate",
+  "tags": [
+   "cat.semantics",
+   "best-practice"
+  ],
+  "description": "Ensure the order of headings is semantically correct",
+  "help": "Heading levels should only increase by one",
+  "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/heading-order?application=playwright",
+  "nodes": [
+   {
+    "any": [
+     {
+      "id": "heading-order",
+      "data": null,
+      "relatedNodes": [],
+      "impact": "moderate",
+      "message": "Heading order invalid"
+     }
+    ],
+    "all": [],
+    "none": [],
+    "impact": "moderate",
+    "html": "<h3>此 id 下不存在任何内容。</h3>",
+    "target": [
+     "h3"
+    ],
+    "failureSummary": "Fix any of the following:\n  Heading order invalid"
+   }
+  ]
+ }
+]

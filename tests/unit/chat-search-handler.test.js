@@ -12,19 +12,12 @@ afterEach(() => {
 });
 
 let lastCall;
-function stubFetch(payload, { ok = true, status = 200, reject = null, invalidJson = false } = {}) {
+function stubFetch(payload, { status = 200, reject = null, invalidJson = false } = {}) {
   lastCall = null;
   globalThis.fetch = vi.fn(async (url, init) => {
     lastCall = { url, init, body: JSON.parse(init.body) };
     if (reject) throw reject;
-    return {
-      ok,
-      status,
-      json: async () => {
-        if (invalidJson) throw new SyntaxError('bad json');
-        return payload;
-      },
-    };
+    return new Response(invalidJson ? 'not JSON' : JSON.stringify(payload), {status,headers:{'content-type':'application/json'}});
   });
 }
 

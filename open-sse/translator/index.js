@@ -1,4 +1,5 @@
 import { FORMATS } from "./formats.js";
+import { assertTranslationContent } from "./concerns/translationError.js";
 import { ensureToolCallIds, fixMissingToolResponses, repairOrphanToolResults } from "./concerns/toolCall.js";
 import { prepareClaudeRequest } from "./formats/claude.js";
 import { cloakClaudeTools } from "../utils/claudeCloaking.js";
@@ -28,6 +29,21 @@ export function register(from, to, requestFn, responseFn) {
   if (responseFn) {
     responseRegistry.set(key, responseFn);
   }
+}
+
+// Describes registered conversion edges without executing a translator.
+export function describeTranslationRoute(from, to, kind = "request") {
+  const registry = kind === "request" ? requestRegistry : kind === "response" ? responseRegistry : null;
+  if (!registry || !Object.values(FORMATS).includes(from) || !Object.values(FORMATS).includes(to)) {
+    return { supported: false, kind, mode: "unavailable", edges: [] };
+  }
+  if (from === to) return { supported: true, kind, mode: "passthrough", edges: [] };
+  if (registry.has(`${from}:${to}`)) return { supported: true, kind, mode: "direct", edges: [{ from, to }] };
+  const edges = [];
+  if (from !== FORMATS.OPENAI) edges.push({ from, to: FORMATS.OPENAI });
+  if (to !== FORMATS.OPENAI) edges.push({ from: FORMATS.OPENAI, to });
+  const missing = edges.filter(edge => !registry.has(`${edge.from}:${edge.to}`));
+  return { supported: missing.length === 0, kind, mode: missing.length ? "unavailable" : "pivot", edges, missing };
 }
 
 // No-op: translators self-register via the static imports at the bottom of this file.
@@ -63,6 +79,7 @@ function stripContentTypes(body, stripList = []) {
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
+  assertTranslationContent(sourceFormat, targetFormat, body);
   let result = body;
 
   // Null blocks are malformed, but must not abort routes with no media strip configured.
@@ -134,6 +151,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
       if (targetFormat !== FORMATS.OPENAI) {
         const fromOpenAI = requestRegistry.get(`${FORMATS.OPENAI}:${targetFormat}`);
         if (fromOpenAI) {
+          assertTranslationContent(FORMATS.OPENAI, targetFormat, result);
           result = fromOpenAI(model, result, stream, credentials);
         }
       }

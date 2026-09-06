@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 
 const require_ = createRequire(import.meta.url);
-const MODULE_PATH = new URL("../../cli/src/cli/tray/autostart.js", import.meta.url).pathname;
+const MODULE_PATH = fileURLToPath(new URL("../../cli/src/cli/tray/autostart.js", import.meta.url));
 
 // #1431: on a headless Ubuntu 22.04 server (no desktop environment, no
 // DISPLAY), Hide to Tray wrote ~/.config/autostart/tokenproxy.desktop and

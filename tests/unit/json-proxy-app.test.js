@@ -59,7 +59,7 @@ describe("handleJsonProxy cancellation and timeout behavior", () => {
     expect(authMocks.getProviderCredentials).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a body-phase server-side timeout eligible for next-account fallback", async () => {
+  it("does not resend a possibly accepted request after a response-body timeout", async () => {
     authMocks.getProviderCredentials
       .mockResolvedValueOnce(account("conn-1"))
       .mockResolvedValueOnce(account("conn-2"));
@@ -70,8 +70,10 @@ describe("handleJsonProxy cancellation and timeout behavior", () => {
 
     const response = await handleJsonProxy(requestFor(), "ocr");
 
-    expect(response.status).toBe(200);
-    expect(authMocks.markAccountUnavailable).toHaveBeenCalledWith("conn-1", 504, "upstream timed out", "mistral", "mistral-ocr-latest");
-    expect(authMocks.getProviderCredentials.mock.calls[1][1]).toEqual(new Set(["conn-1"]));
+    expect(response.status).toBe(504);
+    expect(response.headers.get('x-should-retry')).toBe('false');
+    expect(authMocks.markAccountUnavailable).not.toHaveBeenCalled();
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledTimes(1);
+    expect(coreMocks.handleJsonProxyCore).toHaveBeenCalledTimes(1);
   });
 });

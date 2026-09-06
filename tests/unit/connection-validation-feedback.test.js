@@ -1,0 +1,63 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+
+const fixture = vi.hoisted(() => ({ validation: null, calls: [], refresh: vi.fn() }));
+vi.mock('react', async original => ({ ...await original(), use: () => ({ id: 'c-1' }) }));
+vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({
+  loading: false, goodAt: 1, refresh: fixture.refresh,
+  data: url === '/api/providers/c-1'
+    ? { connection: { id: 'c-1', provider: 'openai', authType: 'apikey', name: 'Fixture account', isActive: true, maxConcurrent: 3 } }
+    : url === '/api/admin/qualification/c-1'
+      ? { status: 'healthy', validation: fixture.validation, generation: { ok: true, model: 'old-default' } }
+      : url === '/api/settings' ? { providerStrategies: { openai: { maxConcurrent: 9, unrelated: 'preserve' } } }
+        : { connections: [], proxyPools: [] },
+}) }));
+vi.mock('@/shared/api', () => ({ call: vi.fn(async (url, options) => {
+  fixture.calls.push({ url, ...options });
+  return { ok: true, body: {} };
+}) }));
+const { default: ConnectionPage } = await import('../../src/app/dashboard/connections/[id]/page.js');
+let root, container;
+beforeEach(async () => {
+  fixture.calls = [];
+  fixture.validation = { ok: true, kind: 'provider-validation', model: null, latencyMs: 22,
+    checkedAt: '2026-09-06T12:00:00.000Z', generationVerified: false, upstreamContact: 'not-recorded' };
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
+  container = document.createElement('div'); document.body.appendChild(container);
+  root = createRoot(container);
+});
+afterEach(() => { act(() => root.unmount()); container.remove(); });
+async function mount() { await act(async () => root.render(<ConnectionPage params={Promise.resolve({ id: 'c-1' })} />)); }
+function fact(label) { return [...container.querySelectorAll('dt')].find(e => e.textContent === label)?.nextElementSibling.textContent; }
+it('renders a check result separately from generation and independent capacity limits', async () => {
+  await mount();
+  expect(fact('Verdict')).toBe('Check passed');
+  expect(fact('Generation')).toBe('Not verified by this check');
+  expect(fact('Model')).toBe('Not recorded');
+  expect(fact('Account ceiling')).toBe('3');
+  expect(fact('Provider ceiling')).toBe('9');
+  expect(container.textContent).not.toContain('Answered');
+});
+it('keeps missing canonical validation unknown despite an old legacy success field', async () => {
+  fixture.validation = null; await mount();
+  expect(fact('Verdict')).toBe('Not established');
+  expect(fact('Observed')).toBe('Not recorded');
+});
+it('clears only the selected provider ceiling through the supported field patch', async () => {
+  await mount();
+  await act(async () => [...container.querySelectorAll('button')].find(e => e.textContent.trim().endsWith('Concurrency ceiling')).click());
+  const dialog = container.querySelector('dialog');
+  const input = dialog.querySelector('input[type="number"]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => [...dialog.querySelectorAll('button')].find(e => e.textContent.trim() === 'Save').click());
+  expect(fixture.calls).toEqual([{ url: '/api/settings', method: 'PATCH',
+    body: { providerStrategyPatch: { providerId: 'openai', values: { maxConcurrent: null } } } }]);
+  expect(fixture.refresh).toHaveBeenCalled();
+});

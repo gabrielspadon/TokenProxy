@@ -31,6 +31,7 @@
 // exists to avoid.
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '@/lib/db/driver.js';
+import { getPendingPinAction, completePinAction } from '@/lib/db/helpers/sessionPinControl.js';
 import {
   ACTIVE_PINS_BY_CONNECTION_SQL,
   rowsToPinCounts,
@@ -90,6 +91,11 @@ export async function createSchedulerRepos({ now = Date.now() } = {}) {
       return db.transaction(fn);
     },
 
+    getPendingPinAction({ sessionHash, model }) {
+      return getPendingPinAction(db, sessionHash, model, nowIso);
+    },
+    completePinAction(action) { completePinAction(db, action, nowIso); },
+
     getPin({ sessionHash, model } = {}) {
       if (!sessionHash || !model) return null;
       const row = db.get(
@@ -112,6 +118,7 @@ export async function createSchedulerRepos({ now = Date.now() } = {}) {
          ON CONFLICT(sessionHash, model) DO UPDATE SET
            connectionId = excluded.connectionId,
            pinnedAt = excluded.pinnedAt,
+           operatorExpiresAt = NULL,
            expiresAt = excluded.expiresAt,
            lastSeenAt = excluded.lastSeenAt`,
         [sessionHash, model, connectionId, pinnedAt, expiresAtIso, nowIso]
@@ -139,8 +146,10 @@ export async function createSchedulerRepos({ now = Date.now() } = {}) {
       if (!sessionHash || !model) return 0;
       const seenAt = typeof at === 'string' && at !== '' ? at : nowIso;
       const res = db.run(
-        `UPDATE sessionAffinity SET lastSeenAt = ?, expiresAt = ? WHERE sessionHash = ? AND model = ?`,
-        [seenAt, expiresAtIso, sessionHash, model]
+        `UPDATE sessionAffinity SET lastSeenAt = ?, expiresAt = CASE
+           WHEN operatorExpiresAt IS NOT NULL AND operatorExpiresAt < ? THEN operatorExpiresAt ELSE ? END
+         WHERE sessionHash = ? AND model = ?`,
+        [seenAt, expiresAtIso, expiresAtIso, sessionHash, model]
       );
       return res?.changes ?? 0;
     },

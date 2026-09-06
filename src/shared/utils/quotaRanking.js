@@ -42,6 +42,8 @@
  * offered, because there is nothing left to be ineligible against.
  */
 
+import { accountSupportsModel, scopeAppliesToModel } from './accountModelEligibility.js';
+
 // Horizon in milliseconds, keyed by the parenthetical duration a provider
 // appends to a window name ("session (5h)", "weekly (7d)", "monthly (30d)").
 // Values follow overlay-spec §1 exactly.
@@ -144,6 +146,7 @@ function parseResetAt(value) {
 }
 
 function finiteNonNegative(v) {
+  if (v === null || v === undefined || typeof v === 'boolean' || String(v).trim() === '') return null;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
@@ -191,7 +194,7 @@ export function effectiveResetAt(resetAt, horizonMs, nowMs) {
  *   reasons: Array<string>} | {ok: false, reason: string, unreadable: number,
  *   reasons: Array<string>}}
  */
-export function normalizeAccountWindows(windows) {
+export function normalizeAccountWindows(windows, { model = null } = {}) {
   if (!Array.isArray(windows) || windows.length === 0) {
     return { ok: false, reason: 'no-windows', unreadable: 0, reasons: [], blocked: false };
   }
@@ -217,11 +220,12 @@ export function normalizeAccountWindows(windows) {
       reasons.push(`unclassifiable-scope:${w.scope}`);
       continue;
     }
-    if (kind === 'scoped') continue;
+    if (kind === 'scoped' && !scopeAppliesToModel(w.scope, model)) continue;
 
     const remaining = finiteNonNegative(w.remaining);
     const limit = finiteNonNegative(w.limit);
-    const declaredLimit = Number(w.limit);
+    const declaredLimit = w.limit === null || w.limit === undefined || typeof w.limit === 'boolean'
+      || String(w.limit).trim() === '' ? NaN : Number(w.limit);
     const resetAt = parseResetAt(w.resetAt);
     if (Number.isFinite(declaredLimit) && declaredLimit <= 0) {
       blocked = true;
@@ -244,6 +248,7 @@ export function normalizeAccountWindows(windows) {
       resetAt,
       observedAt: parseResetAt(w.observedAt),
       confidence: typeof w.confidence === 'string' ? w.confidence : 'unknown',
+      ...(kind === 'scoped' ? { scoped: true } : {}),
     });
   }
   if (general.length === 0) {
@@ -375,16 +380,9 @@ function hasHeadroom(orderable) {
   return orderable.every((w) => w.effectiveRemaining >= headroomFloorOf(w.limit));
 }
 
-// ACTIVE LOAD, the spread key for a NEW pin. The reset keys below are a
-// function of quota evidence alone, so once affinity keys became per-agent
-// every fresh pin ranked the same account first and every agent landed on it:
-// one connection carried 102 of 103 requests into its upstream rate limit
-// while three connections with headroom sat idle, and because they never got
-// traffic they never gained evidence either. `activeLoad` is
-// connectionId -> {pins, inFlight}: live sessionAffinity rows for this model
-// plus open leases. It is read only when there is no previous pin. An existing
-// pin is stickiness's business (rules 4 and 5), and a settled agent must not
-// be moved off its provider-side cache because a neighbour got busy.
+// Active load breaks deadline ties for new placement only. Capacity admission
+// spills to the next ranked account when the earlier deadline has no free slot.
+// A healthy established pin is never moved by either ordering key.
 function loadOf(activeLoad, id) {
   if (!activeLoad) return 0;
   const entry = activeLoad instanceof Map
@@ -397,6 +395,18 @@ function loadOf(activeLoad, id) {
     + (Number.isFinite(inFlight) && inFlight > 0 ? inFlight : 0);
 }
 
+// Compare the full deadline vector, aligned by horizon. Missing evidence is
+// unknown, so it cannot win a tie against a readable deadline at that horizon.
+function compareHorizons(a, b) {
+  const horizons = [...new Set([...a.deadlines.keys(), ...b.deadlines.keys()])].sort((x, y) => y - x);
+  for (const horizon of horizons) {
+    const left = a.deadlines.get(horizon) ?? Infinity;
+    const right = b.deadlines.get(horizon) ?? Infinity;
+    if (left !== right) return left < right ? -1 : 1;
+  }
+  return 0;
+}
+
 /**
  * Rank accounts for one provider node.
  *
@@ -405,7 +415,7 @@ function loadOf(activeLoad, id) {
  *   activeLoad?: Map<string, {pins: number, inFlight: number}>|Record<string, {pins: number, inFlight: number}>|null}} options
  *   `now` is REQUIRED and injected — this module never reads the clock.
  *   `activeLoad` orders a NEW pin (previousPinId null) by headroom floor, then
- *   live pins plus open leases, ahead of the evidence keys; an existing pin
+ *   live pins plus open leases after deadline ties; an existing pin
  *   ignores both and keeps the rule 4/5 comparator.
  * @returns {{
  *   ranked: Array<object>, eligible: Array<object>, ineligible: Array<object>,
@@ -418,7 +428,7 @@ function loadOf(activeLoad, id) {
  *   account is present in `ranked` either way, because a non-winning account
  *   stays failover inventory (§10) rather than being deactivated.
  */
-export function rankAccounts(accounts, { now, previousPinId = null, activeLoad = null } = {}) {
+export function rankAccounts(accounts, { now, previousPinId = null, activeLoad = null, model = null } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
   if (!Number.isFinite(nowMs)) {
     throw new TypeError('rankAccounts requires an injected numeric or Date `now`');
@@ -462,18 +472,11 @@ export function rankAccounts(accounts, { now, previousPinId = null, activeLoad =
     // read is) are both the evidence axis, and the printed line has one name
     // for it. Minting a second enum would split a key the log format cannot
     // tell apart anyway.
-    // New pins only: the runner-up is under the headroom floor, or the winner
-    // was the lighter account. `explore` is the special case where the lighter
-    // account's evidence is WORSE than the runner-up's: it won because every
-    // better-evidenced account was already busy, which is the only way an idle
-    // account ever earns evidence.
+    // The placement headroom guard comes first. Load only breaks deadlines.
     if (spreadByLoad && a.headroom !== b.headroom) return 'headroom';
-    if (spreadByLoad && a.load !== b.load) {
-      return a.evidenceBand > b.evidenceBand || a.band > b.band ? 'explore' : 'load-spread';
-    }
     if (a.evidenceBand !== b.evidenceBand || a.band !== b.band) return 'evidence-band';
-    if (a.bindingResetAt !== b.bindingResetAt) return 'reset-horizon';
-    if (a.soonestResetAt !== b.soonestResetAt) return 'reset-horizon';
+    if (compareHorizons(a, b) !== 0) return 'reset-horizon';
+    if (spreadByLoad && a.load !== b.load) return 'load-spread';
     if ((a.id === previousPinId) !== (b.id === previousPinId)) return 'pinned-continuity';
     if (a.priority !== b.priority) return 'configured-priority';
     return 'fallback-order';
@@ -516,8 +519,14 @@ export function rankAccounts(accounts, { now, previousPinId = null, activeLoad =
   };
 
   const records = list.map((account, index) => {
-    const structural = normalizeAccountWindows(account?.windows);
+    const structural = normalizeAccountWindows(account?.windows, { model });
     const { orderable, unreadable, usable } = resolveWindows(structural, nowMs);
+    const general = orderable.filter((w) => !w.scoped);
+    const deadlines = new Map();
+    for (const w of general) {
+      deadlines.set(w.horizonMs, Math.min(deadlines.get(w.horizonMs) ?? Infinity, w.effectiveResetAt));
+    }
+    const entitled = accountSupportsModel(account, model);
     return {
       id: account?.id,
       account,
@@ -531,11 +540,13 @@ export function rankAccounts(accounts, { now, previousPinId = null, activeLoad =
         ? (unreadable > 0 ? `partial-evidence:${structural.reasons.join(',')}` : null)
         : structural.reason,
       unreadable,
-      usable,
+      usable: usable && entitled,
+      hardBlocked: structural.blocked || !entitled,
+      deadlines,
       load: loadOf(activeLoad, account?.id),
       headroom: hasHeadroom(orderable),
-      evidenceBand: evidenceBandOf(orderable, unreadable),
-      band: bandOf(orderable),
+      evidenceBand: evidenceBandOf(general, unreadable),
+      band: bandOf(general),
       // The subscription's main-quota deadline, and the nearest deadline of any
       // kind. Infinity when there is no orderable evidence, which parks the
       // account behind everything that has a real deadline.
@@ -567,13 +578,12 @@ export function rankAccounts(accounts, { now, previousPinId = null, activeLoad =
     const bp = b.id === previousPinId ? 0 : 1;
     return ap - bp || (a.priority - b.priority) || (a.index - b.index);
   };
-  // New pins only: above the headroom floor first, then the lighter account.
-  // Zero (no opinion) for an existing pin.
+  // The headroom guard precedes deadline ordering. Load breaks deadline ties.
   const byLoad = (a, b) => {
     if (!spreadByLoad) return 0;
-    if (a.headroom !== b.headroom) return a.headroom ? -1 : 1;
     return a.load - b.load;
   };
+  const byHeadroom = (a, b) => spreadByLoad && a.headroom !== b.headroom ? (a.headroom ? -1 : 1) : 0;
 
   // Nothing anywhere carries a deadline, so there is no urgency to order by.
   // Previous-pin-then-priority is the §1 failure direction, and it is an
@@ -581,7 +591,7 @@ export function rankAccounts(accounts, { now, previousPinId = null, activeLoad =
   // with no readable window has nothing that could prove it depleted.
   const anyEvidence = records.some((r) => r.windows.length > 0);
   if (!anyEvidence) {
-    const ranked = [...records].sort((a, b) => byLoad(a, b) || stickyThenDeclared(a, b));
+    const ranked = [...records].sort((a, b) => byHeadroom(a, b) || byLoad(a, b) || stickyThenDeclared(a, b));
     const eligible = ranked.filter((r) => r.usable);
     return {
       ranked,
@@ -607,34 +617,19 @@ export function rankAccounts(accounts, { now, previousPinId = null, activeLoad =
     };
   }
 
-  // Ordering keys, in order:
-  //   0. usable before depleted
-  //   0b. NEW PIN ONLY: headroom floor (every readable window above
-  //      HEADROOM_FLOOR_FRACTION of its limit) first, then active load (live
-  //      pins + open leases), lightest first. Sitting above the evidence keys
-  //      is what lets a worse-evidenced account win once every better one is
-  //      already carrying load (exploration); with a tie on both, the evidence
-  //      keys decide as before, so an idle fresh account still beats an idle
-  //      unknown one.
-  //   1. evidence completeness (full read, partial read, no read)
-  //   2. confidence band (rule 2: unknown never outranks fresh known evidence,
-  //      but never goes offline either)
-  //   3. the MAIN quota's projected reset, soonest first — the subscription
-  //      branch that constrains the plan, so entitlement about to be wasted is
-  //      spent first and a short window cannot overspend a longer one
-  //   4. the nearest deadline of any horizon, soonest first — immediate
-  //      pressure, once the main quotas tie
-  //   5. previous pin (stickiness; never round-robin)
-  //   6. configured priority, lowest wins, missing = unbounded — TIE-BREAK ONLY
-  //   7. original index, so the sort is total and therefore deterministic
+  // Eligibility, new-placement headroom guard, evidence quality, then every
+  // general deadline from longest to shortest horizon. Load breaks deadline
+  // ties; continuity, configured priority and declaration order break the rest.
   const ranked = [...records].sort((a, b) => {
     if (a.usable !== b.usable) return a.usable ? -1 : 1;
-    const spread = byLoad(a, b);
-    if (spread !== 0) return spread;
+    const headroom = byHeadroom(a, b);
+    if (headroom !== 0) return headroom;
     if (a.evidenceBand !== b.evidenceBand) return a.evidenceBand - b.evidenceBand;
     if (a.band !== b.band) return a.band - b.band;
-    if (a.bindingResetAt !== b.bindingResetAt) return a.bindingResetAt - b.bindingResetAt;
-    if (a.soonestResetAt !== b.soonestResetAt) return a.soonestResetAt - b.soonestResetAt;
+    const horizons = compareHorizons(a, b);
+    if (horizons !== 0) return horizons;
+    const spread = byLoad(a, b);
+    if (spread !== 0) return spread;
     return stickyThenDeclared(a, b);
   });
 

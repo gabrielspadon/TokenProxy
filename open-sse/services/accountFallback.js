@@ -277,7 +277,11 @@ export function getExhaustedQuotaWindow(connection, model, now = Date.now()) {
   if (!Array.isArray(windows)) return null;
   const quotaWindow = windows.find((entry) => entry?.key === model);
   if (!quotaWindow || quotaWindow.unlimited === true) return null;
-  if (Number(quotaWindow.remainingPercentage) !== 0) return null;
+  const remaining = quotaWindow.remainingPercentage;
+  // Unknown values must not become measured depletion through Number(null),
+  // Number('') or Number(false). Providers may supply finite numeric strings.
+  if (typeof remaining !== 'number' && (typeof remaining !== 'string' || !remaining.trim())) return null;
+  if (!Number.isFinite(Number(remaining)) || Number(remaining) !== 0) return null;
   const resetAt = new Date(quotaWindow.resetAt).getTime();
   if (!Number.isFinite(resetAt) || resetAt <= now) return null;
   return { key: quotaWindow.key, until: new Date(resetAt).toISOString() };
@@ -289,7 +293,7 @@ export function getExhaustedQuotaWindow(connection, model, now = Date.now()) {
  * model's quota exhausted (see `getExhaustedQuotaWindow`).
  * Reads flat field `modelLock_${model}` (or `modelLock___all` when model=null).
  */
-export function isModelLockActive(connection, model) {
+export function isModelLockActive(connection, model, now = Date.now()) {
   // Each key is judged on its own expiry. `a || b` picked the per-model key on the
   // truthiness of the string, so a stale one hid a still-active account-wide lock:
   // the connection then read as free for exactly the model that had just failed,
@@ -297,9 +301,9 @@ export function isModelLockActive(connection, model) {
   // key either -- the lazy cleanup runs only after a successful request, and an
   // account under an `__all` lock never gets one. Same rule the sibling
   // `getEarliestModelLockUntil` already applies when it skips expired entries.
-  return isActiveLockUntil(connection[getModelLockKey(model)])
-    || isActiveLockUntil(connection[MODEL_LOCK_ALL])
-    || getExhaustedQuotaWindow(connection, model) !== null;
+  return isActiveLockUntil(connection[getModelLockKey(model)], now)
+    || isActiveLockUntil(connection[MODEL_LOCK_ALL], now)
+    || getExhaustedQuotaWindow(connection, model, now) !== null;
 }
 
 /**
@@ -309,13 +313,13 @@ export function isModelLockActive(connection, model) {
  * so all-exhausted selection still reports retry timing rather than a bare
  * "no accounts available".
  */
-export function getActiveModelFailure(connection, model) {
+export function getActiveModelFailure(connection, model, now = Date.now()) {
   if (!connection) return null;
   const models = model ? [null, model] : [null];
   for (const candidate of models) {
     const lockKey = getModelLockKey(candidate);
     const until = connection[lockKey];
-    if (!isActiveLockUntil(until)) continue;
+    if (!isActiveLockUntil(until, now)) continue;
     const failureKey = getModelFailureKey(candidate);
     const metadata = connection[failureKey];
     const matchingMetadata = metadata && typeof metadata === "object" && metadata.until === until
@@ -333,7 +337,7 @@ export function getActiveModelFailure(connection, model) {
     };
   }
 
-  const exhausted = getExhaustedQuotaWindow(connection, model);
+  const exhausted = getExhaustedQuotaWindow(connection, model, now);
   if (exhausted) {
     return {
       lockKey: getModelLockKey(model),

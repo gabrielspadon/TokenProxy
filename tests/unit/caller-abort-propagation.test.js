@@ -83,6 +83,7 @@ function requestReplayFailure() {
   return {
     success: false,
     status: 507,
+    failureMetadata: { safeToReplay: true },
     error: "[507]: exceeded request buffer limit while retrying upstream",
     response: Response.json({ error: { message: "buffer" } }, { status: 507 }),
   };
@@ -208,6 +209,7 @@ describe("caller abort propagation", () => {
       "codex",
       "gpt-5.6-sol",
       undefined,
+      null,
       { rid: expect.stringMatching(/^[0-9a-f]{8}$/) },
     );
   });
@@ -262,6 +264,7 @@ describe("caller abort propagation", () => {
     dispatchMocks.handleChatCore.mockResolvedValue({
       success: false,
       status: 429,
+      failureMetadata: { safeToReplay: true },
       error: "A failure must not leak",
       response: Response.json({ error: { message: "A failure must not leak" } }, { status: 429 }),
     });

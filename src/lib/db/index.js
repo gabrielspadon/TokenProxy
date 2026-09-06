@@ -2,6 +2,7 @@
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 import { decryptSecretJson, encryptSecretJson } from "./helpers/secretCol.js";
+import { initializeBudgetAccount, validateBudgetPolicy } from "./repos/budgetRepo.js";
 
 // Settings
 export {
@@ -95,7 +96,8 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...decryptSecretJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt,
+      expiresAt: r.expiresAt, maxPromptTokens: r.maxPromptTokens, maxCompletionTokens: r.maxCompletionTokens, maxCostUsd: r.maxCostUsd, budgetPolicy: r.budgetPolicy })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -143,6 +145,21 @@ export async function importDb(payload) {
   } catch { providerCatalog = {}; }
 
   db.transaction(() => {
+    const existingKeys = new Map(db.all("SELECT * FROM apiKeys").map(k => [k.id, k]));
+    const keysToImport = (payload.apiKeys || []).map(k => {
+      const prior = existingKeys.get(k.id);
+      const owner = db.get("SELECT id FROM apiKeys WHERE key=?", [k.key]);
+      if (owner && owner.id !== k.id) throw new TypeError("Imported key material belongs to a different stable key ID");
+      if (prior && prior.key !== k.key) {
+        if (db.get("SELECT id FROM usageHistory WHERE apiKey=? LIMIT 1", [k.key])) throw new TypeError("Imported key material has ambiguous historical ownership");
+        initializeBudgetAccount(db, prior);
+      }
+      // Older configuration exports omit limits. Preserve the local stable-ID
+      // policy in that case rather than turning a capped key into unlimited.
+      const merged = { ...prior, ...k };
+      validateBudgetPolicy(merged.budgetPolicy ?? null);
+      return merged;
+    });
     // Wipe all tables (keep _meta)
     db.run(`DELETE FROM settings`);
     db.run(`DELETE FROM providerConnections`);
@@ -178,10 +195,11 @@ export async function importDb(payload) {
         [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
-    for (const k of payload.apiKeys || []) {
+    for (const k of keysToImport) {
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(id,key,name,machineId,isActive,createdAt,expiresAt,maxPromptTokens,maxCompletionTokens,maxCostUsd,budgetPolicy) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false || k.isActive === 0 ? 0 : 1, k.createdAt || new Date().toISOString(),
+          k.expiresAt ?? null, k.maxPromptTokens ?? null, k.maxCompletionTokens ?? null, k.maxCostUsd ?? null, k.budgetPolicy ?? null]
       );
     }
     for (const c of payload.combos || []) {

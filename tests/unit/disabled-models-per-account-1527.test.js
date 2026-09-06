@@ -34,12 +34,13 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  // Clear every key this suite writes, provider-wide and per-connection.
-  await db.enableModels("openai", []);
-  for (const conn of [CONN_A, CONN_B]) {
-    const key = `openai::${conn}`;
-    await db.enableModels(key, []); // provider-scoped delete of the raw key
-  }
+  // An operator Enable retains an explicit empty override. A fresh-install
+  // fixture requires absent keys, so clear only this isolated test database.
+  const { getAdapter } = await import('@/lib/db/driver.js');
+  const adapter = await getAdapter();
+  adapter.run('DELETE FROM kv WHERE scope = ?', ['disabledModels']);
+  const { invalidateDisabledModelsCache } = await import('@/lib/db/repos/disabledModelsRepo.js');
+  invalidateDisabledModelsCache();
 });
 
 describe("disabled models are per account (#1527)", () => {

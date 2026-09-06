@@ -1,9 +1,9 @@
-// Tier 1 — Structural coverage: every model in PROVIDER_MODELS must translate
-// without throwing, correct upstreamId, strip applied. Data-driven → new providers auto-covered.
+// Structural coverage covers text translation and explicit unsupported media.
 import { describe, it, expect } from "vitest";
 import "./registerAll.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
+import { TranslationInputError } from "../../open-sse/translator/concerns/translationError.js";
 import { buildProviderGroups, buildModelMatrix, resolveTargetFormat } from "./matrix.js";
 
 // Base OpenAI-format request with text + tool + image (exercises strip + tool paths)
@@ -30,11 +30,20 @@ function baseBody(modelId) {
 
 const groups = buildProviderGroups();
 
-describe("coverage: every model translates without throwing", () => {
+describe("coverage: every model translates supported input", () => {
   it.each(groups)("$alias: all models OpenAI→target", ({ alias, models }) => {
     for (const m of models) {
       const target = resolveTargetFormat(alias, m.id);
       const body = baseBody(m.id);
+      if (target === FORMATS.CURSOR) {
+        const original = structuredClone(body);
+        expect(() => translateRequest(FORMATS.OPENAI, target, m.id, body, true, null, alias))
+          .toThrow(TranslationInputError);
+        expect(body).toEqual(original);
+        // The current Cursor encoder has no image channel. Its text route
+        // remains covered for every model after proving media fails explicitly.
+        body.messages[1].content = [{ type: "text", text: "Hello" }];
+      }
       // source = openai (lingua franca); exercise openai → target path
       const out = translateRequest(FORMATS.OPENAI, target, m.id, body, true, null, alias);
       expect(out, `${alias}/${m.id} → ${target} returned falsy`).toBeTruthy();

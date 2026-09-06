@@ -1,3 +1,5 @@
+import { getRequestIdentity } from "../services/requestIdentity.js";
+import { createUsageAttemptTracker } from "../services/usageAttempt.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -10,10 +12,12 @@ import { releaseAccountLease } from "../services/accountLeaseRegistry.js";
 import { resolveClientApiKey } from "@/lib/auth/clientApiKey";
 import { getSettings } from "@/lib/localDb";
 import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getComboModels } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { handleComboChat } from "open-sse/services/combo.js";
+import { resolveRequestModel } from '../services/requestModel.js';
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
@@ -46,12 +50,14 @@ export async function handleEmbeddings(request) {
   }
 
   const url = new URL(request.url);
+  const identity = getRequestIdentity(request);
   const modelStr = body.model;
 
   log.request("POST", `${url.pathname} | ${modelStr}`);
 
   // Log API key (masked)
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
   if (apiKey) {
@@ -95,7 +101,8 @@ export async function handleEmbeddings(request) {
   // combo name, which is the same signal handleChat keys off. Members then run
   // one at a time through the single-model path below, with the shared
   // fallback/round-robin strategy on top.
-  const resolved = await getModelInfo(modelStr);
+  const resolved = await resolveRequestModel(modelStr);
+  if (resolved.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, resolved.error);
   if (!resolved.provider) {
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
@@ -105,7 +112,7 @@ export async function handleEmbeddings(request) {
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelEmbeddings(b, m, apiKey, url.pathname),
+        handleSingleModel: (b, m) => handleSingleModelEmbeddings(b, m, apiKey, url.pathname, null, identity),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -114,11 +121,12 @@ export async function handleEmbeddings(request) {
     }
   }
 
-  return handleSingleModelEmbeddings(body, modelStr, apiKey, url.pathname, resolved);
+  return handleSingleModelEmbeddings(body, modelStr, apiKey, url.pathname, resolved, identity);
 }
 
-async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, resolved = null) {
-  const modelInfo = resolved || await getModelInfo(modelStr);
+async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, resolved = null, identity = getRequestIdentity(null)) {
+  const modelInfo = resolved || await resolveRequestModel(modelStr);
+  if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
   if (!modelInfo.provider) {
     log.warn("EMBEDDINGS", "Invalid model format", { model: modelStr });
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
@@ -155,26 +163,26 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
           log.warn("EMBEDDINGS", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-          return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) {
           log.error("AUTH", `No credentials for provider: ${provider}`);
-          return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
+          return withReplaySafety(errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`), true);
         }
         log.warn("EMBEDDINGS", "No more accounts available", { provider });
-        return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+        return withReplaySafety(errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable"), true);
       }
 
       log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-      const effectiveModel = !modelStr.includes("/") && credentials.defaultModel
-        ? credentials.defaultModel
-        : model;
 
+      const usageAttempt = createUsageAttemptTracker(identity, { provider, model, connectionId: credentials.connectionId, apiKey }, credentials);
       const result = await handleEmbeddingsCore({
-        body: { ...body, model: `${provider}/${effectiveModel}` },
-        modelInfo: { provider, model: effectiveModel },
+        beforeDispatch: usageAttempt.beforeDispatch,
+        afterDispatch: usageAttempt.afterDispatch,
+        body: { ...body, model: `${provider}/${model}` },
+        modelInfo: { provider, model },
         credentials: refreshedCredentials,
         log,
         onCredentialsRefreshed: async (newCreds) => {
@@ -187,12 +195,14 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
         }
-      });
+      }).catch(async (error) => { await usageAttempt.finish({ success: false }); throw error; });
+      await usageAttempt.finish(result);
 
       if (result.success) {
         const usage = exactEmbeddingUsage(result.usage);
         if (usage) {
-          saveRequestUsage({
+          await saveRequestUsage({
+            contextTelemetry: usageAttempt.contextTelemetry,
             provider,
             model,
             connectionId: credentials.connectionId,
@@ -205,7 +215,9 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
         return result.response;
       }
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response);
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response, false, cooldownMs, true);
 
       if (shouldFallback) {
         log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
@@ -215,7 +227,7 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
         continue;
       }
 
-      return result.response;
+      return withReplaySafety(result.response, true);
     } finally {
       releaseAccountLease(accountLease);
     }

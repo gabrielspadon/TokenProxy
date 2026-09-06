@@ -149,16 +149,10 @@ async function readAll(stream) {
   }
 }
 
-// A decode failure triggers the executor's ONE bounded integrity retry, which
-// issues a second upstream call. Both are mocked: the first carries the frames
-// under test, the second a clean stream, so the retry resolves instead of
-// stalling against an unmocked upstream. The failed attempt's decoder message
-// still reaches the client in the retry diagnostics.
-async function runFrames(frames, { retryFrames = null } = {}) {
+// An accepted stream is decoded exactly once. A second dispatch is forbidden,
+// even if an intact replacement answer could be obtained.
+async function runFrames(frames) {
   fetchMock.mockResolvedValueOnce(response(frames));
-  fetchMock.mockResolvedValueOnce(
-    response(retryFrames || [textFrame('assistantResponseEvent', { content: 'retry-clean' })])
-  );
   const result = await new KiroExecutor().execute({
     model: 'kr/claude-opus-4.8',
     body: {
@@ -189,12 +183,12 @@ function errorsIn(sse) {
     .filter((e) => e && e.message);
 }
 
-// A decoder rejection only reaches the client once BOTH the initial attempt and
-// the bounded retry fail; a recovered request deliberately releases only the
-// retry's own output. The envelope carries the decoder's message on the outer
-// error, so that is where a decode assertion reads.
-function failureMessages(sse) {
-  return errorsIn(sse).map((e) => e.message);
+function expectCorruptFrame(sse) {
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(errorsIn(sse)).toMatchObject([{
+    code: 'kiro_missing_terminal',
+    details: { terminal_provenance: 'corrupt_eventstream_frame', transport_state: 'corrupt_frame', safe_to_replay: false },
+  }]);
 }
 
 function textIn(sse) {
@@ -246,8 +240,7 @@ describe('EventStream header value types', () => {
         headerBytes('h-weird', 42, new Uint8Array(0)),
       ]),
     ];
-    const messages = failureMessages(await runFrames(bad(), { retryFrames: bad() }));
-    expect(messages.some((m) => /unknown type 42/i.test(m))).toBe(true);
+    expectCorruptFrame(await runFrames(bad()));
   });
 
   it('rejects a header whose declared value runs past the header block', async () => {
@@ -262,20 +255,17 @@ describe('EventStream header value types', () => {
       ]);
       return [frameFrom([truncated], { content: 'x' })];
     };
-    const messages = failureMessages(await runFrames(bad(), { retryFrames: bad() }));
-    expect(messages.some((m) => /exceeds its declared bounds/i.test(m))).toBe(true);
+    expectCorruptFrame(await runFrames(bad()));
   });
 
-  it('keeps a rejected header type private when the bounded retry succeeds', async () => {
-    // The failed attempt's frames must never reach the client once the retry
-    // produces a clean stream; only the retry's own text is released.
+  it('keeps a rejected header type private without a replacement generation', async () => {
     const sse = await runFrames([
       textFrame('assistantResponseEvent', { content: 'must stay private' }, [
         headerBytes('h-weird', 42, new Uint8Array(0)),
       ]),
     ]);
-    expect(errorsIn(sse)).toEqual([]);
-    expect(textIn(sse)).toContain('retry-clean');
+    expectCorruptFrame(sse);
+    expect(textIn(sse)).toBe('');
     expect(sse).not.toContain('must stay private');
   });
 });
@@ -283,21 +273,14 @@ describe('EventStream header value types', () => {
 describe('EventStream frame validation', () => {
   // The prelude-CRC, message-CRC, out-of-bounds-headers and duplicate-header
   // cases are already asserted in kiro-terminal-integrity.test.js, which owns
-  // the retry-and-recover contract. What is left here is the decoder's own
+  // the accepted-response integrity contract. What is left here is the decoder's own
   // payload handling, which that file does not reach.
 
   it('rejects a payload that is not valid JSON', async () => {
     const bad = () => [
       frameFrom([stringHeader(':event-type', 'assistantResponseEvent')], '{not json'),
     ];
-    const sse = await runFrames(bad(), { retryFrames: bad() });
-    expect(failureMessages(sse).some((m) => /payload is not valid JSON/i.test(m))).toBe(true);
-    // Both attempts are reported, and both name the frame decoder.
-    const [error] = errorsIn(sse);
-    expect(error.details.attempts.map((a) => a.terminal_provenance)).toEqual([
-      'corrupt_eventstream_frame',
-      'corrupt_eventstream_frame',
-    ]);
+    expectCorruptFrame(await runFrames(bad()));
   });
 });
 

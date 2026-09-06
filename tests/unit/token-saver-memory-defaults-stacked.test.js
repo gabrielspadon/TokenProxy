@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 
 import { applyMemoryEnhancements } from "../../open-sse/services/memory/index.js";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { mergeWithDefaults } from "../../src/lib/db/repos/settingsRepo.js";
 
 // A silent default flip in settingsRepo (e.g. turning compaction on by

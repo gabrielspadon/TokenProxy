@@ -249,7 +249,7 @@ describe('message conversion', () => {
     expect(tool[2].content).toBe(JSON.stringify([{ type: 'weird' }]));
   });
 
-  it('converts a user image block and drops a non-base64 one', () => {
+  it('preserves both inline and remote user images', () => {
     const out = claudeToOpenAIRequest(
       MODEL,
       {
@@ -269,8 +269,10 @@ describe('message conversion', () => {
       false
     );
     const parts = out.messages[0].content;
-    expect(parts).toHaveLength(1);
-    expect(parts[0].type).toBe(OPENAI_BLOCK.IMAGE_URL);
+    expect(parts).toEqual([
+      { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: 'data:image/jpeg;base64,CCCC' } },
+      { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: 'https://x' } },
+    ]);
   });
 
   it('empty content array yields an empty message, and unknown message shapes are dropped', () => {

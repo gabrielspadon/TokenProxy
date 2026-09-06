@@ -2,6 +2,9 @@
 // envelope (project, model, requestType, sessionId) and auth headers.
 import { nowSec, sizeToAspectRatio } from "./_base.js";
 import { getExecutor } from "../../executors/index.js";
+import { HTTP_STATUS } from "../../config/runtimeConfig.js";
+import { parseUpstreamError } from "../../utils/error.js";
+import { isReplaySafeRejection } from "../../utils/replaySafety.js";
 
 // Convert image input (data URI or raw base64) to Gemini inlineData part
 function resolveImageInput(input) {
@@ -31,9 +34,18 @@ export default {
     const executor = getExecutor("antigravity");
     if (!executor) throw new Error("Antigravity executor not found");
 
-    // The image handler is reachable with a chat model, which would return text.
+    // The public image endpoint requires an explicit model. Reject a chat
+    // selection before dispatch instead of billing a different image model.
     const isImageModel = (m) => /image|imagen|image-generation/i.test(m || "");
-    let targetModel = isImageModel(model) ? model : "gemini-3.1-flash-image";
+    if (!isImageModel(model)) {
+      const error = new Error(model
+        ? `Model '${model}' does not support image generation`
+        : 'Missing image model');
+      error.status = HTTP_STATUS.BAD_REQUEST;
+      error.failureMetadata = { safeToReplay: true };
+      throw error;
+    }
+    let targetModel = model;
 
     // The executor reads the aspect ratio off a -WxH model suffix (parseImageConfig),
     // so body.size only reaches the upstream by being encoded into the model name.
@@ -67,8 +79,12 @@ export default {
     });
 
     if (!result.response.ok) {
-      const text = await result.response.text();
-      throw new Error(text || `HTTP ${result.response.status}`);
+      const { message: text, resetsAtMs } = await parseUpstreamError(result.response);
+      const error = new Error(text || `HTTP ${result.response.status}`);
+      error.status = result.response.status;
+      error.failureMetadata = { safeToReplay: isReplaySafeRejection(result.response) };
+      error.resetsAtMs = resetsAtMs;
+      throw error;
     }
 
     return result.response.json();

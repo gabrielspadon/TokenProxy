@@ -219,6 +219,7 @@ export function applyEndpointOverride(override, registryUrl) {
 }
 
 export class DefaultExecutor extends BaseExecutor {
+  get supportsBudgetDispatch() { return true; }
   constructor(provider) {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }

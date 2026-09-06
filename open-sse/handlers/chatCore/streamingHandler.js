@@ -1,3 +1,4 @@
+import { recordContextFailure } from "./contextTelemetry.js";
 import { FORMATS } from "../../translator/formats.js";
 import { needsTranslation } from "../../translator/index.js";
 import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger } from "../../utils/stream.js";
@@ -72,12 +73,15 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
 /**
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
-export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, streamController, onStreamComplete, streamDetailId, streamState, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, saverMeta = {} }) {
-  if (callerSignal?.aborted) return withSaverHeaders(createCallerAbortResult(), saverMeta);
+export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, streamController, onStreamComplete, streamDetailId, streamState, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, saverMeta = {}, contextTelemetry }) {
 
   // HEADERS finding: caller-abort results carry the same x-tp-* saver
   // telemetry as every other gateway-built response.
-  const abortResult = () => withSaverHeaders(createCallerAbortResult(), saverMeta);
+  const abortResult = () => {
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted" });
+    return withSaverHeaders(createCallerAbortResult(), saverMeta);
+  };
+  if (callerSignal?.aborted) return abortResult();
 
   const getConnPrefix = () => (connectionId ? String(connectionId).slice(0, 8) : undefined);
 
@@ -91,9 +95,10 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     // 200-OK-but-unusable classification forks: one STREAM.non-sse line.
     decide("STREAM", "non-sse", { rid, conn: getConnPrefix(), why: why || "unknown" });
     saveRequestDetail(buildRequestDetail({
+      contextTelemetry,
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
-      tokens: { prompt_tokens: 0, completion_tokens: 0 },
+      tokens: null,
       request: extractRequestConfig(body, stream),
       providerRequest: finalBody || translatedBody || null,
       providerResponse: message,
@@ -104,6 +109,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     }, { id: streamDetailId })).catch(() => {});
     return {
       success: false,
+      failureMetadata: { safeToReplay: false },
       status,
       error: message,
       response: new Response(JSON.stringify({ error: { message: `[${status}]: ${message}` } }), {
@@ -167,7 +173,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
       includeClaudeTerminal: true,
       requireActionableGeminiOutput: provider === "antigravity",
     });
-    if (callerSignal?.aborted) return createCallerAbortResult();
+    if (callerSignal?.aborted) return abortResult();
     if (contentPeek.error) {
       const status = 502;
       const shortMsg = provider === "antigravity"
@@ -459,9 +465,10 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   // this row — the placeholder would stay "pending" forever (doc row 65).
   if (completionDelivered) decide("STREAM", "detail-pending", { rid });
   saveRequestDetail(buildRequestDetail({
+      contextTelemetry,
     provider, model, connectionId,
     latency: { ttft: 0, total: Date.now() - requestStartTime },
-    tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    tokens: null,
     request: extractRequestConfig(body, stream),
     providerRequest: finalBody || translatedBody || null,
     providerResponse: "[Streaming - raw response not captured]",
@@ -545,8 +552,8 @@ function notifyTerminalVerificationSuccess(callback, connectionId, log) {
  *   gets a retried request routed to a different backend.
  */
 export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log, onEmptyStream, sourceFormat, rid, route, fmt, sel, notifyTerminalVerificationSuccess: notifyTerminal,
-  saverFields = {} }) {
-  const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  saverFields = {}, contextTelemetry }) {
+  const streamDetailId = contextTelemetry?.requestId || `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   // One-shot finalization guard shared by onStreamComplete (flush/cancel paths)
   // and onStreamAbandoned (upstream error path): whoever fires first wins, so a
@@ -599,9 +606,10 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     const safeThinking = contentObj?.thinking || null;
 
     saveRequestDetail(buildRequestDetail({
+      contextTelemetry,
       provider, model, connectionId,
       latency,
-      tokens: usage || { prompt_tokens: 0, completion_tokens: 0 },
+      tokens: usage ?? null,
       request: extractRequestConfig(body, stream),
       providerRequest: finalBody || translatedBody || null,
       providerResponse: safeContent,
@@ -614,7 +622,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
-    saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid });
+    saveUsageStats({ contextTelemetry, usageFinality: aborted ? "partial" : "final", provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid });
     // The one nominal per-request line (doc §3.3/3.4): success is REQ.ok,
     // an aborted/interrupted completion is REQ.failed — exactly one, never both.
     if (usage?.estimated) decide("STREAM", "usage-estimated", { rid, conn: connPrefix(), why: "provider-omitted-usage" });
@@ -651,9 +659,10 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     const partialUsage = resolvePartialUsage(streamState, body, sourceFormat);
     const tokens = partialUsage
       ? { ...partialUsage, completion_tokens: partialUsage.completion_tokens ?? partialUsage.output_tokens ?? 0 }
-      : { prompt_tokens: 0, completion_tokens: 0 };
+      : null;
 
     saveRequestDetail(buildRequestDetail({
+      contextTelemetry,
       provider, model, connectionId,
       latency: { ttft: streamState.ttftAt ? streamState.ttftAt - requestStartTime : 0, total: Date.now() - requestStartTime },
       tokens,
@@ -668,8 +677,8 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       decide("ACCT", "detail-write-failed", { rid, phase: "finalize" });
     });
 
-    if (hasValidUsage(tokens)) {
-      saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: "STREAM USAGE (interrupted)", silent: true });
+    if (hasValidUsage(tokens) || contextTelemetry?.budgetReservationId) {
+      saveUsageStats({ contextTelemetry, usageFinality: "partial", provider, model, tokens, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: "STREAM USAGE (interrupted)", silent: true });
     }
     if (log?.line) log.line(reqTag, "✗", `INTERRUPTED ${reason || "unknown"}`);
     reqSummary("failed", { ...saverFields, rid,

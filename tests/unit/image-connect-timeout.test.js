@@ -94,9 +94,25 @@ describe("image connect timeout propagation", () => {
     expect(response.status).toBe(200);
     expect(mocks.getSettings).toHaveBeenCalledTimes(1);
     expect(mocks.execute).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gemini-3.1-flash-image',
       connectTimeout: { providerOverride: 8000, globalTimeout: 15000 },
       signal: imageRequest.signal,
     }));
+  });
+
+  it('rejects an explicitly selected chat model without substituting an image model', async () => {
+    const response = await handleImageGeneration(request('antigravity/claude-sonnet-4-6'));
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Model 'claude-sonnet-4-6' does not support image generation");
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it('requires a model instead of silently selecting an image default', async () => {
+    const incoming = new Request('http://localhost/v1/images/generations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'paint a lighthouse' }) });
+    const response = await handleImageGeneration(incoming);
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('Missing model');
+    expect(mocks.execute).not.toHaveBeenCalled();
   });
 
   it("reuses the same settings snapshot across combo model fallback", async () => {
@@ -106,7 +122,7 @@ describe("image connect timeout propagation", () => {
       "antigravity/gemini-3.1-flash-image-b",
     ]);
     mocks.execute
-      .mockRejectedValueOnce(new ConnectTimeoutError(8000))
+      .mockResolvedValueOnce({ response: Response.json({ error: { message: 'Explicit upstream rejection' } }, { status: 503, headers: { 'x-tokenproxy-replay-safe': 'true' } }) })
       .mockResolvedValueOnce(imageSuccess("c2Vjb25k"));
 
     const pending = handleImageGeneration(request("image-combo"));
@@ -120,6 +136,14 @@ describe("image connect timeout propagation", () => {
       { providerOverride: 8000, globalTimeout: 15000 },
       { providerOverride: 8000, globalTimeout: 15000 },
     ]);
+  });
+  it('does not try the second combo member after an ambiguous image503',async()=>{
+    mocks.getComboModels.mockResolvedValue(['antigravity/gemini-3.1-flash-image-a','antigravity/gemini-3.1-flash-image-b']);
+    mocks.execute.mockResolvedValueOnce({response:Response.json({error:{message:'outcome unknown'}},{status:503})})
+      .mockResolvedValueOnce(imageSuccess());
+    const response=await handleImageGeneration(request('image-combo'));
+    expect(response.status).toBe(502);expect(response.headers.get('x-should-retry')).toBe('false');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 
   it("returns 499 for caller cancellation without disabling the account", async () => {
@@ -146,18 +170,26 @@ describe("image connect timeout propagation", () => {
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
   });
 
-  it("maps a typed timeout to 502 and enters the existing account fallback path", async () => {
+  it("maps an uncertain response-header timeout to 502 without replay or account rotation", async () => {
     mocks.execute.mockRejectedValue(new ConnectTimeoutError(8000));
 
     const response = await handleImageGeneration(request());
 
     expect(response.status).toBe(502);
-    expect(mocks.markAccountUnavailable).toHaveBeenCalledWith(
-      "connection-1",
-      502,
-      expect.stringContaining("Upstream response headers exceeded 8000ms"),
-      "antigravity",
-      "gemini-3.1-flash-image",
-    );
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+  });
+
+  it("stops an image combo after an uncertain response-header timeout", async () => {
+    mocks.getComboModels.mockResolvedValue([
+      'antigravity/gemini-3.1-flash-image-a',
+      'antigravity/gemini-3.1-flash-image-b',
+    ]);
+    mocks.execute.mockRejectedValueOnce(new ConnectTimeoutError(8000)).mockResolvedValue(imageSuccess());
+    const response = await handleImageGeneration(request('image-combo'));
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 });

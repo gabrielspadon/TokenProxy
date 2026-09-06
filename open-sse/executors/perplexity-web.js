@@ -1,4 +1,6 @@
 import { BaseExecutor } from "./base.js";
+import { rejectionHeaders } from "./rejectionHeaders.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { PROVIDERS } from "../config/providers.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
@@ -370,7 +372,7 @@ async function buildNonStreamingResponse(eventStream, model, cid, created, histo
     if (chunk.error) {
       return new Response(JSON.stringify({
         error: { message: chunk.error, type: "upstream_error", code: "PPLX_ERROR" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }), { status: 502, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } });
     }
     if (chunk.thinking) { thinkingParts.push(chunk.thinking); continue; }
     if (chunk.done) { fullAnswer = chunk.answer || fullAnswer; break; }
@@ -399,7 +401,9 @@ export class PerplexityWebExecutor extends BaseExecutor {
     super("perplexity-web", PROVIDERS["perplexity-web"]);
   }
 
-  async execute({ model, body, stream, credentials, signal, log, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, connectTimeout = null, beforeDispatch, afterDispatch }) {
     const messages = body?.messages;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       const errResp = new Response(JSON.stringify({
@@ -456,6 +460,10 @@ export class PerplexityWebExecutor extends BaseExecutor {
 
     log?.info?.("PPLX-WEB", `Query to ${model} (pref=${modelPref}, mode=${pplxMode}), len=${query.length}`);
 
+    const serialized = JSON.stringify(pplxBody);
+    signal?.throwIfAborted?.();
+    if (beforeDispatch) await beforeDispatch({ body: pplxBody, serialized, url: PPLX_SSE_ENDPOINT });
+    signal?.throwIfAborted?.();
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
       registryTimeout: this.config?.timeoutMs,
@@ -465,7 +473,7 @@ export class PerplexityWebExecutor extends BaseExecutor {
     const fetchOptions = {
       method: "POST",
       headers,
-      body: JSON.stringify(pplxBody),
+      body: serialized,
       signal: deadline.signal,
     };
 
@@ -478,11 +486,13 @@ export class PerplexityWebExecutor extends BaseExecutor {
       log?.error?.("PPLX-WEB", `Fetch failed: ${error.message || String(error)}`);
       const errResp = new Response(JSON.stringify({
         error: { message: `Perplexity connection failed: ${error.message || String(error)}`, type: "upstream_error" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }), { status: 502, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } });
       return { response: errResp, url: PPLX_SSE_ENDPOINT, headers, transformedBody: pplxBody };
     } finally {
       deadline.clear();
     }
+
+    await notifyDispatchResponse(afterDispatch, response);
 
     if (!response.ok) {
       const status = response.status;
@@ -492,14 +502,14 @@ export class PerplexityWebExecutor extends BaseExecutor {
       log?.warn?.("PPLX-WEB", errMsg);
       const errResp = new Response(JSON.stringify({
         error: { message: errMsg, type: "upstream_error", code: `HTTP_${status}` },
-      }), { status, headers: { "Content-Type": "application/json" } });
+      }), { status, headers: rejectionHeaders(response) });
       return { response: errResp, url: PPLX_SSE_ENDPOINT, headers, transformedBody: pplxBody };
     }
 
     if (!response.body) {
       const errResp = new Response(JSON.stringify({
         error: { message: "Perplexity returned empty response body", type: "upstream_error" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }), { status: 502, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } });
       return { response: errResp, url: PPLX_SSE_ENDPOINT, headers, transformedBody: pplxBody };
     }
 

@@ -1,5 +1,7 @@
 import { randomUUID } from "crypto";
 import { BaseExecutor } from "./base.js";
+import { rejectionHeaders } from "./rejectionHeaders.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
@@ -28,7 +30,7 @@ async function zmGet(url, ctoken, cookieStr, proxyOptions) {
   }, proxyOptions);
 }
 
-async function handleExecute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+async function handleExecute({ model, body, stream, credentials, signal, log, proxyOptions = null, beforeDispatch, afterDispatch }) {
   const cookieStr = buildCookieHeader(credentials?.apiKey);
   const ctoken = extractCtoken(cookieStr);
   if (!ctoken) throw new Error("ctoken not found in cookies");
@@ -76,22 +78,30 @@ async function handleExecute({ model, body, stream, credentials, signal, log, pr
 
   const pu = new URL(CHAT_URL);
   pu.searchParams.set("ctoken", ctoken);
-  const response = await proxyAwareFetch(pu.toString(), {
+  const url = pu.toString();
+  const serialized = JSON.stringify(claudeBody);
+  signal?.throwIfAborted?.();
+  if (beforeDispatch) await beforeDispatch({ body: claudeBody, serialized, url });
+  signal?.throwIfAborted?.();
+  const response = await proxyAwareFetch(url, {
     method: "POST",
     headers: mkH({
       "Content-Type": "application/json", "anthropic-version": "2023-06-01",
       "chat-request-id": reqId, "x-zenmux-accept-processing": "true, true",
       "x-zenmux-apikey-source": "subscription", Accept: "text/event-stream",
     }),
-    body: JSON.stringify(claudeBody),
+    body: serialized,
     signal,
   }, proxyOptions);
 
+  await notifyDispatchResponse(afterDispatch, response);
+
   if (!response.ok) {
+    const responseHeaders = rejectionHeaders(response);
     const eb = await response.text().catch(() => "");
-    if (response.status === 401 || response.status === 403) throw Object.assign(new Error("ZenMux: cookies expired"), { statusCode: 401 });
-    if (response.status === 402) throw Object.assign(new Error("ZenMux: quota exhausted"), { statusCode: 402 });
-    throw Object.assign(new Error(`ZenMux: HTTP ${response.status}`), { statusCode: response.status });
+    if (response.status === 401 || response.status === 403) throw Object.assign(new Error("ZenMux: cookies expired"), { statusCode: 401, responseHeaders });
+    if (response.status === 402) throw Object.assign(new Error("ZenMux: quota exhausted"), { statusCode: 402, responseHeaders });
+    throw Object.assign(new Error(`ZenMux: HTTP ${response.status}`), { statusCode: response.status, responseHeaders });
   }
 
   // Step 3: updateRound fire & forget
@@ -234,13 +244,20 @@ export class ZenmuxFreeExecutor extends BaseExecutor {
   constructor() {
     super("zenmux-free", PROVIDERS["zenmux-free"]);
   }
+  get supportsBudgetDispatch() { return true; }
+
   async execute(opts) {
+    let hookFailed = false;
+    const guard = hook => hook && (async info => {
+      try { await hook(info); } catch (error) { hookFailed = true; throw error; }
+    });
     try {
-      return await handleExecute(opts);
+      return await handleExecute({ ...opts, beforeDispatch: guard(opts.beforeDispatch), afterDispatch: guard(opts.afterDispatch) });
     } catch (err) {
+      if (hookFailed || err?.name === "AbortError") throw err;
       const status = err.statusCode || 502;
       const body = JSON.stringify({ error: { message: err.message, type: "upstream_error", code: `HTTP_${status}` } });
-      return { response: new Response(body, { status, headers: { "Content-Type": "application/json" } }), url: CHAT_URL, headers: {}, transformedBody: opts.body };
+      return { response: new Response(body, { status, headers: err.responseHeaders || { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } }), url: CHAT_URL, headers: {}, transformedBody: opts.body };
     }
   }
 }

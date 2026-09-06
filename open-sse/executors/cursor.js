@@ -1,4 +1,6 @@
 import { BaseExecutor } from "./base.js";
+import { rejectionHeaders } from "./rejectionHeaders.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { Buffer } from "node:buffer";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { FETCH_CONNECT_TIMEOUT_MS, HTTP_STATUS } from "../config/runtimeConfig.js";
@@ -391,7 +393,9 @@ export class CursorExecutor extends BaseExecutor {
     return generateCursorBody(messages, model, tools, reasoningEffort, forceAgentMode);
   }
 
-  async makeFetchRequest(url, headers, body, signal, proxyOptions = null, connectTimeout = null) {
+  async makeFetchRequest(url, headers, body, signal, proxyOptions = null, connectTimeout = null, dispatchHooks = {}) {
+    if (dispatchHooks.beforeDispatch) await dispatchHooks.beforeDispatch({ body: null, serialized: body, url, structuralEncoding: "protobuf", byteLength: body.byteLength });
+    signal?.throwIfAborted?.();
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
       registryTimeout: this.config?.timeoutMs,
@@ -412,6 +416,7 @@ export class CursorExecutor extends BaseExecutor {
       deadline.clear();
     }
 
+    await notifyDispatchResponse(dispatchHooks.afterDispatch, response);
     return {
       status: response.status,
       headers: Object.fromEntries(response.headers.entries()),
@@ -419,13 +424,16 @@ export class CursorExecutor extends BaseExecutor {
     };
   }
 
-  makeHttp2Request(url, headers, body, signal, connectTimeout = null) {
+  async makeHttp2Request(url, headers, body, signal, connectTimeout = null, dispatchHooks = {}) {
     if (!http2) {
       throw new Error("http2 module not available");
     }
     if (signal?.aborted) {
       return Promise.reject(signal.reason || new DOMException("Request aborted", "AbortError"));
     }
+
+    if (dispatchHooks.beforeDispatch) await dispatchHooks.beforeDispatch({ body: null, serialized: body, url, structuralEncoding: "protobuf", byteLength: body.byteLength });
+    signal?.throwIfAborted?.();
 
     const HTTP2_TIMEOUT_MS = 60000; // 60s max — prevent hung sessions
 
@@ -439,6 +447,7 @@ export class CursorExecutor extends BaseExecutor {
       });
       const chunks = [];
       let responseHeaders = {};
+      let headerNotification = Promise.resolve();
       let settled = false;
       let client;
       let req;
@@ -485,15 +494,27 @@ export class CursorExecutor extends BaseExecutor {
           responseHeaders = hdrs;
           deadline.clear();
           deadline.signal.removeEventListener("abort", onHeaderAbort);
+          if (dispatchHooks.afterDispatch) {
+            req.pause?.();
+            const response = {
+              status: Number(hdrs[":status"]),
+              headers: new Headers(Object.entries(hdrs).filter(([key, value]) => !key.startsWith(":") && value !== undefined)),
+              body: { cancel: () => req.destroy() },
+            };
+            headerNotification = notifyDispatchResponse(dispatchHooks.afterDispatch, response);
+            headerNotification.then(() => { if (!settled) req.resume?.(); }, finish(reject));
+          }
         });
         req.on("data", (chunk) => { chunks.push(chunk); });
-        req.on("end", finish(() => {
-          resolve({
-            status: responseHeaders[":status"],
-            headers: responseHeaders,
-            body: Buffer.concat(chunks)
-          });
-        }));
+        req.on("end", () => {
+          headerNotification.then(finish(() => {
+            resolve({
+              status: responseHeaders[":status"],
+              headers: responseHeaders,
+              body: Buffer.concat(chunks)
+            });
+          }), finish(reject));
+        });
         req.on("error", finish(reject));
 
         req.write(body);
@@ -854,7 +875,10 @@ export class CursorExecutor extends BaseExecutor {
     };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return false; }
+  get budgetDispatchUnsupportedReason() { return "AgentService can perform opaque internal generations; this executor also supports protobuf transport."; }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch, afterDispatch }) {
     if (isAgentTextRequest(body)) {
       try {
         return await this.executeAgent({ model, body, stream, credentials, signal, proxyOptions, connectTimeout });
@@ -863,7 +887,7 @@ export class CursorExecutor extends BaseExecutor {
         return {
           response: new Response(JSON.stringify({
             error: { message: error.message, type: "connection_error", code: "" },
-          }), { status: HTTP_STATUS.SERVER_ERROR, headers: { "Content-Type": "application/json" } }),
+          }), { status: HTTP_STATUS.SERVER_ERROR, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } }),
           url: `${PROVIDER_OAUTH.cursor?.agentEndpoint || ""}${AGENT_RUN_PATH}`,
           headers: {},
           transformedBody: body,
@@ -874,12 +898,17 @@ export class CursorExecutor extends BaseExecutor {
     const url = this.buildUrl();
     const headers = this.buildHeaders(credentials);
     const transformedBody = this.transformRequest(model, body, stream, credentials);
+    let hookFailed = false;
+    const guard = hook => hook && (async info => {
+      try { await hook(info); } catch (error) { hookFailed = true; throw error; }
+    });
+    const dispatchHooks = { beforeDispatch: guard(beforeDispatch), afterDispatch: guard(afterDispatch) };
 
     try {
       const shouldForceFetch = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true || !!proxyOptions?.vercelRelayUrl;
       const response = (http2 && !shouldForceFetch)
-        ? await this.makeHttp2Request(url, headers, transformedBody, signal, connectTimeout)
-        : await this.makeFetchRequest(url, headers, transformedBody, signal, proxyOptions, connectTimeout);
+        ? await this.makeHttp2Request(url, headers, transformedBody, signal, connectTimeout, dispatchHooks)
+        : await this.makeFetchRequest(url, headers, transformedBody, signal, proxyOptions, connectTimeout, dispatchHooks);
 
       if (response.status !== 200) {
         const errorText = response.body?.toString() || "Unknown error";
@@ -891,7 +920,7 @@ export class CursorExecutor extends BaseExecutor {
           }
         }), {
           status: response.status,
-          headers: { "Content-Type": "application/json" }
+          headers: rejectionHeaders({ headers: new Headers(Object.entries(response.headers || {}).filter(([key]) => !key.startsWith(":"))) })
         });
         return { response: errorResponse, url, headers, transformedBody: body };
       }
@@ -905,7 +934,7 @@ export class CursorExecutor extends BaseExecutor {
           },
         }), {
           status: HTTP_STATUS.BAD_GATEWAY,
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" },
         });
         return { response: errorResponse, url, headers, transformedBody: body };
       }
@@ -916,6 +945,7 @@ export class CursorExecutor extends BaseExecutor {
 
       return { response: transformedResponse, url, headers, transformedBody: body };
     } catch (error) {
+      if (hookFailed) throw error;
       if (error?.name === "AbortError" || isConnectTimeoutError(error)) throw error;
       const errorResponse = new Response(JSON.stringify({
         error: {
@@ -925,7 +955,7 @@ export class CursorExecutor extends BaseExecutor {
         }
       }), {
         status: HTTP_STATUS.SERVER_ERROR,
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" }
       });
       return { response: errorResponse, url, headers, transformedBody: body };
     }

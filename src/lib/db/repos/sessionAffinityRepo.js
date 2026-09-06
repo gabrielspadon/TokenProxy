@@ -60,6 +60,7 @@ export async function setPin(sessionHash, model, connectionId, opts = {}) {
      VALUES(?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(sessionHash, model) DO UPDATE SET
        connectionId = excluded.connectionId,
+       operatorExpiresAt = NULL,
        providerNode = excluded.providerNode,
        pinnedAt = excluded.pinnedAt,
        expiresAt = excluded.expiresAt,

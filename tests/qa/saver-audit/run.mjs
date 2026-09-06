@@ -129,11 +129,11 @@ async function evaluate(cfg, regime, turns, finalEst, a, cfgIndex) {
     const res = await runPipeline(t.body, cfg.order, ctx);
     errors += ctx.errors.length;
     if (prevCache !== null) {
-      const f = commonPrefix(prevCache, res.cacheString) / prevCache.length;
+      const f = commonPrefix(prevCache, res.cacheString) / Buffer.byteLength(prevCache, "utf8");
       stab.push(f);
       if (prevOver) stabTight.push(f);
       // Bytes of the previous prefix the provider would have to re-cache.
-      cacheWriteBytes += Math.round((1 - f) * prevCache.length);
+      cacheWriteBytes += Math.round((1 - f) * Buffer.byteLength(prevCache, "utf8"));
     }
     prevCache = res.cacheString;
     prevOver = measureContextPressure(t.body, { contextWindow, settings }).over;
@@ -222,7 +222,13 @@ function summarize(rows, a) {
   // Single-stage report: each stage alone in each regime.
   const single = rows.filter((r) => !r.subset.includes(",")).map((r) => ({ stage: r.subset, regime: r.regime, cacheWriteKB: r.cacheWriteKB, stabMean: r.stabMean, stabMin: r.stabMin, stabTight: r.stabTight, savMean: r.savMean, savFinal: r.savFinal, viol: r.viol, idem: r.idem, msMean: r.msMean }));
   const all = rows.filter((r) => r.subset.split(",").length === a.stages.length && r.order === a.stages.join(">"));
-  return { totalConfigs: rows.length, subsetsScored: total, canonicalBest, canonicalTied, canonicalOptimal: canonicalBest + canonicalTied, globalOrderByPrecedence: globalOrder, precedence, single, allStagesCanonical: all, perSubset };
+  return {
+    coverage: { stages: a.stages, nonemptySubsets: 2 ** a.stages.length - 1,
+      orders: a.quick ? "canonical only" : `exhaustive through size ${a.maxPerm}; canonical plus at most ${a.randomPerms} seeded samples above`,
+      headroom: "real wrapper; deterministic JSON-compaction stub, no remote model", reorder: "deterministic bag-of-words stub",
+      cacheMetric: "UTF-8 common prefix of JSON serialization; not provider token cache hits or billed cache writes",
+      note: "Legacy twelve-stage grouping; inject combines Caveman/Ponytail; pxpipe absent. See independent 14-toggle matrix for full toggle coverage." },
+    totalConfigs: rows.length, subsetsScored: total, canonicalBest, canonicalTied, canonicalOptimal: canonicalBest + canonicalTied, globalOrderByPrecedence: globalOrder, precedence, single, allStagesCanonical: all, perSubset };
 }
 
 async function main() {

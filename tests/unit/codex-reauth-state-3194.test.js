@@ -68,7 +68,7 @@ describe("Codex permanently invalid OAuth state (#3194)", () => {
         "gpt-5.6-sol",
       );
 
-      expect(result).toEqual({ shouldFallback: true, cooldownMs: 0 });
+      expect(result).toEqual({ shouldFallback: true, cooldownMs: 0, failureClass: 'credential', retrySameAccount: false, mustWait: false });
       expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
         "codex-a",
         expect.objectContaining({

@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { readRoutingConfig, recordConfigMutation } from "../helpers/configHistory.js";
 
 function parseComboModels(value) {
   const models = parseJson(value, []);
@@ -48,10 +49,14 @@ export async function createCombo(data) {
     createdAt: now,
     updatedAt: now,
   };
-  db.run(
+  db.transaction(() => {
+    const before = readRoutingConfig(db);
+    db.run(
     `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
     [combo.id, combo.name, combo.kind, stringifyJson(combo.models), combo.createdAt, combo.updatedAt]
   );
+    recordConfigMutation(db, before, "repo.combos.create");
+  });
   return combo;
 }
 
@@ -61,11 +66,13 @@ export async function updateCombo(id, data) {
   db.transaction(() => {
     const row = db.get(`SELECT * FROM combos WHERE id = ?`, [id]);
     if (!row) return;
+    const before = readRoutingConfig(db);
     const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
     db.run(
       `UPDATE combos SET name = ?, kind = ?, models = ?, updatedAt = ? WHERE id = ?`,
       [merged.name, merged.kind, stringifyJson(merged.models || []), merged.updatedAt, id]
     );
+    recordConfigMutation(db, before, "repo.combos.update");
     result = merged;
   });
   return result;
@@ -73,6 +80,10 @@ export async function updateCombo(id, data) {
 
 export async function deleteCombo(id) {
   const db = await getAdapter();
-  const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
-  return (res?.changes ?? 0) > 0;
+  return db.transaction(() => {
+    const before = readRoutingConfig(db);
+    const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
+    recordConfigMutation(db, before, "repo.combos.delete");
+    return (res?.changes ?? 0) > 0;
+  });
 }

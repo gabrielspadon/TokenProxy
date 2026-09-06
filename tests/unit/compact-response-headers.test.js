@@ -57,7 +57,7 @@ describe("live combo response headers", () => {
       throw new Error("upstream unavailable");
     }));
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(502);
     expect(response.headers.get("x-tokenproxy-combo")).toBe("true");
     expect(response.headers.get("x-tokenproxy-model")).toBeNull();
   });

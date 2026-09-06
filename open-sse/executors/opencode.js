@@ -83,6 +83,7 @@ function resolveOpencodeSession(body, credentials) {
 }
 
 export class OpenCodeExecutor extends BaseExecutor {
+  get supportsBudgetDispatch() { return true; }
   constructor() {
     super("opencode", PROVIDERS.opencode);
   }

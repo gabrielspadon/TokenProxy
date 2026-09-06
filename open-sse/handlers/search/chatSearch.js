@@ -5,6 +5,8 @@
  */
 import { PROVIDER_MEDIA } from "../../providers/index.js";
 import { ANTIGRAVITY_IDE_USER_AGENT } from "../../providers/shared.js";
+import { isReplaySafeRejection } from "../../utils/replaySafety.js";
+import { parseUpstreamError } from "../../utils/error.js";
 
 // Default search model + endpoint derive from registry searchViaChat (single source)
 const searchModel = (id) => PROVIDER_MEDIA[id]?.searchViaChat?.defaultModel;
@@ -538,6 +540,11 @@ export async function handleChatSearch({
   clearTimeout(timer);
   const upstreamLatency = Date.now() - upstreamStart;
 
+  if (!resp.ok) {
+    const parsed = await parseUpstreamError(resp);
+    return { success: false, status: resp.status, error: parsed.message, resetsAtMs: parsed.resetsAtMs,
+      failureMetadata: { safeToReplay: isReplaySafeRejection(resp) } };
+  }
   let data;
   try {
     data = await resp.json();
@@ -549,19 +556,6 @@ export async function handleChatSearch({
     };
   }
 
-  if (!resp.ok) {
-    const errMsg =
-      data?.error?.message ||
-      data?.error ||
-      data?.message ||
-      `Upstream HTTP ${resp.status}`;
-    log?.warn?.(`[chatSearch] upstream error provider=${provider} status=${resp.status}`);
-    return {
-      success: false,
-      status: resp.status,
-      error: typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)
-    };
-  }
 
   const { text, citations, tokens } = cfg.extractAnswer(data);
   const retrievedAt = new Date().toISOString();

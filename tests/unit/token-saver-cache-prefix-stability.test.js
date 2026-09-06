@@ -23,7 +23,9 @@
 // deferred-tool exclusion.
 import { describe, it, expect } from 'vitest';
 import { distillToolSchemas } from '../../open-sse/utils/schemaDistiller.js';
-import { compressMessages } from '../../open-sse/rtk/index.js';
+import { compressMessages as compressWithPolicy } from '../../open-sse/rtk/index.js';
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { injectCaveman } from '../../open-sse/rtk/caveman.js';
 import { CAVEMAN_PROMPTS, CAVEMAN_LEVELS } from '../../open-sse/rtk/cavemanPrompts.js';
 import { injectPonytail } from '../../open-sse/rtk/ponytail.js';

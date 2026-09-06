@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 let TMP;
+const originalDataDir = process.env.DATA_DIR;
 
 beforeEach(() => {
   TMP = fs.mkdtempSync(path.join(os.tmpdir(), "tokenproxy-tsapi-"));
@@ -17,7 +18,8 @@ afterEach(async () => {
   const eventsMod = await import("@/lib/tokenSaver/events.js");
   eventsMod.__setTokenSaverEventsDirForTest(null);
   fs.rmSync(TMP, { recursive: true, force: true });
-  delete process.env.DATA_DIR;
+  if (originalDataDir === undefined) delete process.env.DATA_DIR;
+  else process.env.DATA_DIR = originalDataDir;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   // Fresh module graph for the next test regardless of what this one imported.
@@ -105,7 +107,6 @@ describe("GET /api/token-saver/stats", () => {
       expect(spy).toHaveBeenCalled();
     } finally {
       spy.mockRestore();
-      delete process.env.DATA_DIR;
       vi.resetModules();
     }
   });

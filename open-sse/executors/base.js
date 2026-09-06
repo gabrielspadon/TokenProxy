@@ -1,3 +1,7 @@
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { setTimeout as retryDelay } from "node:timers/promises";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { inspectErrorBody } from "../utils/inspectErrorBody.js";
 import {
   HTTP_STATUS,
   RETRY_CONFIG,
@@ -18,6 +22,7 @@ import {
   ANTHROPIC_COMPAT_BASE,
 } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { extractRetryAfterDeadline } from "../utils/error.js";
 
 // Format byte count to human-readable string for debug logs
 function fmtBytes(n) {
@@ -54,6 +59,7 @@ function parseDurationToMs(durationStr) {
 }
 
 export class BaseExecutor {
+  get supportsBudgetDispatch() { return this.execute === BaseExecutor.prototype.execute; }
   constructor(provider, config) {
     this.provider = provider;
     this.config = config;
@@ -241,6 +247,8 @@ export class BaseExecutor {
     log,
     proxyOptions = null, sourceFormat, targetFormat,
     connectTimeout = null,
+    beforeDispatch,
+    afterDispatch,
   }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
@@ -254,12 +262,13 @@ export class BaseExecutor {
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
 
-    // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
+    // Plan a retry. The discarded response is cancelled before waiting.
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
+      if (!isReplaySafeRejection(response)) return null;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts)
-        return false;
+        return null;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.
       let waitMs = delayMs;
       if (response && this.computeRetryDelay) {
@@ -267,20 +276,34 @@ export class BaseExecutor {
           response,
           retryAttemptsByUrl[urlIndex] + 1,
           delayMs,
+          { signal },
         );
-        if (dynamic === false) return false; // hook vetoes retry (e.g. Retry-After too long)
+        if (dynamic === false) return null; // hook vetoes retry (e.g. Retry-After too long)
         if (dynamic != null) waitMs = dynamic;
       }
+      if (!Number.isFinite(waitMs) || waitMs < 0) return null;
       retryAttemptsByUrl[urlIndex]++;
       log?.debug?.(
         "RETRY",
         `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts} after ${waitMs / 1000}s`,
       );
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      return true;
+      return waitMs;
+    };
+
+    const cancelBody = response => {
+      try { Promise.resolve(response?.body?.cancel?.()).catch(() => {}); } catch {}
+    };
+    const discardResponse = async response => {
+      try {
+        if (typeof response.clone === 'function') {
+          const inspected = await inspectErrorBody(response, { signal });
+          if (inspected.complete && inspected.text?.trim()) lastRetriedErrorText = inspected.text;
+        }
+      } finally { cancelBody(response); }
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
+      if (signal?.aborted) throw signal.reason ?? new DOMException('Request aborted', 'AbortError');
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const transformedBody = this.transformRequest(
         model,
@@ -308,6 +331,7 @@ export class BaseExecutor {
           "FETCH",
           `${this.provider.toUpperCase()} → ${url} | model=${model} | body=${fmtBytes(bodyStr.length)} | connectTimeout=${deadline.timeoutMs}ms`,
         );
+        if (beforeDispatch) await beforeDispatch({ body: transformedBody, serialized: bodyStr, url });
         const response = await proxyAwareFetch(
           url,
           {
@@ -318,7 +342,9 @@ export class BaseExecutor {
           },
           proxyOptions,
         );
+        await notifyDispatchResponse(afterDispatch, response);
         deadline.clear();
+        if (signal?.aborted) { cancelBody(response); signal.throwIfAborted(); }
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";
         dbg(
@@ -326,50 +352,43 @@ export class BaseExecutor {
           `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`,
         );
 
-        if (
-          await tryRetry(
+        // A provider deadline belongs to the coordinator's pinned-account wait.
+        // Returning it intact prevents both fixed-delay retries and URL fallback
+        // from issuing another generation before Retry-After expires.
+        if ((response.status === 429 || response.status === 503) && extractRetryAfterDeadline(response)) {
+          return { response, url, headers, transformedBody };
+        }
+
+        const waitMs = await tryRetry(
             urlIndex,
             response.status,
             `status ${response.status}`,
             response,
-          )
-        ) {
-          // This response is about to be replaced by the next attempt and
-          // never reaches the caller — read its body now, while it's still
-          // the only copy, in case the eventual final attempt has nothing.
-          // clone() is guarded because unit tests script minimal response
-          // doubles ({status, headers}) that don't implement it.
-          if (typeof response.clone === "function") {
-            try {
-              const text = await response.clone().text();
-              if (text && text.trim()) lastRetriedErrorText = text;
-            } catch {
-              // best-effort capture only, never blocks the actual retry
-            }
-          }
+          );
+        if (waitMs !== null) {
+          await discardResponse(response);
+          await retryDelay(waitMs, undefined, { signal });
           urlIndex--;
           continue;
         }
 
-        if (this.shouldRetry(response.status, urlIndex)) {
+        if (isReplaySafeRejection(response) && this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.(
             "RETRY",
             `${response.status} on ${url}, trying fallback ${urlIndex + 1}`,
           );
           lastStatus = response.status;
+          await discardResponse(response);
           continue;
         }
 
         if (lastRetriedErrorText && response.status >= 500 && typeof response.clone === "function") {
-          let finalText = "";
-          try {
-            finalText = await response.clone().text();
-          } catch {
-            finalText = "";
-          }
-          if (!finalText || !finalText.trim()) {
+          const inspected = await inspectErrorBody(response, { signal });
+          if (inspected.complete && !inspected.text?.trim()) {
             const preservedHeaders = new Headers(response.headers);
             preservedHeaders.delete("content-length");
+            preservedHeaders.set("x-tokenproxy-error-body-source", "previous-rejected-attempt");
+            cancelBody(response);
             return {
               response: new Response(lastRetriedErrorText, {
                 status: response.status,
@@ -394,25 +413,9 @@ export class BaseExecutor {
         if (isConnectTimeoutError(error)) throw error;
         if (error.name === "AbortError") throw error;
 
-        // Map network/fetch exceptions to 502 retry config
-        if (
-          await tryRetry(
-            urlIndex,
-            HTTP_STATUS.BAD_GATEWAY,
-            `network "${error.message}"`,
-          )
-        ) {
-          urlIndex--;
-          continue;
-        }
-
-        if (urlIndex + 1 < fallbackCount) {
-          log?.debug?.(
-            "RETRY",
-            `Error on ${url}, trying fallback ${urlIndex + 1}`,
-          );
-          continue;
-        }
+        // A failed POST transport does not prove rejection. The provider may
+        // have accepted and billed generation before the connection vanished.
+        // Only an explicit HTTP rejection above authorizes another attempt.
         throw error;
       }
     }

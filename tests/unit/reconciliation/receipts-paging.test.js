@@ -13,18 +13,11 @@
 // could not distinguish "your filter matched the default page" from "your
 // parameter was thrown away". The ABI types these parameters (limit: number,
 // since: date-time), so a malformed one is a 400.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-const rows = vi.hoisted(() => ({ current: [] }));
-
-vi.mock("@/lib/db/repos/accountSwitchRepo.js", () => ({
-  listSwitches: vi.fn(async ({ connectionId } = {}) =>
-    rows.current.filter((r) =>
-      connectionId ? r.fromConnectionId === connectionId || r.toConnectionId === connectionId : true
-    )
-  ),
-}));
-
+import Database from 'better-sqlite3';
+const state=vi.hoisted(()=>({db:null}));
+vi.mock("@/lib/db/driver.js",()=>({getAdapter:async()=>({all:(sql,args=[])=>state.db.prepare(sql).all(...args),get:(sql,args=[])=>state.db.prepare(sql).get(...args)})}));
 const { queryReceipts, pageLimit, ReceiptQueryError } = await import("@/lib/admin/receipts.js");
 
 // Three timestamps, six rows: two clean and four spread across two ties. Paging
@@ -51,8 +44,13 @@ async function walk(limit, extra = {}) {
 }
 
 beforeEach(() => {
-  rows.current = fixture();
+  state.db=new Database(':memory:');
+  state.db.exec('CREATE TABLE accountSwitches(id TEXT PRIMARY KEY,model TEXT,fromConnectionId TEXT,toConnectionId TEXT,trigger TEXT,reason TEXT,windows TEXT,switchedAt TEXT); CREATE TABLE providerConnections(id TEXT PRIMARY KEY,provider TEXT)');
+  state.db.prepare('INSERT INTO providerConnections VALUES(?,?)').run('c1','claude');
+  for(const row of fixture())state.db.prepare('INSERT INTO accountSwitches(id,switchedAt,model,toConnectionId,trigger) VALUES(?,?,?,?,?)').run(row.id,row.switchedAt,row.model,row.toConnectionId,row.trigger);
 });
+
+afterEach(()=>state.db.close());
 
 describe("G-RECEIPTS F3 - a paginated audit log returns every row exactly once", () => {
   it("loses no row to a tied timestamp when paging one at a time", async () => {
@@ -71,7 +69,8 @@ describe("G-RECEIPTS F3 - a paginated audit log returns every row exactly once",
 
   it("keeps a tie stable rather than leaving it to arbitrary repo order", async () => {
     const first = (await queryReceipts({ limit: 200 })).receipts.map((r) => r.receiptId ?? r.id);
-    rows.current = [...fixture()].reverse();
+    state.db.prepare('DELETE FROM accountSwitches').run();
+    for(const row of [...fixture()].reverse())state.db.prepare('INSERT INTO accountSwitches(id,switchedAt,model,toConnectionId,trigger) VALUES(?,?,?,?,?)').run(row.id,row.switchedAt,row.model,row.toConnectionId,row.trigger);
     const second = (await queryReceipts({ limit: 200 })).receipts.map((r) => r.receiptId ?? r.id);
     // Same rows in a different repo order must produce the same total order, or
     // the cursor means something different on each request.
@@ -123,4 +122,24 @@ describe("G-RECEIPTS F4 - a typed parameter is validated, never silently dropped
     // Total order is (switchedAt DESC, id DESC), so the 10:40:27.377 tie is b then a.
     expect(page.receipts.map((r) => r.receiptId ?? r.id)).toEqual(["b", "a", "c"]);
   });
+});
+
+describe('Shared routing scope across the complete retained population',()=>{
+  it('filters before pagination and reaches records beyond the old thousand-row scan',async()=>{
+    state.db.prepare('INSERT INTO providerConnections VALUES(?,?)').run('c2','codex');
+    const insert=state.db.prepare('INSERT INTO accountSwitches(id,switchedAt,model,toConnectionId,trigger) VALUES(?,?,?,?,?)');
+    state.db.transaction(()=>{for(let i=0;i<1200;i++)insert.run(`new-${String(i).padStart(4,'0')}`,'2026-09-04T00:00:00.000Z','other','c2','reset');})();
+    const result=await queryReceipts({provider:'claude',model:'m',since:'2026-09-03T10:00:00.000Z',until:'2026-09-03T10:40:27.377Z',limit:2});
+    expect(result.receipts.map(row=>row.receiptId)).toEqual(['c','e']);expect(result.nextCursor).toBeTruthy();
+    const next=await queryReceipts({provider:'claude',model:'m',since:'2026-09-03T10:00:00.000Z',until:'2026-09-03T10:40:27.377Z',limit:2,cursor:result.nextCursor});
+    expect(next.receipts.map(row=>row.receiptId)).toEqual(['d','f']);expect(next.nextCursor).toBeNull();
+    const {findReceipt}=await import('@/lib/admin/receipts.js');expect((await findReceipt('f')).receiptId).toBe('f');
+  });
+  it('preserves all predicates as conjunctions including either account side',async()=>{
+    state.db.prepare('UPDATE accountSwitches SET fromConnectionId=? WHERE id=?').run('source','a');
+    expect((await queryReceipts({provider:'claude',connectionId:'source',model:'m'})).receipts.map(row=>row.receiptId)).toEqual(['a']);
+    expect((await queryReceipts({provider:"claude' OR 1=1--"})).receipts).toEqual([]);
+    expect((await queryReceipts({provider:'codex',model:'m'})).receipts).toEqual([]);
+  });
+  it.each([{until:'bad'},{provider:['claude']},{since:'2026-02-31T00:00:00Z'},{since:'2026-09-04T00:00:00Z',until:'2026-09-03T00:00:00Z'}])('rejects malformed scope before state reads %#',async(query)=>{await expect(queryReceipts(query)).rejects.toThrow(ReceiptQueryError);});
 });

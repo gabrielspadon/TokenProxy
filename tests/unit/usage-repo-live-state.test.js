@@ -141,7 +141,7 @@ describe('saveRequestUsage endpoint backfill', () => {
   it('a second save carrying the endpoint completes the endpoint-less row instead of inserting', async () => {
     const ts = iso(2);
     const entry = {
-      timestamp: ts,
+      timestamp: ts, requestId: 'same-physical-attempt',
       provider: 'prov-bf',
       model: 'm-bf',
       connectionId: 'conn-bf',

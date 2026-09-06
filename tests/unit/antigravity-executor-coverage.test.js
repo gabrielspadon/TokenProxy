@@ -217,11 +217,7 @@ describe('parseRetryHeaders', () => {
 });
 
 describe('computeRetryDelay', () => {
-  const resp = (status, headers = {}, bodyText = '') => ({
-    status,
-    headers: new Headers(headers),
-    clone: () => ({ text: async () => bodyText }),
-  });
+  const resp = (status, headers = {}, bodyText = '') => new Response(bodyText, { status, headers });
 
   it('uses body reset time when headers carry none, vetoing beyond the cap', async () => {
     const short = await ex.computeRetryDelay(

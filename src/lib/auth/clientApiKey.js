@@ -35,5 +35,16 @@ export async function resolveClientApiKey(request, validate) {
   for (const apiKey of candidates) {
     if (await validate(apiKey)) return { apiKey, valid: true };
   }
+  // A recognized key that exhausted its budget is still the presented
+  // principal. Local-mode handlers must not turn it into anonymous traffic.
+  if (candidates.length) {
+    const { getExceededLimit } = await import("../db/repos/apiKeysRepo.js");
+    for (const apiKey of candidates) {
+      const dimension = await getExceededLimit(apiKey);
+      if (dimension) return { apiKey, valid: false, refusal: Response.json({
+        error: { code: "api_key_budget_exceeded", type: "budget_error", message: `API key ${dimension} budget is exhausted.` },
+      }, { status: 402, headers: { "x-should-retry": "false", "x-tokenproxy-replay-safe": "false" } }) };
+    }
+  }
   return { apiKey: candidates[0] || null, valid: false };
 }

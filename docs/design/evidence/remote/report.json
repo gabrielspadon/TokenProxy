@@ -1,0 +1,583 @@
+{
+ "slice": "remote",
+ "base": "http://127.0.0.1:20148",
+ "at": "2026-09-06T12:57:17.015Z",
+ "checks": [
+  {
+   "name": "login",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.en.390 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.en.390 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.en.390 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "en.390 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "en.390 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.en.768 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.en.768 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.en.768 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "en.768 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "en.768 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.en.1440 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.en.1440 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.en.1440 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "en.1440 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "en.1440 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.de.390 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.de.390 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.de.390 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "de.390 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "de.390 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.de.768 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.de.768 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.de.768 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "de.768 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "de.768 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.de.1440 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.de.1440 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.de.1440 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "de.1440 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "de.1440 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.vi.390 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.vi.390 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.vi.390 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "vi.390 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "vi.390 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.vi.768 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.vi.768 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.vi.768 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "vi.768 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "vi.768 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.vi.1440 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.vi.1440 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.vi.1440 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "vi.1440 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "vi.1440 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.390 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.390 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.390 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "zh-CN.390 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "zh-CN.390 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.768 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.768 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.768 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "zh-CN.768 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "zh-CN.768 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.1440 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.1440 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.zh-CN.1440 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "zh-CN.1440 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "zh-CN.1440 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.fa.390 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.fa.390 rtl",
+   "ok": true,
+   "detail": "dir=rtl"
+  },
+  {
+   "name": "_dashboard_remote.fa.390 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.fa.390 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "fa.390 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "fa.390 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.fa.768 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.fa.768 rtl",
+   "ok": true,
+   "detail": "dir=rtl"
+  },
+  {
+   "name": "_dashboard_remote.fa.768 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.fa.768 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "fa.768 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "fa.768 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "_dashboard_remote.fa.1440 loads",
+   "ok": true,
+   "detail": "status=200"
+  },
+  {
+   "name": "_dashboard_remote.fa.1440 rtl",
+   "ok": true,
+   "detail": "dir=rtl"
+  },
+  {
+   "name": "_dashboard_remote.fa.1440 no-h-overflow",
+   "ok": true,
+   "detail": "overflow=0px"
+  },
+  {
+   "name": "_dashboard_remote.fa.1440 axe",
+   "ok": true,
+   "detail": "0 serious/critical"
+  },
+  {
+   "name": "fa.1440 console",
+   "ok": true,
+   "detail": "clean"
+  },
+  {
+   "name": "fa.1440 third-party",
+   "ok": true,
+   "detail": "none"
+  },
+  {
+   "name": "strings catalogue",
+   "ok": true,
+   "detail": "docs/design/strings.json has 1239 strings"
+  },
+  {
+   "name": "literals ar.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals bn.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals cs.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals da.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals de.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals el.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals es.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals fa.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals fi.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals fr.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals he.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals hi.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals hu.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals id.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals it.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals ja.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals km.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals ko.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals nl.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals no.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals pl.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals pt-BR.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals pt-PT.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals ro.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals ru.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals sv.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals th.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals tl.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals tr.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals uk.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals ur.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals vi.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals zh-CN.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals zh-TW.json",
+   "ok": true,
+   "detail": "1239 covered"
+  },
+  {
+   "name": "literals file-count",
+   "ok": true,
+   "detail": "34 files"
+  }
+ ],
+ "failures": 0
+}

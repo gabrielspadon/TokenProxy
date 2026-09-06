@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 
 // RTK's contract is that it skips failed tool results, because a failed result
 // is a trace and compressing it destroys the evidence. The error marker is

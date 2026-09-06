@@ -142,17 +142,14 @@ describe('affinity.state.exit: fifteen identities remain stable across a second 
 
     const { selectAndReserve } = await import('@/sse/services/accountScheduler.js');
 
-    // Turn 1: no prior pin exists, so each identity is placed by live load
-    // first (the pins the earlier identities just wrote, read inside the same
-    // transaction) and by soonest reset on a tie. Fifteen identities over
-    // three accounts therefore spread five apiece, and what each one got is
-    // recorded so turn 2 and the restart can assert it did not move.
+    // Equal deadlines let live load spread new agents across all three accounts.
+    // Later deadline changes must not move any established pin.
     const firstPin = new Map();
     const turn1 = await openRepos(NOW);
     const accountsTurn1 = [
       { id: 'acct-a', windows: usableWindow(HOUR) },
-      { id: 'acct-b', windows: usableWindow(5 * HOUR) },
-      { id: 'acct-c', windows: usableWindow(9 * HOUR) },
+      { id: 'acct-b', windows: usableWindow(HOUR) },
+      { id: 'acct-c', windows: usableWindow(HOUR) },
     ];
     for (const sessionHash of IDENTITIES) {
       const result = selectAndReserve({

@@ -20,8 +20,11 @@ export async function GET(request, { params }) {
   if (denied) return denied;
 
   const { connectionId } = await params;
-  const conn = await getProviderConnectionById(connectionId);
-  if (!conn) return adminError(404, "not_found", `No connection with id ${connectionId}.`);
-
-  return adminJson(toQuotaSnapshot(conn, await getWindows(connectionId)));
+  try {
+    const conn = await getProviderConnectionById(connectionId);
+    if (!conn) return adminError(404, "not_found", `No connection with id ${connectionId}.`);
+    return adminJson(toQuotaSnapshot(conn, await getWindows(connectionId)));
+  } catch {
+    return adminError(500, "state_unavailable", "Quota state could not be read.");
+  }
 }

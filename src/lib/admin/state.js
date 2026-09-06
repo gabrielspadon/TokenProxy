@@ -91,7 +91,7 @@ export function toDrainState(connectionId, doc) {
 /* --------------------------------------------------- qualification */
 
 /**
- * The last generation probe's result, per connection.
+ * The last provider-specific credential check's result, per connection.
  *
  * A SEPARATE SCOPE, NOT THE CONNECTION ROW. updateProviderConnection merges
  * into the encrypted `data` blob that also holds accessToken and apiKey, so
@@ -101,6 +101,10 @@ export function toDrainState(connectionId, doc) {
  */
 export async function readQualification(connectionId) {
   return await qualificationKv.get(connectionId, null);
+}
+
+export async function readAllQualifications() {
+  return await qualificationKv.getAll();
 }
 
 export async function writeQualification(connectionId, doc) {

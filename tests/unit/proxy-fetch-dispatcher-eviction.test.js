@@ -82,13 +82,14 @@ async function loadHarness() {
   globalThis.fetch = fetchSpy;
   dispatcherSeam.reset();
   vi.resetModules();
-  const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+  const { proxyAwareFetch, closeTransportDispatchers } = await import("../../open-sse/utils/proxyFetch.js");
 
-  restoreHarness = () => {
+  restoreHarness = async () => {
+    await closeTransportDispatchers?.();
     globalThis.fetch = priorFetch;
   };
 
-  return { fetchSpy, proxyAwareFetch };
+  return { fetchSpy, proxyAwareFetch, closeTransportDispatchers };
 }
 
 async function fetchThrough(proxyAwareFetch, proxyUrl) {
@@ -123,14 +124,65 @@ beforeEach(() => {
   delete process.env.PROXY_HEADERS_TIMEOUT_MS;
 });
 
-afterEach(() => {
-  restoreHarness?.();
+afterEach(async () => {
+  await restoreHarness?.();
   restoreHarness = null;
   restoreEnv("PROXY_CONNECT_TIMEOUT_MS", originalProxyTimeoutEnv.connect);
   restoreEnv("PROXY_HEADERS_TIMEOUT_MS", originalProxyTimeoutEnv.headers);
 });
 
 describe("proxy dispatcher cache eviction", () => {
+  it("coalesces concurrent cold construction for one effective proxy", async () => {
+    const { proxyAwareFetch, fetchSpy } = await loadHarness();
+    await Promise.all(Array.from({ length: 32 }, () => fetchThrough(proxyAwareFetch, "http://cold.example:8080")));
+    expect(new Set(fetchSpy.mock.calls.map(call => call[1].dispatcher)).size).toBe(1);
+  });
+
+  it("cancels one waiting caller without dispatching it or canceling another reservation", async () => {
+    const { proxyAwareFetch, fetchSpy } = await loadHarness();
+    const abort = new AbortController();
+    const stopped = proxyAwareFetch("https://upstream.example/sample", { signal: abort.signal }, { enabled: true, url: "http://shared.example:8080", strictProxy: true });
+    const continued = fetchThrough(proxyAwareFetch, "http://shared.example:8080");
+    abort.abort(new DOMException("client stopped", "AbortError"));
+    await expect(stopped).rejects.toMatchObject({ name: "AbortError" });
+    await expect(continued).resolves.toMatchObject({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("revokes local-refusal proof if an earlier GET fallback already invoked transport", async () => {
+    const { proxyAwareFetch, fetchSpy, closeTransportDispatchers } = await loadHarness();
+    const { isLocalTransportPoolRefusal } = await import("open-sse/utils/dispatcherCache.js");
+    fetchSpy.mockImplementationOnce(async () => { await closeTransportDispatchers(); throw new Error("synthetic transport failure"); });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await proxyAwareFetch("https://upstream.example/sample", {}, { enabled: true, url: "http://proof.example:8080", strictProxy: false }).catch(error => error);
+      expect(result.code).toBe("transport_pools_closed");
+      expect(isLocalTransportPoolRefusal(result)).toBe(false);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(dispatcherSeam.state.directInstances).toHaveLength(0);
+    } finally { warn.mockRestore(); }
+  });
+
+  it("bounds concurrent distinct construction before dispatch", async () => {
+    const { proxyAwareFetch, fetchSpy } = await loadHarness();
+    const results = await Promise.allSettled(Array.from({ length: 40 }, (_, index) => fetchThrough(proxyAwareFetch, `http://cold-${index}.example:8080`)));
+    expect(results.filter(item => item.status === "rejected").map(item => item.reason.code ?? item.reason.message)).toEqual(Array(20).fill("transport_pool_capacity"));
+    expect(new Set(fetchSpy.mock.calls.map(call => call[1].dispatcher)).size).toBe(MEMORY_CONFIG.proxyDispatchersMaxSize);
+    expect(fetchSpy).toHaveBeenCalledTimes(MEMORY_CONFIG.proxyDispatchersMaxSize);
+    for (const result of results.filter(item => item.status === "rejected")) {
+      expect(result.reason.code).toBe("transport_pool_capacity");
+    }
+  });
+
+  it("coalesces equivalent URL spelling but keeps proxy credentials distinct", async () => {
+    const { proxyAwareFetch } = await loadHarness();
+    await fetchThrough(proxyAwareFetch, "http://USER:password@PROXY.example:80");
+    await fetchThrough(proxyAwareFetch, "http://USER:password@proxy.example/");
+    expect(dispatcherSeam.state.instances).toHaveLength(1);
+    await fetchThrough(proxyAwareFetch, "http://USER:other@proxy.example/");
+    expect(dispatcherSeam.state.instances).toHaveLength(2);
+  });
+
   it("uses one Happy Eyeballs Agent for intentional direct requests", async () => {
     const { fetchSpy, proxyAwareFetch } = await loadHarness();
 
@@ -210,7 +262,7 @@ describe("proxy dispatcher cache eviction", () => {
     },
   );
 
-  it("keeps timeout values from dispatcher creation after environment changes", async () => {
+  it("uses a separate dispatcher when effective timeout configuration changes", async () => {
     process.env.PROXY_CONNECT_TIMEOUT_MS = "120000";
     process.env.PROXY_HEADERS_TIMEOUT_MS = "600000";
     const { proxyAwareFetch } = await loadHarness();
@@ -221,10 +273,15 @@ describe("proxy dispatcher cache eviction", () => {
     process.env.PROXY_HEADERS_TIMEOUT_MS = "900000";
     await fetchThrough(proxyAwareFetch, proxyUrl);
 
-    expect(dispatcherSeam.state.instances).toHaveLength(1);
+    expect(dispatcherSeam.state.instances).toHaveLength(2);
     expect(dispatcherSeam.state.instances[0].options).toMatchObject({
       connectTimeout: 120_000,
       headersTimeout: 600_000,
+      bodyTimeout: 0,
+    });
+    expect(dispatcherSeam.state.instances[1].options).toMatchObject({
+      connectTimeout: 240_000,
+      headersTimeout: 900_000,
       bodyTimeout: 0,
     });
   });
@@ -270,7 +327,7 @@ describe("proxy dispatcher cache eviction", () => {
     expect(dispatcherSeam.state.instances.at(-1).destroy).not.toHaveBeenCalled();
   });
 
-  it("contains a synchronous close failure and still installs the replacement", async () => {
+  it("reclaims an idle dispatcher after a synchronous close failure before replacing it", async () => {
     const { proxyAwareFetch } = await loadHarness();
     const failure = new Error("synthetic synchronous close failure");
     dispatcherSeam.state.closeFailureByUri.set(
@@ -286,7 +343,7 @@ describe("proxy dispatcher cache eviction", () => {
     ).resolves.toMatchObject({ ok: true });
 
     expect(evicted.close).toHaveBeenCalledTimes(1);
-    expect(evicted.destroy).not.toHaveBeenCalled();
+    expect(evicted.destroy).toHaveBeenCalledTimes(1);
     expect(dispatcherSeam.state.instances).toHaveLength(MEMORY_CONFIG.proxyDispatchersMaxSize + 1);
   });
 
@@ -309,7 +366,7 @@ describe("proxy dispatcher cache eviction", () => {
       await new Promise((resolve) => setImmediate(resolve));
 
       expect(evicted.close).toHaveBeenCalledTimes(1);
-      expect(evicted.destroy).not.toHaveBeenCalled();
+      expect(evicted.destroy).toHaveBeenCalledTimes(1);
       expect(unhandled).toEqual([]);
     } finally {
       process.removeListener("unhandledRejection", onUnhandled);

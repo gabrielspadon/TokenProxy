@@ -1,6 +1,6 @@
 // Claude helper functions for translator
 import { DEFAULT_THINKING_CLAUDE_SIGNATURE } from "../../config/defaultThinkingSignature.js";
-import { ROLE, CLAUDE_BLOCK } from "../schema/index.js";
+import { ROLE, CLAUDE_BLOCK, TOOL_TYPE } from "../schema/index.js";
 import { adjustMaxTokens } from "./maxTokens.js";
 import { applyCloaking } from "../../utils/claudeCloaking.js";
 import { resolveSessionId } from "../../utils/sessionManager.js";
@@ -795,8 +795,8 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     // so a value that merely contains a slash, or names something this router
     // does not own, is left exactly as the client sent it.
     body.tools = normalizeKnownProviderToolModels(body.tools);
-    // Strip built-in tools (e.g. web_search_20250305) and normalize to Anthropic-native shape
-    // (drop `type` field, fold `function.{name,description,parameters}`) for non-Anthropic providers
+    // Strip server tools and normalize OpenAI functions for compatible providers,
+    // while retaining Anthropic's native custom-tool discriminator and schema.
     if (provider !== "claude" && provider !== "anthropic") {
       // A built-in server tool is one only Anthropic executes, so it cannot be
       // forwarded to another provider and is dropped here. The drop was silent,
@@ -805,8 +805,11 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
       // reads as a broken search rather than an unsupported one (#3133).
       // TokenProxy does not execute these itself; say so once per request so the
       // empty result has a visible cause.
+      // Anthropic's optional custom discriminator describes a client-executed
+      // schema tool, not a provider-hosted server tool.
+      const isClientTool = (tool) => !tool.type || tool.type === TOOL_TYPE.FUNCTION || tool.type === TOOL_TYPE.CUSTOM;
       const droppedServerTools = body.tools
-        .filter((tool) => tool?.type && tool.type !== "function")
+        .filter((tool) => !isClientTool(tool))
         .map((tool) => tool.name || tool.type);
       if (droppedServerTools.length > 0) {
         console.warn(
@@ -816,8 +819,9 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
         );
       }
       body.tools = body.tools
-        .filter(tool => !tool.type || tool.type === "function")
+        .filter(isClientTool)
         .map(tool => {
+          if (tool.type === TOOL_TYPE.CUSTOM) return tool;
           if (tool.function) {
             return {
               name: tool.function.name,

@@ -1,3 +1,5 @@
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
+import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   isValidApiKey,
   getProviderCredentials,
@@ -51,8 +53,11 @@ export async function handleTts(request) {
   log.request("POST", `${url.pathname} | ${modelStr} | format=${responseFormat}${language ? ` | lang=${language}` : ""}`);
 
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
+  const budgetRefusal = await refuseUncoveredBudget(apiKey);
+  if (budgetRefusal) return budgetRefusal;
   const settings = await getSettings();
   if (settings.requireApiKey) {
     if (!presentedApiKey) return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
@@ -105,7 +110,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
     const result = await handleTtsCore({ provider, model, input: body.input, responseFormat, language, style, providerOptions });
     if (result.success) return result.response;
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
+    return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed"), result.failureMetadata?.safeToReplay);
   }
 
   // Credentialed providers — fallback loop (same pattern as embeddings)
@@ -129,7 +134,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
         if (credentials?.allRateLimited) {
           const msg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true, 0, true);
         }
         if (excludeConnectionIds.size === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
         return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
@@ -141,14 +146,16 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
 
       if (result.success) return result.response;
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error));
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error), false, cooldownMs, true);
       if (shouldFallback) {
         excludeConnectionIds.add(credentials.connectionId);
         lastError = result.error;
         lastStatus = result.status;
         continue;
       }
-      return result.response || errorResponse(result.status, result.error);
+      return withReplaySafety(result.response || errorResponse(result.status, result.error), true);
     } finally {
       releaseAccountLease(accountLease);
     }

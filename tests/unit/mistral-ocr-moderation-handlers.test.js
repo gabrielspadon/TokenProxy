@@ -179,7 +179,8 @@ describe("Mistral OCR and moderation handlers", () => {
     const body = await response.text();
     expect(body).not.toContain("test-secret-token");
     expect(authMocks.markAccountUnavailable).toHaveBeenCalledWith(
-      "conn-1", 401, expect.not.stringContaining("test-secret-token"), "mistral", "mistral-moderation-latest"
+      "conn-1", 401, expect.not.stringContaining("test-secret-token"), "mistral", "mistral-moderation-latest",
+      undefined, { safeToReplay: true }
     );
   });
 

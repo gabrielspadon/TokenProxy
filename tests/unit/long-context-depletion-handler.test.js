@@ -1,3 +1,4 @@
+import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // HANDLER-LEVEL companion to unit/long-context-depletion-latch.test.js, which
@@ -82,10 +83,6 @@ vi.mock('@/sse/utils/logger.js', () => logMocks);
 const PROVIDER = 'claude';
 const MODEL = 'claude-sonnet-4-5-20250929';
 const LOCK_KEY = getModelLockKey(MODEL);
-// chat.js:780. Above this the loop rotates instead of replaying the account.
-const SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS = 30 * 1000;
-// chat.js:776.
-const ACCOUNT_RETRY_LIMIT = 3;
 
 const carriesMarker = (text) =>
   LONG_CONTEXT_DEPLETION_MARKERS.some((m) => String(text).toLowerCase().includes(m));
@@ -146,7 +143,8 @@ async function markAccountUnavailableFake(connectionId, status, errorText, _prov
     buildModelFailureUpdate(model, { status, message: reason, until, resetsAt: null })
   );
   conn.backoffLevel = newBackoffLevel ?? conn.backoffLevel ?? 0;
-  return { shouldFallback, cooldownMs };
+  const failureClass = classifyAccountFailure(status, errorText);
+  return { shouldFallback, cooldownMs, failureClass, mustWait: failureClass === 'rate', retrySameAccount: false };
 }
 
 // auth.js:554-571 (the eligibility filter) and auth.js:665-693 (the
@@ -191,13 +189,14 @@ async function handleChatCoreFake({ connectionId }) {
   const upstream = upstreamByConn.get(connectionId)();
   if (upstream.ok) return { success: true, response: upstream };
   const { statusCode, message, resetsAtMs } = await parseUpstreamError(upstream);
-  return createErrorResult(
+  const result = createErrorResult(
     statusCode,
     formatProviderError(new Error(message), statusCode),
     resetsAtMs,
     null,
     'rid-depletion'
   );
+  return { ...result, failureMetadata: { safeToReplay: true } };
 }
 
 const request = () =>
@@ -254,18 +253,16 @@ describe('long-context credit 429 through the chat handler: one account depleted
       // The client is served by B.
       expect(response.status).toBe(200);
       expect(coreCallsByConn.get('account-b')).toBe(1);
-      // ROTATED, not retried: A was dispatched to exactly once, well short of
-      // the ACCOUNT_RETRY_LIMIT an ordinary retryable 429 would earn it.
+      // The rejected request spends only one attempt on the depleted account.
       expect(coreCallsByConn.get('account-a')).toBe(1);
       expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(2);
-      // The recorded fallback decision: a lock long enough to clear the
-      // same-account retry window, which is what forced the rotation.
+      // Confirmed quota depletion permits rotation and preserves its reset.
       const decision = await authMocks.markAccountUnavailable.mock.results[0].value;
       expect(decision).toEqual({
         shouldFallback: true,
         cooldownMs: LONG_CONTEXT_DEPLETION_COOLDOWN_MS,
+        failureClass: 'quota', mustWait: false, retrySameAccount: false,
       });
-      expect(decision.cooldownMs).toBeGreaterThan(SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS);
       // modelLock_<model> is set on A, for this model only, and B is untouched.
       const [a, b] = connections;
       const lockedUntil = Date.parse(a[LOCK_KEY]);
@@ -310,7 +307,7 @@ describe('long-context credit 429 through the chat handler: pool depleted', () =
       // Retry information survives the rewrite, in the header and the prose.
       const retryAfter = Number(response.headers.get('Retry-After'));
       expect(Number.isFinite(retryAfter)).toBe(true);
-      expect(retryAfter).toBeGreaterThan(SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS / 1000);
+      expect(retryAfter).toBeGreaterThan(LONG_CONTEXT_DEPLETION_COOLDOWN_MS / 1000 - 10);
       expect(retryAfter).toBeLessThanOrEqual(LONG_CONTEXT_DEPLETION_COOLDOWN_MS / 1000);
       const body = JSON.parse(raw);
       expect(body.error.message).toContain(formatRetryAfter(connections[0][LOCK_KEY]));
@@ -318,23 +315,17 @@ describe('long-context credit 429 through the chat handler: pool depleted', () =
   );
 });
 
-describe('control: an ordinary 429 keeps the behaviour it had', () => {
-  it('still rotates A→B, after the same-account retries a plain rate limit earns', async () => {
+describe('temporary rate limit preserves the agent pin', () => {
+  it('returns the cooldown after one attempt without rotating to another account', async () => {
     upstreamByConn.set('account-a', ordinary429);
     upstreamByConn.set('account-b', ok200);
-
     const response = await handleChat(request());
-
-    expect(response.status).toBe(200);
-    // The contrast with the depletion case above: a plain 429 is a window, so
-    // A is replayed up to the limit BEFORE the loop moves on. The depletion
-    // 429 skips all of that on the strength of its cooldown alone.
-    expect(coreCallsByConn.get('account-a')).toBe(ACCOUNT_RETRY_LIMIT);
-    expect(coreCallsByConn.get('account-b')).toBe(1);
+    expect(response.status).toBe(429);
+    expect(coreCallsByConn.get('account-a')).toBe(1);
+    expect(coreCallsByConn.has('account-b')).toBe(false);
     const decision = await authMocks.markAccountUnavailable.mock.results[0].value;
-    expect(decision.shouldFallback).toBe(true);
-    expect(decision.cooldownMs).toBeLessThanOrEqual(SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS);
-    expect(decision.cooldownMs).toBeLessThan(LONG_CONTEXT_DEPLETION_COOLDOWN_MS);
-    expect(carriesMarker(await response.clone().text())).toBe(false);
+    expect(decision).toMatchObject({ failureClass: 'rate', mustWait: true, retrySameAccount: false });
+    expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(carriesMarker(await response.text())).toBe(false);
   });
 });

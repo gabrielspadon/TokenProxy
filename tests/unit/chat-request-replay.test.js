@@ -61,6 +61,7 @@ function failure() {
   return {
     success: false,
     status: 507,
+    failureMetadata: { safeToReplay: true },
     error,
     response: Response.json({ error: { message: error } }, { status: 507 }),
   };
@@ -106,6 +107,17 @@ beforeEach(() => {
 });
 
 describe("chat request replay", () => {
+  it("does not replay a buffer error without proof the generation was rejected", async () => {
+    dispatchMocks.handleChatCore.mockImplementation(() => ({ ...failure(), failureMetadata: null }));
+
+    const response = await handleChat(request());
+
+    expect(response.status).toBe(507);
+    expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledTimes(1);
+  });
+
   it("passes unresolved provider and global timeouts to chat core", async () => {
     dispatchMocks.handleChatCore.mockImplementation(() => success());
 

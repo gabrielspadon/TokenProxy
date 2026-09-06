@@ -8,7 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { compressWithPxpipe, formatPxpipeLog } from "../../open-sse/rtk/pxpipe.js";
+import { compressWithPxpipe as compressVisual, formatPxpipeLog } from "../../open-sse/rtk/pxpipe.js";
+// These visual compression fixtures explicitly accept lossy conversion.
+const compressWithPxpipe = (body, options) => compressVisual(body, { ...options, allowLossy: true });
 import {
   __setTokenSaverEventsDirForTest,
   appendTokenSaverEvent,
@@ -19,8 +21,8 @@ function claudeBody(chars = 30000) {
   return {
     model: "claude-sonnet-4-5",
     max_tokens: 1024,
-    system: "s".repeat(chars),
-    messages: [{ role: "user", content: "u".repeat(100) }],
+    system: "Preserve these instructions exactly.",
+    messages: [{ role: "assistant", content: "u".repeat(chars) }, { role: "user", content: "Current request." }],
   };
 }
 
@@ -75,11 +77,11 @@ describe("compressWithPxpipe threshold boundary", () => {
   it("exactly minChars chars → proxy invoked", async () => {
     const body = claudeBody(99);
     const threshold = JSON.stringify(body).length;
-    const compressed = { model: "claude-sonnet-4-5", max_tokens: 1024, system: "img", messages: [] };
+    const compressed = { ...body, messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }, { role: "user", content: "Current request." }] };
     const transform = vi.fn(async () => ({
       applied: true,
       body: encoder.encode(JSON.stringify(compressed)),
-      info: { imageCount: 1, imagePixels: 750 },
+      info: { imageCount: 1, imagePixels: 750, compressedChars: 99 },
     }));
     const { body: out, summary } = await compressWithPxpipe(body, {
       enabled: true, format: "claude", minChars: threshold, transform,
@@ -128,7 +130,7 @@ describe("compressWithPxpipe estimated-token accounting", () => {
     const L = JSON.stringify(body).length;
     const compressedChars = 4000;
     const imagePixels = 150000; // → 200 image tokens
-    const compressed = claudeBody(10);
+    const compressed = { ...body, messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }, { type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }, { role: "user", content: "Current request." }] };
     const transform = vi.fn(async () => ({
       applied: true,
       body: encoder.encode(JSON.stringify(compressed)),
@@ -156,7 +158,7 @@ describe("compressWithPxpipe estimated-token accounting", () => {
     const body = claudeBody(30000);
     const transform = vi.fn(async () => ({
       applied: true,
-      body: encoder.encode(JSON.stringify(claudeBody(10))),
+      body: encoder.encode(JSON.stringify({ ...body, messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }, { role: "user", content: "Current request." }] })),
       info: { imageCount: 1 },
     }));
     const { summary } = await compressWithPxpipe(body, {
@@ -194,14 +196,16 @@ describe("chatCore pxpipe wiring", () => {
         model: "claude-sonnet-4-5",
         max_tokens: 1024,
         stream: false,
-        system: "s".repeat(30000),
-        messages: [{ role: "user", content: "hi" }],
+        system: "base",
+        messages: [{ role: "assistant", content: [{ type: "text", text: "s".repeat(30000), cache_control: { type: "ephemeral" } }] }, { role: "user", content: [{ type: "text", text: "Current request." }] }],
       },
+      sourceFormatOverride: "claude",
       modelInfo: { provider: "anthropic", model: "claude-sonnet-4-5" },
       credentials: { apiKey: "k" },
       log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), line: vi.fn(), tagForSession: () => "TAG", nextTag: () => "TAG", fmtThink: () => null },
       connectionId: "conn-1",
       pxpipeEnabled: true,
+      pxpipeAllowLossy: true,
       pxpipeMinChars: 100,
       pxpipeTimeoutMs: 5000,
       pxpipeTransform: async () => ({
@@ -209,10 +213,10 @@ describe("chatCore pxpipe wiring", () => {
         body: encoder.encode(JSON.stringify({
           model: "claude-sonnet-4-5",
           max_tokens: 1024,
-          system: "PNG-IMAGE-PLACEHOLDER",
-          messages: [],
+          system: "base",
+          messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "PNG-IMAGE-PLACEHOLDER" } }] }, { role: "user", content: [{ type: "text", text: "Current request." }] }],
         })),
-        info: { imageCount: 1, imagePixels: 750 },
+        info: { imageCount: 1, imagePixels: 750, compressedChars: 30000 },
       }),
       clientRawRequest: { headers: {}, body: {} },
       onPxpipeEvent,

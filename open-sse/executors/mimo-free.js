@@ -1,6 +1,8 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
 import { createHash } from "crypto";
 import os from "os";
 import { FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
@@ -130,7 +132,10 @@ export class MimoFreeExecutor extends BaseExecutor {
     return injectSystemMarker(body);
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch = null, afterDispatch = null }) {
+    signal?.throwIfAborted();
     let jwt;
     try {
       jwt = await bootstrapJwt(proxyOptions);
@@ -154,11 +159,15 @@ export class MimoFreeExecutor extends BaseExecutor {
         signal,
       });
       try {
-        return await proxyAwareFetch(
+        signal?.throwIfAborted();
+        if (beforeDispatch) await beforeDispatch({ body: transformedBody, serialized: bodyStr, url });
+        const response = await proxyAwareFetch(
           url,
           { method: "POST", headers, body: bodyStr, signal: deadline.signal },
           proxyOptions,
         );
+        await notifyDispatchResponse(afterDispatch, response);
+        return response;
       } catch (error) {
         throw deadline.classify(error);
       } finally {
@@ -169,7 +178,9 @@ export class MimoFreeExecutor extends BaseExecutor {
     const response = await sendChat(jwt);
 
     // On auth failure, invalidate cache and retry once with a fresh JWT
-    if (response.status === 401 || response.status === 403) {
+    if ((response.status === 401 || response.status === 403) && isReplaySafeRejection(response)) {
+      try { Promise.resolve(response.body?.cancel?.()).catch(() => {}); } catch {}
+      signal?.throwIfAborted();
       log?.debug?.("AUTH", `MiMo auth failed (${response.status}), re-bootstrapping...`);
       resetJwtCache();
       jwt = await bootstrapJwt(proxyOptions);

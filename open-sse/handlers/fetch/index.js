@@ -2,6 +2,14 @@
 // Returns normalized shape across all providers
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { isReplaySafeRejection } from "../../utils/replaySafety.js";
+import { extractRetryAfterDeadline } from "../../utils/error.js";
+
+function upstreamFailure(response, error) {
+  return { success: false, status: response.status, error,
+    failureMetadata: { safeToReplay: isReplaySafeRejection(response) },
+    resetsAtMs: extractRetryAfterDeadline(response) };
+}
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_FORMAT = "markdown";
@@ -419,11 +427,11 @@ function boundedUpstreamFailure(response, body, context) {
       }
     } catch { }
   }
-  return failure(
+  return { ...failure(
     status,
     OLLAMA_ERROR.UPSTREAM_ERROR,
     sanitizeOllamaError(message, context),
-  );
+  ), failureMetadata: { safeToReplay: isReplaySafeRejection(response) }, resetsAtMs: extractRetryAfterDeadline(response) };
 }
 
 function classifyOllamaFailure(error, { deadline, apiKey, url, proxyOptions }) {
@@ -778,7 +786,7 @@ async function runFirecrawl({ url, fmt, timeoutMs, apiKey, maxCharacters, costPe
   const upstreamMs = Date.now() - upstreamStart;
   const { json } = await readJsonOrText(r.res);
   if (!r.res.ok) {
-    return { success: false, status: r.res.status, error: json?.error || `Firecrawl error: ${r.res.status}` };
+    return upstreamFailure(r.res, json?.error || `Firecrawl error: ${r.res.status}`);
   }
   const d = json?.data || {};
   const text = truncate(d.markdown || d.html || d.text || "", maxCharacters);
@@ -820,7 +828,7 @@ async function runJina({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQuer
   const upstreamMs = Date.now() - upstreamStart;
   const body = await r.res.text();
   if (!r.res.ok) {
-    return { success: false, status: r.res.status, error: body?.slice(0, 500) || `Jina error: ${r.res.status}` };
+    return upstreamFailure(r.res, body?.slice(0, 500) || `Jina error: ${r.res.status}`);
   }
   const text = truncate(body, maxCharacters);
   return {
@@ -851,7 +859,7 @@ async function runTavily({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQu
   const upstreamMs = Date.now() - upstreamStart;
   const { json } = await readJsonOrText(r.res);
   if (!r.res.ok) {
-    return { success: false, status: r.res.status, error: json?.error || `Tavily error: ${r.res.status}` };
+    return upstreamFailure(r.res, json?.error || `Tavily error: ${r.res.status}`);
   }
   const first = json?.results?.[0] || {};
   const text = truncate(first.raw_content || "", maxCharacters);
@@ -881,7 +889,7 @@ async function runExa({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQuery
   const upstreamMs = Date.now() - upstreamStart;
   const { json } = await readJsonOrText(r.res);
   if (!r.res.ok) {
-    return { success: false, status: r.res.status, error: json?.error || `Exa error: ${r.res.status}` };
+    return upstreamFailure(r.res, json?.error || `Exa error: ${r.res.status}`);
   }
   const first = json?.results?.[0] || {};
   const text = truncate(first.text || "", maxCharacters);

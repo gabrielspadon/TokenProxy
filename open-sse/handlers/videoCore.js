@@ -1,4 +1,6 @@
-import { createErrorResult } from "../utils/error.js";
+import { createErrorResult, parseUpstreamError } from "../utils/error.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { discardResponseBody } from "../utils/discardResponseBody.js";
 import { getVideoAdapter, findVideoAdapterForRequestId } from "./videoProviders/index.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { refreshTokenByProvider } from "../services/tokenRefresh.js";
@@ -145,6 +147,7 @@ export async function handleVideoProxyCore({
   // 401/403 → refresh once → retry once (OAuth accounts only; API keys can't refresh)
   if (
     (upstream.status === HTTP_STATUS.UNAUTHORIZED || upstream.status === HTTP_STATUS.FORBIDDEN) &&
+    isReplaySafeRejection(upstream) &&
     credentials?.refreshToken
   ) {
     let refreshed = null;
@@ -157,9 +160,7 @@ export async function handleVideoProxyCore({
       log?.info?.("TOKEN", `${provider.toUpperCase()} | refreshed for video ${method}`);
       Object.assign(credentials, refreshed);
       if (onCredentialsRefreshed) await onCredentialsRefreshed(refreshed);
-      try {
-        await upstream.body?.cancel?.();
-      } catch { /* noop */ }
+      discardResponseBody(upstream);
       try {
         upstream = await doFetch(credentials.accessToken || credentials.apiKey);
       } catch (error) {
@@ -170,12 +171,13 @@ export async function handleVideoProxyCore({
     }
   }
 
-  const bodyText = await upstream.text().catch(() => "");
-
   if (!upstream.ok) {
-    const message = sanitizeSecrets(bodyText || `HTTP ${upstream.status}`, credentials);
-    return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`);
+    const parsed = await parseUpstreamError(upstream);
+    const message = sanitizeSecrets(parsed.message, credentials);
+    return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`, parsed.resetsAtMs,
+      { safeToReplay: isReplaySafeRejection(upstream) });
   }
+  const bodyText = await upstream.text().catch(() => "");
 
   // Success: pass the upstream JSON through untouched (request_id / status / video.url).
   return {

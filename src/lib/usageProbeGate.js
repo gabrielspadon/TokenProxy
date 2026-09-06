@@ -12,26 +12,64 @@
 // This gate puts a ceiling on it (#3061).
 
 const MAX_CONCURRENT_PROBES = 4;
+// One page load queues at most one probe per configured connection, so the
+// queue only ever needs to hold "every card minus the four running". 64 covers
+// double that with two tabs open; past it the caller is retrying anyway.
+const MAX_WAITING_PROBES = 64;
 
 const inFlight = new Map();
 let active = 0;
 const waiting = [];
+
+class ProbeQueueFullError extends Error {
+  constructor() {
+    super('usage probe queue is full');
+    this.name = 'ProbeQueueFullError';
+    this.code = 'PROBE_QUEUE_FULL';
+  }
+}
 
 function releaseSlot() {
   active -= 1;
   const next = waiting.shift();
   if (next) {
     active += 1;
-    next();
+    next.resolve();
   }
 }
 
-function acquireSlot() {
+function acquireSlot(signal) {
   if (active < MAX_CONCURRENT_PROBES) {
     active += 1;
     return Promise.resolve();
   }
-  return new Promise((resolve) => waiting.push(resolve));
+  if (waiting.length >= MAX_WAITING_PROBES) {
+    return Promise.reject(new ProbeQueueFullError());
+  }
+  return new Promise((resolve, reject) => {
+    const entry = { resolve };
+    if (signal) {
+      if (signal.aborted) {
+        reject(signal.reason ?? new Error('aborted'));
+        return;
+      }
+      // Only a QUEUED entry leaves on abort. A probe already running stays:
+      // its result may be shared by other subscribers via inFlight.
+      const onAbort = () => {
+        const i = waiting.indexOf(entry);
+        if (i !== -1) {
+          waiting.splice(i, 1);
+          reject(signal.reason ?? new Error('aborted'));
+        }
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      entry.resolve = () => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+    }
+    waiting.push(entry);
+  });
 }
 
 /**
@@ -42,20 +80,35 @@ function acquireSlot() {
  * pressing refresh must not be handed the result of a probe that was already
  * running without it.
  *
+ * `signal` (optional) only cancels a probe still WAITING for a slot. It is
+ * deliberately not passed into `probe`: a running probe may have several
+ * subscribers collapsed onto it, and no downstream transport consumes a
+ * per-subscriber signal.
+ *
  * @param {string} key
  * @param {() => Promise<any>} probe
+ * @param {AbortSignal} [signal]
  * @returns {Promise<any>}
  */
-export function runUsageProbe(key, probe) {
+export function runUsageProbe(key, probe, signal) {
   const existing = inFlight.get(key);
   if (existing) return existing;
 
-  const run = acquireSlot()
-    .then(probe)
-    .finally(() => {
+  // ponytail: joiners that coalesce onto a probe still queued share the
+  // creator's abort rejection; per-subscriber refcounting when it matters.
+  const run = acquireSlot(signal).then(
+    () =>
+      Promise.resolve()
+        .then(probe)
+        .finally(() => {
+          inFlight.delete(key);
+          releaseSlot();
+        }),
+    (err) => {
       inFlight.delete(key);
-      releaseSlot();
-    });
+      throw err;
+    }
+  );
 
   inFlight.set(key, run);
   return run;
@@ -69,4 +122,4 @@ export function __resetUsageProbeGate() {
   waiting.length = 0;
 }
 
-export { MAX_CONCURRENT_PROBES };
+export { MAX_CONCURRENT_PROBES, MAX_WAITING_PROBES };

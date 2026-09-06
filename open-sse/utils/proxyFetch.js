@@ -3,14 +3,21 @@ import { Buffer } from "node:buffer";
 import crypto from "crypto";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
+import { createDispatcherCache, isLocalTransportPoolRefusal, LocalTransportPoolRefusal, revokeLocalTransportRefusalProof } from "./dispatcherCache.js";
 
 const originalFetch = globalThis.fetch;
-const proxyDispatchers = new Map();
+const proxyDispatchers = createDispatcherCache(MEMORY_CONFIG.proxyDispatchersMaxSize);
 const HAPPY_EYEBALLS_OPTIONS = {
   autoSelectFamily: true,
   autoSelectFamilyAttemptTimeout: 1000,
 };
 let directDispatcherPromise = null;
+let transportsClosing = false;
+
+function throwIfTransportClosing() {
+  if (!transportsClosing) return;
+  throw new LocalTransportPoolRefusal("transport_pools_closed");
+}
 
 async function getDirectDispatcher() {
   if (!directDispatcherPromise) {
@@ -21,13 +28,17 @@ async function getDirectDispatcher() {
     // surviving through a proxy. Stall protection stays app-level, where it
     // is tied to upstream byte activity and configurable.
     directDispatcherPromise = import("undici")
-      .then(({ Agent }) => new Agent({ ...HAPPY_EYEBALLS_OPTIONS, bodyTimeout: 0 }));
+      .then(({ Agent }) => new Agent({ ...HAPPY_EYEBALLS_OPTIONS, bodyTimeout: 0 }))
+      .catch(error => { directDispatcherPromise = null; throw error; });
   }
   return directDispatcherPromise;
 }
 
-async function fetchDirect(url, options) {
+async function fetchDirect(url, options, attempt) {
+  throwIfTransportClosing();
   const dispatcher = options.dispatcher ?? await getDirectDispatcher();
+  throwIfTransportClosing();
+  attempt.dispatched = true;
   return originalFetch(url, { ...options, dispatcher });
 }
 
@@ -528,31 +539,34 @@ export async function createProxyDispatcher(proxyUrl, agentOptions = {}) {
 /**
  * Create proxy dispatcher lazily (undici-compatible) with connection limits
  */
-async function getDispatcher(proxyUrl) {
+function getDispatcher(proxyUrl, routeIdentity) {
   const normalized = normalizeProxyUrl(proxyUrl);
   if (!normalized) return null;
-
-  if (!proxyDispatchers.has(normalized)) {
-    // Evict the least-recently-used entry if max size is reached.
-    if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
-      const oldestKey = proxyDispatchers.keys().next().value;
-      const evictedDispatcher = proxyDispatchers.get(oldestKey);
-      proxyDispatchers.delete(oldestKey);
-      if (typeof evictedDispatcher?.close === "function") {
-        try {
-          void Promise.resolve(evictedDispatcher.close()).catch(() => {});
-        } catch { }
-      }
-    }
-    const connectTimeout = readPositiveIntegerEnv(
-      "PROXY_CONNECT_TIMEOUT_MS",
-      DEFAULT_PROXY_CONNECT_TIMEOUT_MS,
-    );
-    const headersTimeout = readPositiveIntegerEnv(
-      "PROXY_HEADERS_TIMEOUT_MS",
-      DEFAULT_PROXY_HEADERS_TIMEOUT_MS,
-    );
-    proxyDispatchers.set(normalized, await createProxyDispatcher(normalized, {
+  const connectTimeout = readPositiveIntegerEnv(
+    "PROXY_CONNECT_TIMEOUT_MS",
+    DEFAULT_PROXY_CONNECT_TIMEOUT_MS,
+  );
+  const headersTimeout = readPositiveIntegerEnv(
+    "PROXY_HEADERS_TIMEOUT_MS",
+    DEFAULT_PROXY_HEADERS_TIMEOUT_MS,
+  );
+  // Credentials are part of the private identity, never part of diagnostics.
+  const key = `${routeIdentity}:${connectTimeout}:${headersTimeout}`;
+  return proxyDispatchers.reserve(key, async () => {
+    const undici = await import("undici");
+    const pools = new Set();
+    const factory = (origin, options) => {
+      const pool = new undici.Pool(origin, options);
+      pools.add(pool);
+      const prune = () => queueMicrotask(() => {
+        if (pool.closed || pool.destroyed || (pool.stats.connected === 0 && pool.stats.size === 0)) pools.delete(pool);
+      });
+      pool.on("connect", () => pools.add(pool));
+      pool.on("disconnect", prune);
+      pool.on("connectionError", prune);
+      return pool;
+    };
+    const dispatcher = await createProxyDispatcher(normalized, {
       ...HAPPY_EYEBALLS_OPTIONS,
       connections: PROXY_MAX_CONNECTIONS,
       keepAliveMaxTimeout: KEEP_ALIVE_TIMEOUT,
@@ -562,14 +576,19 @@ async function getDispatcher(proxyUrl) {
       connectTimeout,
       pipelining: 1,
       maxCachedSessions: PROXY_MAX_FREE_CONNECTIONS,
-    }));
-  } else {
-    const cachedDispatcher = proxyDispatchers.get(normalized);
-    proxyDispatchers.delete(normalized);
-    proxyDispatchers.set(normalized, cachedDispatcher);
-  }
+      factory,
+    });
+    return { dispatcher, isIdle: () => [...pools].every(pool => pool.stats.size === 0) };
+  });
+}
 
-  return proxyDispatchers.get(normalized);
+// Explicit graceful shutdown seam. It performs no process/signal registration.
+export async function closeTransportDispatchers() {
+  transportsClosing = true;
+  await Promise.all([
+    proxyDispatchers.close(),
+    Promise.resolve(directDispatcherPromise).then(direct => direct?.close?.()),
+  ]);
 }
 
 /**
@@ -683,8 +702,23 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 }
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
+  const attempt = { dispatched: false };
+  try {
+    return await performProxyAwareFetch(url, options, proxyOptions, attempt);
+  } catch (error) {
+    // A local refusal after an earlier legacy GET fallback attempt cannot prove
+    // that the entire call sent nothing upstream. Never release exposure on it.
+    if (attempt.dispatched) revokeLocalTransportRefusalProof(error);
+    throw error;
+  }
+}
+
+async function performProxyAwareFetch(url, options, proxyOptions, attempt) {
   throwIfAborted(options.signal);
-  const targetUrl = typeof url === "string" ? url : url.toString();
+  throwIfTransportClosing();
+  const request = typeof Request !== 'undefined' && url instanceof Request ? url : null;
+  const replayableMethod = ['GET', 'HEAD', 'OPTIONS'].includes(String(options.method ?? request?.method ?? 'GET').toUpperCase());
+  const targetUrl = typeof url === "string" ? url : request?.url ?? url.toString();
   const route = resolveEffectiveProxyRoute(targetUrl, proxyOptions || {});
 
   if (route.kind === "required-unavailable") throw requiredProxyUnavailableError(route);
@@ -698,7 +732,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
-    return fetchDirect(vercelRelayUrl, { ...options, headers: relayHeaders });
+    return fetchDirect(vercelRelayUrl, { ...options, headers: relayHeaders }, attempt);
   }
 
   const proxyUrl = route.kind === "proxy" ? route.proxyUrl : null;
@@ -707,48 +741,79 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   if (shouldBypassMitmDns(targetUrl)) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
+      let dispatched = false;
+      let lease;
       try {
-        const dispatcher = await getDispatcher(proxyUrl);
+        lease = getDispatcher(proxyUrl, route.cacheIdentity);
+        const dispatcher = await waitWithSignal(lease.dispatcher, options.signal);
+        throwIfAborted(options.signal);
+        throwIfTransportClosing();
+        dispatched = true;
+        attempt.dispatched = true;
         return await originalFetch(url, { ...options, dispatcher });
       } catch (proxyError) {
         throwIfAborted(options.signal);
         if (isAbortError(proxyError)) throw proxyError;
+        if (isLocalTransportPoolRefusal(proxyError)) throw proxyError;
+        if (dispatched && !replayableMethod) throw proxyError;
         if (route.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
+      } finally {
+        lease?.release();
       }
     }
     // No proxy — manually resolve real IP to bypass DNS spoof
+    let bypassDispatched = false;
     try {
+      throwIfTransportClosing();
       const parsedUrl = new URL(targetUrl);
       const realIP = await resolveRealIP(parsedUrl.hostname, options.signal);
-      if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
+      if (realIP) {
+        throwIfTransportClosing();
+        bypassDispatched = true;
+        attempt.dispatched = true;
+        return await createBypassRequest(parsedUrl, realIP, options);
+      }
     } catch (error) {
       throwIfAborted(options.signal);
+      if (isLocalTransportPoolRefusal(error)) throw error;
+      if (isAbortError(error) || (bypassDispatched && !replayableMethod)) throw error;
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
 
   if (proxyUrl) {
+    let dispatched = false;
+    let lease;
     try {
-      const dispatcher = await getDispatcher(proxyUrl);
+      lease = getDispatcher(proxyUrl, route.cacheIdentity);
+      const dispatcher = await waitWithSignal(lease.dispatcher, options.signal);
+      throwIfAborted(options.signal);
+      throwIfTransportClosing();
+      dispatched = true;
+      attempt.dispatched = true;
       return await originalFetch(url, { ...options, dispatcher });
     } catch (proxyError) {
       throwIfAborted(options.signal);
       if (isAbortError(proxyError)) throw proxyError;
+      if (isLocalTransportPoolRefusal(proxyError)) throw proxyError;
+      if (dispatched && !replayableMethod) throw proxyError;
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (route.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
-      return fetchDirect(url, options);
+      return fetchDirect(url, options, attempt);
+    } finally {
+      lease?.release();
     }
   }
 
   // got-scraping disabled — use native fetch directly
   // (Re-enable per-host by wrapping with tryGotScrapingFetch when needed)
-  return fetchDirect(url, options);
+  return fetchDirect(url, options, attempt);
 }
 
 /**

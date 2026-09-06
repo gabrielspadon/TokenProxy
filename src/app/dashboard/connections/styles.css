@@ -1,0 +1,24 @@
+@layer components {
+  /* Add / edit forms inside the confirm dialog. */
+  .connections-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+  .connections-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--t-13); }
+  .connections-check input { margin: 0; accent-color: var(--signal); }
+
+  .connections-actions { flex-wrap: wrap; row-gap: 8px; }
+
+  /* Release block: the active record as facts, history as plain rows. */
+  .connections-row { grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 768px) {
+    .connections-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr); }
+  }
+
+  .connections-releases { margin-block-start: 8px; }
+  .connections-releases .facts { margin-block-end: 12px; }
+}
+
+@layer states {
+  @media (max-width: 767px) {
+    .connections-actions { flex-direction: column; align-items: stretch; }
+    .connections-actions .button { width: 100%; }
+  }
+}

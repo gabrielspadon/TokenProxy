@@ -197,7 +197,7 @@ describe('direct fetch path', () => {
     expect(global.fetch.mock.calls[1][1].headers).toEqual({ Authorization: 'Bearer k2' });
   });
 
-  it('keeps the 401 result when the retry build after refresh throws', async () => {
+  it('returns a terminal failure when building the refreshed attempt throws', async () => {
     let builds = 0;
     const adapter = baseAdapter({
       buildBody: vi.fn(() => {
@@ -213,7 +213,8 @@ describe('direct fetch path', () => {
 
     const result = await call({ log: { warn: vi.fn(), debug: vi.fn(), info: vi.fn() } });
     expect(result.success).toBe(false);
-    expect(result.status).toBe(401);
+    expect(result.status).toBe(502);
+    expect(result.failureMetadata.safeToReplay).toBe(false);
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 

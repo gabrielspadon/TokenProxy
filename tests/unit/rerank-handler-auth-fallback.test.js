@@ -97,6 +97,7 @@ const okCore = (usage = { total_tokens: 12 }) => ({
 });
 
 const failCore = (status, error = 'boom') => ({
+  failureMetadata: { safeToReplay: [400,401,402,403,404,405,413,415,422,429].includes(status) },
   success: false,
   status,
   error,
@@ -284,7 +285,7 @@ describe('dispatch, fallback and lease hygiene', () => {
     ]);
   });
 
-  it("a bare provider name uses the connection's defaultModel", async () => {
+  it("a resolved bare alias retains its physical model despite a connection default", async () => {
     mocks.getModelInfo.mockResolvedValue({ provider: 'cohere', model: 'rerank-v3.5' });
     mocks.getProviderCredentials.mockResolvedValue({
       connectionId: 'c1',
@@ -294,6 +295,6 @@ describe('dispatch, fallback and lease hygiene', () => {
       accountLease: null,
     });
     await post({ model: 'cohere', query: 'q', documents: ['d'] });
-    expect(mocks.handleRerankCore.mock.calls[0][0].modelInfo.model).toBe('rerank-english-v3.0');
+    expect(mocks.handleRerankCore.mock.calls[0][0].modelInfo.model).toBe('rerank-v3.5');
   });
 });
