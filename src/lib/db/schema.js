@@ -5,8 +5,9 @@
 // to bump only skips that backup — it does NOT break the additive auto-sync.
 import { QUOTA_HISTORY_TABLES } from "./schema/quotaHistory.js";
 import { CONFIG_VERSION_TABLES } from "./configVersionSchema.js";
+import { CONTEXT_EVIDENCE_TABLES, REQUEST_IDENTITY_COLUMNS, REQUEST_IDENTITY_INDEXES } from "./contextEvidenceSchema.js";
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -24,6 +25,7 @@ PRAGMA busy_timeout = 5000;
 export const TABLES = {
   ...QUOTA_HISTORY_TABLES,
   ...CONFIG_VERSION_TABLES,
+  ...CONTEXT_EVIDENCE_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
@@ -250,6 +252,7 @@ export const TABLES = {
   },
   requestStats: {
     columns: {
+      ...REQUEST_IDENTITY_COLUMNS,
       id: "TEXT PRIMARY KEY",
       timestamp: "TEXT NOT NULL",
       provider: "TEXT",
@@ -291,6 +294,7 @@ export const TABLES = {
       attempt: "INTEGER",
     },
     indexes: [
+      ...REQUEST_IDENTITY_INDEXES,
       "CREATE INDEX IF NOT EXISTS idx_rs_ts ON requestStats(timestamp DESC)",
       "CREATE INDEX IF NOT EXISTS idx_rs_context_session ON requestStats(contextSessionId, timestamp, id)",
       "CREATE INDEX IF NOT EXISTS idx_rs_context_request ON requestStats(logicalRequestId)",
