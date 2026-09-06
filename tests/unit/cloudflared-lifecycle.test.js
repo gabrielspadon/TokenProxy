@@ -4,7 +4,7 @@
  * PID lifecycle. child_process, https and pid.js mocked; fs is real but every
  * write lands in the per-file DATA_DIR temp dir.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -35,13 +35,15 @@ import { savePid, loadPid, clearPid } from '@/lib/tunnel/cloudflare/pid.js';
 
 const DATA_DIR = process.env.DATA_DIR;
 const BIN_PATH = path.join(DATA_DIR, 'bin', 'cloudflared');
+const realAccessSync = fs.accessSync.bind(fs);
 const load = () => import('@/lib/tunnel/cloudflare/cloudflared.js');
 
-// Minimal valid "binary": ELF magic + padding past the 1MB floor.
+// Minimal binary for the explicit platform fixture, past the 1MB floor.
 function writeValidBinary(p) {
   fs.mkdirSync(path.dirname(p), { recursive: true });
   const buf = Buffer.alloc(1024 * 1024 + 16);
-  buf.write('\x7fELF', 0, 'binary');
+  if (os.platform() === 'darwin') buf.writeUInt32BE(0xcffaedfe, 0);
+  else buf.write('\x7fELF', 0, 'binary');
   fs.writeFileSync(p, buf);
   fs.chmodSync(p, 0o755);
 }
@@ -58,6 +60,14 @@ function fakeChild(pid = 4321) {
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  vi.spyOn(os, 'platform').mockReturnValue('linux');
+  vi.spyOn(os, 'arch').mockReturnValue('x64');
+  vi.spyOn(fs, 'accessSync').mockImplementation((candidate, mode) => {
+    if (!path.resolve(String(candidate)).startsWith(`${DATA_DIR}${path.sep}`)) {
+      throw Object.assign(new Error('outside fixture directory'), { code: 'ENOENT' });
+    }
+    return realAccessSync(candidate, mode);
+  });
   h.execSyncMock = vi.fn(() => '');
   h.spawnMock = vi.fn(() => fakeChild());
   h.httpsGetMock = vi.fn(() => {
@@ -65,9 +75,15 @@ beforeEach(() => {
   });
   loadPid.mockReturnValue(null);
   fs.rmSync(path.join(DATA_DIR, 'bin'), { recursive: true, force: true });
-  delete process.env.CLOUDFLARED_BIN;
-  delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-  delete process.env.CLOUDFLARED_PROTOCOL;
+  vi.stubEnv('CLOUDFLARED_BIN', '');
+  vi.stubEnv('TUNNEL_TRANSPORT_PROTOCOL', '');
+  vi.stubEnv('CLOUDFLARED_PROTOCOL', '');
+  vi.stubEnv('PATH', path.join(DATA_DIR, 'empty-path'));
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 describe('ensureCloudflared', () => {
@@ -89,7 +105,8 @@ describe('ensureCloudflared', () => {
     expect(h.httpsGetMock).not.toHaveBeenCalled();
   });
 
-  it('reuses a valid stored binary and re-chmods it, no network', async () => {
+  it.each(['linux', 'darwin'])('reuses a valid stored %s binary and re-chmods it, no network', async (platform) => {
+    vi.mocked(os.platform).mockReturnValue(platform);
     writeValidBinary(BIN_PATH);
     fs.chmodSync(BIN_PATH, 0o644);
     const cf = await load();
@@ -101,7 +118,7 @@ describe('ensureCloudflared', () => {
   it('deletes an invalid stored binary, then prefers PATH before any download', async () => {
     fs.mkdirSync(path.dirname(BIN_PATH), { recursive: true });
     fs.writeFileSync(BIN_PATH, '<html>captive portal</html>'); // wrong magic, tiny
-    const pathDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-path-'));
+    const pathDir = fs.mkdtempSync(path.join(DATA_DIR, 'cf-path-'));
     writeValidBinary(path.join(pathDir, 'cloudflared'));
     const oldPath = process.env.PATH;
     process.env.PATH = pathDir;

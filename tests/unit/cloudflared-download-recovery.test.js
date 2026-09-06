@@ -38,6 +38,7 @@ import { loadPid, clearPid } from '@/lib/tunnel/cloudflare/pid.js';
 
 const DATA_DIR = process.env.DATA_DIR;
 const BIN_PATH = path.join(DATA_DIR, 'bin', 'cloudflared');
+const realAccessSync = fs.accessSync.bind(fs);
 const load = () => import('@/lib/tunnel/cloudflare/cloudflared.js');
 
 // Payload with the right magic for THIS platform, past the 1MB size floor —
@@ -86,11 +87,18 @@ function writeValidBinary(p) {
   fs.chmodSync(p, 0o755);
 }
 
-let savedPath;
-
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
+  vi.spyOn(os, 'platform').mockReturnValue('linux');
+  vi.spyOn(os, 'arch').mockReturnValue('x64');
+  // Discovery also checks fixed system directories, regardless of PATH.
+  vi.spyOn(fs, 'accessSync').mockImplementation((candidate, mode) => {
+    if (!path.resolve(String(candidate)).startsWith(`${DATA_DIR}${path.sep}`)) {
+      throw Object.assign(new Error('outside fixture directory'), { code: 'ENOENT' });
+    }
+    return realAccessSync(candidate, mode);
+  });
   h.execSyncMock = vi.fn(() => '');
   h.spawnMock = vi.fn(() => fakeChild());
   h.httpsGetMock = vi.fn(() => {
@@ -98,22 +106,49 @@ beforeEach(() => {
   });
   loadPid.mockReturnValue(null);
   fs.rmSync(path.join(DATA_DIR, 'bin'), { recursive: true, force: true });
-  delete process.env.CLOUDFLARED_BIN;
-  delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
-  delete process.env.CLOUDFLARED_PROTOCOL;
-  // Empty PATH so findCloudflaredOnPath never resolves a host binary.
-  savedPath = process.env.PATH;
-  process.env.PATH = fs.mkdtempSync(path.join(os.tmpdir(), 'cf-empty-path-'));
+  vi.stubEnv('CLOUDFLARED_BIN', '');
+  vi.stubEnv('TUNNEL_TRANSPORT_PROTOCOL', '');
+  vi.stubEnv('CLOUDFLARED_PROTOCOL', '');
+  vi.stubEnv('PATH', path.join(DATA_DIR, 'empty-path'));
 });
 
 afterEach(() => {
-  fs.rmSync(process.env.PATH, { recursive: true, force: true });
-  process.env.PATH = savedPath;
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe('download path', () => {
+  it('extracts a Darwin archive into a valid Mach-O binary', async () => {
+    vi.mocked(os.platform).mockReturnValue('darwin');
+    vi.mocked(os.arch).mockReturnValue('arm64');
+    h.httpsGetMock = vi.fn(respondWith({ body: Buffer.from('mock archive') }));
+    h.execSyncMock = vi.fn((command) => {
+      expect(command).toBe(`tar -xzf "${path.join(DATA_DIR, 'bin', 'cloudflared.tgz.tmp')}" -C "${path.join(DATA_DIR, 'bin')}"`);
+      writeValidBinary(BIN_PATH);
+    });
+    const cf = await load();
+    expect(await cf.ensureCloudflared()).toBe(BIN_PATH);
+    expect(h.httpsGetMock.mock.calls[0][0]).toContain('cloudflared-darwin-arm64.tgz');
+    expect(h.execSyncMock).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(path.join(DATA_DIR, 'bin', 'cloudflared.tgz.tmp'))).toBe(false);
+  });
+
+  it.each([
+    ['linux', 'x64', 'cloudflared-linux-amd64'],
+    ['linux', 'arm64', 'cloudflared-linux-arm64'],
+    ['darwin', 'x64', 'cloudflared-darwin-amd64.tgz'],
+    ['darwin', 'arm64', 'cloudflared-darwin-arm64.tgz'],
+    ['win32', 'x64', 'cloudflared-windows-amd64.exe'],
+  ])('selects the %s/%s artifact without using host executables', async (platform, arch, artifact) => {
+    vi.mocked(os.platform).mockReturnValue(platform);
+    vi.mocked(os.arch).mockReturnValue(arch);
+    h.httpsGetMock = vi.fn(respondWith({ statusCode: 500 }));
+    const cf = await load();
+    await expect(cf.ensureCloudflared()).rejects.toThrow('Download failed with status 500');
+    expect(h.httpsGetMock.mock.calls[0][0]).toBe(`https://github.com/cloudflare/cloudflared/releases/latest/download/${artifact}`);
+  });
+
   it('downloads, tracks progress to 100, validates magic, chmods, and returns BIN_PATH', async () => {
     h.httpsGetMock = vi.fn(respondWith({ body: validPayload() }));
     const cf = await load();
