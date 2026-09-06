@@ -145,6 +145,10 @@ describe("backupDbLite — excludes requestDetails, keeps critical data", () => 
   it("backup file omits requestDetails rows but keeps other tables", async () => {
     const { backupDbLite } = await import("@/lib/db/backup.js");
     await saveDetail({ id: "bk-1", provider: "openai", model: "m", status: "ok", tokens: {}, request: {}, response: {} });
+    adapter.exec('CREATE TABLE backupChild(id TEXT PRIMARY KEY, parentId TEXT REFERENCES backupParent(id))');
+    adapter.exec('CREATE TABLE backupParent(id TEXT PRIMARY KEY)');
+    adapter.run('INSERT INTO backupParent(id) VALUES(?)', ['parent']);
+    adapter.run('INSERT INTO backupChild(id,parentId) VALUES(?,?)', ['child','parent']);
 
     const backupDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenproxy-bklite-"));
     const dest = backupDbLite(adapter, backupDir);
@@ -159,6 +163,10 @@ describe("backupDbLite — excludes requestDetails, keeps critical data", () => 
       // Critical data preserved
       const st = bak.prepare("SELECT COUNT(*) c FROM settings").get();
       expect(st.c).toBeGreaterThanOrEqual(1);
+      expect(bak.prepare('SELECT parentId FROM backupChild WHERE id=?').get('child').parentId).toBe('parent');
+      expect(bak.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      expect(adapter.get('PRAGMA foreign_keys').foreign_keys).toBe(1);
+      expect(adapter.get('PRAGMA defer_foreign_keys').defer_foreign_keys).toBe(0);
     } finally {
       bak.close();
       fs.rmSync(backupDir, { recursive: true, force: true });
