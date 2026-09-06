@@ -4,11 +4,19 @@ const fetchMock = vi.fn();
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: (...args) => fetchMock(...args),
 }));
+// Base uses the abortable promise timer. Route that dependency through the
+// test clock; Vitest's global fake timers do not replace this built-in export.
+vi.mock('node:timers/promises', () => ({ setTimeout: (ms, value, { signal } = {}) => new Promise((resolve, reject) => {
+  if (signal?.aborted) { reject(signal.reason); return; }
+  const abort = () => { clearTimeout(timer); reject(signal.reason); };
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(value); }, ms);
+  signal?.addEventListener('abort', abort, { once: true });
+}) }));
 
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 
-function response(status = 200) {
-  return { status, headers: { get: () => "" } };
+function response(status = 200, headers = {}) {
+  return new Response(null, { status, headers });
 }
 
 function hangUntilAbort(_url, options) {
@@ -104,7 +112,7 @@ describe("BaseExecutor response-header timeout", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("creates a fresh full deadline after an ordinary status retry", async () => {
+  it("creates a fresh full deadline after an explicitly replay-safe rejection", async () => {
     const signals = [];
     const executor = new BaseExecutor("test", {
       baseUrl: "https://upstream.test/chat",
@@ -113,7 +121,7 @@ describe("BaseExecutor response-header timeout", () => {
     fetchMock
       .mockImplementationOnce((_url, options) => {
         signals.push(options.signal);
-        return Promise.resolve(response(502));
+        return Promise.resolve(response(502, { 'x-tokenproxy-replay-safe': 'true' }));
       })
       .mockImplementationOnce((url, options) => {
         signals.push(options.signal);
@@ -141,6 +149,17 @@ describe("BaseExecutor response-header timeout", () => {
     await vi.advanceTimersByTimeAsync(1);
     await assertion;
     expect(signals[1].aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not resend an ambiguous 502 even when a status retry is configured', async () => {
+    const executor = new BaseExecutor('test', {
+      baseUrl: 'https://upstream.test/chat', retry: { 502: { attempts: 3, delayMs: 3000 } },
+    });
+    fetchMock.mockResolvedValueOnce(response(502));
+    const result = await executor.execute({ model: 'm', body: {}, stream: false, credentials: {}, connectTimeout: { globalTimeout: 15000 } });
+    expect(result.response.status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -103,7 +103,7 @@ const searchReq = (body) => post('http://localhost/v1/web/search', body);
 const fetchReq = (body) => post('http://localhost/v1/web/fetch', body);
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   mocks.resolveClientApiKey.mockResolvedValue({ apiKey: null, valid: false });
   mocks.getSettings.mockResolvedValue({ requireApiKey: false });
   mocks.getCombos.mockResolvedValue([]);
@@ -295,7 +295,7 @@ describe('search-specific validation and routing', () => {
   });
 
   it('rotates on shouldFallback and reports the last error when exhausted', async () => {
-    mocks.handleSearchCore.mockResolvedValue({ success: false, status: 429, error: 'rl' });
+    mocks.handleSearchCore.mockResolvedValue({ success: false, status: 429, error: 'rl', failureMetadata: { safeToReplay: true } });
     mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true });
     mocks.getProviderCredentials.mockResolvedValueOnce(CREDS).mockResolvedValueOnce(null);
     const res = await handleSearch(searchReq({ provider: 'prov-search', query: 'q' }));
@@ -306,7 +306,9 @@ describe('search-specific validation and routing', () => {
       429,
       'rl',
       'prov-search',
-      'websearch:prov-search'
+      'websearch:prov-search',
+      undefined,
+      { safeToReplay: true }
     );
   });
 
@@ -319,7 +321,13 @@ describe('search-specific validation and routing', () => {
       response: failResp,
     });
     const res = await handleSearch(searchReq({ provider: 'prov-search', query: 'q' }));
-    expect(res).toBe(failResp);
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe('boom');
+    expect(res.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(res.headers.get('x-should-retry')).toBe('false');
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(1);
+    expect(mocks.handleSearchCore).toHaveBeenCalledTimes(1);
+    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
   });
 
   it('refresh callback preserves providerSpecificData; success callback clears the error', async () => {
@@ -425,18 +433,23 @@ describe('fetch-specific validation and routing', () => {
   });
 
   it('rotates on shouldFallback and reports the last error when exhausted', async () => {
-    mocks.handleFetchCore.mockResolvedValue({ success: false, status: 502, error: 'upstream' });
+    mocks.handleFetchCore.mockResolvedValue({ success: false, status: 502, error: 'upstream', failureMetadata: { safeToReplay: true } });
     mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true });
     mocks.getProviderCredentials.mockResolvedValueOnce(CREDS).mockResolvedValueOnce(null);
     const res = await handleFetch(fetchReq(okBody));
     expect(res.status).toBe(502);
     expect((await res.json()).error.message).toBe('upstream');
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+    expect(mocks.markAccountUnavailable).toHaveBeenCalledTimes(1);
   });
 
   it('maps a non-fallback core failure to errorResponse', async () => {
     mocks.handleFetchCore.mockResolvedValue({ success: false, status: 500, error: 'boom' });
     const res = await handleFetch(fetchReq(okBody));
     expect(res.status).toBe(500);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(1);
+    expect(mocks.handleFetchCore).toHaveBeenCalledTimes(1);
+    expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
   });
 
   it("passes the connection's proxy fields and the refresh callback preserves them", async () => {

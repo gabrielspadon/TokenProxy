@@ -330,7 +330,7 @@ describe("chat connect timeout propagation", () => {
     rejected.response.headers.set("x-tokenproxy-replay-safe", "false");
     mocks.execute.mockResolvedValueOnce(response(400)).mockResolvedValueOnce(rejected);
     await expect(handleChatCore(options({ body: { verbosity: "high" } }))).resolves.toMatchObject({
-      success: false, status: 502, failureMetadata: { safeToReplay: false },
+      success: false, status: 503, failureMetadata: { safeToReplay: false },
     });
     expect(mocks.execute).toHaveBeenCalledTimes(2);
   });
