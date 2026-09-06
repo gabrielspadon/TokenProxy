@@ -162,8 +162,8 @@ export async function handleImageGenerationCore({
           headers: retryHeaders,
           body: serializeRequestBody(retryBody),
         });
-      } catch {
-        log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
+      } catch (error) {
+        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || 'Image retry failed', null, { safeToReplay: false });
       }
     } else {
       log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
@@ -174,7 +174,7 @@ export async function handleImageGenerationCore({
     const { statusCode, message } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("IMAGE", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg);
+    return createErrorResult(statusCode, errMsg, null, { safeToReplay: true });
   }
 
   // Parse provider response — adapter may override (codex SSE / async polling / binary)

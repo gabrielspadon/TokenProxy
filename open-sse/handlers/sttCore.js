@@ -30,7 +30,7 @@ async function upstreamError(res) {
   try { txt = await res.text(); } catch {}
   let msg = txt || `Upstream error (${res.status})`;
   try { const j = JSON.parse(txt); msg = j?.error?.message || j?.error || j?.message || msg; } catch {}
-  return createErrorResult(res.status, typeof msg === "string" ? msg : JSON.stringify(msg));
+  return createErrorResult(res.status, typeof msg === "string" ? msg : JSON.stringify(msg), null, { safeToReplay: true });
 }
 
 // Deepgram: raw binary POST + model query param

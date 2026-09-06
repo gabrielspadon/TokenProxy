@@ -102,8 +102,8 @@ export async function handleEmbeddingsCore({
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
         });
-      } catch {
-        log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
+      } catch (error) {
+        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || 'Embedding retry failed', null, { safeToReplay: false });
       }
     } else {
       log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
@@ -114,7 +114,7 @@ export async function handleEmbeddingsCore({
     const { statusCode, message } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("EMBEDDINGS", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg);
+    return createErrorResult(statusCode, errMsg, null, { safeToReplay: true });
   }
 
   let responseBody;

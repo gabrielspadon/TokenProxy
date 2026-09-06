@@ -13,6 +13,7 @@ import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { handleComboChat } from "open-sse/services/combo.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
@@ -155,14 +156,14 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
           log.warn("EMBEDDINGS", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-          return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true);
         }
         if (excludeConnectionIds.size === 0) {
           log.error("AUTH", `No credentials for provider: ${provider}`);
-          return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
+          return withReplaySafety(errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`), true);
         }
         log.warn("EMBEDDINGS", "No more accounts available", { provider });
-        return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+        return withReplaySafety(errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable"), true);
       }
 
       log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
@@ -205,7 +206,9 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
         return result.response;
       }
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response);
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response, false, cooldownMs);
 
       if (shouldFallback) {
         log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
@@ -215,7 +218,7 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
         continue;
       }
 
-      return result.response;
+      return withReplaySafety(result.response, true);
     } finally {
       releaseAccountLease(accountLease);
     }

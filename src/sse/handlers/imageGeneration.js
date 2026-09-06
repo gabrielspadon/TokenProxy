@@ -13,6 +13,7 @@ import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
+import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat } from "open-sse/services/combo.js";
@@ -124,7 +125,7 @@ async function handleSingleModelImage(body, modelStr, {
       signal,
     });
     if (result.success) return result.response;
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Image generation failed");
+    return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Image generation failed"), result.failureMetadata?.safeToReplay);
   }
 
   // Credentialed providers — fallback loop
@@ -148,12 +149,12 @@ async function handleSingleModelImage(body, modelStr, {
         if (credentials?.allRateLimited) {
           const errorMsg = credentials.lastError || "Unavailable";
           const status = credentials.clientErrorStatus ?? (Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE);
-          return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+          return withReplaySafety(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman), credentials.mustWait !== true);
         }
         if (excludeConnectionIds.size === 0) {
-          return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
+          return withReplaySafety(errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`), true);
         }
-        return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+        return withReplaySafety(errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable"), true);
       }
 
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -188,7 +189,9 @@ async function handleSingleModelImage(body, modelStr, {
 
       if (result.status === 499) return result.response;
 
-      const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
+      if (result.failureMetadata?.safeToReplay !== true) return withReplaySafety(result.response);
+      const { shouldFallback, mustWait, cooldownMs } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs, result.failureMetadata);
+      if (mustWait) return withReplaySafety(result.response, false, cooldownMs);
 
       if (shouldFallback) {
         excludeConnectionIds.add(credentials.connectionId);
@@ -197,7 +200,7 @@ async function handleSingleModelImage(body, modelStr, {
         continue;
       }
 
-      return result.response;
+      return withReplaySafety(result.response, true);
     } finally {
       releaseAccountLease(accountLease);
     }

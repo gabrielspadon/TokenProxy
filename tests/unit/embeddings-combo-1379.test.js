@@ -98,7 +98,7 @@ describe("embeddings combo support (#1379)", () => {
     mocks.handleEmbeddingsCore.mockImplementation(async ({ modelInfo }) => (
       modelInfo.provider === "openai"
         // 401: falls back without the transient 502/503/504 cooldown sleep.
-        ? { success: false, status: 401, error: "upstream rejected the key", response: Response.json({ error: "upstream rejected the key" }, { status: 401 }) }
+        ? { success: false, failureMetadata: { safeToReplay: true }, status: 401, error: "upstream rejected the key", response: Response.json({ error: "upstream rejected the key" }, { status: 401 }) }
         : okFor(modelInfo.provider)
     ));
 
@@ -113,7 +113,7 @@ describe("embeddings combo support (#1379)", () => {
   it("reports a failure once every member has failed", async () => {
     mocks.getComboModels.mockResolvedValue(["openai/text-embedding-3-small", "voyage/voyage-3"]);
     mocks.handleEmbeddingsCore.mockResolvedValue({
-      success: false, status: 401, error: "upstream rejected the key",
+      success: false, failureMetadata: { safeToReplay: true }, status: 401, error: "upstream rejected the key",
       response: Response.json({ error: "upstream rejected the key" }, { status: 401 }),
     });
 
@@ -137,7 +137,7 @@ describe("embeddings combo support (#1379)", () => {
       seen.push(body.input); // value as the member received it, before its own mutation
       body.input = `mutated-by-${modelInfo.provider}`;
       return modelInfo.provider === "openai"
-        ? { success: false, status: 401, error: "x", response: Response.json({ error: "x" }, { status: 401 }) }
+        ? { success: false, failureMetadata: { safeToReplay: true }, status: 401, error: "x", response: Response.json({ error: "x" }, { status: 401 }) }
         : okFor(modelInfo.provider);
     });
 
