@@ -1,4 +1,4 @@
-const OPERATIONS = new Set(['overview','session','activity']);
+const OPERATIONS = new Set(['overview','session','activity','quota-history','quota-history-summary']);
 const PHASES = new Set(['validate','open','snapshot','query','release','close']);
 const CODES = new Set(['SQLITE_ERROR','SQLITE_BUSY','SQLITE_LOCKED','SQLITE_CORRUPT','SQLITE_NOTADB',
   'SQLITE_READONLY','SQLITE_CANTOPEN','ERR_SQLITE_ERROR','ENOENT','EACCES','EPERM']);

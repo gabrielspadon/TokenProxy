@@ -4,6 +4,15 @@ The passive operator endpoint is `GET /api/admin/quota/history`. It never polls 
 
 ## Query contract
 
+Historical counts and pages use the shared bounded analytics worker and one
+read-only snapshot. They inherit its queue limits, cancellation, deadline and
+equivalent-query coalescing. Freshness identifies committed native SQLite or
+the last persisted sql.js snapshot. Current capacity waits at most 250 ms for
+optional history counts, then returns `historyState: unavailable`, null counts
+and unknown `historyAvailable` if analytics are busy. History pages return 503
+on admission or execution failure. Duplicate keys, unsupported dimensions and
+invalid calendar dates are rejected before querying.
+
 - `kind=observations` is the default; `kind=checks` selects scheduler events.
 - `start` is inclusive and `end` is exclusive. Both accept ISO timestamps with an explicit UTC offset and are normalized to UTC. `since` and `until` are aliases with the same half-open meaning. Supplying a canonical key and its alias together is rejected.
 - The default range is the preceding 30 days, ending at request time. The response's `timeRange` contains the effective bounds, time field, `endExclusive: true`, and `defaultHorizonDays`. Explicit `start` makes `defaultHorizonDays` null.

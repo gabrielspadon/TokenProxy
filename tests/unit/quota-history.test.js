@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAdapter } from '@/lib/db/driver.js';
 import { initDb } from '@/lib/db/index.js';
 import { captureQuotaUsage, retainQuotaUsage, quotaObservationsFromUsage, recordQuotaCheckEvent, getQuotaHistory, parseQuotaHistoryQuery } from '@/lib/db/repos/quotaHistoryRepo.js';
@@ -7,6 +7,8 @@ import { withQuotaObservation } from 'open-sse/services/usage/observation.js';
 import { deriveQuotaSnapshot } from '@/shared/utils/quotaPause.js';
 import { openAnalyticsReadOnly } from '@/lib/db/analytics/readOnly.mjs';
 import { DATA_FILE } from '@/lib/db/paths.js';
+import * as analyticsClient from '@/lib/db/analytics/client.js';
+import { validateQuotaHistoryQuery } from '@/lib/db/analytics/quotaHistoryQueries.mjs';
 
 // The actual operator policy and repository run. Only credential collectors
 // are mocked; no usage provider or network function is reachable from this API.
@@ -26,6 +28,7 @@ const usage = (extra = {}) => ({ quotaObservation: { id: 'sample-1', observedAt 
 let db;
 beforeAll(async () => { await initDb(); db = await getAdapter(); });
 beforeEach(() => { db.run('DELETE FROM quotaObservations'); db.run('DELETE FROM quotaCheckEvents'); });
+afterAll(async () => { await globalThis._contextAnalytics?.client.close(); });
 
 describe('retained quota observations', () => {
   it('makes samples and check outcomes visible to a separate persisted reader', async () => {
@@ -108,7 +111,7 @@ describe('history queries and operator boundary', () => {
     const request = () => new Request('http://localhost/api/admin/quota', { headers: { 'x-operator': 'yes' } });
     const empty = await (await quotaGET(request())).json();
     expect(empty.historyAvailable).toBe(false);
-    expect(empty.retainedHistory).toEqual({ observationCount: 0, checkEventCount: 0 });
+    expect(empty.retainedHistory).toMatchObject({ observationCount: 0, checkEventCount: 0 });
     await captureQuotaUsage(conn, usage(), { capturedAt });
     const observed = await (await quotaGET(request())).json();
     expect(observed.historyAvailable).toBe(true);
@@ -148,8 +151,48 @@ describe('history queries and operator boundary', () => {
     const request = () => new Request(`http://localhost/api/admin/quota/history?${params()}`, { headers: { 'x-operator': 'yes' } });
     const response = await GET(request()); expect(response.status).toBe(200); expect((await response.json()).total).toBe(1);
     expect(response.headers.get('cache-control')).toBe('no-store');
-    const spy = vi.spyOn(db, 'all').mockImplementation(() => { throw new Error('PRIVATE-CREDENTIAL'); });
-    const error = await GET(request()); expect(error.status).toBe(500); expect(await error.text()).not.toContain('PRIVATE-CREDENTIAL'); spy.mockRestore();
+    const spy = vi.spyOn(analyticsClient, 'readContextAnalytics').mockRejectedValue(new analyticsClient.ContextAnalyticsError('PRIVATE-CREDENTIAL'));
+    const error = await GET(request()); expect(error.status).toBe(503); expect(await error.text()).not.toContain('PRIVATE-CREDENTIAL'); spy.mockRestore();
+  });
+  it('keeps current capacity readable when historical analytics are unavailable', async () => {
+    const spy = vi.spyOn(analyticsClient, 'readContextAnalytics').mockRejectedValue(new analyticsClient.ContextAnalyticsError('busy'));
+    try {
+      const response = await quotaGET(new Request('http://localhost/api/admin/quota', { headers: { 'x-operator': 'yes' } }));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ historyAvailable: null, historyState: 'unavailable', retainedHistory: null });
+    } finally { spy.mockRestore(); }
+  });
+  it('bounds optional history waiting and cancels abandoned reads', async () => {
+    const spy = vi.spyOn(analyticsClient, 'readContextAnalytics').mockImplementation((query, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new analyticsClient.ContextAnalyticsError('cancelled')), { once: true });
+    }));
+    try {
+      const started = performance.now();
+      const response = await quotaGET(new Request('http://localhost/api/admin/quota', { headers: { 'x-operator': 'yes' } }));
+      expect(response.status).toBe(200);
+      expect((await response.json()).historyState).toBe('unavailable');
+      expect(spy.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(performance.now() - started).toBeLessThan(1500);
+    } finally { spy.mockRestore(); }
+  });
+  it('rejects ambiguous dimensions and worker SQL or path injection', () => {
+    for (const raw of ['provider=claude&provider=codex', 'unknown=value', 'start=2026-02-30T10:00:00Z&end=2026-03-01T10:00:00Z']) {
+      expect(() => parseQuotaHistoryQuery(new URLSearchParams(raw))).toThrow();
+    }
+    const query = { operation: 'quota-history', ...parseQuotaHistoryQuery(params()) };
+    expect(validateQuotaHistoryQuery(query)).toEqual(query);
+    for (const changed of [{ ...query, file: '/private' }, { ...query, filters: { sql: 'SELECT * FROM apiKeys' } }, { operation: 'quota-history-summary', sql: 'anything' }]) {
+      expect(() => validateQuotaHistoryQuery(changed)).toThrow();
+    }
+  });
+  it('reads history off-thread and reports its committed snapshot', async () => {
+    await captureQuotaUsage(conn, usage(), { capturedAt });
+    const spy = vi.spyOn(db, 'all').mockImplementation(() => { throw new Error('Request-thread historical scan'); });
+    try {
+      const page = await getQuotaHistory(params());
+      expect(page.total).toBe(1);
+      expect(page.freshness).toMatchObject({ source: 'committed-sqlite', persistedAt: null });
+    } finally { spy.mockRestore(); }
   });
   it('retains scheduled and actual check events separately without raw errors', async () => {
     const event = { connectionId: conn.id, provider: conn.provider, checkId: 'check-1', eventType: 'scheduled', scheduledFor: until, resetAt: until, code: 'reset-not-before', capturedAt, rawError: 'PRIVATE-CREDENTIAL' };

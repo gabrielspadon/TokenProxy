@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { getAdapter } from "../driver.js";
 
-const DAY = 86_400_000;
-export const QUOTA_HISTORY_DEFAULT_DAYS = 30;
-export const QUOTA_HISTORY_MAX_PAGE = 200;
+import { DATA_FILE } from "../paths.js";
+import { readContextAnalytics } from "../analytics/client.js";
+import { parseQuotaHistoryQuery } from "../analytics/quotaHistoryQueries.mjs";
+export { parseQuotaHistoryQuery, QUOTA_HISTORY_DEFAULT_DAYS, QUOTA_HISTORY_MAX_PAGE } from "../analytics/quotaHistoryQueries.mjs";
 const text = (v) => typeof v === "string" && v.length <= 512 && v.trim() ? v : null;
 const number = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
 const date = (v) => typeof v === "string" && v.trim() && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null;
@@ -86,68 +87,16 @@ export async function recordQuotaCheckEvent(event) {
   [id,row.checkId,row.connectionId,row.provider,row.scope,row.source,row.eventType,row.scheduledFor,row.resetAt,row.observedAt,row.capturedAt,row.code]).changes;
 }
 
-export function parseQuotaHistoryQuery(params, { now = Date.now() } = {}) {
-  const kind = params.get("kind") ?? "observations";
-  if (!["observations", "checks"].includes(kind)) throw new TypeError("Invalid history kind");
-  const timeField = params.get("timeField") ?? "capturedAt";
-  if (!["capturedAt", "observedAt"].includes(timeField)) throw new TypeError("Invalid history time field");
-  const integer = (key, fallback, max) => {
-    const raw = params.get(key);
-    if (raw === null) return fallback;
-    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) > max) throw new TypeError(`Invalid ${key}`);
-    return Number(raw);
-  };
-  const pageSize = integer("pageSize", 50, QUOTA_HISTORY_MAX_PAGE);
-  const page = integer("page", 1, Number.MAX_SAFE_INTEGER);
-  if (pageSize < 1 || page < 1 || !Number.isSafeInteger((page - 1) * pageSize)) throw new TypeError("Invalid pagination");
-  if (params.has("limit") || params.has("offset")) throw new TypeError("Use page and pageSize");
-  const bound = (canonical, alias, fallback) => {
-    if (params.has(canonical) && params.has(alias)) throw new TypeError("Conflicting time keys");
-    if (!params.has(canonical) && !params.has(alias)) return fallback;
-    const raw = params.get(canonical) ?? params.get(alias);
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw)) {
-      throw new TypeError("History bounds require an explicit UTC offset");
-    }
-    return date(raw);
-  };
-  const start = bound("start", "since", new Date(now - QUOTA_HISTORY_DEFAULT_DAYS * DAY).toISOString());
-  const end = bound("end", "until", new Date(now).toISOString());
-  if (!start || !end || start >= end) throw new TypeError("Invalid history time range");
-  const filters = {};
-  for (const key of ["connectionId", "provider", "scope", "source", ...(kind === "checks" ? ["eventType", "checkId"] : ["unit", "resourceType", "observationKind"])]) {
-    if (!params.has(key)) continue;
-    const value = text(params.get(key));
-    if (!value || value.length > 512) throw new TypeError(`Invalid ${key}`);
-    filters[key] = value;
-  }
-  return { kind,timeField,start,end,pageSize,page,filters,defaultHorizonDays: params.has("start") || params.has("since") ? null : QUOTA_HISTORY_DEFAULT_DAYS };
-}
-
-export async function getQuotaHistory(params = new URLSearchParams(), options) {
+export async function getQuotaHistory(params = new URLSearchParams(), options = {}) {
   const query = parseQuotaHistoryQuery(params, options);
-  const { kind, timeField, start, end, pageSize, page, filters } = query;
-  const offset = (page - 1) * pageSize;
-  const table = kind === "checks" ? "quotaCheckEvents" : "quotaObservations";
-  const clauses = [`${timeField} >= ?`, `${timeField} < ?`];
-  const values = [start,end];
-  for (const [key,value] of Object.entries(filters)) { clauses.push(`${key} = ?`); values.push(value); }
-  const where = clauses.join(" AND ");
-  const db = await getAdapter();
-  return db.transaction(() => {
-    const total = db.get(`SELECT COUNT(*) AS total FROM ${table} WHERE ${where}`, values).total;
-    const items = db.all(`SELECT * FROM ${table} WHERE ${where} ORDER BY ${timeField} DESC, id DESC LIMIT ? OFFSET ?`, [...values,pageSize,offset]);
-    return { items,total,page,pageSize,pages: Math.ceil(total / pageSize),hasMore: offset + items.length < total,kind,filters,
-      timeRange: { field: timeField,start,end,endExclusive: true,defaultHorizonDays: query.defaultHorizonDays },
-      retention: { mode: "indefinite",automaticDeletion: false },mode: "passive" };
-  });
+  const writer = await getAdapter();
+  return readContextAnalytics({ operation: "quota-history", ...query },
+    { file: DATA_FILE, driver: writer.driver, signal: options.signal });
 }
 
-// These totals intentionally cover all retained source evidence, unlike a
-// filtered page's total. Merely creating the tables does not imply history.
-export async function getQuotaHistorySummary() {
-  const db = await getAdapter();
-  return db.transaction(() => ({
-    observationCount: db.get("SELECT COUNT(*) AS total FROM quotaObservations").total,
-    checkEventCount: db.get("SELECT COUNT(*) AS total FROM quotaCheckEvents").total,
-  }));
+// Totals cover all retained source evidence and run outside the request thread.
+export async function getQuotaHistorySummary({ signal } = {}) {
+  const writer = await getAdapter();
+  return readContextAnalytics({ operation: "quota-history-summary" },
+    { file: DATA_FILE, driver: writer.driver, signal });
 }
