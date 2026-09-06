@@ -12,6 +12,7 @@ import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtTime } from '@/shared/format';
 import { TONE, WORDS as STATUS } from '@/shared/status';
 import { Icon } from '@/shared/components/Icon';
+import SessionPins from '@/shared/components/SessionPins';
 import './styles.css';
 import { Button } from '@mantine/core';
 import { useResource } from '@/shared/workspace/useResource';
@@ -461,6 +462,8 @@ export default function SessionsPage() {
           </div>
         ) : null}
       </section>
+
+      <SessionPins />
 
       <section aria-labelledby="h-stick">
         <h2 id="h-stick">When a pin moves</h2>
