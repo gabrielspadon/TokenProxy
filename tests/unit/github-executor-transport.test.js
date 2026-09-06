@@ -108,11 +108,11 @@ describe('GithubExecutor.execute — endpoint routing', () => {
 
   it("escalates a 400 'not accessible via /chat/completions' to /responses, but caches the route ONLY on success (#3477)", async () => {
     const ex = new GithubExecutor();
-    vi.spyOn(Object.getPrototypeOf(Object.getPrototypeOf(ex)), 'execute').mockResolvedValue({
+    vi.spyOn(Object.getPrototypeOf(Object.getPrototypeOf(ex)), 'execute').mockImplementation(async () => ({
       response: new Response('model is not accessible via the /chat/completions endpoint', {
         status: 400,
       }),
-    });
+    }));
     const respSpy = vi
       .spyOn(ex, 'executeWithResponsesEndpoint')
       .mockResolvedValueOnce({ response: { ok: false, status: 400 } })

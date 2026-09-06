@@ -133,7 +133,9 @@ export class OllamaLocalExecutor extends DefaultExecutor {
   }
 
   // Override execute: emit rich debug diagnostics then delegate to BaseExecutor.
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch = null, afterDispatch = null }) {
     const host = resolveOllamaLocalHost(credentials);
     const timeoutMs = resolveConnectTimeoutMs({
       providerOverride: connectTimeout?.providerOverride,
@@ -166,7 +168,7 @@ export class OllamaLocalExecutor extends DefaultExecutor {
 
     // ── Delegate ────────────────────────────────────────────────────────
     try {
-      const result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, connectTimeout });
+      const result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, connectTimeout, beforeDispatch, afterDispatch });
       const elapsed = Date.now() - t0;
       dbg("OLLAMA-LOCAL", `✓ connected in ${fmtMs(elapsed)} | url=${result.url}`);
       return result;
