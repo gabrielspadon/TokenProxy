@@ -79,7 +79,7 @@ export function readEvidence(db,input) {
       if (scope.end) { clauses.push('switchedAt<?'); args.push(scope.end); }
     }
     result = limited(db,`SELECT id,model,fromConnectionId,toConnectionId,trigger,switchedAt FROM accountSwitches ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY switchedAt,id`,args);
-    source = 'accountSwitches'; coverage = { freeformReasonsExcluded: true, sessionIdentityExcluded: true };
+    source = 'accountSwitches'; coverage = { freeformReasonsExcluded: true, sessionIdentityExcluded: true, providerAttribution:'Current configured provider of the recorded destination account; deleted destinations are unknown.' };
   }
   if (result.exceeded) return { refused: true, code: 'export_too_large', totalRecords: result.totalRecords, limits: EXPORT_LIMITS,
     message: `The selected population contains ${result.totalRecords} records. Narrow the shared filters to at most ${EXPORT_LIMITS.records}; no partial export was produced.` };

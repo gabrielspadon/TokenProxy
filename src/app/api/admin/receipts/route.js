@@ -30,9 +30,11 @@ export async function GET(request) {
     const q = searchParams(request);
     return adminJson(
       await queryReceipts({
+        provider: q.get("provider"),
         connectionId: q.get("connectionId"),
         model: q.get("model"),
         since: q.get("since"),
+        until: q.get("until"),
         limit: q.get("limit"),
         cursor: q.get("cursor"),
       }),

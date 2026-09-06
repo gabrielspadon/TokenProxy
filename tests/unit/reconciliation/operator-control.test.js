@@ -98,7 +98,7 @@ vi.mock('@/lib/db/repos/quotaWindowsRepo.js', () => ({
   getWindows: mocks.getWindows,
   getAllWindows: mocks.getAllWindows,
 }));
-vi.mock('@/lib/db/repos/accountSwitchRepo.js', () => ({ listSwitches: mocks.listSwitches }));
+vi.mock('@/lib/db/repos/accountSwitchRepo.js', () => ({ listSwitches: mocks.listSwitches, querySwitchesPage:mocks.listSwitches, getSwitchById:async(id)=>(await mocks.listSwitches({})).find(row=>row.id===id) || null }));
 vi.mock('@/app/api/providers/[id]/test/testUtils', () => ({
   testSingleConnection: mocks.testSingleConnection,
 }));

@@ -92,3 +92,24 @@ export async function listSwitches({ sessionHash, connectionId, limit = 50 } = {
     switchedAt: r.switchedAt,
   }));
 }
+
+// Operator reads filter the complete retained population before keyset paging.
+export async function querySwitchesPage({ provider, connectionId, model, since, until, after, limit = 51 } = {}) {
+  const clauses = [], args = [];
+  if (provider) { clauses.push('toConnectionId IN (SELECT id FROM providerConnections WHERE provider=?)'); args.push(provider); }
+  if (connectionId) { clauses.push('(fromConnectionId=? OR toConnectionId=?)'); args.push(connectionId,connectionId); }
+  if (model) { clauses.push('model=?'); args.push(model); }
+  if (since) { clauses.push('switchedAt>=?'); args.push(since); }
+  if (until) { clauses.push('switchedAt<?'); args.push(until); }
+  if (after) { clauses.push('(switchedAt<? OR (switchedAt=? AND id<?))'); args.push(after.switchedAt,after.switchedAt,after.id); }
+  const db=await getAdapter();
+  return db.all(`SELECT id,model,fromConnectionId,toConnectionId,trigger,reason,windows,switchedAt
+    FROM accountSwitches ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+    ORDER BY switchedAt DESC,id DESC LIMIT ?`,[...args,Math.min(201,limit)])
+    .map(row=>({...row,windows:parseJson(row.windows,null)}));
+}
+export async function getSwitchById(id) {
+  const db=await getAdapter();
+  const row=db.get('SELECT id,model,fromConnectionId,toConnectionId,trigger,reason,windows,switchedAt FROM accountSwitches WHERE id=?',[id]);
+  return row ? {...row,windows:parseJson(row.windows,null)} : null;
+}

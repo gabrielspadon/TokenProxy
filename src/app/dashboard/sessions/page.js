@@ -14,6 +14,7 @@ import { TONE, WORDS as STATUS } from '@/shared/status';
 import { Icon } from '@/shared/components/Icon';
 import './styles.css';
 import { Button } from '@mantine/core';
+import { useResource } from '@/shared/workspace/useResource';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 
@@ -149,14 +150,19 @@ function Receipt({ r, names, now }) {
 }
 
 export default function SessionsPage() {
+  const {scope,setScope,snapshot,selectedRecord,observeSnapshot}=useWorkspace();
+  const retainedReceipt=useResource(selectedRecord?.kind==='routing-switch' ? `/api/admin/receipts/${encodeURIComponent(selectedRecord.id)}` : null,{onSnapshot:observeSnapshot});
   const detail = usePoll('/api/admin/health/detail', 30000);
   const apply = useUsageStream((s) => s.apply);
   const usage = useUsageStream((s) => s.data);
   const receivedAt = useUsageStream((s) => s.receivedAt);
   const stream = useEventStream('/api/usage/stream?period=today', apply);
 
-  const [draft, setDraft] = useState(EMPTY);
-  const [filters, setFilters] = useState(EMPTY);
+  const draftKey=JSON.stringify(scope);
+  const [draftState,setDraftState]=useState({key:null,value:EMPTY});
+  const draft=draftState.key===draftKey ? draftState.value : {connectionId:scope.connectionId || '',model:scope.model || '',since:scope.start || scope.end ? 'current' : ''};
+  const setDraft=(value)=>setDraftState({key:draftKey,value});
+  const filters={connectionId:scope.connectionId,model:scope.model,since:scope.start,until:scope.end,provider:scope.provider};
   const [extra, setExtra] = useState([]);
   const [pagedCursor, setPagedCursor] = useState(undefined);
   const [pageRefusal, setPageRefusal] = useState(null);
@@ -174,8 +180,10 @@ export default function SessionsPage() {
     if (filters.connectionId) q.set('connectionId', filters.connectionId);
     if (filters.model) q.set('model', filters.model);
     if (filters.since) q.set('since', filters.since);
+    if (filters.until) q.set('until',filters.until);
+    if (filters.provider) q.set('provider',filters.provider);
     return `/api/admin/receipts?${q}`;
-  }, [filters]);
+  }, [filters.connectionId,filters.model,filters.since,filters.until,filters.provider]);
   const receipts = usePoll(url, 30000);
 
   // Reset the paging state the moment `url` changes rather than in an effect
@@ -207,14 +215,13 @@ export default function SessionsPage() {
     return out;
   }, [receipts.data, extra]);
   const cursor = pagedCursor === undefined ? (receipts.data?.nextCursor ?? null) : pagedCursor;
-  const filtered = Boolean(filters.connectionId || filters.model || filters.since);
+  const filtered = Boolean(filters.connectionId || filters.model || filters.since || filters.until || filters.provider);
 
   const applyFilters = (e) => {
     e.preventDefault();
-    setFilters({
-      ...draft,
-      since: draft.since ? new Date(Date.now() - Number(draft.since)).toISOString() : '',
-    });
+    const anchor=snapshot?.capturedAt ? Date.parse(snapshot.capturedAt) : Date.now();
+    setScope({connectionId:(draft.connectionId ?? scope.connectionId) || null,model:(draft.model ?? scope.model) || null,
+      ...(draft.since==='current' ? {} : draft.since ? {period:'custom',start:new Date(anchor-Number(draft.since)).toISOString(),end:new Date(anchor).toISOString()} : {period:'all',start:null,end:null})});
   };
 
   const showMore = async () => {
@@ -247,6 +254,11 @@ export default function SessionsPage() {
       </div>
 
       <ScopeBar />
+      {selectedRecord?.kind==='routing-switch' && <section aria-label="Selected routing evidence" className="panel">
+        <h2>Selected routing receipt</h2>
+        <p className="caption">Exact retained identity, independent of the current list scope.</p>
+        {retainedReceipt.loading ? <p role="status">Reading selected receipt…</p> : retainedReceipt.error ? <p role="alert">The selected receipt is unavailable. Its identity is retained; no substitute was chosen.</p> : retainedReceipt.data ? <Receipt r={retainedReceipt.data} names={names} now={now}/> : null}
+      </section>}
       <div className="measures">
         <div className="measure big">
           <span className="label">In flight</span>
@@ -337,12 +349,13 @@ export default function SessionsPage() {
           One receipt for every time a session left one account for another. Receipts are written
           once and never edited or deleted.
         </p>
+        <p className="caption">Provider, account, model and UTC bounds follow the shared scope above. Provider attribution uses the destination account’s current configuration; deleted destinations remain unknown.</p>
         <form className="sessions-filters" onSubmit={applyFilters}>
           <label className="field">
             <span>Account</span>
             <select
               className="select"
-              value={draft.connectionId}
+              value={draft.connectionId ?? scope.connectionId ?? ''}
               onChange={(e) => setDraft({ ...draft, connectionId: e.target.value })}
             >
               <option value="">Every account</option>
@@ -357,7 +370,7 @@ export default function SessionsPage() {
             <span>Model</span>
             <input
               className="input"
-              value={draft.model}
+              value={draft.model ?? scope.model ?? ''}
               onChange={(e) => setDraft({ ...draft, model: e.target.value })}
             />
           </label>
@@ -368,6 +381,7 @@ export default function SessionsPage() {
               value={draft.since}
               onChange={(e) => setDraft({ ...draft, since: e.target.value })}
             >
+              <option value="current">Current shared UTC range</option>
               {SINCE.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}
@@ -423,8 +437,7 @@ export default function SessionsPage() {
       <section aria-labelledby="h-find" className="panel">
         <h2 id="h-find">Find one receipt</h2>
         <p className="caption">
-          A receipt older than the last thousand switches reads exactly like one that never existed.
-          The gateway does not tell the two apart.
+          An exact retained receipt ID is looked up across the complete stored log. A missing ID is never replaced by a similar timestamp or account.
         </p>
         <form className="sessions-filters" onSubmit={find}>
           <label className="field">
