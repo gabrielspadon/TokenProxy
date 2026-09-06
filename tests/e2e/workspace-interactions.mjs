@@ -149,6 +149,13 @@ try {
   report.mobileOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > innerWidth
   );
+  const mobileAxe = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+    .analyze();
+  report.mobileAccessibility = mobileAxe.violations.map((violation) => ({
+    id: violation.id,
+    nodes: violation.nodes.map((node) => node.target),
+  }));
   await page.evaluate(() => {
     document.documentElement.dir = 'rtl';
   });

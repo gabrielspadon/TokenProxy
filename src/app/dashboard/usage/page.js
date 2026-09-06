@@ -66,9 +66,10 @@ export default function EconomicsPage() {
     if (!inspection) return;
     const label =
       inspection.value.kind === 'economics-record' ? 'Recorded requests' : 'Economics by cohort';
-    surface.current
-      ?.querySelector(`table[aria-label="${label}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
+    const region = surface.current;
+    const table = region?.querySelector(`table[aria-label="${label}"]`);
+    if (region && table)
+      region.scrollTop += table.getBoundingClientRect().top - region.getBoundingClientRect().top;
   }, [inspection]);
   return (
     <>
