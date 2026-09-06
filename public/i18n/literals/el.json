@@ -1362,5 +1362,7 @@
   "spent": "δαπανηθείσα",
   "uses the default strategy": "χρησιμοποιεί την προκαθορισμένη στρατηγική",
   "⚠️ MITM intercepts HTTPS traffic of IDE tools (Antigravity, GitHub Copilot, Kiro) via local CA to redirect requests to your providers. May violate ToS → account ban. Use at your own risk.": "⚠️ Το MITM υποκλέπτει την κίνηση HTTPS των εργαλείων IDE (Antigravity, GitHub Copilot, Kiro) μέσω τοπικού CA για ανακατεύθυνση αιτημάτων στους παρόχους σας. Μπορεί να παραβιάσει τους ToS → κίνδυνος αποκλεισμού λογαριασμού. Χρήση με δική σας ευθύνη.",
-  "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ Ειδοποίηση κινδύνου: Αυτός ο πάροχος χρησιμοποιεί συνδρομή/συνεδρία OAuth που δεν έχει επίσημη άδεια για χρήση μέσω proxy/router. Ο λογαριασμός ενδέχεται να περιοριστεί ή να αποκλειστεί. Χρήση με δική σας ευθύνη."
+  "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ Ειδοποίηση κινδύνου: Αυτός ο πάροχος χρησιμοποιεί συνδρομή/συνεδρία OAuth που δεν έχει επίσημη άδεια για χρήση μέσω proxy/router. Ο λογαριασμός ενδέχεται να περιοριστεί ή να αποκλειστεί. Χρήση με δική σας ευθύνη.",
+  "req/min": "req/min",
+  "Telemetry": "Telemetry"
 }
