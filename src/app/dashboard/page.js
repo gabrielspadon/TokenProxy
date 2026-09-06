@@ -27,6 +27,7 @@ import {
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
 import { Icon } from '@/shared/components/Icon';
 import { QuotaSummary, WindowEvidence, orderQuotaWindows } from '@/shared/workspace/QuotaEvidence';
+import { QuotaHistoryWorkbench } from '@/shared/workspace/QuotaHistoryWorkbench';
 import { ActivityBand } from '@/shared/workspace/ActivityBand';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
@@ -360,6 +361,7 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
               No quota windows were recorded for this account.
             </Text>
           )}
+          <QuotaHistoryWorkbench account={row} anchor={anchor} selectedScope={selectedScope} />
         </div>
       </Tabs.Panel>
       <Tabs.Panel value="requests">
