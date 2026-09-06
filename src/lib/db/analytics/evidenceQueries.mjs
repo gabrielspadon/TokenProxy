@@ -1,6 +1,7 @@
 import { InvestigationError, OWNER_SCOPE, object, validateDefinition } from './investigationModel.mjs';
 import { readActivityEvidence } from './activityQueries.mjs';
 import { readContextEvidenceExport } from './contextEvidenceExport.mjs';
+import { economicsGroupFilters } from './economicsDimensions.mjs';
 import { EXPORT_LIMITS } from './evidenceFormat.mjs';
 
 export { EXPORT_LIMITS } from './evidenceFormat.mjs';
@@ -16,11 +17,11 @@ export function validateEvidenceQuery(query) {
   if (query.mode === 'selected' && !definition.selection) throw new InvestigationError('Select a record first.');
   if (query.mode === 'comparison' && !definition.comparisonIds.length) throw new InvestigationError('Select comparison accounts first.');
   if(query.mode==='population' && definition.lens==='capacity')throw new InvestigationError('Capacity exports exact selected or comparison accounts. Use Economics or Context for a time-filtered population.');
-  if(query.mode==='selected' && definition.selection?.kind==='economics-group' && (!definition.selection.provider || (definition.selection.groupBy==='model'&&!definition.selection.model) || (definition.selection.groupBy==='account'&&!definition.selection.connectionId)))throw new InvestigationError('This cohort has an unspecified dimension. Select exact records or a supported filtered population.');
+  if(query.mode==='selected' && definition.selection?.kind==='economics-group' && !economicsGroupFilters(definition.selection,definition.selection.groupBy))throw new InvestigationError('This cohort cannot be isolated by the supported exact filters. Select exact records or a supported filtered population.');
   return { operation: 'evidence', mode: query.mode, definition };
 }
 function selectFields(row,keys) { return Object.fromEntries(keys.map((key) => [key,row[key] ?? null])); }
-const ACTIVITY_FIELDS = ['id','timestamp','provider','model','connectionId','status','requestId','logicalRequestId','attempt','contextSessionId','projectId','dispatchCoverage','usageSource','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','estimatedCostUsd','reportedCostUsd','costSource','rateSnapshotId','pricingCapturedAt','latencyMs','ttftMs','invalidTokens','inconsistentCache','missingTokenDetail'];
+const ACTIVITY_FIELDS = ['id','timestamp','provider','model','requestedModel','connectionId','status','requestId','requestLink','logicalRequestId','attempt','contextSessionId','projectId','clientKeyId','clientIdentitySource','clientRef','clientSessionRef','projectRef','taskRef','dispatchCoverage','usageSource','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','reasoningTokens','recordedCostUsd','estimatedCostUsd','reportedCostUsd','costSource','rateSnapshotId','pricingCapturedAt','rateSnapshot','costComponents','latencyMs','ttftMs','invalidTokens','inconsistentCache','missingTokenDetail'];
 function limited(db,sql,args) {
   const total = db.get(`SELECT COUNT(*) AS n FROM (${sql})`,args).n;
   if (total > EXPORT_LIMITS.records) return { exceeded: true, totalRecords: total };
@@ -37,13 +38,15 @@ export function readEvidence(db,input) {
     const filters = { ...scope };
     delete filters.period;
     if (selection?.kind === 'economics-record') filters.recordId = selection.id;
-    const cohort=selectedCohort ? selection : !selection ? d.economics.cohort : null;
-    if (cohort) for (const key of ['provider','model','connectionId']) if (cohort[key]) {
+    const cohort=selectedCohort ? economicsGroupFilters(selection,selection.groupBy) : !selection ? d.economics.cohort : null;
+    if (cohort) for (const key of ['provider','model','connectionId','sessionId','logicalRequestId','clientRef','projectRef','taskRef','missing']) if (cohort[key]!=null) {
       if (filters[key] && filters[key]!==cohort[key]) throw new InvestigationError('The retained cohort conflicts with the shared scope. Clear the cohort or restore its matching scope before exporting.');
       filters[key]=cohort[key];
     }
     result = readActivityEvidence(db,{operation:'activity',view:'economics',...filters,groupBy:d.economics.groupBy,
-      ...(!selection && d.economics.status !== 'all' ? {status:d.economics.status} : {})});
+      ...(!selection && d.economics.status !== 'all' ? {status:d.economics.status} : {}),
+      ...(!selection && d.economics.costSource && d.economics.costSource!=='all' ? {costSource:d.economics.costSource} : {}),
+      ...(!selection && d.economics.attemptKind && d.economics.attemptKind!=='all' ? {attemptKind:d.economics.attemptKind} : {})});
     if (result.items) result.items = result.items.map((row) => selectFields(row,ACTIVITY_FIELDS));
     source = 'usageHistory'; coverage = result.coverage;
   } else if (kind.startsWith('context')) {

@@ -1,8 +1,13 @@
+import { CLIENT_REFERENCE_FIELDS, ECONOMICS_LINK_FIELDS, economicsLedgerSource, costComponents } from './economicsLinks.mjs';
+import { ECONOMICS_GROUP_VALUES, economicsGroupFields } from './economicsDimensions.mjs';
 const MAX_POINTS = 720;
 const MINUTE = 60000;
-const GROUPS = new Set(['provider', 'model', 'account']);
+const GROUPS = new Set(ECONOMICS_GROUP_VALUES);
+const IDENTITY_FILTERS = ['clientKeyId',...CLIENT_REFERENCE_FIELDS];
+const MISSING_FILTERS = ['provider','model','connectionId','sessionId','logicalRequestId',...IDENTITY_FILTERS];
 const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId']);
+const GROUP_SORTS = new Set(['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens']);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
 
 export class ActivityQueryError extends Error {}
 
@@ -48,6 +53,23 @@ export function validateActivityQuery(query) {
   result.recordId = query.recordId == null ? null : integer(query.recordId, null, Number.MAX_SAFE_INTEGER, 'ledger record');
   if (result.recordId !== null && view !== 'economics') throw new ActivityQueryError('recordId is a completion-ledger identity.');
   result.sessionId = query.sessionId == null ? null : integer(query.sessionId, null, Number.MAX_SAFE_INTEGER, 'session');
+  for (const field of IDENTITY_FILTERS) {
+    const value=query[field];
+    if (value==null || value==='') {result[field]=null;continue;}
+    if (typeof value!=='string' || (field==='clientKeyId' ? !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) : !/^ctx1_[a-f0-9]{64}$/.test(value))) throw new ActivityQueryError('Invalid explicit identity filter.');
+    result[field]=value;
+  }
+  for (const [field,choices] of [['missing',MISSING_FILTERS],['requestLink',['linked','unattributed','unavailable','conflict']],['costSource',['application-estimate','provider-reported','unknown']],['attemptKind',['initial','additional','unknown']]]) {
+    result[field]=query[field] ?? null;
+    if (result[field]!==null && !choices.includes(result[field])) throw new ActivityQueryError('Invalid economics evidence filter.');
+  }
+  if (result.missing && result[result.missing]!=null) throw new ActivityQueryError('An identity cannot be both specified and missing.');
+  if (view!=='economics' && ([...IDENTITY_FILTERS,'requestLink','costSource','attemptKind'].some(field=>result[field]!==null) || !['provider','model','account'].includes(groupBy) || (result.missing && IDENTITY_FILTERS.includes(result.missing)))) throw new ActivityQueryError('Explicit cost evidence requires the economics view.');
+  result.groupPage=integer(query.groupPage,1,100000,'cohort page');
+  result.groupPageSize=integer(query.groupPageSize,100,100,'cohort page size');
+  result.groupSortBy=query.groupSortBy ?? 'records';
+  result.groupSortDirection=query.groupSortDirection ?? 'desc';
+  if (!GROUP_SORTS.has(result.groupSortBy) || !['asc','desc'].includes(result.groupSortDirection)) throw new ActivityQueryError('Invalid cohort sort.');
   result.page = integer(query.page, 1, 100000, 'page');
   result.pageSize = integer(query.pageSize, 50, 100, 'page size');
   result.sortBy = query.sortBy ?? 'timestamp';
@@ -68,6 +90,22 @@ function filterFor(query, columns) {
     if (query[key] === null) continue;
     if (!columns.has(column)) { clauses.push('0'); continue; }
     clauses.push(`${column}=?`); params.push(query[key]);
+  }
+  for (const field of IDENTITY_FILTERS) if (query[field]!=null) {clauses.push(`${field}=?`);params.push(query[field]);}
+  if (query.missing) {
+    const column=query.missing==='sessionId' ? 'contextSessionId' : query.missing;
+    clauses.push(columns.has(column) || IDENTITY_FILTERS.includes(column) ? `${column} IS NULL` : '1');
+  }
+  if (query.requestLink) {clauses.push('requestLink=?');params.push(query.requestLink);}
+  if (query.costSource) {
+    if (!columns.has('costSource')) clauses.push(query.costSource==='unknown' ? '1' : '0');
+    else if (query.costSource==='unknown') clauses.push("(costSource IS NULL OR costSource='unknown')");
+    else {clauses.push('costSource=?');params.push(query.costSource);}
+  }
+  if (query.attemptKind) {
+    const known=columns.has('attempt') && columns.has('logicalRequestId') && columns.has('dispatchCoverage')
+      ? "logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>=1" : '0';
+    clauses.push(query.attemptKind==='unknown' ? `NOT COALESCE((${known}),0)` : `(${known}) AND attempt${query.attemptKind==='initial'?'=1':'>1'}`);
   }
   if (query.start) { clauses.push('timestamp>=?'); params.push(query.start); }
   if (query.end) { clauses.push('timestamp<?'); params.push(query.end); }
@@ -91,29 +129,33 @@ function baseQuery(db, query) {
     : columns.has(name) ? name : `NULL AS ${name}`).join(',');
   const contextId = columns.has('contextSessionId') ? 'contextSessionId' : 'NULL AS contextSessionId';
   if (query.view === 'economics') {
-    return { params, sql: `WITH filtered AS (
-      SELECT id,timestamp,provider,model,connectionId,status,promptTokens,completionTokens,cost,${attribution},${contextId},
+    return { params, sql: `WITH ${economicsLedgerSource(db,columns)}, filtered AS (
+      SELECT id,timestamp,provider,model,connectionId,status,promptTokens,completionTokens,cost,${attribution},${contextId},${ECONOMICS_LINK_FIELDS.join(',')},linkedLatency,linkedTtft,
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN tokens ELSE '{}' END ELSE '{}' END AS safeTokens,
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN 0 ELSE 1 END ELSE 1 END AS invalidTokenDetail
-      FROM usageHistory ${sql}
+      FROM ledger ${sql}
     ), quantities AS MATERIALIZED (
-      SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,
+      SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,${ECONOMICS_LINK_FIELDS.join(',')},
         CASE WHEN json_extract(safeTokens,'$.input_tokens_present')=0 THEN NULL ELSE ${quantity('promptTokens')} END AS prompt,
         CASE WHEN json_extract(safeTokens,'$.output_tokens_present')=0 THEN NULL ELSE ${quantity('completionTokens')} END AS output,
         ${jsonQuantity('cached_tokens')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens')} AS cacheWrite,
+        ${jsonQuantity('reasoning_tokens')} AS reasoningTokens,
         CASE WHEN ${validNumber('cost')} THEN cost END AS recordedCost,
         CASE WHEN invalidTokenDetail=1 OR NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
           OR (json_type(safeTokens,'$.cached_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")})
           OR (json_type(safeTokens,'$.cache_creation_input_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")})
           THEN 1 ELSE 0 END AS invalidTokens,
         CASE WHEN NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")} OR NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")}
-          THEN 1 ELSE 0 END AS missingTokenDetail,NULL AS latencyMs,NULL AS ttftMs
+          THEN 1 ELSE 0 END AS missingTokenDetail,
+        CASE WHEN ${validNumber('linkedLatency')} AND linkedLatency>0 THEN linkedLatency END AS latencyMs,
+        CASE WHEN ${validNumber('linkedTtft')} AND linkedTtft>0 THEN linkedTtft END AS ttftMs
       FROM filtered
     ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
       CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
   }
   return { params, sql: `WITH quantities AS (
     SELECT id,timestamp,provider,model,connectionId,status,${attribution},
+      ${ECONOMICS_LINK_FIELDS.map(field=>`NULL AS ${field}`).join(',')},NULL AS reasoningTokens,
       ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
       ${quantity('cachedTokens')} AS cacheRead,${quantity('cacheCreationTokens')} AS cacheWrite,
       NULL AS recordedCost,
@@ -127,6 +169,16 @@ function baseQuery(db, query) {
 }
 
 const TOTALS = `COUNT(*) AS records,COUNT(*) AS attempts,
+  COALESCE(SUM(requestLink='linked'),0) AS linkedRequestRows,
+  COALESCE(SUM(requestLink='conflict'),0) AS conflictingRequestRows,
+  COALESCE(SUM(requestLink='unavailable'),0) AS unavailableRequestRows,
+  COUNT(contextSessionId) AS explicitSessionRows,COUNT(projectRef) AS clientProjectRows,COUNT(taskRef) AS taskRows,COUNT(clientRef) AS clientRows,
+  COALESCE(SUM(logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt=1),0) AS initialAttemptRows,
+  COALESCE(SUM(logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>1),0) AS additionalAttemptRows,
+  SUM(CASE WHEN logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>1 THEN recordedCost END) AS additionalAttemptCostUsd,
+  SUM(CASE WHEN latencyMs IS NOT NULL AND recordedCost IS NOT NULL THEN recordedCost END) AS pairedCostUsd,
+  AVG(CASE WHEN recordedCost IS NOT NULL THEN latencyMs END) AS pairedAverageLatencyMs,
+  COALESCE(SUM(latencyMs IS NOT NULL AND recordedCost IS NOT NULL),0) AS costLatencySamples,
   COALESCE(SUM(CASE WHEN dispatchCoverage='physical-dispatch' THEN 1 ELSE 0 END),0) AS physicalDispatchRows,
   COALESCE(SUM(CASE WHEN dispatchCoverage='executor-invocation' THEN 1 ELSE 0 END),0) AS executorInvocationRows,
   COALESCE(SUM(CASE WHEN dispatchCoverage IS NULL THEN 1 ELSE 0 END),0) AS unknownDispatchRows,
@@ -137,6 +189,7 @@ const TOTALS = `COUNT(*) AS records,COUNT(*) AS attempts,
   COALESCE(SUM(CASE WHEN ${validNumber('estimatedCostUsd')} THEN 1 ELSE 0 END),0) AS estimatedCostSamples,
   COALESCE(SUM(CASE WHEN ${validNumber('reportedCostUsd')} THEN 1 ELSE 0 END),0) AS reportedCostSamples,
   COALESCE(SUM(CASE WHEN costSource='provider-confirmed' THEN 1 ELSE 0 END),0) AS confirmedCostRows,
+  COALESCE(SUM(CASE WHEN costSource='provider-reported' THEN 1 ELSE 0 END),0) AS providerReportedCostRows,
   COALESCE(SUM(CASE WHEN costSource IS NULL OR costSource='unknown' THEN 1 ELSE 0 END),0) AS unknownCostSourceRows,
   COALESCE(SUM(CASE WHEN rateSnapshotId IS NOT NULL THEN 1 ELSE 0 END),0) AS rateSnapshotRows,
 COALESCE(SUM(prompt),0) AS inputTokens,
@@ -172,9 +225,7 @@ function enrich(row) {
 }
 
 function groupColumns(groupBy) {
-  if (groupBy === 'model') return ['provider', 'model'];
-  if (groupBy === 'account') return ['provider', 'connectionId'];
-  return ['provider'];
+  return economicsGroupFields(groupBy);
 }
 
 function series(db, base, query, summary) {
@@ -204,12 +255,15 @@ export function readActivityAnalytics(db, input) {
     summary.p50LatencyMs = ranks.p50; summary.p95LatencyMs = ranks.p95;
   }
   const columns = groupColumns(query.groupBy);
+  const groupTotal=db.get(`${base.sql} SELECT COUNT(*) AS n FROM (SELECT 1 FROM records GROUP BY ${columns.join(',')})`,base.params).n;
   const groups = db.all(`${base.sql} SELECT ${columns.join(',')},${TOTALS} FROM records
-    GROUP BY ${columns.join(',')} ORDER BY records DESC,${columns.join(',')} LIMIT 101`, base.params);
+    GROUP BY ${columns.join(',')} ORDER BY ${query.groupSortBy} ${query.groupSortDirection.toUpperCase()} NULLS LAST,${columns.join(',')} LIMIT ? OFFSET ?`,
+    [...base.params,query.groupPageSize,(query.groupPage-1)*query.groupPageSize]);
   const rows = readActivityItems(db,query,base,query.pageSize,(query.page-1)*query.pageSize);
   return {
     source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query,
-    summary, series: series(db,base,query,summary), groups: groups.slice(0,100).map(enrich), groupsTruncated: groups.length > 100,
+    summary, series: series(db,base,query,summary), groups: groups.map(enrich), groupsTruncated: groupTotal>query.groupPageSize,
+    groupPagination:{page:query.groupPage,pageSize:query.groupPageSize,totalItems:groupTotal,totalPages:Math.ceil(groupTotal/query.groupPageSize),hasNext:query.groupPage*query.groupPageSize<groupTotal,hasPrev:query.groupPage>1},
     items: rows, pagination: { page: query.page, pageSize: query.pageSize, totalItems: summary.records,
       totalPages: Math.ceil(summary.records/query.pageSize), hasNext: query.page*query.pageSize < summary.records, hasPrev: query.page > 1 },
     units: { tokens: 'tokens', cost: 'USD', latency: 'ms', time: 'UTC' },
@@ -218,7 +272,10 @@ export function readActivityAnalytics(db, input) {
       recordedCostUsd: 'Recorded application estimate or explicitly USD-denominated provider report. Read costSource and both component amounts. It is not subscription spend or a confirmed charge. Historical price basis was not retained; zero is ambiguous.',
       dispatchCoverage: 'physical-dispatch means the generation transport invoked the dispatch hook. executor-invocation may contain uninstrumented wire retries. Null means historical or unavailable coverage.',
       attribution: 'requestId identifies one recorded attempt; dispatchCoverage distinguishes measured transport dispatches from executor invocations. logicalRequestId groups attempts from the same server request. Unattributed historical attempts are counted separately, never guessed. Distinct logical counts across groups or time buckets are not additive.',
-      pricing: 'Immutable captured rates and calculator version support application estimates. Only explicit context identities link sessions. Project IDs remain null until an actual project identity source exists.',
+      pricing: 'Immutable captured rates and calculator version support application estimates. Reported costs are upstream USD observations, not confirmed charges. Ledger contextSessionId records an explicit session link; projectRef is client-reported and scoped to installation/key/client, not an application project.',
+      requestLink: 'Exact requestId with compatible logical/session/attempt identities permits retained request metrics. Unavailable can mean expired evidence. Conflicts remain unlinked. No timestamps are used for attribution.',
+      retry: 'Additional attempt costs include only server logical IDs with physical dispatch coverage and attempt ordinal above one. They are not necessarily avoidable cost; missing attempts or charges remain unknown.',
+      costLatency: 'Cost and latency comparisons use the same exactly linked rows with usable cost and positive latency. Samples are descriptive, not causal or task-success measures.',
       cacheReadFraction: 'Recorded cache reads divided by cache-inclusive input only where both quantities are usable. Historical zero defaults may still represent unreported upstream fields.',
       coverage: 'Token sums include only finite nonnegative quantities within the safe integer range. Per-quantity sample counts and invalid/missing detail rows expose incomplete decomposition.',
       recordedPending: 'Persisted pending statuses. They do not establish current in-flight requests.',
@@ -231,7 +288,7 @@ export function readActivityAnalytics(db, input) {
 }
 
 function readActivityItems(db,query,base,limit,offset=0) {
-  const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},prompt AS inputTokens,
+  const rows = db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},${ECONOMICS_LINK_FIELDS.join(',')},reasoningTokens,prompt AS inputTokens,
     uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
     recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
     FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC LIMIT ? OFFSET ?`,
@@ -242,6 +299,7 @@ function readActivityItems(db,query,base,limit,offset=0) {
   for (const row of rows) {
     row.costEvidence = parseObject(row.costEvidence);
     row.rateSnapshot = snapshotMap.get(row.rateSnapshotId) || null;
+    if (query.view==='economics') row.costComponents=costComponents(row);
   }
   return rows;
 }
