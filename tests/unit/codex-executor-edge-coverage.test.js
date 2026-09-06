@@ -375,10 +375,9 @@ describe('execute SSE verdicts', () => {
   });
 
   it('returns the 400 untouched when the error body cannot be read', async () => {
-    const spy = stubUpstream(() => ({
-      status: HTTP_STATUS.BAD_REQUEST,
-      clone: () => ({ text: () => Promise.reject(new Error('unreadable')) }),
-    }));
+    const spy = stubUpstream(() => new Response(new ReadableStream({
+      start(controller) { controller.error(new Error('unreadable')); },
+    }), {status:HTTP_STATUS.BAD_REQUEST}));
     const { response } = await new CodexExecutor().execute(baseArgs());
     expect(spy).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(HTTP_STATUS.BAD_REQUEST);

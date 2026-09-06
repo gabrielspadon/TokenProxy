@@ -14,6 +14,9 @@ import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { normalizeCodexServiceTier } from "../config/codexFastMode.js";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { inspectErrorBody } from "../utils/inspectErrorBody.js";
+import { discardResponseBody } from "../utils/discardResponseBody.js";
 
 // Classify explicit SSE error envelopes. Accepted responses never permit replay.
 const CODEX_SSE_TRANSIENT_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
@@ -426,22 +429,25 @@ export class CodexExecutor extends BaseExecutor {
       if (
         !ciphertextRetried
         && result.response?.status === HTTP_STATUS.BAD_REQUEST
+        && isReplaySafeRejection(result.response)
         && typeof result.response.clone === "function"
       ) {
-        let errorText = "";
         try {
-          errorText = await result.response.clone().text();
-        } catch {
-          errorText = "";
-        }
-        if (isStaleCiphertextError(errorText)) {
-          const stripped = stripEncryptedReasoning(args.body);
-          if (stripped > 0) {
-            ciphertextRetried = true;
-            args.log?.warn?.("RETRY", `CODEX | stale reasoning ciphertext 400 — dropped ${stripped}, retrying`);
-            dbg("CODEX", `stale ciphertext 400 → stripped ${stripped} encrypted_content, retrying once`);
-            continue;
+          const inspected = await inspectErrorBody(result.response, { signal: args.signal });
+          if (inspected.complete && isStaleCiphertextError(inspected.text)) {
+            args.signal?.throwIfAborted();
+            const stripped = stripEncryptedReasoning(args.body);
+            if (stripped > 0) {
+              ciphertextRetried = true;
+              discardResponseBody(result.response);
+              args.log?.warn?.("RETRY", `CODEX | stale reasoning ciphertext 400, dropped ${stripped}, retrying`);
+              dbg("CODEX", `stale ciphertext 400 → stripped ${stripped} encrypted_content, retrying once`);
+              continue;
+            }
           }
+        } catch (error) {
+          discardResponseBody(result.response);
+          throw error;
         }
       }
       const peek = await this._peekSseTransientError(result.response);
