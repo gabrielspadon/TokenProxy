@@ -101,9 +101,16 @@ function protectedSplitIndex(items, requestedSplit) {
   const edges = [];
   let split = requestedSplit;
   const errorFlagged = (node) => {
-    if (!node || typeof node !== 'object') return false;
-    if (node.is_error === true || node.isError === true || node.error === true || node.status === 'error' || node.status === 'failed') return true;
-    return Object.values(node).some((value) => value && typeof value === 'object' && errorFlagged(value));
+    const pending = [node];
+    const visited = new Set();
+    while (pending.length) {
+      const value = pending.pop();
+      if (!value || typeof value !== 'object' || visited.has(value)) continue;
+      visited.add(value);
+      if (value.is_error === true || value.isError === true || value.error === true || value.status === 'error' || value.status === 'failed') return true;
+      for (const child of Object.values(value)) if (child && typeof child === 'object') pending.push(child);
+    }
+    return false;
   };
   const call = (id, index) => { if (typeof id === 'string' && id) calls.set(id, { index, answered: false }); };
   const result = (id, index) => {

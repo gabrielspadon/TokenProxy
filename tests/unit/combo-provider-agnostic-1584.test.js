@@ -46,7 +46,7 @@ const sse = (content) =>
 const failure = (status, message) =>
   new Response(JSON.stringify({ error: { message } }), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-tokenproxy-replay-safe': 'true' },
   });
 
 // The report's own queue: a codex model ranked first, then the providers it is
@@ -101,7 +101,7 @@ describe('#1584 a combo is walked by position, not by provider', () => {
     expect(tried).toEqual(QUEUE);
   });
 
-  it('does not stop at a codex member that answers HTTP 200 with an empty stream', async () => {
+  it('stops after accepted empty generation independently of provider identity', async () => {
     const tried = [];
     const empty = () =>
       new Response(
@@ -119,8 +119,9 @@ describe('#1584 a combo is walked by position, not by provider', () => {
       return modelStr.startsWith('codex') ? empty() : sse('answer from claude');
     });
 
-    expect(res.status).toBe(200);
-    expect(tried).toEqual(['codex,gpt-5.1-codex', 'claude,claude-sonnet-4-6']);
+    expect(res.status).toBe(502);
+    expect(res.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(tried).toEqual(['codex,gpt-5.1-codex']);
   });
 
   it('stops at the first healthy member whatever its provider — that is fallback, not a codex rule', async () => {

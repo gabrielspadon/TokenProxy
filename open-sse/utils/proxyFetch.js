@@ -684,8 +684,9 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   throwIfAborted(options.signal);
-  const replayableMethod = ['GET', 'HEAD', 'OPTIONS'].includes(String(options.method || 'GET').toUpperCase());
-  const targetUrl = typeof url === "string" ? url : url.toString();
+  const request = typeof Request !== 'undefined' && url instanceof Request ? url : null;
+  const replayableMethod = ['GET', 'HEAD', 'OPTIONS'].includes(String(options.method ?? request?.method ?? 'GET').toUpperCase());
+  const targetUrl = typeof url === "string" ? url : request?.url ?? url.toString();
   const route = resolveEffectiveProxyRoute(targetUrl, proxyOptions || {});
 
   if (route.kind === "required-unavailable") throw requiredProxyUnavailableError(route);

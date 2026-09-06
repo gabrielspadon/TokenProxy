@@ -27,7 +27,7 @@ const ok = () =>
 const rateLimited = () =>
   new Response(
     JSON.stringify({ error: { message: "rate_limit_error: 5-hour limit reached" } }),
-    { status: 429, headers: { "Content-Type": "application/json" } },
+    { status: 429, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "true" } },
   );
 
 const PREFERRED = "claude/claude-sonnet-4.6";

@@ -8,6 +8,13 @@ beforeEach(() => native.mockReset());
 afterAll(() => { globalThis.fetch = previousFetch; });
 
 describe('independent proxy transport replay boundary', () => {
+  it('honors method and URL carried by a Request object', async () => {
+    const error = new Error('uncertain Request POST');
+    native.mockRejectedValueOnce(error).mockResolvedValue(Response.json({ answer: 'duplicate' }));
+    const request = new Request('https://provider.invalid/generate', { method: 'POST', body: '{}' });
+    await expect(proxyAwareFetch(request, {}, proxy)).rejects.toBe(error);
+    expect(native).toHaveBeenCalledTimes(1);
+  });
   it.each(['https://provider.invalid/generate', 'https://audit.proxy.individual.githubcopilot.com/chat/completions'])('never falls through to direct transport after an uncertain POST at %s', async (url) => {
     const error = new Error('proxy socket closed after write');
     native.mockRejectedValueOnce(error).mockResolvedValue(Response.json({ answer: 'duplicate' }));

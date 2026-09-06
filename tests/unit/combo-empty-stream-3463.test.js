@@ -43,29 +43,29 @@ async function runCombo(responders, { models = ["p1/first", "p2/second"], consum
   return { attempted, response, text: consume ? await response.text() : null };
 }
 
-describe("combo failover on empty-but-successful streams (#3463)", () => {
+describe("combo refuses replay of empty accepted streams (#3463)", () => {
   beforeEach(() => {
     resetComboRotation();
   });
 
-  it("falls over when the first model returns HTTP 200 with zero meaningful frames", async () => {
+  it("stops when the first model accepts but returns zero meaningful frames", async () => {
     const { attempted, text } = await runCombo({
       "p1/first": () => sseResponse([": keepalive\n\n"]),
       "p2/second": () => sseResponse(['data: {"choices":[{"delta":{"content":"real answer"}}]}\n\n']),
     });
 
-    expect(attempted).toEqual(["p1/first", "p2/second"]);
-    expect(text).toContain("real answer");
+    expect(attempted).toEqual(["p1/first"]);
+    expect(text).toContain("no usable content");
   });
 
-  it("falls over when the stream closes without sending a single byte", async () => {
+  it("stops when the accepted stream closes without sending a single byte", async () => {
     const { attempted, text } = await runCombo({
       "p1/first": () => sseResponse([]),
       "p2/second": () => sseResponse(['data: {"choices":[{"delta":{"content":"second model"}}]}\n\n']),
     });
 
-    expect(attempted).toEqual(["p1/first", "p2/second"]);
-    expect(text).toContain("second model");
+    expect(attempted).toEqual(["p1/first"]);
+    expect(text).toContain("no usable content");
   });
 
   it("treats a stream carrying only [DONE] as a failure", async () => {
@@ -74,18 +74,19 @@ describe("combo failover on empty-but-successful streams (#3463)", () => {
       "p2/second": () => sseResponse(['data: {"choices":[{"delta":{"content":"after done"}}]}\n\n']),
     });
 
-    expect(attempted).toEqual(["p1/first", "p2/second"]);
-    expect(text).toContain("after done");
+    expect(attempted).toEqual(["p1/first"]);
+    expect(text).toContain("no usable content");
   });
 
-  it("reports 503 when every combo model returns an empty stream", async () => {
+  it("reports 502 after the first accepted empty stream", async () => {
     const { attempted, response } = await runCombo({
       "p1/first": () => sseResponse([": ping\n\n"]),
       "p2/second": () => sseResponse([]),
     });
 
-    expect(attempted).toEqual(["p1/first", "p2/second"]);
-    expect(response.status).toBe(503);
+    expect(attempted).toEqual(["p1/first"]);
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
   });
 
   it("returns the first model untouched when it does send content", async () => {
@@ -161,14 +162,14 @@ describe("combo failover on empty-but-successful streams (#3463)", () => {
     ["gemini candidate with empty text part", [
       'data: {"candidates":[{"content":{"parts":[{"text":""}]}}]}\n\n',
     ]],
-  ])("fails over on a metadata-only stream: %s", async (_name, frames) => {
+  ])("refuses replay on a metadata-only accepted stream: %s", async (_name, frames) => {
     const { attempted, text } = await runCombo({
       "p1/first": () => sseResponse(frames),
       "p2/second": () => sseResponse(['data: {"choices":[{"delta":{"content":"rescued"}}]}\n\n']),
     });
 
-    expect(attempted).toEqual(["p1/first", "p2/second"]);
-    expect(text).toContain("rescued");
+    expect(attempted).toEqual(["p1/first"]);
+    expect(text).toContain("no usable content");
   });
 
   // Shapes that genuinely carry output must never trigger failover.
@@ -329,8 +330,9 @@ describe("combo empty-stream guard is time-bounded (#3463)", () => {
       const elapsed = Date.now() - started;
       clearInterval(keepAliveTimer);
 
-      expect(attempted).toEqual(["p1/hang", "p2/second"]);
-      expect(await response.text()).toContain("rescued");
+      expect(attempted).toEqual(["p1/hang"]);
+      expect(response.status).toBe(502);
+      expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
       // Proves the deadline fired rather than the stream ending on its own.
       expect(elapsed).toBeLessThan(3000);
     } finally {

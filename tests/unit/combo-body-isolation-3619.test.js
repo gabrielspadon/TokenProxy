@@ -16,7 +16,7 @@ const freshBody = () => ({
 });
 
 const fail = () => new Response(JSON.stringify({ error: { message: "nope" } }), {
-  status: 500, headers: { "Content-Type": "application/json" },
+  status: 500, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "true" },
 });
 const ok = () => new Response(JSON.stringify({ choices: [{ message: { content: "hi" } }] }), {
   status: 200, headers: { "Content-Type": "application/json" },

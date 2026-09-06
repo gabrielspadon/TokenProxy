@@ -11,6 +11,18 @@ const tools = {
 };
 
 describe('independent compactor transaction preservation', () => {
+  it('leaves cyclic or deeply nested inputs unchanged without a traversal failure', () => {
+    for (const cyclic of [false, true]) {
+      const root = {};
+      let tail = root;
+      for (let i = 0; i < 20_000; i++) { tail.next = {}; tail = tail.next; }
+      if (cyclic) tail.next = root;
+      const body = { messages: [...history(), { role: 'user', content: root }, ...history()] };
+      const before = body.messages;
+      expect(() => compactContextWindow(body, options)).not.toThrow();
+      expect(body.messages).toBe(before);
+    }
+  });
   it.each(Object.entries(tools))('retains the complete %s transaction across a recent-window cut', (_name, pair) => {
     const body = { messages: [...history(), ...structuredClone(pair), { role: 'user', content: 'Continue.' }] };
     const result = compactContextWindow(body, options);

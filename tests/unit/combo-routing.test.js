@@ -14,7 +14,7 @@ function successfulResponse() {
 function fallbackResponse() {
   return new Response(JSON.stringify({ error: { message: "context length" } }), {
     status: 400,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "true" },
   });
 }
 

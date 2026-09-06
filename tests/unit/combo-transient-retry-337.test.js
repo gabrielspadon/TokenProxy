@@ -16,7 +16,7 @@ function okResponse(text) {
 function errorResponse(status, message, headers = {}) {
   return new Response(JSON.stringify({ error: { message } }), {
     status,
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', 'x-tokenproxy-replay-safe': 'true', ...headers },
   });
 }
 
