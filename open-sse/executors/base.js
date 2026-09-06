@@ -257,6 +257,7 @@ export class BaseExecutor {
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
+      if (!response || response.status < 400 || response.status >= 600) return false;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts)
         return false;
@@ -281,6 +282,7 @@ export class BaseExecutor {
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
+      if (signal?.aborted) throw signal.reason ?? new DOMException('Request aborted', 'AbortError');
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const transformedBody = this.transformRequest(
         model,
@@ -351,7 +353,7 @@ export class BaseExecutor {
           continue;
         }
 
-        if (this.shouldRetry(response.status, urlIndex)) {
+        if (response.status >= 400 && response.status < 600 && this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.(
             "RETRY",
             `${response.status} on ${url}, trying fallback ${urlIndex + 1}`,
@@ -394,25 +396,9 @@ export class BaseExecutor {
         if (isConnectTimeoutError(error)) throw error;
         if (error.name === "AbortError") throw error;
 
-        // Map network/fetch exceptions to 502 retry config
-        if (
-          await tryRetry(
-            urlIndex,
-            HTTP_STATUS.BAD_GATEWAY,
-            `network "${error.message}"`,
-          )
-        ) {
-          urlIndex--;
-          continue;
-        }
-
-        if (urlIndex + 1 < fallbackCount) {
-          log?.debug?.(
-            "RETRY",
-            `Error on ${url}, trying fallback ${urlIndex + 1}`,
-          );
-          continue;
-        }
+        // A failed POST transport does not prove rejection. The provider may
+        // have accepted and billed generation before the connection vanished.
+        // Only an explicit HTTP rejection above authorizes another attempt.
         throw error;
       }
     }

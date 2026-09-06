@@ -93,6 +93,51 @@ function summarizeMessage(msg) {
   return truncated ? `- **${role.toUpperCase()}**: ${truncated}` : '';
 }
 
+// A recent result depends on its earlier call, and old failures remain evidence.
+// Move the cut toward the beginning until every retained transaction is whole.
+// This preserves chronology and exact bytes without inventing replacement calls.
+function protectedSplitIndex(items, requestedSplit) {
+  const calls = new Map();
+  const edges = [];
+  let split = requestedSplit;
+  const errorFlagged = (node) => {
+    if (!node || typeof node !== 'object') return false;
+    if (node.is_error === true || node.isError === true || node.error === true || node.status === 'error' || node.status === 'failed') return true;
+    return Object.values(node).some((value) => value && typeof value === 'object' && errorFlagged(value));
+  };
+  const call = (id, index) => { if (typeof id === 'string' && id) calls.set(id, { index, answered: false }); };
+  const result = (id, index) => {
+    const pending = calls.get(id);
+    if (!pending) return;
+    pending.answered = true;
+    edges.push([pending.index, index]);
+  };
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item || typeof item !== 'object') continue;
+    if (errorFlagged(item)) split = Math.min(split, i);
+    for (const tool of Array.isArray(item.tool_calls) ? item.tool_calls : []) call(tool?.id, i);
+    if (item.type === 'function_call') call(item.call_id, i);
+    if (item.type === 'function_call_output') result(item.call_id, i);
+    if (item.role === 'tool') result(item.tool_call_id, i);
+    for (const block of Array.isArray(item.content) ? item.content : []) {
+      if (block?.type === 'tool_use') call(block.id, i);
+      if (block?.type === 'tool_result') result(block.tool_use_id, i);
+    }
+    for (const part of Array.isArray(item.parts) ? item.parts : []) {
+      if (part?.functionCall) call(part.functionCall.id || part.functionCall.name, i);
+      if (part?.functionResponse) result(part.functionResponse.id || part.functionResponse.name, i);
+    }
+  }
+  for (const pending of calls.values()) if (!pending.answered) split = Math.min(split, pending.index);
+  // A moved boundary may expose an earlier crossing, so walk edges backward.
+  for (let i = edges.length - 1; i >= 0; i--) {
+    const [start, end] = edges[i];
+    if (end >= split && start < split) split = start;
+  }
+  return split;
+}
+
 /**
  * Compact older conversation history into a structured summary
  * @param {Object} body - Request body
@@ -165,7 +210,10 @@ export function compactContextWindow(body, options = {}) {
     return { body, compacted: false, originalTokens, newTokens: originalTokens };
   }
 
-  const splitIndex = conversationalItems.length - recentTurnsToKeep;
+  const splitIndex = protectedSplitIndex(conversationalItems, conversationalItems.length - recentTurnsToKeep);
+  if (splitIndex < 2) {
+    return { body, compacted: false, originalTokens, newTokens: originalTokens };
+  }
   const olderItems = conversationalItems.slice(0, splitIndex);
   const recentItems = conversationalItems.slice(splitIndex);
 

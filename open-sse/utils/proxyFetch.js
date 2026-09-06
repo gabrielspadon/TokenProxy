@@ -684,6 +684,7 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   throwIfAborted(options.signal);
+  const replayableMethod = ['GET', 'HEAD', 'OPTIONS'].includes(String(options.method || 'GET').toUpperCase());
   const targetUrl = typeof url === "string" ? url : url.toString();
   const route = resolveEffectiveProxyRoute(targetUrl, proxyOptions || {});
 
@@ -707,12 +708,15 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   if (shouldBypassMitmDns(targetUrl)) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
+      let dispatched = false;
       try {
         const dispatcher = await getDispatcher(proxyUrl);
+        dispatched = true;
         return await originalFetch(url, { ...options, dispatcher });
       } catch (proxyError) {
         throwIfAborted(options.signal);
         if (isAbortError(proxyError)) throw proxyError;
+        if (dispatched && !replayableMethod) throw proxyError;
         if (route.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
@@ -720,23 +724,31 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       }
     }
     // No proxy — manually resolve real IP to bypass DNS spoof
+    let bypassDispatched = false;
     try {
       const parsedUrl = new URL(targetUrl);
       const realIP = await resolveRealIP(parsedUrl.hostname, options.signal);
-      if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
+      if (realIP) {
+        bypassDispatched = true;
+        return await createBypassRequest(parsedUrl, realIP, options);
+      }
     } catch (error) {
       throwIfAborted(options.signal);
+      if (isAbortError(error) || (bypassDispatched && !replayableMethod)) throw error;
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
 
   if (proxyUrl) {
+    let dispatched = false;
     try {
       const dispatcher = await getDispatcher(proxyUrl);
+      dispatched = true;
       return await originalFetch(url, { ...options, dispatcher });
     } catch (proxyError) {
       throwIfAborted(options.signal);
       if (isAbortError(proxyError)) throw proxyError;
+      if (dispatched && !replayableMethod) throw proxyError;
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (route.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
