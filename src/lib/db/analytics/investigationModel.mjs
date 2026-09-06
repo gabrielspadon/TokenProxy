@@ -1,3 +1,4 @@
+import { ECONOMICS_GROUP_VALUES, economicsGroupKey } from './economicsDimensions.mjs';
 export class InvestigationError extends Error {
   constructor(message, status = 400, code = 'invalid_request') { super(message); this.status = status; this.code = code; }
 }
@@ -38,9 +39,13 @@ export function validateScope(input = INITIAL_SCOPE) {
 }
 export function validateSelection(value) {
   if (value == null) return null;
-  object(value, ['kind','id','sessionId','provider','model','connectionId','fromConnectionId','timestamp','groupBy','windowScope']);
+  object(value, ['kind','id','sessionId','provider','model','connectionId','fromConnectionId','timestamp','groupBy','windowScope','logicalRequestId','clientRef','projectRef','taskRef']);
   const selected = { kind: choice(value.kind, kinds), id: text(String(value.id ?? ''), 'record ID', value.kind === 'economics-group' ? 650 : 200, false) };
   for (const name of ['provider','model','connectionId','fromConnectionId','windowScope']) if (value[name] != null) selected[name] = text(value[name], name);
+  for (const name of ['logicalRequestId','clientRef','projectRef','taskRef']) if (value[name]!=null) {
+    selected[name]=text(value[name],name,128);
+    if(name!=='logicalRequestId' && !/^ctx1_[a-f0-9]{64}$/.test(selected[name])) throw new InvestigationError('Invalid explicit identity reference.');
+  }
   if (value.timestamp != null) selected.timestamp = date(value.timestamp);
   if (value.sessionId != null) {
     if (!/^[1-9]\d*$/.test(String(value.sessionId)) || !Number.isSafeInteger(Number(value.sessionId))) throw new InvestigationError('Invalid session ID.');
@@ -51,8 +56,8 @@ export function validateSelection(value) {
   if (value.kind === 'context-session' && selected.id !== String(selected.sessionId)) throw new InvestigationError('Context identity must match its session ID.');
   if (value.kind === 'economics-record' && (!/^[1-9]\d*$/.test(selected.id) || !Number.isSafeInteger(Number(selected.id)))) throw new InvestigationError('Invalid ledger ID.');
   if (value.kind === 'economics-group') {
-    selected.groupBy = choice(value.groupBy, ['provider','model','account']);
-    const expected=JSON.stringify([selected.groupBy,selected.provider ?? null,selected.groupBy==='model'?selected.model ?? null:selected.groupBy==='account'?selected.connectionId ?? null:null]);
+    selected.groupBy = choice(value.groupBy, ECONOMICS_GROUP_VALUES);
+    const expected=economicsGroupKey(selected,selected.groupBy);
     if(selected.id!==expected)throw new InvestigationError('Cohort identity does not match its dimensions.');
   }
   return selected;
@@ -68,11 +73,11 @@ export function selectionExcluded(selected, scope) {
 }
 export function validateDefinition(value) {
   object(value, ['schemaVersion','lens','scope','selection','comparisonIds','context','economics']);
-  if (![1,2].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
+  if (![1,2,3].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
   const ids = value.comparisonIds ?? [];
   if (!Array.isArray(ids) || ids.length > 100 || new Set(ids).size !== ids.length) throw new InvestigationError('Compare at most 100 distinct accounts.');
-  const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool',...(value.schemaVersion===2 ? ['baseline'] : [])]);
-  const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort']);
+  const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool',...(value.schemaVersion>=2 ? ['baseline'] : [])]);
+  const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort',...(value.schemaVersion>=3 ? ['groupSortBy','groupSortDirection','costSource','attemptKind'] : [])]);
   const page = context.page ?? 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 10000) throw new InvestigationError('Invalid attempt page.');
   const selection=validateSelection(value.selection);
@@ -81,8 +86,11 @@ export function validateDefinition(value) {
   if (sessionId !== null && (!Number.isSafeInteger(sessionId) || sessionId < 1)) throw new InvestigationError('Invalid session ID.');
   let cohort = null;
   if (economics.cohort) {
-    object(economics.cohort, ['provider','model','connectionId']);
-    cohort = Object.fromEntries(Object.entries(economics.cohort).map(([key,item]) => [key,text(item,key)]));
+    object(economics.cohort, ['provider','model','connectionId',...(value.schemaVersion>=3 ? ['sessionId','logicalRequestId','clientRef','projectRef','taskRef','missing'] : [])]);
+    cohort = Object.fromEntries(Object.entries(economics.cohort).map(([key,item]) => [key,key==='sessionId' ? Number(item) : text(item,key)]));
+    if (cohort.sessionId!=null && (!Number.isSafeInteger(cohort.sessionId) || cohort.sessionId<1)) throw new InvestigationError('Invalid explicit session.');
+    for(const key of ['clientRef','projectRef','taskRef']) if(cohort[key]!=null && !/^ctx1_[a-f0-9]{64}$/.test(cohort[key])) throw new InvestigationError('Invalid explicit cohort reference.');
+    if(cohort.missing && (!['provider','model','connectionId','sessionId','logicalRequestId','clientRef','projectRef','taskRef'].includes(cohort.missing) || cohort[cohort.missing]!=null)) throw new InvestigationError('Invalid missing cohort identity.');
   }
   let baseline = null;
   if (context.baseline != null) {
@@ -92,9 +100,10 @@ export function validateDefinition(value) {
   }
   return { schemaVersion: value.schemaVersion, lens: choice(value.lens, Object.keys(LENS_PATHS)), scope: validateScope(value.scope), selection,
     comparisonIds: ids.map((id) => text(id,'comparison account',200,false)),
-    context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client'), ...(value.schemaVersion===2 ? {baseline} : {}) },
-    economics: { groupBy: choice(economics.groupBy,['provider','model','account'],'provider'), status: choice(economics.status,['all','succeeded','failed','pending'],'all'),
-      sortBy: choice(economics.sortBy,sorts,'timestamp'), sortDirection: choice(economics.sortDirection,['asc','desc'],'desc'), cohort } };
+    context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client'), ...(value.schemaVersion>=2 ? {baseline} : {}) },
+    economics: { groupBy: choice(economics.groupBy,value.schemaVersion>=3 ? ECONOMICS_GROUP_VALUES : ['provider','model','account'],'provider'), status: choice(economics.status,['all','succeeded','failed','pending'],'all'),
+      sortBy: choice(economics.sortBy,sorts,'timestamp'), sortDirection: choice(economics.sortDirection,['asc','desc'],'desc'), cohort,
+      ...(value.schemaVersion>=3 ? {groupSortBy:choice(economics.groupSortBy,['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens'],'recordedCostUsd'),groupSortDirection:choice(economics.groupSortDirection,['asc','desc'],'desc'),costSource:choice(economics.costSource,['all','application-estimate','provider-reported','unknown'],'all'),attemptKind:choice(economics.attemptKind,['all','initial','additional','unknown'],'all')} : {}) } };
 }
 export function validateSave(input, updating = false) {
   object(input, ['name','kind','definition', ...(updating ? ['version'] : [])]);
@@ -102,7 +111,7 @@ export function validateSave(input, updating = false) {
   const definition = validateDefinition(input.definition);
   if (kind === 'bookmark' && !definition.selection) throw new InvestigationError('Select an exact record before saving a bookmark.');
   if (kind === 'bookmark') definition.lens=selectionLens(definition.selection);
-  if (kind === 'filter-set') { definition.selection = null; definition.comparisonIds = []; definition.context = { sessionId: null, page: 1, projectLabel: null, clientTool: null, ...(definition.schemaVersion===2 ? {baseline:null} : {}) }; definition.economics.cohort = null; }
+  if (kind === 'filter-set') { definition.selection = null; definition.comparisonIds = []; definition.context = { sessionId: null, page: 1, projectLabel: null, clientTool: null, ...(definition.schemaVersion>=2 ? {baseline:null} : {}) }; definition.economics.cohort = null; }
   if (updating && (!Number.isSafeInteger(input.version) || input.version < 1)) throw new InvestigationError('Expected version is required.');
   return { name: text(input.name,'name',80,false).trim(), kind, definition, ...(updating ? { version: input.version } : {}) };
 }
