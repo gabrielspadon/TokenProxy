@@ -8,11 +8,10 @@ import { Brand } from '@/shared/components/Brand';
 import { Icon } from '@/shared/components/Icon';
 import { Freshness } from '@/shared/components/Freshness';
 import { Notice } from '@/shared/components/Notice';
-import { fmtNum, fmtPct, fmtRelative } from '@/shared/format';
+import { fmtNum } from '@/shared/format';
 import { TONE, WORDS } from '@/shared/status';
 
 const RANK = { bad: 3, warn: 2, ok: 1 };
-const MAX_DOTS = 6;
 
 // One lane per provider the gateway knows about today: every connected
 // provider, every provider with a request in today's rollup, every provider
@@ -67,25 +66,36 @@ export function buildLanes(usage, conns) {
 }
 
 function RouterNode({ data }) {
-  if (data.hub)
+  if (data.kind === 'request')
+    return (
+      <div className="graph-request" data-selected={data.selected}>
+        <Handle type="source" position={Position.Right} />
+        <span className="request-client-icon">
+          <Icon name="i-tools" />
+        </span>
+        <div>
+          <strong>{data.clientTool || 'Active request'}</strong>
+          <span data-i18n-skip>{data.model}</span>
+          <small>{data.account || 'Account not reported'}</small>
+        </div>
+      </div>
+    );
+  if (data.kind === 'hub')
     return (
       <div className="graph-hub">
+        <Handle type="target" position={Position.Left} />
         <Handle type="source" position={Position.Right} />
         <Brand compact />
-        <strong>TokenProxy</strong>
-        <span>{data.active ? `${data.active} in flight` : 'Ready to route'}</span>
-        <small>One endpoint · every model</small>
+        <strong>Gateway</strong>
       </div>
     );
   return (
-    <div className="graph-provider" data-tone={data.tone}>
+    <div className="graph-provider" data-tone={data.tone} data-selected={data.selected}>
       <Handle type="target" position={Position.Left} />
       <ProviderMark provider={data.provider} />
       <span>
         <strong>{providerIdentity(data.provider).name}</strong>
-        <small>
-          {fmtNum(data.requests)} requests <span className="graph-share">{fmtPct(data.share)}</span>
-        </small>
+        <small data-i18n-skip>{data.displayName || 'Account not reported'}</small>
       </span>
       <span className="graph-provider-state">
         {data.active ? (
@@ -94,51 +104,104 @@ function RouterNode({ data }) {
             {data.active} live
           </>
         ) : (
-          data.word || 'Idle'
+          data.word || 'Unreported'
         )}
       </span>
     </div>
   );
 }
 const nodeTypes = { router: RouterNode };
-export function RouteMap({ usage, conns, stream, receivedAt }) {
+export function RouteMap({
+  usage,
+  conns,
+  stream,
+  receivedAt,
+  selectedConnection,
+  onSelectConnection,
+}) {
   const { lanes, total, activeTotal } = useMemo(() => buildLanes(usage, conns), [usage, conns]);
-  const [selected, setSelected] = useState(null);
   const [paused, setPaused] = useState(false);
-  const visible = lanes.slice(0, 5);
-  const height = visible.length ? Math.max(245, visible.length * 54) : 200;
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const active = (usage?.activeSessions || []).filter((s) => s.status === 'active');
+  const requests = active.slice(0, 3);
+  const matches = (s, c) =>
+    s.provider === c.provider &&
+    s.account &&
+    s.account === c.displayName &&
+    conns.filter((x) => x.provider === c.provider && x.displayName === c.displayName).length === 1;
+  const accounts = conns
+    .slice(0, 6)
+    .map((c) => ({
+      ...c,
+      id: c.connectionId,
+      tone: TONE[c.status] || 'warn',
+      word: c.isDraining ? 'Draining' : WORDS[c.status] || c.status,
+      active: active.filter((s) => matches(s, c)).length,
+    }));
+  const height = accounts.length ? Math.max(320, accounts.length * 64) : 210;
   const nodes = [
+    ...requests.map((s, i) => ({
+      id: `request-${i}`,
+      ariaLabel: `Inspect request ${i + 1}, ${s.model || 'model unknown'}, ${s.account || 'account unknown'}`,
+      type: 'router',
+      width: 210,
+      height: 74,
+      position: { x: 0, y: (height / (requests.length + 1)) * (i + 1) - 37 },
+      data: { ...s, kind: 'request', selected: i === selectedRequest },
+    })),
     {
       id: 'hub',
+      ariaLabel: 'Gateway junction',
+      focusable: false,
       type: 'router',
-      width: 150,
-      height: 140,
-      position: { x: 25, y: height / 2 - 68 },
-      data: { hub: true, active: activeTotal },
+      width: 76,
+      height: 76,
+      position: { x: 292, y: height / 2 - 38 },
+      data: { kind: 'hub' },
     },
-    ...visible.map((l, i) => ({
-      id: l.provider,
+    ...accounts.map((c, i) => ({
+      id: c.id,
+      ariaLabel: `Inspect ${c.displayName || c.provider}, ${c.word || 'health unknown'}`,
       type: 'router',
-      width: 263,
-      height: 48,
-      position: { x: 350, y: 8 + i * 54 },
-      data: l,
+      width: 260,
+      height: 50,
+      position: { x: 460, y: 5 + i * 64 },
+      data: { ...c, selected: c.id === selectedConnection },
     })),
   ];
-  const edges = visible.map((l) => ({
-    id: `route-${l.provider}`,
-    source: 'hub',
-    target: l.provider,
-    animated: !paused && stream.status === 'live' && l.active > 0,
-    style: {
-      stroke: `var(--brand-${providerIdentity(l.provider).color})`,
-      strokeWidth: 1.4 + l.share * 4,
-      opacity: l.requests || l.active ? 0.85 : 0.35,
-    },
-  }));
-  const picked = lanes.find((l) => l.provider === selected);
+  const animate = !paused && stream.status === 'live';
+  const edges = [
+    ...requests.map((s, i) => ({
+      id: `input-${i}`,
+      source: `request-${i}`,
+      target: 'hub',
+      animated: animate,
+      style: {
+        stroke: `var(--brand-${providerIdentity(s.provider).color})`,
+        strokeWidth: 2.4,
+        opacity: 0.85,
+      },
+    })),
+    ...accounts.map((c) => ({
+      id: `allocation-${c.id}`,
+      source: 'hub',
+      target: c.id,
+      animated: animate && c.active > 0,
+      style: {
+        stroke: `var(--brand-${providerIdentity(c.provider).color})`,
+        strokeWidth: 1.4 + c.active * 1.3,
+        opacity: c.active ? 0.9 : 0.35,
+      },
+    })),
+  ];
+  const picked = selectedRequest == null ? null : requests[selectedRequest];
   return (
-    <section className="routing-room" aria-labelledby="h-routing">
+    <section
+      className="routing-room"
+      aria-labelledby="h-routing"
+      data-paused={paused}
+      data-live={stream.status === 'live'}
+    >
       {stream.status === 'stale' ? (
         <Notice
           tone="warn"
@@ -147,15 +210,11 @@ export function RouteMap({ usage, conns, stream, receivedAt }) {
         />
       ) : null}
       <div className="routing-head">
-        <div>
-          <h2 id="h-routing">Live routing</h2>
-          <p>Every request, one connected gateway.</p>
-        </div>
+        <h2 id="h-routing">Work in motion</h2>
         <div className="routing-tools">
           <Freshness status={stream.status} lastDataAt={receivedAt} />
           <button
             className="graph-toggle"
-            type="button"
             aria-label={paused ? 'Resume route animation' : 'Pause route animation'}
             onClick={() => setPaused(!paused)}
           >
@@ -167,46 +226,44 @@ export function RouteMap({ usage, conns, stream, receivedAt }) {
         <div className="routing-summary">
           <span>Requests today</span>
           <strong>{usage ? fmtNum(total) : '—'}</strong>
-          <div className="routing-active">
+          <span className="routing-active">
             <i data-active={activeTotal > 0} />
             {usage ? `${activeTotal} requests in flight` : 'Waiting for telemetry'}
-          </div>
-          <div className="routing-mini">
-            <span>
-              {lanes.length}
-              <small>Providers seen</small>
-            </span>
-            <span>
-              {conns.length}
-              <small>Connections</small>
-            </span>
-          </div>
-          <Link href="/dashboard/connections" className="routing-link">
-            Manage connections <Icon name="i-right" />
-          </Link>
+          </span>
+          <span className="routing-allocation-count">
+            {conns.length} connections · {lanes.length} providers
+          </span>
+        </div>
+        <div className="flow-column-labels">
+          <span>Observed work</span>
+          <span>Gateway</span>
+          <span>Account allocation</span>
         </div>
         <div className="routing-canvas" style={{ height }}>
-          {lanes.length ? (
+          {accounts.length ? (
             <ReactFlow
               nodes={nodes}
               edges={edges}
               nodeTypes={nodeTypes}
               fitView
-              fitViewOptions={{ padding: 0.13 }}
+              fitViewOptions={{ padding: 0.055 }}
               nodesDraggable={false}
               nodesConnectable={false}
               edgesFocusable={false}
+              deleteKeyCode={null}
+              ariaLabelConfig={{'node.a11yDescription.default':'Press Enter or Space to inspect the observed request or account.'}}
               zoomOnScroll={false}
               panOnDrag={false}
               preventScrolling={false}
-              onNodeClick={(_, node) => {
-                if (node.id !== 'hub') setSelected(node.id);
-              }}
               minZoom={0.2}
-              maxZoom={1.2}
+              maxZoom={1.3}
+              onNodeClick={(_, n) => {
+                if (n.id.startsWith('request-')) setSelectedRequest(Number(n.id.slice(8)));
+                else if (n.id !== 'hub') onSelectConnection(n.id);
+              }}
               attributionPosition="bottom-right"
             >
-              <Background color="var(--graph-dot)" gap={20} size={1} />
+              <Background color="var(--graph-dot)" gap={22} size={1} />
             </ReactFlow>
           ) : (
             <div className="graph-onboarding">
@@ -214,50 +271,95 @@ export function RouteMap({ usage, conns, stream, receivedAt }) {
               <strong>
                 {usage ? 'Connect your first provider' : 'Listening for the first frame'}
               </strong>
-              <p>
-                {usage
-                  ? 'Add a connection to start routing requests through your gateway.'
-                  : 'The routing map will reflect the gateway’s recorded connections.'}
-              </p>
+              <p>Configured accounts and observed requests form the routing view.</p>
               <Link className="button" href="/dashboard/connections">
-                <Icon name="i-add" />
                 Add connection
+                <Icon name="i-add" />
               </Link>
             </div>
           )}
+          {accounts.length && !requests.length ? (
+            <div className="flow-idle">
+              <Icon name="i-sessions" />
+              <span>No requests in flight</span>
+              <small>The next request appears here.</small>
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="routing-mobile-list">
-        {visible.map((l) => (
-          <button key={l.provider} onClick={() => setSelected(l.provider)}>
-            <ProviderMark provider={l.provider} size="small" label />
+        {accounts.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => onSelectConnection(c.id)}
+            aria-pressed={c.id === selectedConnection}
+          >
+            <ProviderMark provider={c.provider} size="small" label />
             <span>
-              {fmtNum(l.requests)}
-              <small>{l.active ? `${l.active} in flight` : l.word || 'Idle'}</small>
+              {c.displayName}
+              <small>{c.active ? `${c.active} in flight` : c.word}</small>
             </span>
-            <span className="mobile-share" style={{ '--share': `${l.share * 100}%` }} />
           </button>
         ))}
       </div>
       <div className="routing-caption">
         <span>
           <i />
-          Path width shows today’s request share. Motion means a request is in flight.
+          Motion indicates observed work. Account matches use reported account labels.
         </span>
-        <Link href="/dashboard/sessions">
-          Inspect sessions <Icon name="i-right" />
+        <Link href="/dashboard/connections">
+          All accounts
+          <Icon name="i-right" />
         </Link>
       </div>
+      <div className="routing-activity">
+        <div className="activity-heading">
+          <span>Live requests</span>
+          <strong>{activeTotal}</strong>
+          <Link href="/dashboard/context">
+            Context evolution
+            <Icon name="i-right" />
+          </Link>
+        </div>
+        {requests.map((s, i) => (
+          <button
+            className="flight-row"
+            data-selected={i === selectedRequest}
+            onClick={() => setSelectedRequest(i)}
+            key={i}
+          >
+            <ProviderMark provider={s.provider} size="small" />
+            <span>
+              <strong data-i18n-skip>{s.clientTool || s.model || 'Active request'}</strong>
+              <small>{s.account || 'Account not reported'}</small>
+            </span>
+            <span className="flight-signal" aria-hidden="true" />
+          </button>
+        ))}
+        {!activeTotal ? (
+          <p className="flight-empty">Requests appear while they are running.</p>
+        ) : null}
+        {activeTotal > requests.length ? (
+          <p className="flight-empty">
+            Showing {requests.length} of {activeTotal}. All requests are available in Sessions.
+          </p>
+        ) : null}
+      </div>
       {picked ? (
-        <div className="route-inspector">
+        <div className="live-request-details">
           <ProviderMark provider={picked.provider} label />
-          <span>{fmtNum(picked.out)} input tokens</span>
-          <span>{fmtNum(picked.back)} output tokens</span>
-          <span>{picked.word || 'No connection health reported'}</span>
+          <span data-i18n-skip>{picked.model}</span>
+          <span>
+            Input {picked.promptTokens == null ? 'not yet reported' : fmtNum(picked.promptTokens)}
+          </span>
+          <span>
+            Output{' '}
+            {picked.completionTokens == null ? 'not yet reported' : fmtNum(picked.completionTokens)}
+          </span>
           <button
             className="graph-toggle"
-            aria-label="Close provider details"
-            onClick={() => setSelected(null)}
+            aria-label="Close request details"
+            onClick={() => setSelectedRequest(null)}
           >
             <Icon name="i-close" />
           </button>

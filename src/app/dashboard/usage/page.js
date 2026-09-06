@@ -4,7 +4,6 @@ import { usePoll } from '@/shared/hooks/usePoll';
 import { useEventStream } from '@/shared/hooks/useEventStream';
 import { useUsageStream } from '@/store/usageStream';
 import { TrafficChart } from '@/shared/components/TrafficChart';
-import { ProviderMark } from '@/shared/components/ProviderMark';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';

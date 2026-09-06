@@ -46,9 +46,27 @@ export const usage = {
   byConnection: {},
   byClientTool: {},
   activeSessions: [
-    { provider: 'anthropic', model: 'claude-opus-4-6', status: 'active', startedAt: NOW },
-    { provider: 'openai', model: 'gpt-5.4', status: 'active', startedAt: NOW },
-    { provider: 'anthropic', model: 'claude-opus-4-6', status: 'active', startedAt: NOW },
+    {
+      provider: 'anthropic',
+      account: 'Research workspace',
+      model: 'claude-opus-4-6',
+      status: 'active',
+      startedAt: NOW,
+    },
+    {
+      provider: 'openai',
+      account: 'Engineering team',
+      model: 'gpt-5.4',
+      status: 'active',
+      startedAt: NOW,
+    },
+    {
+      provider: 'anthropic',
+      account: 'Research workspace',
+      model: 'claude-sonnet-4-6',
+      status: 'active',
+      startedAt: NOW,
+    },
   ],
   recentRequests: PROVIDERS.map((provider, i) => ({
     id: `request-${i}`,
@@ -213,102 +231,165 @@ for (const s of stages) {
     skipped: 0,
   });
 }
-export const contextSummary = {
-  attempts: 24,
-  requests: 24,
-  sessions: 3,
-  succeeded: 23,
-  pending: 0,
-  failed: 1,
-  providerUsageSamples: 24,
-  estimatedUsageSamples: 0,
-  missingUsageSamples: 0,
-  providerInputTokens: 915600,
-  providerOutputTokens: 21024,
-  cacheReadTokens: 702000,
-  cacheWriteTokens: 11000,
-  savedBytes: 167880,
-  cacheHitRate: 0.7667,
-  compactionHints: 1,
-  firstSeenAt: turns[0].timestamp,
-  lastSeenAt: NOW,
-};
-export const contextOverview = {
-  summary: contextSummary,
-  sessions: [
-    {
+const contextRecords = [
+  {
+    session: {
       id: 1,
       projectLabel: 'OceanStack',
-      identitySource: 'routing',
+      identitySource: 'explicit',
       clientTool: 'Claude Code',
-      firstSeenAt: turns[0].timestamp,
-      lastSeenAt: NOW,
-      attempts: 24,
-      requests: 24,
-      providerInputTokens: 915600,
-      savedBytes: 167880,
     },
-    {
-      id: 2,
-      projectLabel: 'TokenProxy',
-      identitySource: 'routing',
-      clientTool: 'Codex',
-      firstSeenAt: turns[0].timestamp,
-      lastSeenAt: NOW,
-      attempts: 18,
-      requests: 18,
-      providerInputTokens: 615000,
-      savedBytes: 88200,
-    },
-    {
-      id: 3,
-      projectLabel: null,
-      identitySource: 'request',
-      clientTool: 'API client',
-      firstSeenAt: NOW,
-      lastSeenAt: NOW,
-      attempts: 1,
-      requests: 1,
-      providerInputTokens: 2150,
-      savedBytes: 0,
-    },
-  ],
-  projects: [
-    { projectLabel: 'OceanStack', sessions: 1, attempts: 24 },
-    { projectLabel: 'TokenProxy', sessions: 1, attempts: 18 },
-    { projectLabel: null, sessions: 1, attempts: 1 },
-  ],
-  stages,
-  dimensions: [],
-  pagination: {
-    page: 1,
-    pageSize: 50,
-    totalPages: 1,
-    totalItems: 3,
-    hasNext: false,
-    hasPrev: false,
+    turns: turns.map((t) => ({
+      ...t,
+      connectionId: t.provider === 'anthropic' ? 'visual-0' : 'visual-1',
+      controls: { rtk: true, rtkAllowLossy: false, headroom: true, headroomAllowLossy: false },
+    })),
   },
-  recordingStartedAt: turns[0].timestamp,
-  retentionDays: 45,
-  definitions: {},
-};
-contextSummary.providerInputTokens = turns.reduce((n, t) => n + t.providerInputTokens, 0);
-contextSummary.providerOutputTokens = turns.reduce((n, t) => n + t.providerOutputTokens, 0);
-contextSummary.cacheReadTokens = turns.reduce((n, t) => n + (t.cacheReadTokens || 0), 0);
-contextSummary.savedBytes = turns.reduce((n, t) => n + t.savedBytes, 0);
-contextSummary.cacheHitRate = contextSummary.cacheReadTokens / contextSummary.providerInputTokens;
-contextOverview.sessions[0].providerInputTokens = contextSummary.providerInputTokens;
-contextOverview.sessions[0].savedBytes = contextSummary.savedBytes;
-contextOverview.summary = {
-  ...contextSummary,
-  requests: 43,
-  attempts: 43,
-  providerUsageSamples: 43,
-  providerInputTokens: contextSummary.providerInputTokens + 617150,
-  savedBytes: contextSummary.savedBytes + 88200,
-};
-contextOverview.dimensions = PROVIDERS.map((provider) => ({ provider }));
+  {
+    session: { id: 2, projectLabel: 'TokenProxy', identitySource: 'inferred', clientTool: 'Codex' },
+    turns: turns
+      .slice(0, 18)
+      .map((t, i) => ({
+        ...t,
+        id: `codex-${i}`,
+        provider: 'openai',
+        model: 'gpt-5.4',
+        connectionId: 'visual-1',
+        clientTool: 'Codex',
+        compactHint: false,
+      })),
+  },
+  {
+    session: { id: 3, projectLabel: null, identitySource: 'request', clientTool: 'API client' },
+    turns: [
+      {
+        ...turns[0],
+        id: 'api-1',
+        provider: 'gemini',
+        model: 'gemini-3.1-pro',
+        connectionId: 'visual-2',
+        clientTool: 'API client',
+        providerInputTokens: 2150,
+        providerOutputTokens: 300,
+        cacheReadTokens: 0,
+        cacheWriteTokens: null,
+        savedBytes: 0,
+        bodyBeforeBytes: 8000,
+        bodyAfterBytes: 8000,
+        stages: [],
+      },
+    ],
+  },
+];
+function summarize(rows, sessionCount = 1) {
+  const total = (key) => rows.reduce((n, r) => n + (r[key] || 0), 0);
+  return {
+    attempts: rows.length,
+    requests: rows.length,
+    sessions: sessionCount,
+    succeeded: rows.filter((r) => r.status === 'success').length,
+    pending: 0,
+    failed: rows.filter((r) => r.status === 'error').length,
+    providerUsageSamples: rows.length,
+    estimatedUsageSamples: 0,
+    missingUsageSamples: 0,
+    providerInputTokens: total('providerInputTokens'),
+    providerOutputTokens: total('providerOutputTokens'),
+    cacheReadTokens: total('cacheReadTokens'),
+    cacheWriteTokens: total('cacheWriteTokens'),
+    savedBytes: total('savedBytes'),
+    cacheHitRate: total('providerInputTokens')
+      ? total('cacheReadTokens') / total('providerInputTokens')
+      : null,
+    compactionHints: rows.filter((r) => r.compactHint).length,
+    firstSeenAt: rows[0]?.timestamp || null,
+    lastSeenAt: rows.at(-1)?.timestamp || null,
+  };
+}
+function stageTotals(rows) {
+  const stages = rows.flatMap((t) => t.stages || []);
+  return [...new Set(stages.map((s) => s.stage))].map((stage) => {
+    const own = stages.filter((s) => s.stage === stage);
+    const total = (key) => own.reduce((n, s) => n + (s[key] || 0), 0);
+    return {
+      stage,
+      samples: own.length,
+      beforeBytes: total('beforeBytes'),
+      afterBytes: total('afterBytes'),
+      savedBytes: -total('deltaBytes'),
+      applied: own.filter((s) => s.outcome === 'applied').length,
+      skipped: own.filter((s) => s.outcome === 'skipped').length,
+    };
+  });
+}
+function recordFilter(records, query = new URLSearchParams()) {
+  return records
+    .filter(
+      (r) => !query.get('projectLabel') || r.session.projectLabel === query.get('projectLabel')
+    )
+    .map((r) => ({
+      ...r,
+      turns: r.turns.filter(
+        (t) =>
+          ['provider', 'model', 'connectionId', 'clientTool'].every(
+            (k) => !query.get(k) || t[k] === query.get(k)
+          ) &&
+          (!query.get('from') || t.timestamp >= query.get('from')) &&
+          (!query.get('to') || t.timestamp <= query.get('to'))
+      ),
+    }))
+    .filter((r) => r.turns.length);
+}
+function dimensions(rows) {
+  return [...new Set(rows.map((t) => `${t.provider}|${t.model}|${t.connectionId}`))].map((key) => {
+    const [provider, model, connectionId] = key.split('|');
+    return {
+      provider,
+      model,
+      connectionId,
+      ...summarize(
+        rows.filter(
+          (t) => t.provider === provider && t.model === model && t.connectionId === connectionId
+        )
+      ),
+    };
+  });
+}
+function overviewFor(records) {
+  const rows = records.flatMap((r) => r.turns);
+  return {
+    summary: summarize(rows, records.length),
+    sessions: records.map((r) => ({
+      ...r.session,
+      ...summarize(r.turns),
+      firstSeenAt: r.turns[0]?.timestamp,
+      lastSeenAt: r.turns.at(-1)?.timestamp,
+    })),
+    projects: records.map((r) => ({
+      projectLabel: r.session.projectLabel,
+      sessions: 1,
+      attempts: r.turns.length,
+    })),
+    stages: stageTotals(rows),
+    dimensions: dimensions(rows),
+    pagination: {
+      page: 1,
+      pageSize: 25,
+      totalItems: records.length,
+      totalPages: 1,
+      hasPrev: false,
+      hasNext: false,
+    },
+    recording: { rejectedAttempts: 0, lastRejectedAt: null, scope: 'all retained attempts' },
+    recordingStartedAt: turns[0].timestamp,
+    retentionDays: 45,
+    definitions: {},
+  };
+}
+export const contextSummary = summarize(contextRecords[0].turns);
+export const contextOverview = overviewFor(contextRecords);
 export async function installOperatorFixture(page) {
+  const records = structuredClone(contextRecords);
   await page.addInitScript((frame) => {
     const RealEventSource = window.EventSource;
     window.EventSource = class {
@@ -373,44 +454,60 @@ export async function installOperatorFixture(page) {
   await page.route('**/api/providers', (r) => r.fulfill(json({ connections })));
   await page.route('**/api/admin/qualification', (r) => r.fulfill(json({ connections })));
   await page.route('**/api/admin/drain?*', (r) => r.fulfill(json({ connections: [] })));
-  await page.route('**/api/context?*', (r) => r.fulfill(json(contextOverview)));
-  await page.route('**/api/context/sessions/*', (r) =>
-    r.fulfill(
+  await page.route('**/api/context?*', (r) =>
+    r.fulfill(json(overviewFor(recordFilter(records, new URL(r.request().url()).searchParams))))
+  );
+  await page.route('**/api/context/sessions/*', (r) => {
+    const url = new URL(r.request().url());
+    const record = records.find((s) => s.session.id === Number(url.pathname.split('/').pop()));
+    if (!record)
+      return r.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'No such session' }),
+      });
+    if (r.request().method() === 'PATCH') {
+      record.session.projectLabel = r.request().postDataJSON().projectLabel;
+      return r.fulfill(json({ session: record.session }));
+    }
+    const filtered = recordFilter([record], url.searchParams)[0]?.turns || [];
+    return r.fulfill(
       json({
         session: {
-          id: Number(new URL(r.request().url()).pathname.split('/').pop()),
-          projectLabel: 'OceanStack',
-          identitySource: 'routing',
-          firstSeenAt: turns[0].timestamp,
-          lastSeenAt: NOW,
+          ...record.session,
+          firstSeenAt: record.turns[0].timestamp,
+          lastSeenAt: record.turns.at(-1).timestamp,
         },
-        summary: contextSummary,
-        turns,
-        stages,
+        summary: summarize(filtered),
+        turns: filtered,
+        stages: stageTotals(filtered),
         pins: [],
-        switches: [
-          {
-            id: 1,
-            model: 'research',
-            fromConnectionId: 'visual-0',
-            toConnectionId: 'visual-1',
-            trigger: 'quota',
-            reason: 'Connection quota reached',
-            switchedAt: turns[16].timestamp,
-          },
-        ],
-        dimensions: [],
+        switches:
+          record.session.id === 1
+            ? [
+                {
+                  id: 1,
+                  model: 'research',
+                  fromConnectionId: 'visual-0',
+                  toConnectionId: 'visual-1',
+                  trigger: 'quota',
+                  reason: 'Connection quota reached',
+                  switchedAt: turns[16].timestamp,
+                },
+              ]
+            : [],
+        dimensions: dimensions(filtered),
         pagination: {
           page: 1,
           pageSize: 50,
-          totalItems: 24,
+          totalItems: filtered.length,
           totalPages: 1,
           hasPrev: false,
           hasNext: false,
         },
       })
-    )
-  );
+    );
+  });
   await page.route('**/api/version', (r) =>
     r.fulfill(json({ currentVersion: '0.0.1', hasUpdate: false }))
   );

@@ -114,7 +114,7 @@ test("a receipt id that no longer resolves reads as never happened", async ({ pa
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
   await page.goto("/dashboard/sessions");
   await page.getByLabel("Receipt id").fill("aged-out");
-  await page.getByRole("button", { name: "Find" }).click();
+  await page.getByRole("button", { name: "Find", exact: true }).click();
   await expect(page.getByText("Nothing exists at this id.")).toBeVisible();
 });
 

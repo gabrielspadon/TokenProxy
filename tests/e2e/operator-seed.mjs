@@ -1,0 +1,9 @@
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+const dataDir = process.env.DATA_DIR;
+assert.equal(resolve(dataDir || '.'), '/tmp/tokenproxy-astra-ui-persistence-20160', 'Seed is restricted to its disposable browser-test database');
+const { saveRequestStats } = await import('../../src/lib/db/repos/requestStatsRepo.js');
+const { getContextOverview, updateContextSession } = await import('../../src/lib/db/repos/contextRepo.js');
+for (let i=0;i<3;i++) await saveRequestStats({id:`ui-persisted-${i}`,timestamp:new Date(Date.now()-(2-i)*60000).toISOString(),provider:'openai',model:'local-contract-model',connectionId:'isolated-contract-account',status:'success',tokens:{prompt_tokens:10000+i*1000,completion_tokens:500+i*100,cached_tokens:8000+i*500},latency:{total:1300+i*100,ttft:250},contextTelemetry:{sessionHash:'b'.repeat(32),identitySource:'routing',logicalRequestId:`ui-logical-${i}`,requestedModel:'local-contract-model',clientTool:'Isolated browser test',contextEstimate:10000+i*1200,inputEstimate:10000+i*1200,bodyAfterBytes:19000+i*2000,cachePrefixBytes:15000,messageCount:10+i*2,toolCount:3,routeKind:'direct',formatPair:'openai→openai',selection:'round-robin',attempt:1,controls:{rtk:true,rtkAllowLossy:false},stages:[{stage:'rtk',in:20000+i*2000,out:19000+i*2000,semanticPreserving:true},{stage:'final',in:19000+i*2000,out:19000+i*2000}]}});
+const overview=await getContextOverview();assert.equal(overview.summary.requests,3);assert.equal(overview.summary.providerInputTokens,33000);assert.equal(overview.summary.savedBytes,3000);assert.equal(overview.stages.reduce((n,s)=>n+s.savedBytes,0),3000);await updateContextSession(overview.sessions[0].id,{projectLabel:'Persisted contract session'});
+console.log(JSON.stringify({dataDir,sessionId:overview.sessions[0].id,requests:overview.summary.requests,providerInputTokens:overview.summary.providerInputTokens,savedBytes:overview.summary.savedBytes}));

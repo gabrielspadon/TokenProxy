@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { useEventStream } from '@/shared/hooks/useEventStream';
@@ -14,10 +14,14 @@ import { refusal } from '@/shared/refusal';
 import { fmtDuration, fmtNum, fmtPct, fmtRelative, fmtUsd } from '@/shared/format';
 import { TONE, WORDS } from '@/shared/status';
 import { RouteMap } from './RouteMap';
+import { AccountInspector } from './AccountInspector';
 import './routing.css';
 
 const compact = (n) =>
   n == null ? '—' : fmtNum(n, { notation: 'compact', maximumFractionDigits: 1 });
+const subscribeToOrigin = () => () => {};
+const getEndpoint = () => `${window.location.origin}/v1`;
+const getServerEndpoint = () => '/v1';
 function Kpi({ label, value, foot, icon, tone }) {
   return (
     <div className="kpi" data-tone={tone}>
@@ -38,6 +42,7 @@ export default function NowPage() {
   const state = usePoll('/api/system/state?windowSeconds=3600', 15000);
   const quota = usePoll('/api/admin/quota', 30000);
   const [period, setPeriod] = useState('today');
+  const [connectionId, setConnectionId] = useState(null);
   const chart = usePoll(`/api/usage/chart?period=${period}`, 30000);
   const apply = useUsageStream((s) => s.apply);
   const usage = useUsageStream((s) => s.data);
@@ -72,8 +77,7 @@ export default function NowPage() {
         0
       )
     : null;
-  const [endpoint, setEndpoint] = useState('/v1');
-  useEffect(() => setEndpoint(`${window.location.origin}/v1`), []);
+  const endpoint = useSyncExternalStore(subscribeToOrigin, getEndpoint, getServerEndpoint);
   async function copyEndpoint() {
     try {
       await navigator.clipboard.writeText(endpoint);
@@ -88,7 +92,7 @@ export default function NowPage() {
       <div className="screen-head">
         <div className="page-title">
           <h1>Overview</h1>
-          <p className="screen-subtitle">Your gateway, in focus.</p>
+          <p className="screen-subtitle">A live view of every route, request, and decision.</p>
         </div>
         <Link href="/dashboard/connections" className="button quiet">
           <Icon name="i-add" />
@@ -109,7 +113,14 @@ export default function NowPage() {
         </button>
       </div>
       {state.error ? <Notice {...refusal(state.status, state.error)} /> : null}
-      <RouteMap usage={usage} conns={conns} stream={stream} receivedAt={receivedAt} />
+      <RouteMap
+        usage={usage}
+        conns={conns}
+        stream={stream}
+        receivedAt={receivedAt}
+        selectedConnection={connectionId || conns[0]?.connectionId}
+        onSelectConnection={setConnectionId}
+      />
       <div className="kpi-grid">
         <Kpi
           label="Tokens today"
@@ -119,7 +130,7 @@ export default function NowPage() {
         />
         <Kpi
           label="Spend today"
-          value={usage ? fmtUsd(usage.totalCost ?? 0) : '—'}
+          value={usage?.totalCost == null ? '—' : fmtUsd(usage.totalCost)}
           foot="Recorded cost in today’s usage ledger"
           icon="i-shaping"
         />
@@ -137,7 +148,7 @@ export default function NowPage() {
           tone={m.errorRate?.value > 0.05 ? 'warn' : undefined}
         />
       </div>
-      <div className="operator-grid">
+      <div className="operator-grid overview-analytics">
         <section className="operator-panel" aria-labelledby="traffic-title">
           <div className="panel-head">
             <div>
@@ -173,52 +184,17 @@ export default function NowPage() {
             )}
           </div>
         </section>
-        <section className="operator-panel" aria-labelledby="health-title">
-          <div className="panel-head">
-            <div>
-              <h2 id="health-title">Provider health</h2>
-              <p>{conns.length} configured connections</p>
-            </div>
-            <Link className="text-link" href="/dashboard/connections">
-              Manage
-              <Icon name="i-right" />
-            </Link>
-          </div>
-          <div className="panel-body">
-            {detail.error ? (
-              <Notice {...refusal(detail.status, detail.error)} />
-            ) : !conns.length ? (
-              <div className="chart-empty">
-                <Icon name="i-connections" />
-                <strong>No connections yet</strong>
-                <span>Add an upstream to bring your gateway online.</span>
-                <Link href="/dashboard/connections" className="text-link">
-                  Connect a provider
-                </Link>
-              </div>
-            ) : (
-              conns.slice(0, 5).map((c) => (
-                <Link
-                  key={c.connectionId}
-                  href={`/dashboard/connections/${encodeURIComponent(c.connectionId)}`}
-                  className="health-row"
-                >
-                  <ProviderMark provider={c.provider} />
-                  <span className="health-name" data-i18n-skip>
-                    {c.displayName || c.provider}
-                    <small>{c.lastError || c.provider}</small>
-                  </span>
-                  <i className="health-dot" data-tone={TONE[c.status] || 'warn'} />
-                  <span className="status" data-tone={TONE[c.status] || 'warn'}>
-                    {c.isDraining ? 'Draining' : WORDS[c.status] || c.status}
-                  </span>
-                </Link>
-              ))
-            )}
-          </div>
-        </section>
+        <AccountInspector
+          conns={conns}
+          selectedId={connectionId}
+          onSelect={setConnectionId}
+          quota={quota}
+          usage={usage}
+          healthError={detail.error ? refusal(detail.status, detail.error) : null}
+          now={now}
+        />
       </div>
-      <div className="operator-grid">
+      <div className="operator-grid overview-activity">
         <section className="operator-panel" aria-labelledby="recent-title">
           <div className="panel-head">
             <div>

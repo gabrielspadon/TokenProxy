@@ -1,54 +1,96 @@
-import { test, expect } from "playwright/test";
-import { signIn } from "./helpers.mjs";
-
-// The Tools page (§14 Local Tool Integrations, §15 Local Extension Bridge)
-// has no live backend to poll or mutate: `/api/cli-tools/**` 404s (absent
-// from the tree), and `/api/mcp/[plugin]/**` has no listing/status route.
-// So there is no poll to go stale, no write to confirm or refuse, and no
-// secret field to fetch. These tests assert what the page actually is: a
-// static explanation of both concepts plus an explicit unreported-gap
-// section, and the two invariants that still apply with no route involved
-// (no session/secret identifiers ever appear, one h1, reachable from nav).
-test.beforeEach(async ({ page }) => { await signIn(page); });
-
-test("both sections render as empty state, since no route backs either", async ({ page }) => {
-  await page.goto("/dashboard/tools");
-  await expect(page.getByRole("heading", { name: "Tool integrations" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Local extension bridge" })).toBeVisible();
-  const empties = page.locator(".empty");
-  await expect(empties).toHaveCount(2);
-  await expect(empties.nth(0)).toContainText("No route currently answers which tools are present");
-  await expect(empties.nth(1)).toContainText("No route reports which extensions are available");
+import { test, expect } from 'playwright/test';
+import { signIn, json } from './helpers.mjs';
+const snapshot = {
+  observedAt: '2026-09-06T15:00:00.000Z',
+  presets: [
+    {
+      id: 'filesystem',
+      name: 'Filesystem',
+      transport: 'stdio',
+      configured: true,
+      installation: 'not-probed',
+      declaredToolCount: 4,
+      running: true,
+      clients: 2,
+      endpoint: '/api/mcp/filesystem',
+    },
+    {
+      id: 'memory',
+      name: 'Memory',
+      transport: 'stdio',
+      configured: true,
+      installation: 'not-probed',
+      declaredToolCount: 3,
+      running: false,
+      clients: 0,
+      endpoint: '/api/mcp/memory',
+    },
+  ],
+  summary: { presets: 2, running: 1, clients: 2 },
+  scope: 'local-process',
+  capabilities: { status: true, takeover: false, modelMapping: false },
+};
+test.beforeEach(async ({ page }) => {
+  await signIn(page);
+  await page.route('**/api/tools', (r) => r.fulfill(json(200, snapshot)));
 });
-
-test("the not-reported section names both gaps with their reason", async ({ page }) => {
-  await page.goto("/dashboard/tools");
-  const gap = page.locator("section", { has: page.getByRole("heading", { name: "Not reported" }) });
-  await expect(gap.getByText(/no HTTP route calls them/)).toBeVisible();
-  await expect(gap.getByText(/only its status is unreported here/)).toBeVisible();
+test('bridge status reflects actual running and stopped snapshots without claiming installation', async ({
+  page,
+}) => {
+  await page.goto('/dashboard/tools');
+  await expect(page.locator('.tool-card').first()).toContainText('Running');
+  await expect(page.locator('.tool-card').first()).toContainText('2 clients');
+  await expect(page.locator('.tool-card').nth(1)).toContainText('Stopped');
+  await expect(page.locator('.kpi').first()).toContainText('2');
+  await expect(page.getByText(/Installation is not probed here/)).toBeVisible();
 });
-
-test("freshness reads live with no poll behind it", async ({ page }) => {
-  await page.goto("/dashboard/tools");
-  await expect(page.locator(".screen-head .fresh").first()).toHaveAttribute("data-state", "live");
+test('refresh re-reads bridge state and never starts a process', async ({ page }) => {
+  const writes = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/api/tools') && r.method() !== 'GET') writes.push(r.method());
+  });
+  await page.goto('/dashboard/tools');
+  await expect(page.locator('.screen-head .fresh').first()).toHaveAttribute('data-state', 'live');
+  await page.route('**/api/tools', (r) =>
+    r.fulfill(
+      json(200, { ...snapshot, presets: [], summary: { presets: 0, running: 0, clients: 0 } })
+    )
+  );
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(page.getByText('No local extensions configured')).toBeVisible();
+  expect(writes).toEqual([]);
 });
-
-test("no session, request, or client identifier is ever rendered", async ({ page }) => {
-  await page.goto("/dashboard/tools");
-  const body = page.locator("body");
-  await expect(body).not.toContainText(/sessionId|clientId|requestId/);
-  await expect(body).not.toContainText(/•••|Set\b.*Not set/);
+test('an operator refusal is visible and does not imply empty configuration', async ({ page }) => {
+  await page.route('**/api/tools', (r) =>
+    r.fulfill(
+      json(403, {
+        code: 'forbidden_class',
+        source: 'tokenproxy-admin',
+        error: 'Operator credential required',
+      })
+    )
+  );
+  await page.goto('/dashboard/tools');
+  await expect(
+    page.getByText('An inference API key does not satisfy this endpoint.')
+  ).toBeVisible();
+  await expect(page.getByText('No local extensions configured')).toHaveCount(0);
 });
-
-test("exactly one h1, and the page is reachable from nav", async ({ page }) => {
-  await page.goto("/dashboard");
-  await page.getByRole("link", { name: "Tools" }).click();
-  await expect(page).toHaveURL(/\/dashboard\/tools$/);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Tools");
+test('capability disclosure preserves the connection controls', async ({ page }) => {
+  await page.goto('/dashboard/tools');
+  await page.getByText('Integration capabilities', { exact: true }).click();
+  await expect(page.getByText(/Automatic client takeover/)).toBeVisible();
+  await expect(page.getByRole('link', { name: /Open connection details/ })).toHaveAttribute(
+    'href',
+    '/dashboard/keys'
+  );
+  await expect(page.locator('button.danger, .button.danger')).toHaveCount(0);
 });
-
-test("no confirm dialog exists, since no action here mutates anything", async ({ page }) => {
-  await page.goto("/dashboard/tools");
-  await expect(page.locator("dialog.confirm")).toHaveCount(0);
-  await expect(page.locator("button.danger, .button.danger")).toHaveCount(0);
+test('no secret identifiers are exposed and the page is reachable through navigation', async ({
+  page,
+}) => {
+  await page.goto('/dashboard');
+  await page.getByRole('link', { name: 'Tools', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Tools');
+  await expect(page.locator('body')).not.toContainText(/sessionId|clientId|requestId/);
 });

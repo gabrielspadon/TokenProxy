@@ -12,6 +12,7 @@ await page.request.post(`${base}/api/auth/login`, {
 });
 const paths = [
   '',
+  'context',
   'connections',
   'sessions',
   'network',
@@ -37,8 +38,10 @@ for (const p of paths) {
   const title = await page.locator('h1').innerText();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   await page.screenshot({ path: `${out}/${p || 'overview'}-desktop.png`, fullPage: true });
+  await page.screenshot({ path: `${out}/${p || 'overview'}-desktop-viewport.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${out}/${p || 'overview'}-mobile.png`, fullPage: true });
+  await page.screenshot({ path: `${out}/${p || 'overview'}-mobile-viewport.png` });
   const mobileOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > innerWidth
   );

@@ -29,10 +29,11 @@ function NavList({ pathname, onPick }) {
                       href={n.href}
                       prefetch={false}
                       aria-current={current ? 'page' : undefined}
+                      title={n.label}
                       onClick={onPick}
                     >
                       <Icon name={n.icon} />
-                      {n.label}
+                      <span className="nav-label">{n.label}</span>
                     </Link>
                   </li>
                 );
@@ -119,6 +120,7 @@ export function Shell({ children }) {
   const version = usePoll('/api/version', 0);
   const dialog = useRef(null);
   const searchDialog = useRef(null);
+  const accountDialog = useRef(null);
   const [query, setQuery] = useState('');
   useEffect(() => {
     load();
@@ -141,7 +143,7 @@ export function Shell({ children }) {
       </a>
       <header className="rail">
         <div className="rail-head">
-          <Link className="brand" href="/dashboard" data-i18n-skip>
+          <Link className="brand" href="/dashboard" aria-label="TokenProxy overview" data-i18n-skip>
             <Brand />
           </Link>
           <button
@@ -157,6 +159,7 @@ export function Shell({ children }) {
         <button
           className="nav-search"
           type="button"
+          aria-label="Find a control"
           onClick={() => searchDialog.current?.showModal()}
         >
           <Icon name="i-search" />
@@ -168,7 +171,32 @@ export function Shell({ children }) {
         </nav>
         <Foot auth={auth} version={version} />
       </header>
-      <Strap />
+      <div className="workspace-topbar">
+        <div className="workspace-name" data-i18n-skip>
+          TokenProxy <small>{NAV.find((n) => n.href === pathname)?.label || 'Workspace'}</small>
+        </div>
+        <Strap />
+        <button
+          className="account-button"
+          aria-label="Workspace account and language"
+          onClick={() => accountDialog.current?.showModal()}
+        >
+          <Icon name="i-access" />
+        </button>
+      </div>
+      <dialog
+        className="account-dialog"
+        ref={accountDialog}
+        aria-label="Workspace account and language"
+      >
+        <div className="screen-head">
+          <h2>Workspace preferences</h2>
+          <button className="button quiet" onClick={() => accountDialog.current?.close()}>
+            Close
+          </button>
+        </div>
+        <Foot auth={auth} version={version} />
+      </dialog>
       <dialog className="nav-dialog" ref={dialog} aria-label="Sections">
         <div className="rail-head">
           <span className="brand" data-i18n-skip>

@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import Image from 'next/image';
 
 const BRANDS = {
   anthropic: ['claude', 'Anthropic', 'claude'],
@@ -32,11 +33,12 @@ export function ProviderMark({ provider, size = 'normal', label = false }) {
     <span className="provider-identity" data-provider={brand.color} data-i18n-skip>
       <span className="provider-mark" data-size={size} aria-hidden="true">
         {brand.logo && !failed ? (
-          <img
+          <Image
             src={`/providers/${brand.logo}.png`}
             alt=""
             width="28"
             height="28"
+            unoptimized
             onError={() => setFailed(true)}
           />
         ) : (

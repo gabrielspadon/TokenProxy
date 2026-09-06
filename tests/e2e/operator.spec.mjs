@@ -20,16 +20,20 @@ test('overview renders measured provider traffic and inspectable animated routes
   await page.goto('/dashboard');
   await expect(page.getByText('4,195', { exact: true })).toBeVisible();
   await expect(page.locator('.graph-provider')).toHaveCount(5);
-  await expect(page.locator('.react-flow__edge.animated')).toHaveCount(2);
+  await expect(page.locator('.react-flow__edge.animated')).toHaveCount(5);
   await page.getByRole('button', { name: 'Pause route animation' }).click();
   await expect(page.locator('.react-flow__edge.animated')).toHaveCount(0);
   await page.getByRole('button', { name: 'Resume route animation' }).click();
-  await expect(page.locator('.react-flow__edge.animated')).toHaveCount(2);
+  await expect(page.locator('.react-flow__edge.animated')).toHaveCount(5);
   await page.locator('.graph-provider').filter({ hasText: 'Anthropic' }).click();
+  await expect(page.getByLabel('Inspect connection')).toHaveValue('visual-0');
+  await page.getByText('Provider traffic today', { exact: true }).click();
   await expect(page.locator('.route-inspector')).toContainText('2,890,000 input tokens');
   await expect(page.locator('.route-inspector')).toContainText('410,000 output tokens');
-  await page.getByRole('button', { name: 'Close provider details' }).click();
-  await expect(page.locator('.route-inspector')).toHaveCount(0);
+  await page.locator('.flight-row').first().click();
+  await expect(page.locator('.live-request-details')).toContainText('Input not yet reported');
+  await page.getByRole('button', { name: 'Close request details' }).click();
+  await expect(page.locator('.live-request-details')).toHaveCount(0);
   await page.getByRole('button', { name: 'Tokens', exact: true }).click();
   await expect(page.getByRole('img', { name: /tokens over time/ })).toBeVisible();
   await page.getByRole('button', { name: '7 days', exact: true }).click();
@@ -129,4 +133,72 @@ test('overview and context fit mobile with accessible labels and reduced motion'
   await expect(page.getByRole('dialog', { name: 'Sections' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Sections' })).not.toBeVisible();
+});
+
+test('account allocation keeps a constrained sibling visible', async ({ page }) => {
+  const { connections } = await import('./operator-fixture.mjs');
+  const accounts = [
+    ...connections,
+    {
+      ...connections[0],
+      id: 'visual-reserve',
+      connectionId: 'visual-reserve',
+      displayName: 'Reserve research',
+      status: 'cooldown',
+      lastError: 'Quota cooldown',
+    },
+  ];
+  await page.route('**/api/admin/health/detail', (r) =>
+    r.fulfill(json(200, { checks: { connections: accounts, database: { status: 'healthy' } } }))
+  );
+  await page.goto('/dashboard');
+  const reserve = page.locator('.graph-provider').filter({ hasText: 'Reserve research' });
+  await expect(reserve).toHaveAttribute('data-tone', 'warn');
+  await reserve.click();
+  await expect(page.getByLabel('Inspect connection')).toHaveValue('visual-reserve');
+  await expect(page.locator('.account-inspector')).toContainText('Cooling down');
+  await expect(page.locator('.account-inspector')).toContainText('No quota measurement reported.');
+  await expect(page.locator('.inspector-pair').getByText('—', { exact: true })).toBeVisible();
+});
+
+test('rejected context records expose the coverage gap and session changes clear old details', async ({
+  page,
+}) => {
+  await page.route('**/api/context?*', (r) =>
+    r.fulfill(
+      json(200, {
+        ...contextOverview,
+        recording: { rejectedAttempts: 2, scope: 'all retained attempts' },
+      })
+    )
+  );
+  await page.goto('/dashboard/context');
+  await expect(page.getByText('2 context records were rejected.')).toBeVisible();
+  await expect(page.locator('.session-label-note')).toContainText(
+    'Inferred locality may combine multiple agents'
+  );
+  await page.locator('.context-session').filter({ hasText: 'TokenProxy' }).click();
+  await expect(page.getByRole('heading', { name: 'TokenProxy', exact: true })).toBeVisible();
+  await expect(page.locator('.context-detail')).toContainText('Inferred locality');
+  await expect(page.getByLabel('Inspect request').locator('option')).toHaveCount(18);
+});
+
+test('workspace preferences preserve native keyboard focus and project text is escaped', async ({
+  page,
+}) => {
+  await page.goto('/dashboard/context');
+  const open = page.getByRole('button', { name: 'Workspace account and language' });
+  await open.click();
+  const dialog = page.getByRole('dialog', { name: 'Workspace account and language' });
+  await expect(dialog.getByRole('combobox')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(open).toBeFocused();
+  await page.getByRole('button', { name: 'Edit project' }).click();
+  await page.locator('.project-editor input').fill('<img src=x onerror=alert(1)>');
+  await page.getByRole('button', { name: 'Save label' }).click();
+  await expect(
+    page.getByRole('heading', { name: '<img src=x onerror=alert(1)>', exact: true })
+  ).toBeVisible();
+  await expect(page.locator('.context-detail img[src="x"]')).toHaveCount(0);
 });

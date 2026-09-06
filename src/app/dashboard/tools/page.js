@@ -34,11 +34,11 @@ export default function ToolsPage() {
       <div className="kpi-grid">
         <div className="kpi">
           <div className="kpi-label">
-            Configured extensions
+            Bridge presets
             <Icon name="i-tools" />
           </div>
           <div className="kpi-value">{summary?.presets ?? '—'}</div>
-          <p className="kpi-foot">Available local bridge presets</p>
+          <p className="kpi-foot">Definitions available to this gateway</p>
         </div>
         <div className="kpi">
           <div className="kpi-label">
@@ -82,6 +82,7 @@ export default function ToolsPage() {
                 </div>
                 <div className="tool-card-facts">
                   <span>{p.clients} clients</span>
+                  <span>{p.declaredToolCount ?? '—'} declared tools</span>
                   <code>{p.endpoint}</code>
                 </div>
               </article>
@@ -95,8 +96,9 @@ export default function ToolsPage() {
           </div>
         ) : null}
         <p className="chart-disclosure">
-          Viewing this page reads existing state. An extension starts when a client attaches to its
-          bridge endpoint.
+          Preset definitions do not prove a package is installed. Installation is not probed here.
+          Viewing this page reads existing process state. An extension starts when a client attaches
+          to its bridge endpoint.
         </p>
       </section>
       <section>

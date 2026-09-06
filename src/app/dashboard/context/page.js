@@ -64,6 +64,8 @@ function TurnChart({ turns, onSelect, selected }) {
         ? null
         : Math.max(0, t.providerInputTokens - t.cacheReadTokens),
     cache: t.cacheReadTokens,
+    unclassifiedInput:
+      t.providerInputTokens != null && t.cacheReadTokens == null ? t.providerInputTokens : null,
     output: t.providerOutputTokens,
   }));
   if (!turns.length)
@@ -111,6 +113,13 @@ function TurnChart({ turns, onSelect, selected }) {
               borderRadius: 8,
               fontSize: 11,
             }}
+          />
+          <Bar
+            dataKey="unclassifiedInput"
+            name="Input (cache unknown)"
+            stackId="input"
+            fill="var(--slate)"
+            isAnimationActive={false}
           />
           <Bar
             dataKey="cache"
@@ -198,6 +207,7 @@ function StageLedger({ stages = [] }) {
 }
 export default function ContextPage() {
   const [period, setPeriod] = useState('24h');
+  const [windowEnd, setWindowEnd] = useState(() => Date.now());
   const [provider, setProvider] = useState('');
   const [project, setProject] = useState('');
   const [page, setPage] = useState(1);
@@ -212,8 +222,8 @@ export default function ContextPage() {
     () =>
       period === 'all'
         ? null
-        : new Date(Date.now() - (period === '7d' ? 7 : 1) * 86400000).toISOString(),
-    [period]
+        : new Date(windowEnd - (period === '7d' ? 7 : 1) * 86400000).toISOString(),
+    [period, windowEnd]
   );
   const q = new URLSearchParams({ page: String(page), pageSize: '25' });
   if (since) q.set('from', since);
@@ -224,12 +234,15 @@ export default function ContextPage() {
   const summary = data?.summary;
   const sessions = data?.sessions || [];
   const sessionId = picked && sessions.some((s) => s.id === picked) ? picked : sessions[0]?.id;
+  const detailQuery = new URLSearchParams(q);
+  detailQuery.set('page', String(turnPage));
+  detailQuery.set('pageSize', '50');
   const detail = usePoll(
-    sessionId ? `/api/context/sessions/${sessionId}?page=${turnPage}&pageSize=50` : null,
+    sessionId ? `/api/context/sessions/${sessionId}?${detailQuery}` : null,
     15000
   );
   const turns = detail.data?.turns || [];
-  const selected = turns.find((t) => t.id === turnId) || turns.at(-1);
+  const selected = turns.find((t) => String(t.id) === String(turnId)) || turns.at(-1);
   const projects = data?.projects || [];
   async function saveProject(e) {
     e.preventDefault();
@@ -285,6 +298,7 @@ export default function ContextPage() {
               aria-pressed={period === id}
               onClick={() => {
                 setPeriod(id);
+                setWindowEnd(Date.now());
                 setPage(1);
                 setPicked(null);
               }}
@@ -335,6 +349,13 @@ export default function ContextPage() {
         </span>
       </div>
       {overview.error ? <Notice {...refusal(overview.status, overview.error)} /> : null}
+      {data?.recording?.rejectedAttempts > 0 ? (
+        <Notice
+          tone="warn"
+          title={`${fmtNum(data.recording.rejectedAttempts)} context records were rejected.`}
+          next="These attempts can still appear in billed usage, but are absent from context and stage aggregates. This count covers all retained attempts."
+        />
+      ) : null}
       <div className="context-stats">
         <Stat
           label="Conversations"
@@ -408,6 +429,7 @@ export default function ContextPage() {
                 <span className="session-meta">
                   <strong>{s.projectLabel || `Conversation ${s.id}`}</strong>
                   <small>{s.clientTool || 'Unknown client'}</small>
+                  <small>{IDENTITY[s.identitySource] || 'Identity provenance unknown'}</small>
                   <span>
                     {s.requests} requests <i />
                     {short(s.providerInputTokens)} input
@@ -433,8 +455,8 @@ export default function ContextPage() {
               </button>
             </div>
             <p className="session-label-note">
-              Project labels are operator assigned. Session identity is observed, with no prompt or
-              path stored.
+              Project labels are operator assigned. Inferred locality may combine multiple agents.
+              Routing identities have unknown provenance. Prompts and raw paths are not stored.
             </p>
           </aside>
           <div className="context-detail">
@@ -442,7 +464,11 @@ export default function ContextPage() {
               <div className="panel-head">
                 <div>
                   <h2>{detail.data?.session?.projectLabel || `Conversation ${sessionId}`}</h2>
-                  <p>Context evolution · tokens per request attempt</p>
+                  <p>
+                    {IDENTITY[detail.data?.session?.identitySource] ||
+                      'Identity provenance unknown'}{' '}
+                    · tokens per request attempt
+                  </p>
                 </div>
                 <button
                   className="button quiet"
@@ -461,7 +487,7 @@ export default function ContextPage() {
                     <input
                       className="input"
                       value={projectDraft}
-                      maxLength={120}
+                      maxLength={80}
                       onChange={(e) => setProjectDraft(e.target.value)}
                     />
                   </label>
@@ -477,6 +503,7 @@ export default function ContextPage() {
                   <span data-series="new">Other input</span>
                   <span data-series="output">Output</span>
                   <span data-series="estimate">Estimated context</span>
+                  <span data-series="unknown">Input, cache unknown</span>
                 </div>
                 {detail.error ? (
                   <Notice {...refusal(detail.status, detail.error)} />
@@ -566,6 +593,21 @@ export default function ContextPage() {
                       <StageLedger stages={selected.stages} />
                     ) : (
                       <p className="empty">No stage measurements were recorded for this request.</p>
+                    )}
+                  </details>
+                  <details className="fold">
+                    <summary>Controls used for this attempt</summary>
+                    {Object.keys(selected.controls || {}).length ? (
+                      <dl className="facts">
+                        {Object.entries(selected.controls).map(([key, enabled]) => (
+                          <div key={key}>
+                            <dt data-i18n-skip>{key}</dt>
+                            <dd>{enabled ? 'Enabled' : 'Disabled'}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    ) : (
+                      <p className="empty">No control snapshot was recorded.</p>
                     )}
                   </details>
                 </div>
