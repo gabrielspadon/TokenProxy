@@ -90,7 +90,8 @@ function ResetDeadline({ window, anchor }) {
     </Tooltip>
   );
 }
-function TokenMeasure({ record }) {
+function TokenMeasure({ record, state }) {
+  if(state) return <span className={styles.unknown}>{state}</span>;
   if (!record) return <span className={styles.unknown}>No recorded attempts</span>;
   const total = record.inputSamples === 0 ? null : record.inputTokens;
   const completeBreakdown =
@@ -563,11 +564,12 @@ export default function CapacityPage() {
           windows,
           primary: orderQuotaWindows(windows)[0],
           activity: record,
+          activityState: activity.loading ? 'Loading activity…' : activity.error ? 'Activity unavailable' : !record && activity.data?.groupsTruncated ? 'Outside returned groups' : null,
           records: record?.records ?? -1,
           inputTokens: record?.inputTokens ?? -1,
         };
       }),
-    [accounts, quota.data, activity.data]
+    [accounts, quota.data, activity.data, activity.loading, activity.error]
   );
   const filteredRows = useMemo(
     () =>
@@ -666,21 +668,21 @@ export default function CapacityPage() {
         header: 'Attempts',
         cell: ({ row }) => (
           <div className={styles.requestMeasure}>
-            <span>{row.original.records >= 0 ? number(row.original.records) : '—'}</span>
-            <Progress
+            <span>{row.original.activityState ? 'Unknown' : row.original.records >= 0 ? number(row.original.records) : '—'}</span>
+            {!row.original.activityState && <Progress
               aria-label={`Attempts relative to the busiest configured account (${number(maxRequests)})`}
               value={(Math.max(0, row.original.records) / maxRequests) * 100}
               color="#a5b3df"
               size={3}
               radius={0}
-            />
+            />}
           </div>
         ),
       },
       {
         accessorKey: 'inputTokens',
         header: 'Recorded input',
-        cell: ({ row }) => <TokenMeasure record={row.original.activity} />,
+        cell: ({ row }) => <TokenMeasure record={row.original.activity} state={row.original.activityState} />,
       },
       {
         id: 'quota',
@@ -695,7 +697,7 @@ export default function CapacityPage() {
             windows={row.original.windows}
             onInspect={(windowScope) => {
               setSelectedScope(windowScope);
-              setSelectedAccountId(row.original.connectionId);
+              setSelectedAccountId(row.original.connectionId,windowScope);
               setComparing(false);
             }}
           />

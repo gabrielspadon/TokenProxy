@@ -1,7 +1,8 @@
 'use client';
 import { useState } from 'react';
 import { usePathname,useRouter } from 'next/navigation';
-import { Alert, Badge, Button, Group, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Group, Modal, Select, Stack, Text, TextInput, Tooltip } from '@mantine/core';
+import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
 import { useResource } from './useResource';
 import { LENS_PATHS,selectionExcluded,selectionLens } from '@/lib/db/analytics/investigationModel.mjs';
@@ -52,7 +53,7 @@ export function Investigations() {
       <Stack gap="md">
         <Text size="sm" c="#5b6980">Shared by this installation’s authenticated operators. Saved ranges use fixed UTC boundaries. No request content or credentials are stored.</Text>
         {failure && <Alert color="red" title={failure.code==='version_conflict'?'Another view changed this entry':'Save operation failed'}>{failure.message}{failure.code==='version_conflict' && <Button variant="subtle" onClick={reloadVersion} disabled={busy}>Reload saved version</Button>}</Alert>}
-        {notice && <Alert color="teal">{notice}</Alert>}
+        {notice && <Text role="status" size="sm" c="#356859" className={styles.notice}>{notice}</Text>}
         {deleting ? <Alert title={`Delete “${deleting.name}”?`} color="orange">The stored definition will be removed; evidence records are untouched.<Group mt="sm"><Button color="red" loading={busy} onClick={remove}>Delete saved entry</Button><Button variant="default" disabled={busy} onClick={()=>setDeleting(null)}>Cancel deletion</Button></Group></Alert> : <form onSubmit={(event)=>{event.preventDefault();save(false);}}>
           <Group align="end" grow><TextInput data-autofocus label="Name" maxLength={80} value={name} onChange={(event)=>setName(event.currentTarget.value)} required disabled={busy}/><Select label="Save as" value={kind} onChange={setKind} allowDeselect={false} data={Object.entries(kindName).map(([value,label])=>({value,label}))}/></Group>
           <Text size="sm" c="#5b6980" mt="xs">{kind==='filter-set'?'Filters only. Restoring this set retains your selected evidence.':kind==='bookmark'?'The exact selected identity, its fixed scope and comparison accounts.':'Current lens, filters, selected identity, account comparison and lens controls.'}</Text>
@@ -73,6 +74,10 @@ export function SelectionEvidence() {
   const workspace=useWorkspace(), router=useRouter(), pathname=usePathname();
   const [open,setOpen]=useState(false),[mode,setMode]=useState('selected'),[busy,setBusy]=useState(false),[error,setError]=useState(null),[manifest,setManifest]=useState(null);
   const selected=workspace.selectedRecord;
+  const account=selected?.kind==='account' ? workspace.accounts.find((row)=>row.connectionId===selected.id) : null;
+  const selectedLabel=account ? `${account.displayName || account.provider} · ${providerIdentity(account.provider).name}`
+    : selected?.kind==='economics-group' ? `${selected.groupBy} cohort · ${selected.model || selected.connectionId || selected.provider || 'Unspecified'}`
+    : selected ? `${selected.kind.replaceAll('-',' ')} · ${selected.id.length>28 ? selected.id.slice(0,24)+'…' : selected.id}` : '';
   const canExportPopulation=pathname!==LENS_PATHS.capacity;
   const lens=Object.entries(LENS_PATHS).find(([,path])=>path===pathname)?.[0] || 'capacity';
   async function download() {
@@ -85,7 +90,7 @@ export function SelectionEvidence() {
     } catch(failure){setError(failure.message);}finally{setBusy(false);}
   }
   return <div className={styles.selectionBar} aria-label="Retained evidence selection">
-    <div>{selected ? <><Badge variant="light" c={selectionExcluded(selected,workspace.scope)?'#91430f':undefined} color={selectionExcluded(selected,workspace.scope)?'orange':'indigo'}>{selectionExcluded(selected,workspace.scope)?'Excluded by current scope':'Selection retained'}</Badge><span className={styles.record}>{selected.kind} · {selected.id}</span><Button size="compact-xs" variant="subtle" onClick={()=>router.push(LENS_PATHS[selectionLens(selected)])}>Open record lens</Button><Button size="compact-xs" variant="subtle" color="gray" onClick={()=>workspace.setSelectedRecord(null)}>Clear selection</Button></> : <Text size="sm" c="#5b6980">Select evidence to keep it across lenses.</Text>}</div>
+    <div>{selected ? <><Badge variant="light" c={selectionExcluded(selected,workspace.scope)?'#91430f':undefined} color={selectionExcluded(selected,workspace.scope)?'orange':'indigo'}>{selectionExcluded(selected,workspace.scope)?'Excluded by current scope':'Selection retained'}</Badge><Tooltip label={`Exact ${selected.kind} ID · ${selected.id}`} events={{hover:true,focus:true,touch:true}}><span tabIndex={0} className={styles.record} aria-label={`${selected.kind} · ${selected.id}`}>{selectedLabel}</span></Tooltip><Button size="compact-xs" variant="subtle" onClick={()=>router.push(LENS_PATHS[selectionLens(selected)])}>Open record lens</Button><Button size="compact-xs" variant="subtle" color="gray" onClick={()=>workspace.setSelectedRecord(null)}>Clear selection</Button></> : <Text size="sm" c="#5b6980">Select evidence to keep it across lenses.</Text>}</div>
     <Group gap="xs">{workspace.comparisonIds.length>0 && <Text size="sm">{workspace.comparisonIds.length} comparison accounts</Text>}<Button size="compact-sm" variant="subtle" onClick={()=>{setMode(selected?'selected':workspace.comparisonIds.length?'comparison':canExportPopulation?'population':null);setError(null);setManifest(null);setOpen(true);}}>Export evidence</Button></Group>
     <Modal title="Export recorded evidence" opened={open} onClose={()=>{if(!busy)setOpen(false);}} closeButtonProps={{'aria-label':'Close evidence export'}}>
       <Stack><Select label="Evidence scope" value={mode} onChange={setMode} allowDeselect={false} data={[{value:'selected',label:selected?.kind==='economics-group'?'Selected cohort in shared scope':'Exact selected record',disabled:!selected},{value:'population',label:`Complete filtered ${lens} population`,disabled:!canExportPopulation},{value:'comparison',label:'Selected comparison accounts',disabled:!workspace.comparisonIds.length}]}/>{!canExportPopulation && <Text size="sm" c="#5b6980">Capacity exports the chosen account or comparison accounts. Select an account before exporting its current persisted quota evidence.</Text>}<Text size="sm">Exports use one committed read snapshot. Exact record identities ignore current filters. Selected cohorts and population exports apply the fixed shared scope and recorded lens filters. Maximum 5,000 records and 8 MiB; larger exports are refused without a partial file.</Text><Text size="sm" c="#5b6980">The file includes source, UTC boundaries, coverage, completeness and measurement caveats. It excludes credentials, request bodies and private identity hashes.</Text>{error&&<Alert color="red" title="Export not produced">{error}</Alert>}{manifest&&<Alert color="teal" title="Evidence exported">{manifest.returnedRecords} of {manifest.totalRecords} matching records. {manifest.missingSelection?'The exact selected identity was not retained.':'Complete export.'}</Alert>}<Button loading={busy} disabled={!mode} onClick={download}>Download JSON evidence</Button></Stack>

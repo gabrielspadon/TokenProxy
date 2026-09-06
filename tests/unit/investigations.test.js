@@ -57,6 +57,7 @@ describe('Persistent operator workspaces',()=>{
     expect(()=>validateSelection({kind:'context-attempt',id:'request'})).toThrow();
     expect(()=>validateSelection({kind:'context-session',id:'7',sessionId:8})).toThrow(/match/);
     expect(()=>validateSelection({kind:'economics-record',id:'9007199254740993'})).toThrow(/ledger/);
+    expect(()=>validateSave(saved({definition:definition({selection:{kind:'context-session',id:'7'},context:{sessionId:8}})}))).toThrow(/same session/);
     expect(selectionExcluded({kind:'routing-switch',id:'r',connectionId:'to',fromConnectionId:'from'},{...INITIAL_SCOPE,connectionId:'from'})).toBe(false);
     expect(selectionExcluded({kind:'context-attempt',id:'r',provider:'claude',timestamp:'2026-09-06T00:00:00.000Z'},{...INITIAL_SCOPE,provider:'codex'})).toBe(true);
   });

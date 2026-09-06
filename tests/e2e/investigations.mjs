@@ -19,7 +19,8 @@ try{
   await provider('Codex');await page.waitForFunction(()=>document.querySelector('table[aria-label="Configured account capacity"] tbody')?.rows.length===2);
   await book.getByRole('checkbox').nth(0).check();await book.getByRole('checkbox').nth(1).check();
   await book.locator('tbody tr').first().getByRole('button').first().click();
-  const selection=page.getByLabel('Retained evidence selection');await selection.getByText(/account ·/).waitFor();
+  const selection=page.getByLabel('Retained evidence selection');await selection.getByLabel(/account ·/).waitFor();
+  await page.getByText('Loading recorded activity…',{exact:true}).waitFor({state:'hidden'});
   await page.screenshot({path:path.join(output,'capacity-selected-1440.png'),fullPage:true});
   await openSaved();await modal.getByRole('textbox',{name:'Name',exact:true}).fill(savedName);
   const creating=page.waitForResponse(response=>response.url().endsWith('/api/admin/investigations')&&response.request().method()==='POST');
@@ -27,10 +28,10 @@ try{
   assert.equal(entry.definition.comparisonIds.length,2);assert.equal(entry.definition.scope.provider,'codex');assert.equal(entry.definition.selection.kind,'account');
   await modal.getByText(/saved as version 1/).waitFor();await page.screenshot({path:path.join(output,'saved-modal-1440.png'),fullPage:true});
   await page.reload();await book.waitFor();await openSaved();await modal.getByRole('button',{name:`Restore ${savedName}`,exact:true}).click();
-  await selection.getByText(`account · ${entry.definition.selection.id}`,{exact:true}).waitFor();assert.equal(await page.getByRole('combobox',{name:'Provider filter',exact:true}).inputValue(),'Codex');
+  await selection.getByLabel(`account · ${entry.definition.selection.id}`,{exact:true}).waitFor();assert.equal(await page.getByRole('combobox',{name:'Provider filter',exact:true}).inputValue(),'Codex');
   assert.equal(await book.getByRole('checkbox',{checked:true}).count(),2);
   report.checks.push({saveReloadRestore:true,exactAccount:entry.definition.selection.id,comparisonAccounts:2});
-  await page.getByRole('link',{name:'Economics',exact:true}).click();await page.getByRole('heading',{name:'Economics',exact:true}).waitFor();assert((await selection.textContent()).includes(entry.definition.selection.id));
+  await page.getByRole('link',{name:'Economics',exact:true}).click();await page.getByRole('heading',{name:'Economics',exact:true}).waitFor();assert.equal(await selection.getByLabel(`account · ${entry.definition.selection.id}`,{exact:true}).count(),1);
   await provider('Claude');await selection.getByText('Excluded by current scope',{exact:true}).waitFor();report.checks.push({selectionAcrossLenses:true,excludedWithoutReplacement:true});
   const changed=await page.request.put(`${base}/api/admin/investigations/${entry.id}`,{data:{name:'Second operator view',kind:entry.kind,definition:entry.definition,version:1}});assert.equal(changed.status(),200);
   await openSaved();const conflict=page.waitForResponse(response=>response.url().endsWith(`/investigations/${entry.id}`)&&response.request().method()==='PUT');await modal.getByRole('button',{name:'Update version 1',exact:true}).click();assert.equal((await conflict).status(),409);

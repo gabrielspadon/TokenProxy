@@ -59,7 +59,7 @@ export function readEvidence(db,input) {
       result.items = result.items.map((row) => {const turn=publicTurn(row);return {...turn,controls:Object.fromEntries(Object.entries(turn.controls).filter(([key,value])=>controlKeys.includes(key)&&typeof value==='boolean')),stages:byRequest.get(row.id)||[]};});
     }
     source = 'requestStats + contextStages';
-    coverage = { attributedAttempts: result.totalRecords, reconstruction: false, contextOnly: true };
+    coverage = { attributedAttempts: result.totalRecords, reconstruction: false, contextOnly: true, includedCollections:['requestStats','contextStages'], excludedCollections:['contextStructures','clientEvents'] };
   } else if (kind === 'account') {
     const clauses = [], args = [];
     const ids = selection ? [selection.id] : mode === 'comparison' ? d.comparisonIds : null;

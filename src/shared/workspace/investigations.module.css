@@ -6,3 +6,5 @@
 .entry { display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid #e4e9f1; }
 .entry strong { font-size:14px;font-weight:500;overflow-wrap:anywhere; }
 @media(max-width:768px) { .selectionBar { margin-inline:16px; }.entry { align-items:flex-start;flex-wrap:wrap; } }
+
+.notice { padding-inline-start:10px;border-inline-start:2px solid #65988a; }

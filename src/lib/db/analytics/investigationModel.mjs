@@ -75,14 +75,16 @@ export function validateDefinition(value) {
   const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort']);
   const page = context.page ?? 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 10000) throw new InvestigationError('Invalid attempt page.');
-  const sessionId = context.sessionId == null ? null : Number(context.sessionId);
+  const selection=validateSelection(value.selection);
+  const sessionId = context.sessionId == null ? (selection?.kind.startsWith('context-') ? selection.sessionId : null) : Number(context.sessionId);
+  if(selection?.kind.startsWith('context-') && sessionId!==selection.sessionId)throw new InvestigationError('Selected Context identity and view must reference the same session.');
   if (sessionId !== null && (!Number.isSafeInteger(sessionId) || sessionId < 1)) throw new InvestigationError('Invalid session ID.');
   let cohort = null;
   if (economics.cohort) {
     object(economics.cohort, ['provider','model','connectionId']);
     cohort = Object.fromEntries(Object.entries(economics.cohort).map(([key,item]) => [key,text(item,key)]));
   }
-  return { schemaVersion: 1, lens: choice(value.lens, Object.keys(LENS_PATHS)), scope: validateScope(value.scope), selection: validateSelection(value.selection),
+  return { schemaVersion: 1, lens: choice(value.lens, Object.keys(LENS_PATHS)), scope: validateScope(value.scope), selection,
     comparisonIds: ids.map((id) => text(id,'comparison account',200,false)),
     context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client') },
     economics: { groupBy: choice(economics.groupBy,['provider','model','account'],'provider'), status: choice(economics.status,['all','succeeded','failed','pending'],'all'),

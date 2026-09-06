@@ -21,3 +21,5 @@ Exact selected record exports ignore shared filters deliberately; this is stated
 The initial synchronous download limit is 5000 primary records and 8 MiB. A larger result returns 413 and no partial file, with a request to narrow the scope. Context stage rows remain attached to their exact request IDs. Private identities, credentials, bodies and freeform error/reason payloads are excluded. Historical pending receipts are not live work; application model-rate estimates are not subscription bills.
 
 `GET /api/analytics?view=economics&recordId=<numeric>` is the additive exact legacy-ledger lookup. Existing `requestId`, `logicalRequestId`, `sessionId` and `projectId` filters keep their established meanings. Numeric completion IDs must never be substituted for request attribution.
+
+Context exports currently include attempt fields and ordered shaping stages. The newly introduced structure snapshots and explicit client-event collections are excluded and declared in coverage; their associated-evidence export remains a separate integration task.
