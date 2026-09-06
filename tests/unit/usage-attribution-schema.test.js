@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterAll, describe, expect, it } from 'vitest';
 import { TABLES, buildCreateTableSql } from '../../src/lib/db/schema.js';
 import { latestVersion } from '../../src/lib/db/migrations/index.js';
+import { QUOTA_HISTORY_TABLES } from '../../src/lib/db/schema/quotaHistory.js';
 import { DATA_FILE } from '../../src/lib/db/paths.js';
 
 const additions = ['requestId', 'logicalRequestId', 'attempt', 'contextSessionId', 'projectId',
@@ -15,7 +16,7 @@ describe('usage attribution additive migration', () => {
     mkdirSync(dirname(DATA_FILE), { recursive: true });
     const old = new DatabaseSync(DATA_FILE);
     for (const [name, definition] of Object.entries(TABLES)) {
-      if (name === 'usageRateSnapshots') continue;
+      if (name === 'usageRateSnapshots' || name in QUOTA_HISTORY_TABLES) continue;
       const columns = Object.fromEntries(Object.entries(definition.columns).filter(([key]) =>
         !(name === 'usageHistory' && additions.includes(key))
         && !(name === 'requestStats' && ['rateSnapshotId', 'pricingCapturedAt', 'dispatchCoverage'].includes(key))));
@@ -33,6 +34,9 @@ describe('usage attribution additive migration', () => {
     expect(rows.map((row) => row.cost)).toEqual([1.25, 0]);
     for (const row of rows) for (const field of additions) expect(row[field]).toBeNull();
     expect(db.all('SELECT * FROM usageRateSnapshots')).toEqual([]);
+    for (const table of Object.keys(QUOTA_HISTORY_TABLES)) {
+      expect(db.all(`SELECT * FROM ${table}`)).toEqual([]);
+    }
     db.run('INSERT INTO usageHistory(timestamp,requestId) VALUES(?,?)', ['2026-09-06T13:00:00.000Z', 'attempt-1']);
     expect(() => db.run('INSERT INTO usageHistory(timestamp,requestId) VALUES(?,?)', ['2026-09-06T13:00:01.000Z', 'attempt-1'])).toThrow();
     expect(db.get('PRAGMA integrity_check').integrity_check).toBe('ok');
