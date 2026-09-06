@@ -58,12 +58,13 @@ export function orderedStages(stages = []) {
 }
 export function trendOption(trend, colors, scope) {
   const points = trend?.points || [];
+  const spansDates = points.length > 1 && points[0].bucketStart.slice(0,10) !== points.at(-1).bucketStart.slice(0,10);
   const data = (key) => points.map((point) => [Date.parse(point.bucketStart), finite(point[key]) ? point[key] : null]);
   const grid = [0, 1, 2].map((i) => ({ left: 57, right: 22, top: 12 + i * 77, height: 53 }));
   const xAxis = grid.map((_, i) => ({ type: 'time', gridIndex: i,
     min: scope.start ? Date.parse(scope.start) : undefined,
     max: scope.end ? Date.parse(scope.end) : undefined,
-    axisLabel: { show: i === 2, color: '#65728a', formatter: (value) => utc(value, true) },
+    axisLabel: { show: i === 2, color: '#65728a', formatter: (value) => spansDates ? utc(value).slice(5,16) : utc(value, true) },
     axisLine: { lineStyle: { color: '#dde3ec' } }, axisTick: { show: false },
     splitLine: { show: true, lineStyle: { color: '#eef1f6' } },
   }));

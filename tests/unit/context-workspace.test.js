@@ -2,6 +2,7 @@
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import { RouterContext } from 'next/dist/shared/lib/router-context.shared-runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { contextFixture } from '../fixtures/context-workspace.js';
 import { bucketScope, contextUrl, quantity, signedBytes, trendOption } from '../../src/shared/components/context-workspace/contextModel.js';
@@ -12,13 +13,12 @@ vi.mock('@/shared/workspace/ScopeBar', () => ({ ScopeBar: () => <div aria-label=
 vi.mock('@/shared/workspace/ActivityBand', () => ({ ActivityBand: () => <div aria-label="Shared activity fixture" /> }));
 // Canvas drawing belongs to the shared wrapper. This suite exercises data and interaction contracts.
 vi.mock('@/shared/workspace/AnalyticalChart', () => ({ METRIC_COLORS: { selected: '#455bca', input: '#647ac8', cacheRead: '#208d82', failure: '#b34e61' }, AnalyticalChart: (props) => { state.chart = props; return <div role="img" aria-label={props.label} />; } }));
-vi.mock('next/link', () => ({ default: ({ children, href, ...props }) => <a href={href} {...props}>{children}</a> }));
 const { ContextWorkspace } = await import('../../src/shared/components/context-workspace/ContextWorkspace.js');
-let container, root, fixture, fetchMock;
+let container, root, fixture, fetchMock, router;
 const initialScope = { period: 'all', start: null, end: null, provider: null, model: null, connectionId: null };
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 async function flush() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); }); }
-async function render() { await act(async () => root.render(<MantineProvider env="test"><ContextWorkspace /></MantineProvider>)); await flush(); }
+async function render() { await act(async () => root.render(<RouterContext.Provider value={router}><MantineProvider env="test"><ContextWorkspace /></MantineProvider></RouterContext.Provider>)); await flush(); }
 async function click(selector) { const element = container.querySelector(selector); expect(element).not.toBeNull(); await act(async () => element.click()); await flush(); }
 function button(text) { return [...container.querySelectorAll('button')].find((item) => item.textContent === text); }
 async function clickText(text) { const element = button(text); expect(element).toBeTruthy(); await act(async () => element.click()); await flush(); }
@@ -28,6 +28,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) });
   fixture = contextFixture(); state.chart = null;
+  router = { pathname: '/dashboard/context', asPath: '/dashboard/context', push: vi.fn(), replace: vi.fn(), prefetch: vi.fn().mockResolvedValue(undefined) };
   state.workspace = { scope: { ...initialScope }, setScope: vi.fn(), accounts: [{ connectionId: 'synthetic-account', displayName: 'Synthetic account' }], snapshot: null, observeSnapshot: vi.fn() };
   fetchMock = vi.fn(async (url, options) => options?.method === 'PATCH' ? response({ updated: true }) : response(String(url).includes('/sessions/') ? fixture.detail : fixture.overview));
   vi.stubGlobal('fetch', fetchMock);
@@ -53,6 +54,11 @@ describe('Context projection contracts', () => {
   });
   it('clips focused buckets to the shared half-open range', () => {
     expect(bucketScope({ bucketStart: '2026-09-06T10:00:00Z' }, 60000, { start: '2026-09-06T10:00:20Z', end: '2026-09-06T10:00:50Z' })).toEqual({ period: 'custom', start: '2026-09-06T10:00:20.000Z', end: '2026-09-06T10:00:50.000Z' });
+  });
+  it('includes dates in track ticks when a session spans days', () => {
+    fixture.detail.trend.points[2].bucketStart = '2026-09-07T10:02:00.000Z';
+    const option = trendOption(fixture.detail.trend, {}, initialScope);
+    expect(option.xAxis[2].axisLabel.formatter(Date.parse('2026-09-07T10:02:00Z'))).toBe('09-07 10:02');
   });
 });
 
@@ -134,6 +140,37 @@ describe('Context workspace', () => {
     await act(async () => state.chart.onEvents.click({ dataIndex: 2 }));
     expect(state.workspace.setScope).toHaveBeenCalledWith({ period: 'custom', start: '2026-09-06T10:02:00.000Z', end: '2026-09-06T10:03:00.000Z' });
   });
+  it('preserves the investigated session and request when a focused interval excludes them', async () => {
+    const chosen = { ...fixture.detail.session, id: 8, projectLabel: 'Chosen investigation' };
+    fixture.overview.sessions.push(chosen);
+    await render();
+    fixture.detail.session = chosen;
+    const sessionButton = [...container.querySelectorAll('[aria-label="Recorded session cohort"] button')].find((item) => item.textContent.includes('Chosen investigation'));
+    await act(async () => sessionButton.click()); await flush();
+    await click('[aria-label="Inspect attempt 101"]');
+    await act(async () => state.chart.onEvents.click({ dataIndex: 2 }));
+    state.workspace = { ...state.workspace, scope: { ...initialScope, ...state.workspace.setScope.mock.calls.at(-1)[0] } };
+    fixture.overview.sessions = [fixture.overview.sessions[0]];
+    fixture.detail = { ...fixture.detail, turns: [], summary: { ...fixture.detail.summary, attempts: 0 }, trend: { ...fixture.detail.trend, points: [] } };
+    await render();
+    expect(fetchMock.mock.calls.at(-1)[0]).toContain('/sessions/8?page=1');
+    expect(container.textContent).toContain('Selected session #8 has no attempts in this scope');
+    expect(container.textContent).toContain('Selected request #101 is outside this page or scope');
+    expect(container.querySelector('table[aria-label="Session request attempts"]')).toBeNull();
+    fixture.detail = { ...contextFixture().detail, session: chosen };
+    state.workspace = { ...state.workspace, scope: { ...initialScope } };
+    await render();
+    expect(container.querySelector('[aria-label="Selection details"]')).not.toBeNull();
+    expect(container.textContent).toContain('Chosen investigation');
+  });
+  it('keeps the initial session when a shared filter changes the cohort order', async () => {
+    await render();
+    fixture.overview.sessions = [{ ...fixture.detail.session, id: 9, projectLabel: 'Different cohort leader' }, fixture.detail.session];
+    state.workspace = { ...state.workspace, scope: { ...initialScope, model: 'different-model' } };
+    await render();
+    expect(fetchMock.mock.calls.at(-1)[0]).toContain('/sessions/7?page=1');
+    expect(container.querySelector('[aria-pressed="true"]').textContent).toContain('Synthetic research');
+  });
   it('paginates attempts on the server and closes the previous request inspector', async () => {
     fixture.detail.pagination = { ...fixture.detail.pagination, totalItems: 26, totalPages: 2, hasNext: true };
     await render(); await click('[aria-label="Inspect attempt 101"]');
@@ -168,6 +205,28 @@ describe('Context workspace', () => {
     expect(container.textContent).toContain('Synthetic cooldown receipt');
     expect(container.textContent).toContain('Stored account pins');
     expect(container.textContent).not.toContain('Active pin');
+  });
+  it('uses client navigation for recorded controls without resetting the shared scope', async () => {
+    state.workspace.scope = { ...initialScope, provider: 'synthetic-provider', start: '2026-09-06T10:00:00Z', end: '2026-09-06T11:00:00Z' };
+    const sharedScope = state.workspace.scope;
+    await render(); await click('[aria-label="Inspect attempt 101"]');
+    await click('input[value="controls"]');
+    const link = container.querySelector('[aria-label="Selection details"] a[href="/dashboard/shaping"]');
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    await act(async () => link.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(router.push).toHaveBeenCalledWith('/dashboard/shaping', { scroll: true });
+    expect(state.workspace.scope).toBe(sharedScope);
+    expect(state.workspace.setScope).not.toHaveBeenCalled();
+  });
+  it('shows requested and served model evidence together', async () => {
+    fixture.detail.turns[0].requestedModel = 'requested-alias';
+    await render();
+    expect(container.querySelector('table[aria-label="Session request attempts"]').textContent).toContain('Served provider / model');
+    expect(container.querySelector('table[aria-label="Session request attempts"] tbody tr').textContent).toContain('Requested · requested-alias');
+    await click('[aria-label="Inspect attempt 101"]');
+    expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('Served provider / model');
+    expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('requested-alias');
   });
   it('keeps pagination available for an empty page of a nonempty cohort', async () => {
     fixture.overview.sessions = [];

@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Alert, Badge, Button, Group, Loader, Select, TextInput, UnstyledButton } from '@mantine/core';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
@@ -62,35 +62,44 @@ function NoContext({ data, snapshot }) {
 }
 export function ContextWorkspace() {
   const workspace = useWorkspace();
-  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace} />;
+  const [sessionId, setSessionId] = useState(null);
+  const [turnId, setTurnId] = useState(null);
+  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace}
+    sessionId={sessionId} setSessionId={setSessionId} turnId={turnId} setTurnId={setTurnId} />;
 }
-function ContextScope({ workspace }) {
+function ContextScope({ workspace, sessionId, setSessionId, turnId, setTurnId }) {
   const { scope, setScope, accounts, snapshot, observeSnapshot } = workspace;
-  const [page, setPage] = useState(1), [sessionId, setSessionId] = useState(null);
-  const [turnPage, setTurnPage] = useState(1), [turnId, setTurnId] = useState(null);
+  const [page, setPage] = useState(1);
+  const [turnPage, setTurnPage] = useState(1);
   const [projectLabel, setProjectLabel] = useState(null), [clientTool, setClientTool] = useState('');
   const [clientDraft, setClientDraft] = useState('');
   const filters = { projectLabel, clientTool };
   const overview = useResource(contextUrl(scope, { ...filters, page }), { onSnapshot: observeSnapshot });
   const data = overview.data;
   const sessions = data?.sessions || EMPTY;
-  const selectedSessionId = sessions.some((session) => session.id === sessionId) ? sessionId : sessions[0]?.id;
+  const firstSessionId = sessions[0]?.id;
+  useEffect(() => {
+    if (firstSessionId !== undefined) setSessionId((selected) => selected ?? firstSessionId);
+  }, [firstSessionId, setSessionId]);
+  const selectedSessionId = sessionId ?? sessions[0]?.id;
   const detail = useResource(selectedSessionId ? contextUrl(scope, { ...filters, page: turnPage, sessionId: selectedSessionId }) : null, { onSnapshot: observeSnapshot });
   const turns = detail.data?.turns || EMPTY;
   const selectedTurn = turns.find((turn) => turn.id === turnId);
   const session = detail.data?.session;
   const accountName = (id) => accounts.find((account) => account.connectionId === id)?.displayName || id || 'Unknown account';
   const selectSession = (id) => { setSessionId(id); setTurnPage(1); setTurnId(null); };
-  const changePage = (next) => { setPage(next); selectSession(null); };
+  const changePage = (next) => { setPage(next); };
   const filterByProject = (value) => { setProjectLabel(value); changePage(1); };
   const columns = useMemo(() => [
-    { id: 'request', header: 'Attempt · UTC', cell: ({ row }) => <UnstyledButton className={styles.attemptButton} aria-label={`Inspect attempt ${row.original.id}`} onClick={() => setTurnId(row.original.id)}><strong>{utc(row.original.timestamp, true)}</strong><small>#{row.original.id} · try {row.original.attempt ?? 'Unknown'}</small></UnstyledButton> },
-    { id: 'route', header: 'Provider / model', cell: ({ row }) => <div className={styles.routeCell}><span>{row.original.provider || 'Unknown'}</span><small title={row.original.model}>{row.original.model || 'Unknown model'}</small></div> },
+    { id: 'request', header: 'Attempt · UTC', cell: ({ row }) => <UnstyledButton className={styles.attemptButton} aria-label={`Inspect attempt ${row.original.id}`} onClick={() => { setSessionId(selectedSessionId); setTurnId(row.original.id); }}><strong>{utc(row.original.timestamp, true)}</strong><small>{utc(row.original.timestamp).slice(0,10)} · try {row.original.attempt ?? 'Unknown'}</small><small title={String(row.original.id)}>#{String(row.original.id).slice(0,18)}{String(row.original.id).length > 18 ? '…' : ''}</small></UnstyledButton> },
+    { id: 'route', header: 'Served provider / model', cell: ({ row }) => <div className={styles.routeCell}><span>{row.original.provider || 'Unknown'}</span><small title={row.original.model}>{row.original.model || 'Unknown model'}</small>{row.original.requestedModel !== row.original.model && <small title={row.original.requestedModel}>Requested · {row.original.requestedModel || 'Unknown'}</small>}</div> },
     { id: 'state', header: 'Recorded state', cell: ({ row }) => <span className={styles.status} data-state={row.original.status}>{row.original.status === 'pending' ? 'Incomplete' : row.original.status || 'Unknown'}<small>{row.original.usageSource === 'provider' ? 'Provider usage' : row.original.usageSource === 'estimated' ? 'Estimated usage' : 'Usage missing'}</small></span> },
     ...[['contextEstimate', 'Context est.'], ['providerInputTokens', 'Input'], ['cacheReadTokens', 'Cache read'], ['cacheWriteTokens', 'Cache write'], ['providerOutputTokens', 'Output']].map(([key, header]) => ({ id: key, header, cell: ({ row }) => <span className={styles.numeric} title={quantity(row.original[key])}>{quantity(row.original[key], true)}</span> })),
     { id: 'bytes', header: 'Body change', cell: ({ row }) => <span className={styles.numeric} data-expansion={row.original.savedBytes < 0 || undefined}>{signedBytes(finite(row.original.savedBytes) ? -row.original.savedBytes : null)}</span> },
-  ], []);
-  const refresh = () => { overview.refresh(); detail.refresh(); };
+  ], [selectedSessionId, setSessionId, setTurnId]);
+  const refreshOverview = () => { if (selectedSessionId) setSessionId(selectedSessionId); overview.refresh(); };
+  const refresh = () => { refreshOverview(); detail.refresh(); };
+  const focusInterval = (next) => { if (selectedSessionId) setSessionId(selectedSessionId); setScope(next); };
   return <>
     <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Shaping controls</Button></Group></div>
     <ScopeBar /><ActivityBand title="Retained request activity" />
@@ -99,13 +108,15 @@ function ContextScope({ workspace }) {
       {data?.recording?.rejectedAttempts > 0 && <Alert color="orange" className={styles.rejection} title={`${quantity(data.recording.rejectedAttempts)} context records were rejected`}>Authoritative usage can remain available for these attempts. Their context and stage evidence is absent. Counts follow the current filters.</Alert>}
       <ReadState resource={overview}>
         <div className={styles.toolbar}><div><h2>Session cohort</h2><span>{quantity(data?.summary?.sessions)} identities · latest observation first</span></div><Group gap={8}><Select aria-label="Project label filter" placeholder="All project labels" value={projectLabel} onChange={filterByProject} data={(data?.projects || []).filter((project) => project.projectLabel).map((project) => project.projectLabel)} clearable searchable w={180} /><form className={styles.clientFilter} onSubmit={(event) => { event.preventDefault(); setClientTool(clientDraft.trim()); changePage(1); }}><TextInput aria-label="Exact client filter" placeholder="Exact client name" value={clientDraft} onChange={(event) => setClientDraft(event.currentTarget.value)} w={150} /><Button type="submit" variant="default">Apply</Button></form>{clientTool && <Button variant="subtle" onClick={() => { setClientDraft(''); setClientTool(''); changePage(1); }}>Clear client</Button>}</Group></div>
-        {!sessions.length ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="calc(100dvh - 412px)" detail={selectedTurn && <ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={detail.data} accounts={accounts} />}>
+        {!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="calc(100dvh - 412px)" detail={selectedTurn && <ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={detail.data} accounts={accounts} />}>
           <div className={styles.cohortGrid}>
-            <aside className={styles.sessions} aria-label="Recorded session cohort"><div className={styles.sessionList}>{sessions.map((item) => <UnstyledButton key={item.id} className={styles.sessionButton} data-selected={item.id === selectedSessionId || undefined} aria-pressed={item.id === selectedSessionId} onClick={() => selectSession(item.id)}><div className={styles.sessionName}><strong>{item.projectLabel || 'Unlabeled session'}</strong><span>#{item.id}</span></div><div className={styles.sessionClient}>{item.clientTool || 'Unknown client'}<Badge size="xs" color="gray" variant="light">{IDENTITY[item.identitySource] || 'Unknown identity'}</Badge></div><div className={styles.sessionNumbers}><span>{quantity(item.requests)} requests <small>· {quantity(item.attempts)} attempts</small></span><span>{quantity(item.providerInputTokens, true)} input</span></div><time className={styles.sessionTime} dateTime={item.lastSeenAt}>{utc(item.lastSeenAt)} UTC</time></UnstyledButton>)}</div><Pager pagination={data.pagination} onPage={changePage} label="Sessions" /><p className={styles.identityFoot}>Identity is not a count of agents. Inferred locality may combine separate callers. Project labels are operator assigned.</p></aside>
+            <aside className={styles.sessions} aria-label="Recorded session cohort"><div className={styles.sessionList}>{sessions.map((item) => <UnstyledButton key={item.id} className={styles.sessionButton} data-selected={item.id === selectedSessionId || undefined} aria-pressed={item.id === selectedSessionId} onClick={() => selectSession(item.id)}><div className={styles.sessionName}><strong>{item.projectLabel || 'Unlabeled session'}</strong><span>#{item.id}</span></div><div className={styles.sessionClient}>{item.clientTool || 'Unknown client'}<Badge size="xs" color="gray" variant="light">{IDENTITY[item.identitySource] || 'Unknown identity'}</Badge></div><div className={styles.sessionNumbers}><span>{quantity(item.requests)} requests <small>· {quantity(item.attempts)} attempts</small></span><span>{quantity(item.providerInputTokens, true)} input</span></div><time className={styles.sessionTime} dateTime={item.lastSeenAt}>{utc(item.lastSeenAt)} UTC</time></UnstyledButton>)}</div><Pager pagination={data?.pagination} onPage={changePage} label="Sessions" /><p className={styles.identityFoot}>Identity is not a count of agents. Inferred locality may combine separate callers. Project labels are operator assigned.</p></aside>
             <div className={styles.sessionDetail}><ReadState resource={detail}>{session && <>
-              <div className={styles.sessionHeading}><div><h2>{session.projectLabel || `Session #${session.id}`}<span>{IDENTITY[session.identitySource] || 'Identity source unknown'}</span></h2><p>{IDENTITY_NOTE[session.identitySource] || 'The identity source is not recorded.'}</p></div><ProjectEditor key={session.id} session={session} refresh={detail.refresh} overviewRefresh={overview.refresh} /></div>
+              <div className={styles.sessionHeading}><div><h2>{session.projectLabel || `Session #${session.id}`}<span>{IDENTITY[session.identitySource] || 'Identity source unknown'}</span></h2><p>{IDENTITY_NOTE[session.identitySource] || 'The identity source is not recorded.'}</p></div><ProjectEditor key={session.id} session={session} refresh={detail.refresh} overviewRefresh={refreshOverview} /></div>
               <SummaryMeasures summary={detail.data.summary} />
-              <ContextTracks trend={detail.data.trend} scope={scope} onScope={setScope} />
+              {detail.data.summary?.attempts === 0 && <p className={styles.emptyInline}>Selected session #{session.id} has no attempts in this scope. The session selection is preserved.</p>}
+              {turnId !== null && !selectedTurn && <p className={styles.emptyInline}>Selected request #{turnId} is outside this page or scope. Choose another request or return to its interval.</p>}
+              <ContextTracks trend={detail.data.trend} scope={scope} onScope={focusInterval} />
               <div className={styles.ledgerHead}><h3>Attempt ledger</h3><span>Chronological · token quantities except body change</span></div>
               {turns.length ? <ContextTable rows={turns} columns={columns} selectedId={turnId} label="Session request attempts" minWidth={1000} /> : <p className={styles.emptyInline}>No attempts on this page match the selected scope.</p>}
               <Pager pagination={detail.data.pagination} onPage={(next) => { setTurnPage(next); setTurnId(null); }} label="Attempts" />
@@ -114,7 +125,7 @@ function ContextScope({ workspace }) {
           </div>
         </SelectionDock>}
       </ReadState>
-      {data?.summary?.sessions > 0 && !sessions.length && <Pager pagination={data.pagination} onPage={changePage} label="Sessions" />}
+      {data?.summary?.sessions > 0 && !sessions.length && !selectedSessionId && <Pager pagination={data?.pagination} onPage={changePage} label="Sessions" />}
       <footer className={styles.footer}><span>{quantity(data?.retentionDays)} days retained · recording began {utc(data?.recordingStartedAt)} UTC</span><span>{data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · {utc(data?.freshness?.persistedAt || data?.freshness?.snapshotCompletedAt)} UTC</span></footer>
     </div>
   </>;

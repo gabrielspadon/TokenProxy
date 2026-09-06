@@ -7,7 +7,8 @@
 .coverageMetric > span,.coverageTotal > span { color: #64728a; display: flex; align-items: center; gap: 5px; }
 .coverageMetric i,.trackNote i,.trackLabels i { display: inline-block; width: 7px; height: 7px; border-radius: 1px; flex-shrink: 0; }
 .coverageBar { position: absolute; display: flex; height: 3px; bottom: 0; inset-inline: 0; background: #edf0f5; }
-.rejection { margin-top: 10px; }
+.rejection { margin-top: 10px; padding: 9px 14px; }
+.rejection :global(.mantine-Alert-title) { margin-bottom: 3px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 16px; padding: 12px 16px; background: #fff; border: 1px solid #dce2ec; border-bottom: 0; }
 .toolbar > div:first-child { display: flex; gap: 12px; align-items: baseline; }
 .toolbar h2,.sessionHeading h2 { font-weight: 500; font-size: 16px; margin: 0; }
@@ -68,6 +69,7 @@
 .attemptButton { display: block; width: 100%; color: #3a519e; text-align: start; }
 .attemptButton strong { font-weight: 500; }
 .numeric { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.numeric,.coverageTotal strong,.coverageMetric strong,.sessionMeasures strong,.sessionNumbers,.sessionTime,.attemptButton,.stageTable td:not(:first-child),.ordinal,.facts dd { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
 .numeric[data-expansion] { color: #ac5266; }
 .status { color: #66748a; }
 .status[data-state='success'] { color: #2e7d73; }

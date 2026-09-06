@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import Link from 'next/link';
 import { Badge, SegmentedControl, Table } from '@mantine/core';
 import { CONTROLS, IDENTITY, IDENTITY_NOTE, STAGES, finite, orderedStages, quantity, signedBytes, utc } from './contextModel';
 import styles from './context.module.css';
@@ -24,7 +25,7 @@ export function StageLedger({ stages = [] }) {
   </div>;
 }
 function RecordedControls({ controls = {} }) {
-  return <><div className={styles.controls}>{Object.entries(CONTROLS).map(([key, label]) => <div key={key}><span>{label}</span><Badge size="sm" variant="light" color={controls[key] === true ? key.endsWith('AllowLossy') ? 'orange' : 'indigo' : 'gray'}>{controls[key] === true ? 'Enabled' : controls[key] === false ? 'Disabled' : 'Unknown'}</Badge></div>)}</div><p className={styles.footnote}>These settings were recorded with this request. Enabled does not mean a stage changed the body. <a href="/dashboard/shaping">Open current shaping controls</a></p></>;
+  return <><div className={styles.controls}>{Object.entries(CONTROLS).map(([key, label]) => <div key={key}><span>{label}</span><Badge size="sm" variant="light" color={controls[key] === true ? key.endsWith('AllowLossy') ? 'orange' : 'indigo' : 'gray'}>{controls[key] === true ? 'Enabled' : controls[key] === false ? 'Disabled' : 'Unknown'}</Badge></div>)}</div><p className={styles.footnote}>These settings were recorded with this request. Enabled does not mean a stage changed the body. <Link href="/dashboard/shaping">Open current shaping controls</Link></p></>;
 }
 function RoutingReceipts({ detail, accountName }) {
   return <div className={styles.routing}>
@@ -46,7 +47,7 @@ export function ContextInspector({ turn, detail, accounts = [] }) {
         <Facts rows={[
           ['Time · UTC', utc(turn.timestamp)], ['Recorded state', turn.status === 'pending' ? 'Pending / incomplete' : turn.status],
           ['Logical request', turn.logicalRequestId], ['Upstream attempt', quantity(turn.attempt)],
-          ['Provider / model', `${turn.provider || 'Unknown'} / ${turn.model || 'Unknown'}`],
+          ['Served provider / model', `${turn.provider || 'Unknown'} / ${turn.model || 'Unknown'}`],
           ['Requested model', turn.requestedModel], ['Account', accountName(turn.connectionId)],
           ['Client', turn.clientTool], ['Route / formats', [turn.routeKind, turn.formatPair].filter(Boolean).join(' · ') || 'Unknown'],
           ['Selection reason', turn.selection], ['Context estimate', `${quantity(turn.contextEstimate)} tokens`],
