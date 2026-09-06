@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRoutingSessionHash } from '@/sse/services/routingIdentity.js';
+import { resolveRoutingSessionHash, resolveRoutingSessionIdentity } from '@/sse/services/routingIdentity.js';
 
 const user = { role: 'user', content: 'Initial task for this agent' };
 const hash = (body, headers = {}) => resolveRoutingSessionHash({ clientBody: body, clientHeaders: headers }, 'claude');
 
 describe('agent routing identity', () => {
+  it.each([
+    [{ 'x-session-id': 'client-agent' }, 'explicit'],
+    [{ 'x-client-request-id': 'request-only' }, 'inferred'],
+    [{}, 'inferred'],
+  ])('reports the provenance of the affinity key for %j', (clientHeaders, source) => {
+    const options = { clientHeaders, clientBody: { messages: [user] } };
+    expect(resolveRoutingSessionIdentity(options, 'claude')).toEqual({
+      sessionHash: resolveRoutingSessionHash(options, 'claude'),
+      sessionIdentitySource: source,
+    });
+  });
   it('keeps an anonymous conversation stable when assistant history appears', () => {
     const first = hash({ messages: [user] });
     const next = hash({ messages: [user, { role: 'assistant', content: 'a'.repeat(100) }, { role: 'user', content: 'Next turn' }] });

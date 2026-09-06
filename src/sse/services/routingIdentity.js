@@ -6,7 +6,7 @@ import { cachePrefixDigest } from './cachePrefixDigest.js';
 const stableJson = (value) => JSON.stringify(value, (key, item) => key === 'cache_control' ? undefined : item);
 
 /** Resolve routing identity before choosing an account, without raw data persistence. */
-export function resolveRoutingSessionHash(options, providerId) {
+export function resolveRoutingSessionIdentity(options, providerId) {
   const headers = new Headers(options?.clientHeaders || {});
   // This identifies a request, so treating it as a session repins each turn.
   headers.delete('x-client-request-id');
@@ -27,7 +27,12 @@ export function resolveRoutingSessionHash(options, providerId) {
   const anchor = sessionId ? null : firstUser?.content ?? body.prompt
     ?? (typeof body.input === 'string' ? body.input : null);
   const identity = sessionId || stableJson([body.system ?? null, body.tools ?? null, anchor]);
-  return createHash('sha256')
+  const sessionHash = createHash('sha256')
     .update(stableJson([providerId, client, identity, cachePrefixDigest(body)]))
     .digest('hex').slice(0, 32);
+  return { sessionHash, sessionIdentitySource: sessionId ? 'explicit' : 'inferred' };
+}
+
+export function resolveRoutingSessionHash(options, providerId) {
+  return resolveRoutingSessionIdentity(options, providerId).sessionHash;
 }

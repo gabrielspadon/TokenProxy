@@ -207,6 +207,7 @@ describe('E1.1w: getProviderCredentials selects through the scheduler', () => {
 
     const first = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
     expect(first.connectionId).toBe('alpha');
+    expect(first.sessionIdentitySource).toBe('explicit');
     leases.releaseAccountLease(first.accountLease);
 
     // The pin is on disk now. INVERT the ranking key itself, not the headroom:
@@ -687,6 +688,7 @@ describe('E1.1w: the persisted session identity is a HASH (W4)', () => {
 
     for (let i = 0; i < 3; i += 1) {
       const picked = await auth.getProviderCredentials(PROVIDER, null, MODEL, {});
+      expect(picked.sessionIdentitySource).toBe('inferred');
       leases.releaseAccountLease(picked.accountLease);
     }
     // One row, not three: an anonymous caller is pinned, not re-rolled.

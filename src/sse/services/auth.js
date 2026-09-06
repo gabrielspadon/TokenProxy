@@ -60,7 +60,7 @@ import { putWindows, getWindows } from '@/lib/db/repos/quotaWindowsRepo.js';
 import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaRanking.js';
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
-import { resolveRoutingSessionHash } from './routingIdentity.js';
+import { resolveRoutingSessionIdentity } from './routingIdentity.js';
 import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
 import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 
@@ -373,10 +373,8 @@ export async function getProviderCredentials(
     Boolean(preferredConnectionId) && options?.strictPreferredConnection === true;
   // Resolve aliases before queue acquisition so alias and canonical requests share one lock.
   const providerId = resolveProviderId(provider);
-  // P-F4: resolveRoutingSessionHash was computed three times per request
-  // (operator pin, scheduler selection, return). It is a pure function of
-  // options/providerId, so compute it once, ahead of the serialized queue.
-  const routingSessionHash = resolveRoutingSessionHash(options, providerId);
+  // Resolve once for admission, affinity persistence, and telemetry provenance.
+  const { sessionHash: routingSessionHash, sessionIdentitySource } = resolveRoutingSessionIdentity(options, providerId);
   const currentQueue = providerSelectionQueues.get(providerId) || Promise.resolve();
   const { promise: nextQueue, resolve: releaseQueue } = Promise.withResolvers();
   providerSelectionQueues.set(providerId, nextQueue);
@@ -917,11 +915,9 @@ export async function getProviderCredentials(
         resolutionKind: proxyOptions.resolutionKind,
       },
       connectionId: connection.id,
-      // Session identity the selection already resolved for routing affinity;
-      // chat.js prefixes it into the `sid` used by REQ ce= cache-epoch
-      // telemetry. Additive: absent rather than recomputed when resolution
-      // found nothing client-derived.
+      // Distinguish explicit client identity from inferred anonymous locality.
       sessionHash: routingSessionHash,
+      sessionIdentitySource,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,
