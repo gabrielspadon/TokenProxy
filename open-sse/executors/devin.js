@@ -1,5 +1,6 @@
 import { gunzipSync, gzipSync } from "node:zlib";
 import { BaseExecutor } from "./base.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
@@ -297,7 +298,9 @@ export class DevinExecutor extends BaseExecutor {
     };
   }
 
-  async execute({ model, body, stream, credentials, signal, proxyOptions = null, fetchImpl: injectedFetch, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, proxyOptions = null, fetchImpl: injectedFetch, connectTimeout = null, beforeDispatch, afterDispatch }) {
     const token = credentials?.accessToken || credentials?.apiKey;
     if (!token) throw new Error("No Devin credential");
     const fetchImpl = injectedFetch || ((url, options) => proxyAwareFetch(url, options, proxyOptions));
@@ -314,6 +317,9 @@ export class DevinExecutor extends BaseExecutor {
     const url = this.buildUrl();
     const headers = this.buildHeaders(credentials, stream);
     const transformedBody = frameDevinConnect(buildDevinChatRequest({ model, body, apiKey: token, userJwt, sessionId: credentials?.rawHeaders?.["x-session-id"] }));
+    signal?.throwIfAborted?.();
+    if (beforeDispatch) await beforeDispatch({ body: null, serialized: transformedBody, url, structuralEncoding: "protobuf", byteLength: transformedBody.byteLength });
+    signal?.throwIfAborted?.();
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
       registryTimeout: this.config?.timeoutMs,
@@ -328,6 +334,7 @@ export class DevinExecutor extends BaseExecutor {
     } finally {
       deadline.clear();
     }
+    await notifyDispatchResponse(afterDispatch, upstream);
     if (!upstream.ok) return { response: upstream, url, headers, transformedBody };
     return { response: this.transformToSSE(upstream, model), url, headers, transformedBody };
   }

@@ -11,6 +11,7 @@
 
 import crypto from "node:crypto";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { createExecutorResponseHeaderTimeout } from "../utils/responseHeaderTimeout.js";
 
 export const ZED_WEB_BASE_URL = "https://zed.dev";
@@ -296,6 +297,7 @@ export function shouldRefreshZedLlmToken(response) {
 export async function zedLlmFetch(credentials, path, options = {}) {
   const config = options.config || {};
   const url = zedUrl(config, "llmBaseUrl", path, ZED_LLM_BASE_URL);
+  const generation = path === "/completions" && String(options.fetchOptions?.method || "GET").toUpperCase() === "POST";
   const buildRequest = async (forceRefresh) => {
     const token = await fetchZedLlmToken(credentials, { ...options, forceRefresh });
     const fetchOptions = {
@@ -305,8 +307,15 @@ export async function zedLlmFetch(credentials, path, options = {}) {
         Authorization: `Bearer ${token}`,
       },
     };
+    if (generation) {
+      options.signal?.throwIfAborted?.();
+      if (options.beforeDispatch) await options.beforeDispatch({ body: options.dispatchBody ?? null, serialized: fetchOptions.body, url });
+      options.signal?.throwIfAborted?.();
+    }
     if (!options.connectTimeout && options.registryTimeout == null && options.envTimeout == null) {
-      return proxyAwareFetch(url, { ...fetchOptions, signal: options.signal ?? undefined });
+      const response = await proxyAwareFetch(url, { ...fetchOptions, signal: options.signal ?? undefined });
+      if (generation) await notifyDispatchResponse(options.afterDispatch, response);
+      return response;
     }
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout: options.connectTimeout,
@@ -314,8 +323,9 @@ export async function zedLlmFetch(credentials, path, options = {}) {
       envTimeout: options.envTimeout,
       signal: options.signal,
     });
+    let response;
     try {
-      return await proxyAwareFetch(url, {
+      response = await proxyAwareFetch(url, {
         ...fetchOptions,
         signal: deadline.signal,
       });
@@ -324,10 +334,16 @@ export async function zedLlmFetch(credentials, path, options = {}) {
     } finally {
       deadline.clear();
     }
+    if (generation) await notifyDispatchResponse(options.afterDispatch, response);
+    return response;
   };
 
   let response = await buildRequest(false);
-  if (shouldRefreshZedLlmToken(response)) {
+  const refresh = generation
+    ? [401, 403].includes(response.status) && response.headers?.get?.("x-tokenproxy-replay-safe") !== "false"
+    : shouldRefreshZedLlmToken(response);
+  if (refresh) {
+    try { Promise.resolve(response.body?.cancel?.()).catch(() => {}); } catch {}
     response = await buildRequest(true);
   }
   return response;

@@ -1,4 +1,6 @@
 import { BaseExecutor } from "./base.js";
+import { rejectionHeaders } from "./rejectionHeaders.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { PROVIDERS } from "../config/providers.js";
 import { SSE_DONE, SSE_HEADERS_NO_BUFFER } from "../utils/sseConstants.js";
 import { sseChunk } from "../utils/sse.js";
@@ -203,7 +205,7 @@ async function buildNonStreamingResponse(eventStream, model, cid, created, isThi
     if (chunk.error) {
       return new Response(JSON.stringify({
         error: { message: chunk.error, type: "upstream_error", code: "GROK_ERROR" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }), { status: 502, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } });
     }
     if (chunk.thinking) { thinkingParts.push(chunk.thinking); continue; }
     if (chunk.done) break;
@@ -229,7 +231,9 @@ export class GrokWebExecutor extends BaseExecutor {
     super("grok-web", PROVIDERS["grok-web"]);
   }
 
-  async execute({ model, body, stream, credentials, signal, log, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, connectTimeout = null, beforeDispatch, afterDispatch }) {
     const messages = body?.messages;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       const errResp = new Response(JSON.stringify({
@@ -297,6 +301,10 @@ export class GrokWebExecutor extends BaseExecutor {
 
     log?.info?.("GROK-WEB", `Query to ${model} (grok=${grokModel}, mode=${modelMode}), len=${message.length}`);
 
+    const serialized = JSON.stringify(grokPayload);
+    signal?.throwIfAborted?.();
+    if (beforeDispatch) await beforeDispatch({ body: grokPayload, serialized, url: GROK_CHAT_API });
+    signal?.throwIfAborted?.();
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
       registryTimeout: this.config?.timeoutMs,
@@ -306,7 +314,7 @@ export class GrokWebExecutor extends BaseExecutor {
     let response;
     try {
       response = await fetch(GROK_CHAT_API, {
-        method: "POST", headers, body: JSON.stringify(grokPayload), signal: deadline.signal,
+        method: "POST", headers, body: serialized, signal: deadline.signal,
       });
     } catch (rawError) {
       const error = deadline.classify(rawError);
@@ -314,11 +322,13 @@ export class GrokWebExecutor extends BaseExecutor {
       log?.error?.("GROK-WEB", `Fetch failed: ${error.message || String(error)}`);
       const errResp = new Response(JSON.stringify({
         error: { message: `Grok connection failed: ${error.message || String(error)}`, type: "upstream_error" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }), { status: 502, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } });
       return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
     } finally {
       deadline.clear();
     }
+
+    await notifyDispatchResponse(afterDispatch, response);
 
     if (!response.ok) {
       const status = response.status;
@@ -328,14 +338,14 @@ export class GrokWebExecutor extends BaseExecutor {
       log?.warn?.("GROK-WEB", errMsg);
       const errResp = new Response(JSON.stringify({
         error: { message: errMsg, type: "upstream_error", code: `HTTP_${status}` },
-      }), { status, headers: { "Content-Type": "application/json" } });
+      }), { status, headers: rejectionHeaders(response) });
       return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
     }
 
     if (!response.body) {
       const errResp = new Response(JSON.stringify({
         error: { message: "Grok returned empty response body", type: "upstream_error" },
-      }), { status: 502, headers: { "Content-Type": "application/json" } });
+      }), { status: 502, headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" } });
       return { response: errResp, url: GROK_CHAT_API, headers, transformedBody: grokPayload };
     }
 

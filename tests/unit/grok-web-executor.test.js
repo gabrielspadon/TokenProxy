@@ -256,14 +256,10 @@ describe('GrokWebExecutor — streaming synthesis', () => {
     expect(text.endsWith(SSE_DONE)).toBe(true);
   });
 
-  it('a pre-aborted signal ends the stream cleanly with finish stop', async () => {
+  it('a pre-aborted signal prevents generation dispatch', async () => {
     const ac = new AbortController();
     ac.abort();
-    fetchMock.mockResolvedValueOnce(upstream(['{"result":{"response":{"token":"never"}}}\n']));
-    const out = await run(ex, { stream: true, signal: ac.signal });
-    const text = await out.response.text();
-    expect(text).not.toContain('never');
-    expect(text.endsWith(SSE_DONE)).toBe(true);
-    expect(parseSSE(text).at(-1).choices[0].finish_reason).toBe('stop');
+    await expect(run(ex, { stream: true, signal: ac.signal })).rejects.toBe(ac.signal.reason);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import { BaseExecutor } from "./base.js";
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { PROVIDERS } from "../config/providers.js";
 import { randomUUID } from "node:crypto";
@@ -398,7 +399,9 @@ export class WindsurfExecutor extends BaseExecutor {
     return null;
   }
 
-  async execute({ model, body, stream, credentials, signal, log, upstreamExtraHeaders, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, upstreamExtraHeaders, proxyOptions = null, connectTimeout = null, beforeDispatch, afterDispatch }) {
     const apiKey = credentials?.accessToken || credentials?.apiKey || "";
     const wsModel = resolveWsModelId(model);
 
@@ -418,6 +421,9 @@ export class WindsurfExecutor extends BaseExecutor {
 
     log?.debug?.("WS", `Windsurf → ${wsModel} (${wsMessages.length} messages)`);
 
+    signal?.throwIfAborted?.();
+    if (beforeDispatch) await beforeDispatch({ body: null, serialized: framedPayload, url, structuralEncoding: "protobuf", byteLength: framedPayload.byteLength });
+    signal?.throwIfAborted?.();
     const deadline = createExecutorResponseHeaderTimeout({
       connectTimeout,
       registryTimeout: this.config?.timeoutMs,
@@ -437,6 +443,8 @@ export class WindsurfExecutor extends BaseExecutor {
     } finally {
       deadline.clear();
     }
+
+    await notifyDispatchResponse(afterDispatch, upstream);
 
     if (!upstream.ok && upstream.status !== 200) {
       return { response: upstream, url, headers, transformedBody: protoPayload };

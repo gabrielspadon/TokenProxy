@@ -230,7 +230,9 @@ class ZedExecutor extends BaseExecutor {
     }
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null }) {
+  get supportsBudgetDispatch() { return true; }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, connectTimeout = null, beforeDispatch, afterDispatch }) {
     const { provider } = await this.resolveModel(model, credentials, signal, log);
     const providerRequest = buildProviderRequest(provider, model, body, stream, credentials);
     const bodyRecord = body || {};
@@ -242,7 +244,11 @@ class ZedExecutor extends BaseExecutor {
       provider_request: providerRequest,
     };
 
+    const serialized = JSON.stringify(payload);
     const response = await zedLlmFetch(credentials, "/completions", {
+      beforeDispatch,
+      afterDispatch,
+      dispatchBody: payload,
       config: this.config,
       signal,
       connectTimeout,
@@ -258,7 +264,7 @@ class ZedExecutor extends BaseExecutor {
           [ZED_HEADERS.clientSupportsStatus]: "true",
           [ZED_HEADERS.clientSupportsStreamEnded]: "true",
         },
-        body: JSON.stringify(payload),
+        body: serialized,
       },
     });
 
