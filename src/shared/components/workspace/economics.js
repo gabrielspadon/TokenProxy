@@ -50,6 +50,10 @@ export function averageTokens(group, column) {
     ? group[column.id] / group[column.samples] : null;
 }
 
+export function measuredTokens(group, column) {
+  return group[column.samples] === 0 ? null : group[column.id];
+}
+
 export function costShare(group, summary) {
   return Number.isFinite(group.recordedCostUsd) && summary?.recordedCostUsd > 0
     ? group.recordedCostUsd / summary.recordedCostUsd : null;

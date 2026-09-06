@@ -9,7 +9,7 @@ import {
 import { ProviderMark, providerIdentity } from '../ProviderMark';
 import {
   TOKEN_COLUMNS, averageEstimate, averageTokens, costShare, formatCount, formatEstimate, formatPercent,
-  formatTokens, groupFilters, groupKey, groupName, qualityNotes, recordTime,
+  formatTokens, groupFilters, groupKey, groupName, measuredTokens, qualityNotes, recordTime,
 } from './economics';
 import styles from './EconomicsLens.module.css';
 
@@ -95,7 +95,7 @@ function DataTable({ table, label, onSelect, selectedId, rowLabel, className, st
             {row.getAllCells().map((cell) => (
               <td key={cell.id} style={pinnedStyle(cell.column)} data-numeric={cell.column.columnDef.meta?.numeric || undefined}>
                 {(cell.column.id === 'identity' || cell.column.columnDef.meta?.identity) && onSelect ? (
-                  <button type="button" className={styles.identityButton} onClick={() => onSelect(row.original)}
+                  <button type="button" className={styles.identityButton} onClick={() => onSelect(row.original)} title={rowLabel(row.original)}
                     aria-label={rowLabel(row.original)} aria-pressed={row.id === selectedId}>
                     <table.FlexRender cell={cell} />
                   </button>
@@ -138,10 +138,11 @@ function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onIn
       </span>,
     },
     { accessorKey: 'records', header: 'Records', size: 86, meta: { numeric: true }, cell: ({ getValue }) => formatCount(getValue()) },
-    ...TOKEN_COLUMNS.map(({ id, label, detail, color }) => ({
-      accessorKey: id, size: 124, meta: { numeric: true },
-      header: () => <span className={styles.columnLabel}>{label}<small>{detail}</small></span>,
-      cell: ({ getValue }) => <TokenValue value={getValue()} maximum={maximums[id]} color={color} />,
+    ...TOKEN_COLUMNS.map((column) => ({
+      id: column.id, accessorFn: (group) => measuredTokens(group, column) ?? undefined,
+      sortUndefined: 'last', size: 124, meta: { numeric: true },
+      header: () => <span className={styles.columnLabel}>{column.label}<small>{column.detail}</small></span>,
+      cell: ({ getValue }) => <TokenValue value={getValue()} maximum={maximums[column.id]} color={column.color} />,
     })),
     {
       id: 'recordedCostUsd', accessorFn: (group) => group.recordedCostUsd ?? undefined,
@@ -216,7 +217,7 @@ function RequestLedger({ data, loading, error, selectedGroup, groupBy, accounts,
     {
       accessorKey: 'model', header: 'Model / provider', size: 218, enableSorting: false,
       cell: ({ row }) => <span className={styles.identity}><ProviderMark provider={row.original.provider} size="small" />
-        <span><strong>{row.original.model || 'Unspecified model'}</strong><small>{providerIdentity(row.original.provider).name}</small></span></span>,
+        <span title={row.original.model || 'Unspecified model'}><strong>{row.original.model || 'Unspecified model'}</strong><small>{providerIdentity(row.original.provider).name}</small></span></span>,
     },
     ...TOKEN_COLUMNS.filter(({ id }) => id !== 'uncachedInputTokens').map(({ id, label, detail }) => ({
       accessorKey: id, header: () => <span className={styles.columnLabel}>{label}<small>{detail}</small></span>, size: 124,
@@ -227,7 +228,7 @@ function RequestLedger({ data, loading, error, selectedGroup, groupBy, accounts,
       sortUndefined: 'last', meta: { numeric: true }, cell: ({ row }) => <span className={styles.recordCost}>{formatEstimate(row.original.recordedCostUsd)}
         {row.original.recordedCostUsd === 0 ? <small>Zero is ambiguous</small> : null}</span>,
     },
-    { accessorKey: 'status', header: 'Status', size: 100, enableSorting: false, cell: ({ getValue }) => <span className={styles.status} data-status={getValue()}>{getValue() || 'Unknown'}</span> },
+    { accessorKey: 'status', header: 'Status', size: 100, enableSorting: false, cell: ({ getValue }) => <span className={styles.status} data-status={getValue()}>{getValue() === 'pending' ? 'Recorded pending' : getValue() || 'Unknown'}</span> },
   ], []);
   const table = useTable({
     features, data: rows, columns, getRowId: (row) => String(row.id), enableSortingRemoval: false,
@@ -239,15 +240,15 @@ function RequestLedger({ data, loading, error, selectedGroup, groupBy, accounts,
     initialState: { columnPinning: { start: ['timestamp'], end: [] } },
   });
   const pagination = data?.pagination;
-  const first = pagination?.totalItems > 0 ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
-  const last = pagination ? Math.min(pagination.totalItems, pagination.page * pagination.pageSize) : 0;
+  const first = pagination?.totalItems > 0 && rows.length ? (pagination.page - 1) * pagination.pageSize + 1 : 0;
+  const last = pagination && rows.length ? Math.min(pagination.totalItems, pagination.page * pagination.pageSize) : 0;
   return (
     <section className={styles.ledger} aria-label="Contributing request ledger" aria-busy={loading}>
       <div className={styles.sectionHeader}>
         <div><h3>Contributing records</h3><p>{selectedGroup ? `${groupName(selectedGroup, groupBy, accounts)} on ${selectedGroup.provider}` : 'Complete selected scope'}</p></div>
         <div className={styles.ledgerControls}>
           {selectedGroup ? <Button variant="subtle" size="compact-xs" onClick={onClear}>Show full scope</Button> : null}
-          {onStatusChange ? <Select size="xs" w={150} aria-label="Request ledger status" value={status} onChange={onStatusChange}
+          {onStatusChange ? <Select size="xs" w={165} styles={{ input: { fontSize: 13 } }} aria-label="Request ledger status" value={status} onChange={onStatusChange}
             allowDeselect={false} disabled={loading} data={[
               { value: 'all', label: 'All statuses' }, { value: 'succeeded', label: 'Succeeded' },
               { value: 'failed', label: 'Failed' }, { value: 'pending', label: 'Recorded pending' },
@@ -277,12 +278,13 @@ export function EconomicsDetail({ selection, accounts = EMPTY }) {
       <div className={styles.detailIdentity}><ProviderMark provider={row.provider} label />
         <h3>{record ? row.model || 'Unspecified model' : groupName(row, selection.groupBy, accounts)}</h3>
         <p>{record ? recordTime(row.timestamp, true) : `${formatCount(row.records)} records in the selected scope`}</p>
-        {record ? <dl className={styles.recordFacts}><div><dt>Record ID</dt><dd>{row.id}</dd></div><div><dt>Account ID</dt><dd>{row.connectionId || 'Unassigned'}</dd></div><div><dt>Status</dt><dd>{row.status || 'Unknown'}</dd></div></dl> : null}
+        {record ? <dl className={styles.recordFacts}><div><dt>Record ID</dt><dd>{row.id}</dd></div><div><dt>Account ID</dt><dd>{row.connectionId || 'Unassigned'}</dd></div><div><dt>Status</dt><dd>{row.status === 'pending' ? 'Recorded pending' : row.status || 'Unknown'}</dd></div></dl> : null}
+        {!record && selection.groupBy === 'account' ? <dl className={styles.recordFacts}><div><dt>Account ID</dt><dd>{row.connectionId || 'Unassigned'}</dd></div></dl> : null}
         {record ? <p className={styles.detailNote}>No verified context-session identity is recorded in this ledger. Context attempts are not linked by timestamp.</p> : null}
         {!record && !groupFilters(row, selection.groupBy) ? <p className={styles.detailNote}>This cohort has an unspecified identity. The current filter API cannot isolate its request records.</p> : null}
       </div>
       <div><dl className={styles.facts}>
-        {TOKEN_COLUMNS.map(({ id, samples, label, detail }) => <div key={id}><dt>{label}<small>{detail}</small></dt><dd>{formatCount(row[id])}<small>{record ? 'tokens' : `tokens / ${formatCount(row[samples])} usable samples`}</small></dd></div>)}
+        {TOKEN_COLUMNS.map((column) => <div key={column.id}><dt>{column.label}<small>{column.detail}</small></dt><dd>{formatCount(record ? row[column.id] : measuredTokens(row, column))}<small>{record ? 'tokens' : `tokens / ${formatCount(row[column.samples])} usable samples`}</small></dd></div>)}
       </dl>
       <p className={styles.detailNote}>Input is cache inclusive. Uncached input is derived from input minus cache reads and writes, clamped at zero.</p></div>
       <div><dl className={styles.facts}>

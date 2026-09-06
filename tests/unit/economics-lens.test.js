@@ -157,6 +157,19 @@ describe('Economics ledger interactions', () => {
     expect(container.textContent).toContain('not linked by timestamp');
     expect(container.textContent).toContain('1,700');
   });
+
+  it('shows an aggregate with no usable input samples as unknown even when its empty sum is zero', () => {
+    mount({ data: { ...data, groups: [{ ...providerA, inputTokens: 0, inputSamples: 0 }] } });
+    const values = [...tableBody('Economics by cohort').querySelectorAll('td')];
+    expect(values[3].textContent).toBe('Unknown');
+  });
+
+  it('labels persisted pending status and avoids an inverted page range when the result page is empty', () => {
+    mount({ data: { ...data, items: [{ ...recordA, status: 'pending' }] } });
+    expect(tableBody('Recorded requests').textContent).toContain('Recorded pending');
+    mount({ data: { ...data, items: [], pagination: { ...data.pagination, page: 100 } } });
+    expect(container.textContent).toContain('0–0 of 30 records');
+  });
 });
 
 describe('Economics numerical and identity boundaries', () => {
@@ -172,6 +185,7 @@ describe('Economics numerical and identity boundaries', () => {
   it('does not coerce missing or unsupported numeric quantities into zero', () => {
     expect(formatEstimate(null)).toBe('Unknown');
     expect(formatEstimate(Infinity)).toBe('Unknown');
+    expect(formatEstimate(0.0000001)).toBe('<$0.0001');
     expect(costShare(providerA, { recordedCostUsd: 0 })).toBeNull();
     expect(averageTokens({ cacheReadTokens: null, cacheReadSamples: 0 }, TOKEN_COLUMNS[2])).toBeNull();
     expect(averageTokens({ cacheReadTokens: 100, cacheReadSamples: 2 }, TOKEN_COLUMNS[2])).toBe(50);
