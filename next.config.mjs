@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import proxyBodyLimit from "./open-sse/config/proxyBodyLimit.cjs";
+import { SHAPING_WORKER_FILES } from "./src/lib/shaping/runtimeFiles.mjs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -65,7 +66,7 @@ const nextConfig = {
   // dist/sql-wasm.wasm and the fallback could not load, which is how an install
   // reached "no SQLite driver available" with every link exhausted (#987).
   outputFileTracingIncludes: {
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**"],
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
   },
