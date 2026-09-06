@@ -189,7 +189,8 @@ describe('E1.1w: handleSingleModelChat releases its lease on every exit', () => 
 
     const response = await handleChat(request());
     expect(seen).toEqual(['account-a']);
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
     expect(registry.inFlight('account-a')).toBe(0);
     expect(registry.inFlight('account-b')).toBe(0);
