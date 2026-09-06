@@ -279,6 +279,7 @@ describe("chat core model failure metadata", () => {
     const failedOnA = {
       success: false,
       status: 429,
+      failureMetadata: { safeToReplay: true },
       error: "A failure must not leak",
       response: Response.json({ error: { message: "A failure must not leak" } }, { status: 429 }),
     };

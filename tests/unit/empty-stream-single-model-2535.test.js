@@ -61,14 +61,16 @@ describe("an empty single-model stream is refused, not forwarded (#2535)", () =>
     expect(body).toContain("if (peeked.hasContent)");
   });
 
-  it("no content means the account loop moves on instead of answering", () => {
+  it("accepted empty content returns a terminal error without dispatching another account", () => {
     const branch = chat.slice(chat.indexOf("if (result.success) {"));
     const body = branch.slice(0, branch.indexOf("if (result.clientAborted"));
     // Everything after the hasContent return is the empty-stream path.
     const empty = body.slice(body.indexOf("const reason ="));
     expect(empty).toContain("await markAccountUnavailable(");
-    expect(empty).toContain("excludeConnectionIds.add(credentials.connectionId)");
-    expect(empty).toContain("continue;");
+    expect(empty).toContain("{ safeToReplay: false }");
+    expect(empty).toContain("return terminalAttemptResponse(errorResponse(");
+    expect(empty).not.toContain("excludeConnectionIds.add(credentials.connectionId)");
+    expect(empty).not.toContain("continue;");
     expect(empty).not.toContain("return result.response");
   });
 
