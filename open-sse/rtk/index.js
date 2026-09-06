@@ -1,5 +1,5 @@
 // RTK port: compress tool_result content in LLM request bodies
-// Injected at the top of translateRequest (before any format translation)
+// Applied by chatCore after translation, before optional Headroom compression.
 import { RAW_CAP, MIN_COMPRESS_SIZE, ELIDE_MIN_CHARS } from "./constants.js";
 import { elide } from "./filters/elide.js";
 import { autoDetectFilter } from "./autodetect.js";

@@ -152,9 +152,8 @@ async function run(frames) {
   return await (await execute()).response.text();
 }
 
-// Same as run(), but with the bounded tool-call repair retry disabled, so a
-// hard failure is surfaced from the first attempt instead of triggering a
-// second upstream fetch.
+// The legacy opt-out remains accepted in stored credentials. Both values now
+// validate the first accepted response without generating a second attempt.
 async function runNoRepair(frames) {
   fetchMock.mockResolvedValueOnce(response(frames));
   const result = await execute(new KiroExecutor(), {

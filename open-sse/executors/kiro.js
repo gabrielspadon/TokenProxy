@@ -302,8 +302,8 @@ export class KiroExecutor extends BaseExecutor {
     // same class as #2716). The Kiro request translators already carry thinking
     // intent by the two routes the schema does define, so the stray members are
     // dropped here rather than in one caller: every path to this upstream,
-    // including the integrity-gate retry, is transformed through here exactly
-    // once. Deleting in place keeps the non-enumerable _kiroUpstreamModel tag
+    // including retries after explicit upstream rejection, is transformed here
+    // once per dispatch. Deleting in place keeps the non-enumerable _kiroUpstreamModel tag
     // and leaves the nested additionalModelRequestFields.output_config alone.
     if (body && typeof body === "object") {
       for (const field of KIRO_UNSUPPORTED_THINKING_FIELDS) delete body[field];
@@ -703,9 +703,8 @@ export class KiroExecutor extends BaseExecutor {
       state.bufferedToolBytes = 0;
       // A declared tool turn that emitted no usable call is only fatal when the
       // turn produced nothing else. Throwing unconditionally here escaped
-      // emitTools() with provenance "invalid_tool_call", which the integrity gate
-      // re-derived into a repair retry -- discarding text the client had already
-      // been promised.
+      // emitTools() with provenance "invalid_tool_call", discarding otherwise
+      // usable text. Accepted responses are validated once and never regenerated.
       if (state.stopReason === "tool_use" && !state.hasToolCalls &&
           !state.hasText && !state.hasReasoning && !state.hasCode) {
         throw new Error("Kiro tool_use stop reason did not include a complete tool call");

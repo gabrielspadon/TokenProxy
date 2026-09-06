@@ -42,16 +42,19 @@ shapes are admin-ABI-only and out of scope here.
 
 ## (a) RTK token-saver surface — `open-sse/rtk/**`
 
-Not an HTTP-exposed engine — it runs inline inside `translateRequest`
-(`open-sse/rtk/index.js:1-2`, invoked from `open-sse/handlers/chatCore.js`).
+The engine runs in `open-sse/handlers/chatCore.js` after format translation
+and before optional Headroom compression. `translateRequest` does not run RTK.
 The only HTTP surface is the read-only stats route below plus the
 enable/level toggles that live on `/api/settings` (section (b)).
 
 ### What it compresses
 
-`open-sse/rtk/index.js` compresses `tool_result` content in-place before any
-format translation. Filters live in `open-sse/rtk/filters/*` and are resolved
-by name/alias through `open-sse/rtk/registry.js:1-40`:
+`open-sse/rtk/index.js` stages tool-result replacements on the privately owned
+attempt body and commits them only after every replacement is ready. Safe mode
+uses `jsonCompact`, which removes only insignificant JSON whitespace while
+preserving string bytes, numeric lexemes, duplicate keys and escaping. General
+text remains unchanged. Explicit lossy opt-in enables the legacy filters below,
+resolved through `open-sse/rtk/registry.js`:
 `gitDiff`, `gitStatus`, `gitLog`, `grep` (alias `rg`), `find` (alias `fd`),
 `dedupLog`, `ls`, `tree`, `smartTruncate`, `readNumbered`, `searchList`,
 `buildOutput` — the exact `FILTERS` name constants are in
@@ -76,11 +79,12 @@ is a deliberate exclusion, not a bug.
 
 ### Config knobs an API route exposes
 
-RTK itself has exactly one settings-DB flag, `rtkEnabled` (default `true`,
-`src/lib/db/repos/settingsRepo.js:69`), read/written only through the generic
-`/api/settings` GET/PATCH (no dedicated `/api/rtk/*` route exists). No route
-exposes per-filter enable/disable or the sizing constants above — they are
-not configurable at all, only compiled in.
+RTK uses `rtkEnabled` (default `true`) plus the independent `rtkAllowLossy`
+consent flag through generic `/api/settings` GET/PATCH. An absent consent flag
+has effective value `false`; it may be absent from GET because the defaults
+object does not materialize all four new consent fields. No dedicated
+`/api/rtk/*` or per-filter settings route exists. Existing enable settings remain
+stored, but enabling RTK alone no longer authorizes irreversible elision.
 
 A combo (multi-model fallback chain) can override `rtkEnabled` (and the
 sibling flags below) per-combo via `settings.comboStrategies[<combo>]`,
@@ -104,10 +108,11 @@ doc since it's a separate compression engine, not RTK).
   and `getPxpipeStats()` (`src/lib/pxpipe/events.js`) — both return
   `{ windows, timeline, recent }` shapes (`src/lib/tokenSaver/events.js:252-256`,
   `src/lib/pxpipe/events.js:120-125`). Units are never mixed per the module
-  header comment (`src/lib/tokenSaver/events.js:5-8`): rtk stats are in
-  characters (JS string lengths), headroom stats are proxy-reported tokens
-  plus true `TextEncoder` body bytes, pxpipe stats are estimated tokens
-  (suffixed `Est` upstream). No prompt/message/tool/identity/format/reason
+  event schema: historical `chars*` fields remain legacy JavaScript-character
+  measurements. Current RTK module `bytesBefore`/`bytesAfter` and pipeline stage
+  deltas measure UTF-8 bytes; they must not be relabeled as legacy characters.
+  Headroom token counts are proxy reports with independent body-byte checks.
+  PXPIPE token counts are estimates (suffixed `Est` upstream). No prompt/message/tool/identity/format/reason
   text is ever persisted to disk — strict allowlist, unknown fields silently
   dropped (`src/lib/tokenSaver/events.js:9-10`).
 - Error response: `{ error: "token saver statistics unavailable" }`, HTTP 503,
@@ -156,9 +161,9 @@ Relevant settings-DB keys returned inside `safeSettings`
 | `rtkEnabled` | `true` | RTK tool-result compression on/off |
 | `headroomEnabled` | `false` | headroom compression engine on/off (sibling, not RTK) |
 | `headroomUrl` | `http://localhost:8787` | headroom proxy target |
-| `headroomCompressUserMessages` | `false` | |
+| `headroomCompressUserMessages` | `false` | additional permission for historical user text; current request stays exact |
 | `headroomTimeoutMs` | `null` | null = defer to headroom.js's own default |
-| `headroomLossless` | `false` | |
+| `headroomLossless` | `false` | legacy stored field; does not grant or replace lossy consent |
 | `cavemanEnabled` | `false` | system-prompt persona injection on/off |
 | `cavemanLevel` | `"full"` | selects `CAVEMAN_PROMPTS[level]` (`open-sse/rtk/cavemanPrompts.js`) |
 | `ponytailEnabled` | `false` | system-prompt persona injection on/off |
@@ -196,6 +201,36 @@ validation actually read):
 - Success response: `toSafeSettings(settings)` (post-update), HTTP 200,
   headers `SETTINGS_RESPONSE_HEADERS` (constant not further inspected).
 - Error response: `{ error: error.message }`, HTTP 500 (`route.js:326-329`).
+
+
+### Explicit content-loss consent
+
+The dispatch boundary reads `rtkAllowLossy`, `schemaAllowLossy`,
+`headroomAllowLossy` and `pxpipeAllowLossy` with `=== true` in
+`src/sse/handlers/chat.js`. Only literal JSON boolean `true` authorizes their
+respective lossy behavior. Missing values, strings, numbers and `null` do not.
+The generic settings PATCH currently retains unknown keys and does not reject
+wrong types for these four fields; successful storage is not proof that a flag
+became effective. Client request-body fields and combo enable switches cannot
+grant this consent. The shaping UI asks for explicit confirmation and labels
+content-changing modes; API operators can deliberately persist boolean `true`.
+
+RTK legacy elision and schema annotation removal are irreversible. Headroom
+with lossy consent may rewrite historical text, subject to the separate user-text
+setting and structural validator. It must retain the latest human request,
+system/developer instructions, tool-call identity, error evidence, native
+metadata and signed reasoning. Lossless Headroom mode permits only validated
+lexical JSON reductions in eligible tool-result payloads. PXPIPE requires lossy
+consent even when enabled and validates the current request, tool evidence and
+signed reasoning before committing visual conversion. Its profitability counts
+are estimates, not provider-billed savings or quality guarantees.
+
+The four flags do not cover every content-changing feature. Existing explicit
+pair dropping, query-aware compression, historical reasoning removal, tool
+selection and memory compaction keep their own settings and risk classifications.
+Turning a feature off cannot restore text already omitted from a sent request.
+The local MCP bridge has no output-compaction option and now forwards tool
+content intact; it is validated separately from the 14-toggle chat matrix.
 
 ### Per-combo override (not a route — settings-JSON shape)
 

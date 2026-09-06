@@ -21,3 +21,17 @@ Default retention is 45 days, shared with requestStats and bounded to 1-365 days
 The additive schema preserves every existing column and index. Downgrading the application can read and append legacy requestStats rows without restoring an old database over new traffic. Context metadata written by the newer application remains retained in the extra columns and tables.
 
 GET /api/tools is an operator-authenticated, no-store snapshot of the existing local MCP bridge registry and process map. It returns observedAt, scope="local-process", presets, summary and capabilities. Each preset exposes id, name, transport, configured, installation="not-probed", running, clients, endpoint and declaredToolCount. configured refers to a built-in preset, not installed package availability. summary contains presets, running and clients counts; capabilities advertises status=true, takeover=false and modelMapping=false. Reading this endpoint does not spawn processes, inspect secrets, probe installations or write host configuration.
+
+
+Accepted upstream attempts are never automatically regenerated after uncertain
+transport or integrity failures. Kiro validates an accepted response once;
+`providerSpecificData.kiroToolCallRepair` no longer enables another generation.
+The legacy `KIRO_TOOL_CALL_REPAIR_*` buffer and watchdog environment names remain
+supported for compatibility, but control validation limits rather than retries.
+Codex only classifies typed error events before content is exposed. An ordinary
+answer containing error-like words remains ordinary output. A malformed or
+incomplete accepted response can fail visibly without authorizing replay.
+Retries after an explicit upstream rejection remain separately guarded; a second
+attempt with an unknown outcome cannot reuse the first rejection as permission
+for another attempt. Telemetry may record a failed accepted attempt, and that
+failure does not prove the provider performed or billed no work.
