@@ -270,34 +270,30 @@ describe('DefaultExecutor.refreshCredentials — grant plumbing', () => {
 // Everything below derives its expectations from the exported registry
 // (PROVIDERS / PROVIDER_OAUTH / OAUTH_ENDPOINTS) rather than provider strings,
 // so a registry edit moves the fixture instead of breaking the test.
-const { PROVIDERS } = await import("../../open-sse/config/providers.js");
-const { OAUTH_ENDPOINTS } =
-  await import("../../open-sse/config/appConstants.js");
-const { ANTHROPIC_COMPAT_BASE } =
-  await import("../../open-sse/providers/shared.js");
+const { PROVIDERS } = await import('../../open-sse/config/providers.js');
+const { OAUTH_ENDPOINTS } = await import('../../open-sse/config/appConstants.js');
+const { ANTHROPIC_COMPAT_BASE } = await import('../../open-sse/providers/shared.js');
 
-describe("applyEndpointOverride — degenerate registry URL", () => {
-  it("an empty registry URL leaves the trimmed stored base standing alone", () => {
-    expect(applyEndpointOverride("https://gw.example/", "")).toBe(
-      "https://gw.example",
-    );
+describe('applyEndpointOverride — degenerate registry URL', () => {
+  it('an empty registry URL leaves the trimmed stored base standing alone', () => {
+    expect(applyEndpointOverride('https://gw.example/', '')).toBe('https://gw.example');
   });
 });
 
-describe("DefaultExecutor.execute — floor probe never costs a second call on an unreadable body", () => {
-  it("a non-OK response whose body cannot be re-read is returned as-is, one upstream call", async () => {
-    const refusal = new Response("gone", { status: 500 });
+describe('DefaultExecutor.execute — floor probe never costs a second call on an unreadable body', () => {
+  it('a non-OK response whose body cannot be re-read is returned as-is, one upstream call', async () => {
+    const refusal = new Response('gone', { status: 500 });
     refusal.clone = () => ({
-      text: () => Promise.reject(new Error("body consumed")),
+      text: () => Promise.reject(new Error('body consumed')),
     });
     fetchMock.mockResolvedValueOnce(refusal);
-    const out = await new DefaultExecutor("openai-compatible-test").execute({
-      model: "m",
+    const out = await new DefaultExecutor('openai-compatible-test').execute({
+      model: 'm',
       body: { messages: [], max_tokens: 1 },
       stream: false,
       credentials: {
-        apiKey: "k",
-        providerSpecificData: { baseUrl: "https://chat.example/v1" },
+        apiKey: 'k',
+        providerSpecificData: { baseUrl: 'https://chat.example/v1' },
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -305,21 +301,21 @@ describe("DefaultExecutor.execute — floor probe never costs a second call on a
   });
 });
 
-describe("DefaultExecutor.transformRequest — overlong tool-call IDs (official OpenAI)", () => {
-  const ex = new DefaultExecutor("openai");
-  const longId = `toolcall_${"a".repeat(70)}`;
+describe('DefaultExecutor.transformRequest — overlong tool-call IDs (official OpenAI)', () => {
+  const ex = new DefaultExecutor('openai');
+  const longId = `toolcall_${'a'.repeat(70)}`;
 
-  it("normalizes an over-64-char id identically on the call and its tool result", () => {
+  it('normalizes an over-64-char id identically on the call and its tool result', () => {
     const out = ex.transformRequest(
-      "gpt-4.1",
+      'gpt-4.1',
       {
         messages: [
-          { role: "assistant", tool_calls: [{ id: longId, type: "function" }] },
-          { role: "tool", tool_call_id: longId, content: "ok" },
+          { role: 'assistant', tool_calls: [{ id: longId, type: 'function' }] },
+          { role: 'tool', tool_call_id: longId, content: 'ok' },
         ],
       },
       true,
-      {},
+      {}
     );
     const callId = out.messages[0].tool_calls[0].id;
     expect(callId).not.toBe(longId);
@@ -328,296 +324,482 @@ describe("DefaultExecutor.transformRequest — overlong tool-call IDs (official 
     expect(out.messages[1].tool_call_id).toBe(callId);
   });
 
-  it("leaves an id at or under the limit untouched", () => {
-    const shortId = "call_ok";
+  it('leaves an id at or under the limit untouched', () => {
+    const shortId = 'call_ok';
     const out = ex.transformRequest(
-      "gpt-4.1",
+      'gpt-4.1',
       {
-        messages: [{ role: "tool", tool_call_id: shortId, content: "ok" }],
+        messages: [{ role: 'tool', tool_call_id: shortId, content: 'ok' }],
       },
       true,
-      {},
+      {}
     );
     expect(out.messages[0].tool_call_id).toBe(shortId);
   });
 });
 
-describe("DefaultExecutor.transformRequest — cloudflare-ai max_tokens default (#1645)", () => {
-  const ex = new DefaultExecutor("cloudflare-ai");
-  it("fills a positive default when the client omits max_tokens, and never overrides an explicit one", () => {
-    const filled = ex.transformRequest("m", { messages: [] }, true, {});
-    expect(typeof filled.max_tokens).toBe("number");
+describe('DefaultExecutor.transformRequest — cloudflare-ai max_tokens default (#1645)', () => {
+  const ex = new DefaultExecutor('cloudflare-ai');
+  it('fills a positive default when the client omits max_tokens, and never overrides an explicit one', () => {
+    const filled = ex.transformRequest('m', { messages: [] }, true, {});
+    expect(typeof filled.max_tokens).toBe('number');
     expect(filled.max_tokens).toBeGreaterThan(0);
-    const explicit = ex.transformRequest(
-      "m",
-      { messages: [], max_tokens: 10 },
-      true,
-      {},
-    );
+    const explicit = ex.transformRequest('m', { messages: [], max_tokens: 10 }, true, {});
     expect(explicit.max_tokens).toBe(10);
   });
 });
 
-describe("DefaultExecutor.applyJsonSchemaFallback — openai-compatible without Structured Output", () => {
-  const ex = new DefaultExecutor("openai-compatible-x");
+describe('DefaultExecutor.applyJsonSchemaFallback — openai-compatible without Structured Output', () => {
+  const ex = new DefaultExecutor('openai-compatible-x');
   const schemaBody = (messages = []) => ({
     messages,
     response_format: {
-      type: "json_schema",
-      json_schema: { schema: { type: "object", required: ["zz_marker"] } },
+      type: 'json_schema',
+      json_schema: { schema: { type: 'object', required: ['zz_marker'] } },
     },
   });
 
-  it("downgrades json_schema to json_object and injects the schema as a system prompt", () => {
-    const out = ex.transformRequest("m", schemaBody(), true, {});
-    expect(out.response_format).toEqual({ type: "json_object" });
-    expect(out.messages[0].role).toBe("system");
-    expect(out.messages[0].content).toContain("zz_marker");
+  it('downgrades json_schema to json_object and injects the schema as a system prompt', () => {
+    const out = ex.transformRequest('m', schemaBody(), true, {});
+    expect(out.response_format).toEqual({ type: 'json_object' });
+    expect(out.messages[0].role).toBe('system');
+    expect(out.messages[0].content).toContain('zz_marker');
   });
 
-  it("appends to an existing string system message instead of adding a second one", () => {
+  it('appends to an existing string system message instead of adding a second one', () => {
     const out = ex.transformRequest(
-      "m",
-      schemaBody([{ role: "system", content: "base rules" }]),
+      'm',
+      schemaBody([{ role: 'system', content: 'base rules' }]),
       true,
-      {},
+      {}
     );
-    expect(out.messages.filter((m) => m.role === "system")).toHaveLength(1);
-    expect(out.messages[0].content).toContain("base rules");
-    expect(out.messages[0].content).toContain("zz_marker");
+    expect(out.messages.filter((m) => m.role === 'system')).toHaveLength(1);
+    expect(out.messages[0].content).toContain('base rules');
+    expect(out.messages[0].content).toContain('zz_marker');
   });
 
-  it("pushes a text part onto an array system content", () => {
+  it('pushes a text part onto an array system content', () => {
     const out = ex.transformRequest(
-      "m",
-      schemaBody([
-        { role: "system", content: [{ type: "text", text: "base" }] },
-      ]),
+      'm',
+      schemaBody([{ role: 'system', content: [{ type: 'text', text: 'base' }] }]),
       true,
-      {},
+      {}
     );
     const parts = out.messages[0].content;
-    expect(parts.at(-1).text).toContain("zz_marker");
+    expect(parts.at(-1).text).toContain('zz_marker');
   });
 
-  it("leaves a non-json_schema response_format alone", () => {
-    const body = { messages: [], response_format: { type: "json_object" } };
-    const out = ex.transformRequest("m", body, true, {});
-    expect(out.response_format).toEqual({ type: "json_object" });
+  it('leaves a non-json_schema response_format alone', () => {
+    const body = { messages: [], response_format: { type: 'json_object' } };
+    const out = ex.transformRequest('m', body, true, {});
+    expect(out.response_format).toEqual({ type: 'json_object' });
   });
 });
 
-describe("DefaultExecutor.buildUrl — remaining branches", () => {
-  it("anthropic-compatible: /messages appended to the stored base, default base without one", () => {
-    const ex = new DefaultExecutor("anthropic-compatible-x");
+describe('DefaultExecutor.buildUrl — remaining branches', () => {
+  it('anthropic-compatible: /messages appended to the stored base, default base without one', () => {
+    const ex = new DefaultExecutor('anthropic-compatible-x');
     expect(
-      ex.buildUrl("m", true, 0, {
-        providerSpecificData: { baseUrl: "https://a.example/v1/" },
-      }),
-    ).toBe("https://a.example/v1/messages");
-    expect(ex.buildUrl("m", true, 0, {})).toBe(
-      `${ANTHROPIC_COMPAT_BASE}/messages`,
-    );
+      ex.buildUrl('m', true, 0, {
+        providerSpecificData: { baseUrl: 'https://a.example/v1/' },
+      })
+    ).toBe('https://a.example/v1/messages');
+    expect(ex.buildUrl('m', true, 0, {})).toBe(`${ANTHROPIC_COMPAT_BASE}/messages`);
   });
 
-  it("a registry urlSuffix is appended to the provider base URL", () => {
+  it('a registry urlSuffix is appended to the provider base URL', () => {
     const entry = Object.entries(PROVIDERS).find(
       ([, c]) =>
         c.urlSuffix &&
         c.baseUrl &&
-        !String(c.baseUrl).includes("{accountId}") &&
-        c.format !== "gemini",
+        !String(c.baseUrl).includes('{accountId}') &&
+        c.format !== 'gemini'
     );
     expect(entry).toBeTruthy();
     const [id, cfg] = entry;
-    expect(new DefaultExecutor(id).buildUrl("m", false, 0, {})).toBe(
-      `${cfg.baseUrl}${cfg.urlSuffix}`,
+    expect(new DefaultExecutor(id).buildUrl('m', false, 0, {})).toBe(
+      `${cfg.baseUrl}${cfg.urlSuffix}`
     );
   });
 });
 
-describe("DefaultExecutor.buildHeaders — registry-declared hooks run before auth", () => {
+describe('DefaultExecutor.buildHeaders — registry-declared hooks run before auth', () => {
   const providerWithHook = (hook) =>
-    Object.entries(PROVIDERS).find(([, c]) =>
-      c.auth?.hooks?.includes(hook),
-    )?.[0];
+    Object.entries(PROVIDERS).find(([, c]) => c.auth?.hooks?.includes(hook))?.[0];
 
-  it("kimiHeaders: device id carried from the connection, auth token not clobbered", () => {
-    const id = providerWithHook("kimiHeaders");
+  it('kimiHeaders: device id carried from the connection, auth token not clobbered', () => {
+    const id = providerWithHook('kimiHeaders');
     expect(id).toBeTruthy();
     const cfg = PROVIDERS[id];
     const h = new DefaultExecutor(id).buildHeaders(
-      { apiKey: "k-tok", providerSpecificData: { deviceId: "dev-42" } },
-      true,
+      { apiKey: 'k-tok', providerSpecificData: { deviceId: 'dev-42' } },
+      true
     );
-    expect(h["X-Msh-Device-Id"]).toBe("dev-42");
-    const expected = cfg.auth.scheme === "bearer" ? "Bearer k-tok" : "k-tok";
+    expect(h['X-Msh-Device-Id']).toBe('dev-42');
+    const expected = cfg.auth.scheme === 'bearer' ? 'Bearer k-tok' : 'k-tok';
     expect(h[cfg.auth.header]).toBe(expected);
   });
 
-  it("clineHeaders: a plain API key rides Authorization without the session-token prefix (#2333)", () => {
-    const id = providerWithHook("clineHeaders");
+  it('clineHeaders: a plain API key rides Authorization without the session-token prefix (#2333)', () => {
+    const id = providerWithHook('clineHeaders');
     expect(id).toBeTruthy();
-    const h = new DefaultExecutor(id).buildHeaders(
-      { apiKey: "plain-key" },
-      true,
-    );
-    expect(h["Authorization"]).toBe("Bearer plain-key");
+    const h = new DefaultExecutor(id).buildHeaders({ apiKey: 'plain-key' }, true);
+    expect(h['Authorization']).toBe('Bearer plain-key');
   });
 
-  it("kilocodeOrg: org header only when the connection carries an orgId", () => {
-    const id = providerWithHook("kilocodeOrg");
+  it('kilocodeOrg: org header only when the connection carries an orgId', () => {
+    const id = providerWithHook('kilocodeOrg');
     expect(id).toBeTruthy();
     const withOrg = new DefaultExecutor(id).buildHeaders(
-      { apiKey: "k", providerSpecificData: { orgId: "org-7" } },
-      true,
+      { apiKey: 'k', providerSpecificData: { orgId: 'org-7' } },
+      true
     );
-    expect(withOrg["X-Kilocode-OrganizationID"]).toBe("org-7");
-    const without = new DefaultExecutor(id).buildHeaders({ apiKey: "k" }, true);
-    expect(without["X-Kilocode-OrganizationID"]).toBeUndefined();
+    expect(withOrg['X-Kilocode-OrganizationID']).toBe('org-7');
+    const without = new DefaultExecutor(id).buildHeaders({ apiKey: 'k' }, true);
+    expect(without['X-Kilocode-OrganizationID']).toBeUndefined();
   });
 });
 
-describe("DefaultExecutor.buildHeaders — runtimeTransport auth descriptor", () => {
-  it("combined descriptor with anthropicVersion sets both token header and version", () => {
-    const ex = new DefaultExecutor("openai");
+describe('DefaultExecutor.buildHeaders — runtimeTransport auth descriptor', () => {
+  it('combined descriptor with anthropicVersion sets both token header and version', () => {
+    const ex = new DefaultExecutor('openai');
     const h = ex.buildHeaders(
       {
-        apiKey: "k",
+        apiKey: 'k',
         runtimeTransport: {
           auth: {
             combined: true,
-            header: "x-api-key",
-            scheme: "raw",
+            header: 'x-api-key',
+            scheme: 'raw',
             anthropicVersion: true,
           },
         },
       },
-      true,
+      true
     );
-    expect(h["x-api-key"]).toBe("k");
-    expect(h["anthropic-version"]).toBe(ANTHROPIC_API_VERSION);
+    expect(h['x-api-key']).toBe('k');
+    expect(h['anthropic-version']).toBe(ANTHROPIC_API_VERSION);
   });
 
-  it("a transport beta header reduced to only the claude-code flag is deleted, not left empty", () => {
-    const ex = new DefaultExecutor("anthropic-compatible-x");
+  it('a transport beta header reduced to only the claude-code flag is deleted, not left empty', () => {
+    const ex = new DefaultExecutor('anthropic-compatible-x');
     const creds = {
-      apiKey: "k",
-      providerSpecificData: { baseUrl: "https://third.example/v1" },
+      apiKey: 'k',
+      providerSpecificData: { baseUrl: 'https://third.example/v1' },
       runtimeTransport: {
-        headers: { "anthropic-beta": "claude-code-20250219" },
+        headers: { 'anthropic-beta': 'claude-code-20250219' },
       },
     };
-    const h = ex.buildHeaders(creds, true, undefined, "claude-sonnet-4.6");
-    expect(h["anthropic-beta"]).toBeUndefined();
+    const h = ex.buildHeaders(creds, true, undefined, 'claude-sonnet-4.6');
+    expect(h['anthropic-beta']).toBeUndefined();
     const mixed = ex.buildHeaders(
       {
         ...creds,
         runtimeTransport: {
-          headers: { "anthropic-beta": "claude-code-20250219,keep-me" },
+          headers: { 'anthropic-beta': 'claude-code-20250219,keep-me' },
         },
       },
       true,
       undefined,
-      "claude-sonnet-4.6",
+      'claude-sonnet-4.6'
     );
-    expect(mixed["anthropic-beta"]).toBe("keep-me");
+    expect(mixed['anthropic-beta']).toBe('keep-me');
   });
 });
 
-describe("DefaultExecutor.refreshCredentials — provider-specific refreshers", () => {
-  it("iflow: Basic auth from registry clientId:clientSecret, token response mapped", async () => {
+describe('DefaultExecutor.refreshCredentials — provider-specific refreshers', () => {
+  it('iflow: Basic auth from registry clientId:clientSecret, token response mapped', async () => {
     const cfg = PROVIDERS.iflow;
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ access_token: "iat", expires_in: 60 }), {
+      new Response(JSON.stringify({ access_token: 'iat', expires_in: 60 }), {
         status: 200,
-      }),
+      })
     );
-    const out = await new DefaultExecutor("iflow").refreshCredentials(
-      { refreshToken: "irt" },
-      null,
+    const out = await new DefaultExecutor('iflow').refreshCredentials(
+      { refreshToken: 'irt' },
+      null
     );
     expect(out).toEqual({
-      accessToken: "iat",
-      refreshToken: "irt",
+      accessToken: 'iat',
+      refreshToken: 'irt',
       expiresIn: 60,
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(OAUTH_ENDPOINTS.iflow.token);
-    expect(init.headers["Authorization"]).toBe(
-      `Basic ${btoa(`${cfg.clientId}:${cfg.clientSecret}`)}`,
+    expect(init.headers['Authorization']).toBe(
+      `Basic ${btoa(`${cfg.clientId}:${cfg.clientSecret}`)}`
     );
-    expect(Object.fromEntries(init.body).refresh_token).toBe("irt");
+    expect(Object.fromEntries(init.body).refresh_token).toBe('irt');
   });
 
-  it("kimi: posts the form grant to the registry refreshUrl with the stable device id", async () => {
-    const cfg = PROVIDERS.kimi || PROVIDERS["kimi-coding"];
+  it('kimi: posts the form grant to the registry refreshUrl with the stable device id', async () => {
+    const cfg = PROVIDERS.kimi || PROVIDERS['kimi-coding'];
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          access_token: "kat",
-          refresh_token: "krt2",
+          access_token: 'kat',
+          refresh_token: 'krt2',
           expires_in: 5,
         }),
-        { status: 200 },
-      ),
+        { status: 200 }
+      )
     );
-    const out = await new DefaultExecutor("kimi").refreshCredentials(
-      { refreshToken: "krt", providerSpecificData: { deviceId: "dev-9" } },
-      null,
+    const out = await new DefaultExecutor('kimi').refreshCredentials(
+      { refreshToken: 'krt', providerSpecificData: { deviceId: 'dev-9' } },
+      null
     );
     expect(out).toEqual({
-      accessToken: "kat",
-      refreshToken: "krt2",
+      accessToken: 'kat',
+      refreshToken: 'krt2',
       expiresIn: 5,
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(cfg.refreshUrl);
-    expect(init.headers["X-Msh-Device-Id"]).toBe("dev-9");
+    expect(init.headers['X-Msh-Device-Id']).toBe('dev-9');
     const sent = Object.fromEntries(init.body);
     expect(sent.client_id).toBe(cfg.clientId);
-    expect(sent.grant_type).toBe("refresh_token");
+    expect(sent.grant_type).toBe('refresh_token');
   });
 
-  it("cline: routes through the shared refresher and returns the workos-prefixed token", async () => {
+  it('cline: routes through the shared refresher and returns the workos-prefixed token', async () => {
     fetchMock.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ data: { accessToken: "cat", refreshToken: "crt2" } }),
-        { status: 200 },
-      ),
+      new Response(JSON.stringify({ data: { accessToken: 'cat', refreshToken: 'crt2' } }), {
+        status: 200,
+      })
     );
-    const out = await new DefaultExecutor("cline").refreshCredentials(
-      { refreshToken: "crt" },
-      null,
+    const out = await new DefaultExecutor('cline').refreshCredentials(
+      { refreshToken: 'crt' },
+      null
     );
-    expect(out.accessToken).toContain("cat");
-    expect(out.refreshToken).toBe("crt2");
+    expect(out.accessToken).toContain('cat');
+    expect(out.refreshToken).toBe('crt2');
     expect(fetchMock.mock.calls[0][0]).toBe(PROVIDERS.cline.refreshUrl);
   });
 
-  it("kilocode: device-code flow has no refresh, returns null without any call", async () => {
+  it('kilocode: device-code flow has no refresh, returns null without any call', async () => {
     expect(
-      await new DefaultExecutor("kilocode").refreshCredentials(
-        { refreshToken: "r" },
-        null,
-      ),
+      await new DefaultExecutor('kilocode').refreshCredentials({ refreshToken: 'r' }, null)
     ).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("a non-2xx from a provider-specific refresher yields null (iflow, kimi)", async () => {
-    fetchMock.mockResolvedValue(new Response("no", { status: 401 }));
+  it('a non-2xx from a provider-specific refresher yields null (iflow, kimi)', async () => {
+    fetchMock.mockResolvedValue(new Response('no', { status: 401 }));
     expect(
-      await new DefaultExecutor("iflow").refreshCredentials(
-        { refreshToken: "r" },
-        null,
-      ),
+      await new DefaultExecutor('iflow').refreshCredentials({ refreshToken: 'r' }, null)
     ).toBeNull();
     expect(
-      await new DefaultExecutor("kimi").refreshCredentials(
-        { refreshToken: "r" },
-        null,
-      ),
+      await new DefaultExecutor('kimi').refreshCredentials({ refreshToken: 'r' }, null)
     ).toBeNull();
+  });
+});
+
+// ── Added contracts: floor retry, provider-scoped normalizations, refreshers ──
+const { PROVIDER_OAUTH } = await import('../../open-sse/config/providers.js');
+
+describe('DefaultExecutor.execute — max_tokens floor retry (#1702)', () => {
+  const creds = { apiKey: 'k', providerSpecificData: { baseUrl: 'https://chat.example/v1' } };
+
+  it('an OK response returns as-is with a single upstream call', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    const out = await new DefaultExecutor('openai-compatible-flr').execute({
+      model: 'm',
+      body: { messages: [], max_tokens: 1 },
+      stream: false,
+      credentials: creds,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.response.status).toBe(200);
+  });
+
+  it('a refusal naming a floor triggers exactly one retry at that floor', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: 'max_tokens must be greater than 2' } }), {
+          status: 400,
+        })
+      )
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    const out = await new DefaultExecutor('openai-compatible-flr').execute({
+      model: 'm',
+      body: { messages: [], max_tokens: 1 },
+      stream: false,
+      credentials: creds,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // "greater than 2" → floor is 3, not 2.
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).max_tokens).toBe(3);
+    expect(out.response.status).toBe(200);
+  });
+
+  it('a request that sent no numeric max_tokens never retries on a refusal', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('max_tokens must be at least 16', { status: 400 })
+    );
+    const out = await new DefaultExecutor('openai-compatible-flr').execute({
+      model: 'm',
+      body: { messages: [] },
+      stream: false,
+      credentials: creds,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(out.response.status).toBe(400);
+  });
+});
+
+describe('DefaultExecutor.transformRequest — remaining provider scopes', () => {
+  it('openai: a body without a messages array passes the tool-call id normalizer untouched', () => {
+    const ex = new DefaultExecutor('openai');
+    const out = ex.transformRequest('gpt-4.1', { prompt: 'x' }, true, {});
+    expect(out.prompt).toBe('x');
+  });
+
+  it('gpt-5.6 chat models that reject tools+reasoning get reasoning_effort none, others keep it', () => {
+    const ex = new DefaultExecutor('openai');
+    const tools = [{ type: 'function', function: { name: 'f' } }];
+    const hit = ex.transformRequest(
+      'gpt-5.6-luna',
+      { messages: [], tools, reasoning_effort: 'high' },
+      true,
+      {}
+    );
+    expect(hit.reasoning_effort).toBe('none');
+    // Responses-format source is exempt.
+    const responses = ex.transformRequest(
+      'gpt-5.6-luna',
+      { messages: [], tools, reasoning_effort: 'high' },
+      true,
+      {},
+      'openai-responses'
+    );
+    expect(responses.reasoning_effort).toBe('high');
+    // Non-function tools are exempt.
+    const nonFn = ex.transformRequest(
+      'gpt-5.6-luna',
+      { messages: [], tools: [{ type: 'web_search' }], reasoning_effort: 'high' },
+      true,
+      {}
+    );
+    expect(nonFn.reasoning_effort).toBe('high');
+  });
+
+  it("mistral: final assistant message is marked prefix:true without mutating the caller's body", () => {
+    const ex = new DefaultExecutor('mistral');
+    const original = {
+      messages: [
+        { role: 'user', content: 'q' },
+        { role: 'assistant', content: 'pre' },
+      ],
+    };
+    const out = ex.transformRequest('mistral-large', original, true, {});
+    expect(out.messages.at(-1).prefix).toBe(true);
+    // Combo fallbacks reuse the body across providers: the input must stay isolated.
+    expect(original.messages.at(-1).prefix).toBeUndefined();
+  });
+
+  it('muse-spark models: a forced tool_choice is demoted to auto, with and without an effort suffix', () => {
+    const ex = new DefaultExecutor('openai-compatible-x');
+    const forced = ex.transformRequest(
+      'muse-spark-1 (high)',
+      { messages: [], tool_choice: 'required' },
+      true,
+      {}
+    );
+    expect(forced.tool_choice).toBe('auto');
+    const bare = ex.transformRequest(
+      'muse-spark-1',
+      { messages: [], tool_choice: { type: 'function' } },
+      true,
+      {}
+    );
+    expect(bare.tool_choice).toBe('auto');
+  });
+
+  it('openai-compatible responses transport: text object without format gets the API default', () => {
+    const ex = new DefaultExecutor('openai-compatible-responses-x');
+    const out = ex.transformRequest('m', { messages: [], text: { verbosity: 'low' } }, true, {});
+    expect(out.text).toEqual({ verbosity: 'low', format: { type: 'text' } });
+    // An explicit format and a non-object text are both left alone.
+    const explicit = ex.transformRequest(
+      'm',
+      { messages: [], text: { format: { type: 'json' } } },
+      true,
+      {}
+    );
+    expect(explicit.text.format).toEqual({ type: 'json' });
+    const arr = ex.transformRequest('m', { messages: [], text: ['x'] }, true, {});
+    expect(arr.text).toEqual(['x']);
+  });
+});
+
+describe('DefaultExecutor.buildHeaders — split descriptor OAuth branch', () => {
+  it('anthropic-compatible with only an access token authenticates via Bearer, not x-api-key', () => {
+    const ex = new DefaultExecutor('anthropic-compatible-y');
+    const h = ex.buildHeaders({ accessToken: 'at-1' }, true, undefined, 'claude-sonnet-4.6');
+    expect(h['Authorization']).toBe('Bearer at-1');
+    expect(h['x-api-key']).toBeUndefined();
+    expect(h['anthropic-version']).toBe(ANTHROPIC_API_VERSION);
+  });
+});
+
+describe('DefaultExecutor.refreshCredentials — remaining grant rows', () => {
+  const grantBody = (init) =>
+    init.body instanceof URLSearchParams ? Object.fromEntries(init.body) : JSON.parse(init.body);
+
+  for (const provider of ['codex', 'gemini']) {
+    it(`${provider}: registry grant posts refresh_token, or fails closed without one`, async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: 'at', refresh_token: 'rt2', expires_in: 7 }), {
+          status: 200,
+        })
+      );
+      const ex = new DefaultExecutor(provider);
+      const out = await ex.refreshCredentials({ refreshToken: 'rt1' }, null);
+      if (!PROVIDER_OAUTH[provider]?.refresh) {
+        // No registry grant row: the refresher throws internally, the catch
+        // reports null, and no upstream call carries a broken grant.
+        expect(out).toBeNull();
+        return;
+      }
+      expect(out).toEqual({ accessToken: 'at', refreshToken: 'rt2', expiresIn: 7 });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(PROVIDER_OAUTH[provider].tokenUrl);
+      const sent = grantBody(init);
+      expect(sent.grant_type).toBe('refresh_token');
+      expect(sent.refresh_token).toBe('rt1');
+      const expectedClientId =
+        provider === 'gemini' ? ex.config.clientId : PROVIDER_OAUTH[provider].clientId;
+      expect(sent.client_id).toBe(expectedClientId);
+    });
+  }
+
+  for (const provider of ['clinepass', 'kimi-coding']) {
+    it(`${provider}: shares its sibling's refresher and maps the token response`, async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(
+            provider === 'clinepass'
+              ? { data: { accessToken: 'cat', refreshToken: 'crt2' } }
+              : { access_token: 'kat', refresh_token: 'krt2', expires_in: 5 }
+          ),
+          { status: 200 }
+        )
+      );
+      const out = await new DefaultExecutor(provider).refreshCredentials(
+        { refreshToken: 'r1', providerSpecificData: { deviceId: 'd' } },
+        null
+      );
+      expect(out).toBeTruthy();
+      expect(out.refreshToken).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it('refreshWithForm and refreshKiro return null on a non-2xx without fabricating credentials', async () => {
+    const ex = new DefaultExecutor('openai');
+    fetchMock.mockResolvedValueOnce(new Response('no', { status: 400 }));
+    expect(await ex.refreshWithForm('https://t.example/token', { refresh_token: 'r' })).toBeNull();
+    fetchMock.mockResolvedValueOnce(new Response('no', { status: 400 }));
+    expect(await new DefaultExecutor('kiro').refreshKiro('r')).toBeNull();
   });
 });
