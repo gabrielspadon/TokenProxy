@@ -1,306 +1,355 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { useEventStream } from '@/shared/hooks/useEventStream';
 import { useUsageStream } from '@/store/usageStream';
 import { Freshness } from '@/shared/components/Freshness';
-import { Measure } from '@/shared/components/Measure';
 import { Notice } from '@/shared/components/Notice';
 import { QuotaWindow } from '@/shared/components/QuotaWindow';
-import { Ruler } from '@/shared/components/Ruler';
+import { ProviderMark } from '@/shared/components/ProviderMark';
+import { TrafficChart } from '@/shared/components/TrafficChart';
+import { Icon } from '@/shared/components/Icon';
 import { refusal } from '@/shared/refusal';
-import { fmtDuration, fmtNum, fmtPct, fmtRelative, fmtUnit, fmtUsd } from '@/shared/format';
-import { TONE, WORDS as STATUS } from '@/shared/status';
+import { fmtDuration, fmtNum, fmtPct, fmtRelative, fmtUsd } from '@/shared/format';
+import { TONE, WORDS } from '@/shared/status';
 import { RouteMap } from './RouteMap';
 import './routing.css';
 
-const HORIZON_MS = 6 * 3600 * 1000;
-const WORDS = {
-  ...STATUS,
-  live: 'Receiving requests',
-  idle: 'Idle',
-  empty: 'No requests yet',
-  unknown: 'Not known',
-};
-
-function pollFresh(p) {
-  if (p.loading) return 'connecting';
-  if (p.error && p.goodAt) return 'stale';
-  if (p.error) return 'reconnecting';
-  return 'live';
+const compact = (n) =>
+  n == null ? '—' : fmtNum(n, { notation: 'compact', maximumFractionDigits: 1 });
+function Kpi({ label, value, foot, icon, tone }) {
+  return (
+    <div className="kpi" data-tone={tone}>
+      <div className="kpi-label">
+        {label}
+        <Icon name={icon} />
+      </div>
+      <div className="kpi-value" data-i18n-skip>
+        {value}
+      </div>
+      <div className="kpi-foot">{foot}</div>
+    </div>
+  );
 }
-
 export default function NowPage() {
   const health = usePoll('/api/admin/health', 15000);
   const detail = usePoll('/api/admin/health/detail', 15000);
   const state = usePoll('/api/system/state?windowSeconds=3600', 15000);
   const quota = usePoll('/api/admin/quota', 30000);
+  const [period, setPeriod] = useState('today');
+  const chart = usePoll(`/api/usage/chart?period=${period}`, 30000);
   const apply = useUsageStream((s) => s.apply);
   const usage = useUsageStream((s) => s.data);
   const receivedAt = useUsageStream((s) => s.receivedAt);
   const stream = useEventStream('/api/usage/stream?period=today', apply);
+  const [metric, setMetric] = useState('requests');
   const [now, setNow] = useState(() => Date.now());
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15000);
     return () => clearInterval(t);
   }, []);
-
   const m = state.data?.measures || {};
-  const fresh = state.data?.freshness;
   const conns = useMemo(() => detail.data?.checks?.connections || [], [detail.data]);
-  const db = detail.data?.checks?.database;
-  const windows = useMemo(() => {
-    const names = new Map(conns.map((c) => [c.connectionId, c.displayName]));
-    return (quota.data?.snapshots || []).flatMap((s) =>
-      (s.windows || []).map((w) => ({
-        key: `${s.connectionId}:${w.scope}`,
-        provider: s.provider,
-        name: names.get(s.connectionId) || s.provider,
-        window: w,
-      }))
-    );
-  }, [quota.data, conns]);
-
+  const windows = useMemo(
+    () =>
+      (quota.data?.snapshots || []).flatMap((s) =>
+        (s.windows || []).map((w) => ({
+          key: `${s.connectionId}:${w.scope}`,
+          provider: s.provider,
+          name: conns.find((c) => c.connectionId === s.connectionId)?.displayName || s.provider,
+          window: w,
+        }))
+      ),
+    [quota.data, conns]
+  );
+  const reqs = usage?.recentRequests || [];
+  const tokens = usage
+    ? Object.values(usage.byProvider || {}).reduce(
+        (n, r) => n + (r.promptTokens || 0) + (r.completionTokens || 0),
+        0
+      )
+    : null;
+  const [endpoint, setEndpoint] = useState('/v1');
+  useEffect(() => setEndpoint(`${window.location.origin}/v1`), []);
+  async function copyEndpoint() {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      setCopied(true);
+      setCopyError(false);
+    } catch {
+      setCopyError(true);
+    }
+  }
   return (
     <>
       <div className="screen-head">
-        <h1>Now</h1>
+        <div className="page-title">
+          <h1>Overview</h1>
+          <p className="screen-subtitle">Your gateway, in focus.</p>
+        </div>
+        <Link href="/dashboard/connections" className="button quiet">
+          <Icon name="i-add" />
+          Add connection
+        </Link>
+        <button
+          className="button"
+          onClick={() => {
+            health.refresh();
+            detail.refresh();
+            state.refresh();
+            quota.refresh();
+            chart.refresh();
+          }}
+        >
+          <Icon name="i-refresh" />
+          Refresh
+        </button>
+      </div>
+      {state.error ? <Notice {...refusal(state.status, state.error)} /> : null}
+      <RouteMap usage={usage} conns={conns} stream={stream} receivedAt={receivedAt} />
+      <div className="kpi-grid">
+        <Kpi
+          label="Tokens today"
+          value={compact(tokens)}
+          foot="Input + output in today’s usage ledger"
+          icon="i-usage"
+        />
+        <Kpi
+          label="Spend today"
+          value={usage ? fmtUsd(usage.totalCost ?? 0) : '—'}
+          foot="Recorded cost in today’s usage ledger"
+          icon="i-shaping"
+        />
+        <Kpi
+          label="Response latency · p95"
+          value={m.latencyP95?.value == null ? '—' : fmtDuration(m.latencyP95.value)}
+          foot="Slowest 5% boundary · last hour"
+          icon="i-now"
+        />
+        <Kpi
+          label="Error rate"
+          value={m.errorRate?.value == null ? '—' : fmtPct(m.errorRate.value)}
+          foot="Measured requests · last hour"
+          icon="i-access"
+          tone={m.errorRate?.value > 0.05 ? 'warn' : undefined}
+        />
+      </div>
+      <div className="operator-grid">
+        <section className="operator-panel" aria-labelledby="traffic-title">
+          <div className="panel-head">
+            <div>
+              <h2 id="traffic-title">Traffic over time</h2>
+              <p>Recorded gateway traffic</p>
+            </div>
+            <div className="segment-buttons" aria-label="Traffic period">
+              {[
+                ['today', 'Today'],
+                ['7d', '7 days'],
+                ['30d', '30 days'],
+              ].map(([id, label]) => (
+                <button key={id} aria-pressed={period === id} onClick={() => setPeriod(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="panel-body">
+            <div className="segment-buttons" aria-label="Chart measure">
+              {['requests', 'tokens', 'cost'].map((v) => (
+                <button key={v} onClick={() => setMetric(v)} aria-pressed={metric === v}>
+                  {v[0].toUpperCase() + v.slice(1)}
+                </button>
+              ))}
+            </div>
+            {chart.error ? (
+              <Notice {...refusal(chart.status, chart.error)} />
+            ) : chart.loading ? (
+              <div className="chart-empty skeleton">Reading traffic</div>
+            ) : (
+              <TrafficChart data={Array.isArray(chart.data) ? chart.data : []} metric={metric} />
+            )}
+          </div>
+        </section>
+        <section className="operator-panel" aria-labelledby="health-title">
+          <div className="panel-head">
+            <div>
+              <h2 id="health-title">Provider health</h2>
+              <p>{conns.length} configured connections</p>
+            </div>
+            <Link className="text-link" href="/dashboard/connections">
+              Manage
+              <Icon name="i-right" />
+            </Link>
+          </div>
+          <div className="panel-body">
+            {detail.error ? (
+              <Notice {...refusal(detail.status, detail.error)} />
+            ) : !conns.length ? (
+              <div className="chart-empty">
+                <Icon name="i-connections" />
+                <strong>No connections yet</strong>
+                <span>Add an upstream to bring your gateway online.</span>
+                <Link href="/dashboard/connections" className="text-link">
+                  Connect a provider
+                </Link>
+              </div>
+            ) : (
+              conns.slice(0, 5).map((c) => (
+                <Link
+                  key={c.connectionId}
+                  href={`/dashboard/connections/${encodeURIComponent(c.connectionId)}`}
+                  className="health-row"
+                >
+                  <ProviderMark provider={c.provider} />
+                  <span className="health-name" data-i18n-skip>
+                    {c.displayName || c.provider}
+                    <small>{c.lastError || c.provider}</small>
+                  </span>
+                  <i className="health-dot" data-tone={TONE[c.status] || 'warn'} />
+                  <span className="status" data-tone={TONE[c.status] || 'warn'}>
+                    {c.isDraining ? 'Draining' : WORDS[c.status] || c.status}
+                  </span>
+                </Link>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+      <div className="operator-grid">
+        <section className="operator-panel" aria-labelledby="recent-title">
+          <div className="panel-head">
+            <div>
+              <h2 id="recent-title">Recent requests</h2>
+              <p>Latest events from the usage stream</p>
+            </div>
+            <Link className="text-link" href="/dashboard/usage">
+              All activity
+              <Icon name="i-right" />
+            </Link>
+          </div>
+          <div className="panel-body">
+            {reqs.length ? (
+              reqs.slice(0, 5).map((r, i) => (
+                <div key={r.id || `${r.timestamp}-${i}`} className="request-row">
+                  <ProviderMark provider={r.provider} size="small" />
+                  <span className="request-model" data-i18n-skip>
+                    {r.model || r.provider}
+                    <small>{fmtRelative(r.timestamp, now)}</small>
+                  </span>
+                  <span data-i18n-skip>
+                    {compact((r.promptTokens || 0) + (r.completionTokens || 0))} tokens
+                  </span>
+                  <span className="status" data-tone={r.status === 'error' ? 'bad' : 'ok'}>
+                    {r.status === 'error'
+                      ? 'Failed'
+                      : r.status === 'pending'
+                        ? 'Pending'
+                        : 'Completed'}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p className="empty">
+                Requests appear here after your first call through the gateway.
+              </p>
+            )}
+          </div>
+        </section>
+        <section className="operator-panel" aria-labelledby="quota-title">
+          <div className="panel-head">
+            <div>
+              <h2 id="quota-title">Quota headroom</h2>
+              <p>Provider-reported limits</p>
+            </div>
+            <Link className="text-link" href="/dashboard/connections">
+              Details
+              <Icon name="i-right" />
+            </Link>
+          </div>
+          <div className="panel-body">
+            {quota.error ? (
+              <Notice {...refusal(quota.status, quota.error)} />
+            ) : windows.length ? (
+              windows
+                .slice(0, 3)
+                .map((w) => (
+                  <QuotaWindow
+                    key={w.key}
+                    provider={w.provider}
+                    name={w.name}
+                    window={w.window}
+                    horizonMs={6 * 3600000}
+                    now={now}
+                  />
+                ))
+            ) : (
+              <p className="empty">
+                No quota windows reported yet. Limits appear when a provider includes them.
+              </p>
+            )}
+          </div>
+        </section>
+      </div>
+      <div className="endpoint-bar">
+        <Icon name="i-network" />
+        <span className="endpoint-label">Gateway endpoint</span>
+        <code data-i18n-skip>{endpoint}</code>
+        <button className="button quiet" onClick={copyEndpoint}>
+          <Icon name={copied ? 'i-check' : 'i-copy'} />
+          {copied ? 'Copied' : 'Copy endpoint'}
+        </button>
+        <Link href="/dashboard/keys" className="text-link">
+          Manage keys
+          <Icon name="i-right" />
+        </Link>
+      </div>
+      {copyError ? (
+        <Notice
+          tone="warn"
+          title="Copy was blocked by the browser."
+          next="Select and copy the endpoint above."
+        />
+      ) : null}
+      <div className="runtime-facts">
+        <span>
+          Gateway{' '}
+          <strong>
+            {health.data
+              ? `up ${fmtDuration(health.data.uptimeSeconds * 1000)}`
+              : health.loading
+                ? 'checking'
+                : 'unavailable'}
+          </strong>
+        </span>
+        <span>
+          Database <strong>{detail.data?.checks?.database?.status || 'not reported'}</strong>
+        </span>
+        <span>
+          Connected upstreams <strong>{m.connectedUpstreams?.value ?? '—'}</strong>
+        </span>
         <Freshness status={stream.status} lastDataAt={receivedAt} />
       </div>
-
-      <RouteMap usage={usage} conns={conns} stream={stream} receivedAt={receivedAt} now={now} />
-
-      <section aria-labelledby="h-gateway">
-        <h2 id="h-gateway">Gateway</h2>
-        {health.error && !health.data ? <Notice {...refusal(health.status, health.error)} /> : null}
-        <dl className="facts">
-          <dt>Process</dt>
-          <dd>
-            {health.data ? (
-              <>
-                <span className="status" data-tone="ok">
-                  Up
-                </span>{' '}
-                <span data-i18n-skip>{fmtDuration(health.data.uptimeSeconds * 1000)}</span>
-              </>
-            ) : health.loading ? (
-              <span className="skeleton">Reading</span>
-            ) : (
-              <span className="status" data-tone="bad">
-                Not answering
-              </span>
-            )}
-          </dd>
-          <dt>Database</dt>
-          <dd>
-            {db ? (
-              <>
-                <span className="status" data-tone={TONE[db.status] || 'warn'}>
-                  {WORDS[db.status] || db.status}
-                </span>{' '}
-                <span className="id" data-i18n-skip>
-                  {db.driver}
-                </span>{' '}
-                {db.latencyMs !== undefined && db.latencyMs !== null ? (
-                  <span data-i18n-skip>{fmtUnit(db.latencyMs, 'millisecond')}</span>
-                ) : null}
-                {db.error ? (
-                  <span className="caption" data-i18n-skip>
-                    {' '}
-                    {db.error}
-                  </span>
-                ) : null}
-              </>
-            ) : detail.loading ? (
-              <span className="skeleton">Reading</span>
-            ) : (
-              <span className="unreported">Not reported</span>
-            )}
-          </dd>
-          <dt>Upstream providers</dt>
-          <dd>
-            {state.data?.providerHealth ? (
-              <>
-                <span
-                  className="status"
-                  data-tone={TONE[state.data.providerHealth.status] || 'warn'}
-                >
-                  {WORDS[state.data.providerHealth.status] || state.data.providerHealth.status}
-                </span>
-                {state.data.providerHealth.degradedProviderCount ? (
-                  <span data-i18n-skip>
-                    {' '}
-                    {fmtNum(state.data.providerHealth.degradedProviderCount)}
-                  </span>
-                ) : null}
-                {state.data.providerHealth.unavailable ? (
-                  <span className="caption" data-i18n-skip>
-                    {' '}
-                    {state.data.providerHealth.unavailable}
-                  </span>
-                ) : null}
-              </>
-            ) : (
-              <span className="unreported">Not reported</span>
-            )}
-          </dd>
-          <dt>Traffic</dt>
-          <dd>
-            {fresh ? (
-              <>
-                {WORDS[fresh.state] || fresh.state}
-                {fresh.lastEventAt ? (
-                  <span data-i18n-skip> {fmtRelative(fresh.lastEventAt, now)}</span>
-                ) : null}
-              </>
-            ) : (
-              <span className="unreported">Not reported</span>
-            )}
-          </dd>
-        </dl>
-        {detail.data?.scanFailed ? (
-          <Notice
-            tone="warn"
-            title="The connection scan did not finish."
-            next="The list below may be short. It runs again on the next read."
-          />
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-hour">
-        <div className="screen-head">
-          <h2 id="h-hour">Last hour</h2>
-          <Freshness status={pollFresh(state)} lastDataAt={state.goodAt} />
-        </div>
-        {state.error && !state.data ? <Notice {...refusal(state.status, state.error)} /> : null}
-        <div className="measures">
-          <Measure
-            big
-            label="Spent today"
-            measure={usage ? { value: usage.totalCost ?? null } : null}
-            render={fmtUsd}
-          />
-          <Measure
-            label="Requests per second"
-            measure={m.throughput}
-            render={(v) => fmtNum(v, { maximumFractionDigits: 2 })}
-          />
-          <Measure label="Error rate" measure={m.errorRate} render={fmtPct} />
-          <Measure
-            label="Latency, slowest 5 percent"
-            measure={m.latencyP95}
-            render={(v) => fmtUnit(v, 'millisecond')}
-          />
-          <Measure label="Spent in the window" measure={m.spend} render={fmtUsd} />
-          <Measure label="Connected upstreams" measure={m.connectedUpstreams} render={fmtNum} />
-          <Measure label="Degraded upstreams" measure={m.degradedUpstreams} render={fmtNum} />
-          <Measure label="Failovers" measure={m.failoverCount} render={fmtNum} />
-        </div>
-        {state.data?.unanswerable?.length ? (
-          <p className="caption">
-            Some measures cannot be answered from what the gateway records. Each says why.
+      {state.data?.unanswerable?.length ? (
+        <details className="fold">
+          <summary>Telemetry coverage</summary>
+          <p>
+            Unavailable measures remain unknown. Model-specific cooldowns and quota pause decisions
+            may not be included in connection health.
           </p>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-windows">
-        <div className="screen-head">
-          <h2 id="h-windows">Quota windows</h2>
-          <Freshness status={pollFresh(quota)} lastDataAt={quota.goodAt} />
-        </div>
-        {quota.error && !quota.data ? <Notice {...refusal(quota.status, quota.error)} /> : null}
-        {quota.data && windows.length === 0 ? (
-          <p className="empty">
-            No connection reports a quota window yet. Windows appear after the first qualified
-            request.
-          </p>
-        ) : null}
-        {windows.length ? (
-          <div className="rows">
-            <div className="row head window">
-              <span>Connection</span>
-              <span>Remaining</span>
-              <span>Reset on the next six hours</span>
-            </div>
-            {windows.map((w) => (
-              <QuotaWindow
-                key={w.key}
-                provider={w.provider}
-                name={w.name}
-                window={w.window}
-                horizonMs={HORIZON_MS}
-                now={now}
-              />
+          <ul className="bullets">
+            {state.data.unanswerable.map((v, i) => (
+              <li key={i}>
+                {typeof v === 'string'
+                  ? v
+                  : v.reason || v.unavailable || v.name || 'This measure is not available.'}
+              </li>
             ))}
-            <div className="row window">
-              <span />
-              <span />
-              <Ruler horizonMs={HORIZON_MS} now={now} showScale />
-            </div>
-          </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-conns">
-        <h2 id="h-conns">Connections</h2>
-        {detail.error && !detail.data ? <Notice {...refusal(detail.status, detail.error)} /> : null}
-        {detail.data && conns.length === 0 ? (
-          <p className="empty">No connection is configured. Add one under Connections.</p>
-        ) : null}
-        {conns.length ? (
-          <div className="rows">
-            {conns.map((c) => (
-              <div
-                key={c.connectionId}
-                className="row"
-                style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}
-              >
-                <span className="who">
-                  <span className="name" data-i18n-skip>
-                    {c.displayName || c.provider}
-                  </span>
-                  <span className="sub">
-                    <span data-i18n-skip>{c.provider}</span>
-                    {c.lastError ? (
-                      <>
-                        {' '}
-                        <span data-i18n-skip>{c.lastError}</span>
-                      </>
-                    ) : null}
-                  </span>
-                </span>
-                <span className="status" data-tone={TONE[c.status] || 'warn'}>
-                  {WORDS[c.status] || c.status}
-                  {c.isDraining ? (
-                    <>
-                      {' '}
-                      <span>Draining</span>
-                    </>
-                  ) : null}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-gap">
-        <h2 id="h-gap">Not reported</h2>
-        <p>
-          Two things the gateway acts on every time it routes reach no readable field, so this
-          screen cannot show them.
-        </p>
-        <ul className="bullets">
-          <li>
-            Whether a connection is being skipped because a quota window crossed its auto-pause
-            threshold. Such a connection reads as healthy above.
-          </li>
-          <li>
-            Whether one model on a connection is locked out after a model-scoped failure, and until
-            when.
-          </li>
-        </ul>
-      </section>
+          </ul>
+        </details>
+      ) : null}
     </>
   );
 }

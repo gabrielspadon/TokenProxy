@@ -15,6 +15,10 @@ import './styles.css';
 // so several flags can share one stage and say so.
 const LAYERS = [
   { key: 'rtkEnabled', stage: 'rtk', name: 'Tool result reducer' },
+  { key: 'rtkAllowLossy', stage: 'rtk', name: 'Allow tool result elision' },
+  { key: 'schemaAllowLossy', stage: 'schema', name: 'Allow schema metadata removal' },
+  { key: 'headroomAllowLossy', stage: 'headroom', name: 'Allow external context rewriting' },
+  { key: 'pxpipeAllowLossy', stage: 'pxpipe', name: 'Allow visual context compression' },
   { key: 'memoryToolPruningEnabled', stage: 'mem', name: 'History pruning, tool turns' },
   { key: 'memoryMediaPruningEnabled', stage: 'mem', name: 'History pruning, attachments' },
   { key: 'memoryCompactionEnabled', stage: 'mem', name: 'History compaction' },
@@ -33,6 +37,37 @@ const LAYERS = [
   { key: 'ponytailEnabled', stage: 'inject', name: 'Ponytail prompt' },
   { key: 'headroomEnabled', stage: 'headroom', name: 'Headroom proxy' },
 ];
+const LOSSY_KEYS = new Set([
+  'memoryToolPruningEnabled',
+  'memoryMediaPruningEnabled',
+  'memoryCompactionEnabled',
+  'memoryHandoffEnabled',
+  'toolDisclosureEnabled',
+  'toolDisclosureFilterEnabled',
+  'privacyFilterEnabled',
+  'pxpipeEnabled',
+  'schemaDistillEnabled',
+  'thinkingStripEnabled',
+  'queryAwareCompressionEnabled',
+  'pairDropEnabled',
+  'embedReorderEnabled',
+  'headroomEnabled',
+]);
+function layerRisk(layer, settings) {
+  if (layer.key.endsWith('AllowLossy')) return 'Lossy opt-in';
+  if (layer.key === 'headroomEnabled')
+    return settings?.headroomAllowLossy === true ? 'Content-changing' : 'Semantic-preserving mode';
+  if (layer.key === 'schemaDistillEnabled')
+    return settings?.schemaAllowLossy === true ? 'Content-changing' : 'Preserving schemas';
+  if (layer.key === 'pxpipeEnabled')
+    return settings?.pxpipeAllowLossy === true ? 'Visual, lossy opt-in' : 'No content rewriting';
+  if (layer.key === 'rtkEnabled')
+    return settings?.rtkAllowLossy === true
+      ? 'Content removal, explicit opt-in'
+      : 'Semantic-preserving mode';
+  if (LOSSY_KEYS.has(layer.key)) return 'Content-changing';
+  return 'Prompt-changing';
+}
 const STAGES = [...new Set(LAYERS.map((l) => l.stage))];
 // Panel grouping only; every layer still switches on its own flag above.
 const GROUPS = [
@@ -160,7 +195,9 @@ export default function ShapingPage() {
       title: on ? 'Turn on a layer' : 'Turn off a layer',
       // The layer name is its own text node, so no sentence is split by it.
       layer: l.name,
-      changes: on ? TURN_ON_CHANGES : TURN_OFF_CHANGES,
+      changes: on
+        ? `${TURN_ON_CHANGES} ${layerRisk(l, s)}. Existing content removed by this layer cannot be recovered merely by turning it off.`
+        : TURN_OFF_CHANGES,
       undo: on ? 'Turn it off again here.' : 'Turn it back on here. Numbers already recorded stay.',
       body: { [l.key]: on },
       done: on ? 'Turned on.' : 'Turned off.',
@@ -216,7 +253,14 @@ export default function ShapingPage() {
                             <span className="who">
                               <span className="name">{l.name}</span>
                               <span className="sub">
-                                <span data-i18n-skip>{l.stage}</span>
+                                <span
+                                  className="risk-chip"
+                                  data-risk={
+                                    layerRisk(l, s).startsWith('Semantic') ? 'safe' : 'changing'
+                                  }
+                                >
+                                  {layerRisk(l, s)}
+                                </span>
                               </span>
                             </span>
                             <span className="status" data-tone={on ? 'ok' : undefined}>

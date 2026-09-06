@@ -1,84 +1,126 @@
 'use client';
+import Link from 'next/link';
+import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
+import { Notice } from '@/shared/components/Notice';
+import { refusal } from '@/shared/refusal';
 
-// §14 (Local Tool Integrations) and §15 (Local Extension Bridge). Neither
-// backend surface answers a read today: `/api/cli-tools/**` is documented in
-// docs/contract/06-tools-system.md §2 (all-statuses, per-tool settings,
-// antigravity-mitm) but is absent from the source tree and returns 404 live
-// (verified against 127.0.0.1:20143). `/api/mcp/[plugin]/{sse,message}` is
-// live (docs/contract/06-tools-system.md:123-126) but has no index or
-// status route, so "which extensions are running" is unanswerable without
-// opening a connection, which spawns a child process as a side effect.
 export default function ToolsPage() {
+  const tools = usePoll('/api/tools', 15000);
+  const data = tools.data;
+  const summary = data?.summary;
+  const state = tools.error
+    ? tools.goodAt
+      ? 'stale'
+      : 'reconnecting'
+    : tools.loading
+      ? 'connecting'
+      : 'live';
   return (
     <>
       <div className="screen-head">
-        <h1>Tools</h1>
-        <Freshness status="live" lastDataAt={null} />
+        <div className="page-title">
+          <h1>Tools</h1>
+          <p className="screen-subtitle">The local extensions connected to your gateway.</p>
+        </div>
+        <button className="button quiet" onClick={tools.refresh}>
+          <Icon name="i-refresh" />
+          Refresh
+        </button>
+        <Freshness status={state} lastDataAt={tools.goodAt} />
       </div>
-
-      <section aria-labelledby="h-integrations">
-        <h2 id="h-integrations">
-          <Icon name="i-tools" />
-          Tool integrations
-        </h2>
-        <p>
-          A tool integration is one coding agent installed on this machine whose configuration the
-          gateway can take over, so its traffic arrives here instead of at its vendor. Some tools
-          expose a configurable endpoint; others can only be reached by intercepting their traffic,
-          which changes machine-wide name resolution and the certificate trust store rather than
-          only the tool.
+      {tools.error ? <Notice {...refusal(tools.status, tools.error)} /> : null}
+      <div className="kpi-grid">
+        <div className="kpi">
+          <div className="kpi-label">
+            Configured extensions
+            <Icon name="i-tools" />
+          </div>
+          <div className="kpi-value">{summary?.presets ?? '—'}</div>
+          <p className="kpi-foot">Available local bridge presets</p>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">
+            Running
+            <Icon name="i-connections" />
+          </div>
+          <div className="kpi-value">{summary?.running ?? '—'}</div>
+          <p className="kpi-foot">Processes observed by this gateway</p>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">
+            Attached clients
+            <Icon name="i-sessions" />
+          </div>
+          <div className="kpi-value">{summary?.clients ?? '—'}</div>
+          <p className="kpi-foot">Open bridge connections</p>
+        </div>
+      </div>
+      <section>
+        <div className="screen-head">
+          <h2>Local extension bridge</h2>
+          <span className="caption">Observed local process state</span>
+        </div>
+        {tools.loading && !data ? (
+          <p className="skeleton">Reading extensions</p>
+        ) : data?.presets?.length ? (
+          <div className="tool-cards">
+            {data.presets.map((p) => (
+              <article className="tool-card" key={p.id}>
+                <div className="tool-card-head">
+                  <span className="tool-symbol">
+                    <Icon name="i-tools" />
+                  </span>
+                  <div>
+                    <h3 data-i18n-skip>{p.name}</h3>
+                    <p>{p.transport} bridge</p>
+                  </div>
+                  <span className="status" data-tone={p.running ? 'ok' : undefined}>
+                    {p.running ? 'Running' : 'Stopped'}
+                  </span>
+                </div>
+                <div className="tool-card-facts">
+                  <span>{p.clients} clients</span>
+                  <code>{p.endpoint}</code>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : data ? (
+          <div className="chart-empty">
+            <Icon name="i-tools" />
+            <strong>No local extensions configured</strong>
+            <span>Configured MCP presets appear here when the gateway can read them.</span>
+          </div>
+        ) : null}
+        <p className="chart-disclosure">
+          Viewing this page reads existing state. An extension starts when a client attaches to its
+          bridge endpoint.
         </p>
-        <div className="notice">
-          <p className="empty">
-            No route currently answers which tools are present, taken over, or intercepted, so this
-            screen cannot list them or offer a take-over, hand-back, model-mapping, or interception
-            action.
-          </p>
+      </section>
+      <section>
+        <h2>Connect a coding client</h2>
+        <p className="screen-subtitle">
+          Point a client that supports a custom OpenAI-compatible endpoint to this gateway, then use
+          a gateway API key.
+        </p>
+        <div className="endpoint-bar">
+          <Icon name="i-keys" />
+          <span>Endpoint and keys</span>
+          <Link className="text-link" href="/dashboard/keys">
+            Open connection details
+            <Icon name="i-right" />
+          </Link>
         </div>
       </section>
-
-      <section aria-labelledby="h-bridge">
-        <h2 id="h-bridge">
-          <Icon name="i-connections" />
-          Local extension bridge
-        </h2>
-        <p>
-          A local extension is a program on this machine that speaks a line-oriented protocol over
-          its own input and output. The bridge relays a connected tool&apos;s calls to that program
-          over a server-sent-events connection, opening the extension&apos;s process the first time
-          a tool attaches and truncating or collapsing its output before relaying it.
+      <details className="fold">
+        <summary>Integration capabilities</summary>
+        <p className="caption">
+          Automatic client takeover, interception, and vendor-model remapping are not exposed by
+          this gateway. Configure your client’s endpoint directly.
         </p>
-        <div className="notice">
-          <p className="empty">
-            No route reports which extensions are available, which are running, or whether a tool is
-            attached right now. Opening that view would mean starting an extension&apos;s process as
-            a side effect of viewing a dashboard, so this screen does not attempt it.
-          </p>
-        </div>
-      </section>
-
-      <section aria-labelledby="h-gap">
-        <h2 id="h-gap">
-          <Icon name="i-alert" />
-          Not reported
-        </h2>
-        <p>Two facts this screen would otherwise show have no route to read them from.</p>
-        <ul className="bullets">
-          <li>
-            Every tool-integration attribute and action: which tools are present, taken over, or
-            intercepted; what was written into a tool&apos;s configuration and what it replaced; how
-            a tool&apos;s vendor model names map onto gateway models; and whether the interception
-            redirection and certificate are currently in place. The backing libraries exist on disk,
-            but no HTTP route calls them.
-          </li>
-          <li>
-            Whether a local extension is running and whether a tool is attached to it. The bridge
-            itself works end to end once a tool connects; only its status is unreported here.
-          </li>
-        </ul>
-      </section>
+      </details>
     </>
   );
 }

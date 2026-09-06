@@ -1,6 +1,7 @@
 import "@/lib/network/initOutboundProxy";
 import "@/shared/services/bootstrap";
 import "./globals.css";
+import "./operator.css";
 import { initConsoleLogCapture } from "@/lib/consoleLogBuffer";
 import { getServerLocale } from "@/i18n/server";
 import { getLocaleDirection } from "@/i18n/config";

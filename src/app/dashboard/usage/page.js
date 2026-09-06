@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { useEventStream } from '@/shared/hooks/useEventStream';
 import { useUsageStream } from '@/store/usageStream';
+import { TrafficChart } from '@/shared/components/TrafficChart';
+import { ProviderMark } from '@/shared/components/ProviderMark';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
@@ -378,19 +380,7 @@ export default function UsagePage() {
           <>
             {peak > 0 ? (
               <>
-                <ul className="spark" aria-hidden="true" data-i18n-skip>
-                  {series.map((b, i) => (
-                    <li
-                      key={b.bucketStart ?? `${b.label}-${i}`}
-                      data-peak={(b.cost || 0) === peak ? 'true' : undefined}
-                      style={{
-                        height: `${Math.max(1, ((b.cost || 0) / peak) * 100)}%`,
-                        animationDelay: `${Math.min(i * 12, 360)}ms`,
-                      }}
-                      title={`${b.label} ${fmtUsd(b.cost || 0)}`}
-                    />
-                  ))}
-                </ul>
+                <TrafficChart data={series} metric="cost" height={240}/>
                 <p className="spark-meta">
                   <span data-i18n-skip>{series[0]?.label}</span>
                   <span>

@@ -5,6 +5,7 @@ import { LocaleSelect } from "@/shared/components/LocaleSelect";
 import { useSearch } from "@/shared/hooks/useSearch";
 import { refusal } from "@/shared/refusal";
 import { fmtUnit } from "@/shared/format";
+import { Brand } from '@/shared/components/Brand';
 
 const START_ERRORS = {
   oidc_not_configured: "OIDC is not configured on this gateway.",
@@ -84,9 +85,9 @@ export default function LoginPage() {
   return (
     <main className="login">
       <div className="login-card">
-        <span className="brand" data-i18n-skip>TokenProxy</span>
+        <span className="brand" data-i18n-skip><Brand /></span>
         <h1>Sign in</h1>
-        <p className="caption">This surface holds every credential the gateway routes with, so it stays behind a password even on your own machine.</p>
+        <p className="caption">Your models, connections, and context. Sign in to the gateway control room.</p>
         {startError ? <Notice tone="bad" title={startError.title} detail={startError.detail} /> : null}
         {showPassword ? (
           <form onSubmit={submit}>

@@ -62,7 +62,7 @@ export default function ModelsPage() {
   }, [models.data, q]);
 
   // ponytail: plain slice cap, virtualize if the catalog ever needs to render whole
-  const CAP = 100;
+  const CAP = 25;
   const shown = showAll || filtered.length <= CAP ? filtered : filtered.slice(0, CAP);
 
   const connections = conns.data?.checks?.connections || [];
@@ -475,7 +475,7 @@ export default function ModelsPage() {
           </p>
         ) : null}
         {filtered.length ? (
-          <div className="rows">
+          <div className="rows model-catalog-list" tabIndex={0} aria-label="Model catalog">
             <div className="row head models-row">
               <span>Model</span>
               <span>Capabilities</span>

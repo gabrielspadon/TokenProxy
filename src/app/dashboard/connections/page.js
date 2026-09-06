@@ -11,6 +11,7 @@ import { runGrant, importPasted } from "@/shared/oauthGrant";
 import { TONE, WORDS, AUTH } from "@/shared/status";
 import { fmtNum, fmtRelative, fmtTime } from "@/shared/format";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { ProviderMark } from '@/shared/components/ProviderMark';
 import { Icon } from "@/shared/components/Icon";
 import "./styles.css";
 
@@ -273,7 +274,7 @@ export default function ConnectionsPage() {
         {rows.map((r) => (
           <div className="row connections-row" key={r.id}>
             <div className="who">
-              <Link prefetch={false} href={`/dashboard/connections/${r.id}`} className="name" data-i18n-skip>{r.name}</Link>
+              <Link prefetch={false} href={`/dashboard/connections/${r.id}`} className="name connection-name" data-i18n-skip><ProviderMark provider={r.provider}/>{r.name}</Link>
               <span className="sub"><span data-i18n-skip>{r.provider}</span> · {AUTH[r.authType] || r.authType} · priority <span data-i18n-skip>{fmtNum(r.priority ?? 0)}</span></span>
             </div>
             <div>
