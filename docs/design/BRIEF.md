@@ -39,7 +39,7 @@ Read these, in this order. They are the whole of the input.
    reading aid only.
 2. `docs/contract/*.md`. Field-level HTTP contracts for every operator
    route, verified against server source, with auth class and error shape
-   per route. `07-runtime-inventory.md` covers telemetry fields, control
+   per route. `01-route-inventory.md` is the route-by-route map with auth class and side effects; `07-runtime-inventory.md` covers telemetry fields, control
    surfaces, persistence, security, timers, and the provider registry
    shape, with `file:line` citations.
 3. `CLAUDE.md`, `open-sse/AGENTS.md`, `.env.example`, `next.config.mjs`,
@@ -115,12 +115,12 @@ connections and aliases with it) and every irreversible action (delete,
 update, shutdown, database import which requires the password in an
 `x-tp-password` header) get a confirmation that names what is destroyed.
 
-Locale: thirty-five locales in `src/i18n/config.js`; `he`, `ar`, `fa`, `ur`
+Locale: thirty-five locales in `src/i18n/config.js` (English plus thirty-four translated files); `he`, `ar`, `fa`, `ur`
 are right-to-left. Literals live at `public/i18n/literals/<locale>.json`
 keyed by the English string. `POST /api/locale {locale}` sets the cookie.
 The existing runtime translator in `src/i18n/runtime.js` walks the DOM; you
 may keep it, wrap it, or replace it with something better, but every visible
-string ships in all thirty-five files and German, Vietnamese, Chinese and
+string ships in all thirty-four translated files and German, Vietnamese, Chinese and
 Persian are layout tests, not afterthoughts.
 
 Stack: Next 16 app router, React 19.2, plain JavaScript ESM, `@/*` to
@@ -173,30 +173,57 @@ plumbing, tabular numerals for data.
 </design_direction>
 
 <how_to_work>
-You design and you write every line of UI code. Judgment stays with you.
-Retrieval does not: use the `backend-reader` subagent for any question that
-means opening more than three server files, the `contract-reader` subagent
-to pull exact field names and error shapes out of `docs/contract`, and the
-`ui-verifier` subagent to run the mechanical checks and return numbers.
-Keep working while they run. Never delegate a design decision, a
-component, or a stylesheet.
+You hold judgment: every design decision, every component, every stylesheet,
+every hook, every line under `src/app`, `src/shared/components`, and
+`src/store` is yours and only yours. Everything transient is delegated to
+the cheaper agents in `.claude/agents/`, and you keep working while they
+run. The split is not advisory; it is how the session stays affordable and
+resumable.
+
+| Work | Owner |
+|---|---|
+| Design, tokens, layout, copy, components, styles, state, wiring | you |
+| Reading more than three server files for a fact | `backend-reader` |
+| Exact field names, auth class, refusal shapes for a route | `contract-reader` |
+| Running evidence, smoke, lint, e2e; returning counts | `evidence-runner` |
+| Looking at the screenshots for visual defects | `screenshot-reviewer` |
+| Adding missing strings to the 34 literal files | `locale-writer` |
+| Writing `progress.md`, `tests.json`, committing a slice | `scribe` |
+
+Never take a screenshot yourself, never open a `.png`, never edit a literal
+file, never write `progress.md` by hand. Ask the owning agent and read its
+numbers. Delegate a task to an agent by name with the exact inputs it needs
+(slice name, routes, string list, changed paths) in one message.
 
 Order of work:
 
 1. Read the inputs. Write `docs/design/plan.md`: the token system, the
    information architecture derived from `DESIGN.md` sections (which
    concepts share a surface, which stand alone, what the first screen
-   answers), the self-critique, and what you changed after it. This is the
-   one place you explain a decision; code carries none of it.
+   answers), the self-critique, what you changed after it, and the ordered
+   slice list you will build, each slice naming its `DESIGN.md` sections and
+   its routes. This is the one place you explain a decision; code carries
+   none of it. Have `scribe` seed `tests.json` from that slice list.
 2. Build the shell, `/login`, `/callback`, and the first screen end to end
    against the live instance, including the auth states, before any other
-   screen. Show it to the user with screenshots at 390, 768, 1440.
-3. Then the rest, one `DESIGN.md` section at a time, each wired to its real
-   routes, each with its loading, empty, error, forbidden, and stale states,
-   each screenshotted and checked before the next. Keep `progress.md` and
-   `tests.json` current so a fresh context window can resume from disk.
-4. Commit after every coherent slice with a Conventional Commits subject and
-   a body that names the `DESIGN.md` section it covers. Never `git add -A`.
+   screen. Send it through the evidence loop below, then show the user the
+   evidence summary and the paths of three screenshots (390, 768, 1440).
+3. Then the rest, one slice at a time, each wired to its real routes, each
+   with its loading, empty, error, forbidden, and stale states, each through
+   the evidence loop before the next.
+4. Maintain `docs/design/strings.json`: a JSON array of every English string
+   the UI renders. Add to it as you write copy; the evidence script gates
+   literal coverage on it.
+
+The evidence loop, after every slice:
+
+1. `evidence-runner` with the slice name and routes. It returns failing lines.
+2. Fix what is yours; send string gaps to `locale-writer`; rerun 1 until
+   `PASS`.
+3. `screenshot-reviewer` on the slice's evidence directory. Fix real
+   defects; taste comments are not defects. Rerun 1 if you changed anything.
+4. `scribe` with the slice name, sections, changed paths, evidence summary,
+   and what is next. It commits. Read back the `git log` line it returns.
 
 Prefer targeted edits over rewriting a file. Don't add features, refactor
 server code, or introduce abstractions beyond what the surface requires.
@@ -211,6 +238,29 @@ yet verified, say so explicitly. Report outcomes faithfully: if tests fail,
 say so with the output; if a step was skipped, say that.
 </how_to_work>
 
+<resuming>
+Sessions end: rate limits, a closed terminal, a compaction that lost the
+thread. The state that matters is on disk, never only in this conversation.
+On any start, including the first, before touching a file:
+
+1. `pwd`; you can only read and write inside this worktree.
+2. `git log --oneline -15` and `git status --short`. Uncommitted work is
+   real work; read the diff before deciding whether it is finished.
+3. Read `docs/design/progress.md` (newest entry first) and
+   `docs/design/tests.json`. The first slice whose status is not `passing`
+   is where you resume. If `plan.md` does not exist, this is the first
+   session and you start at step 1 of the order of work.
+4. If the isolated instance is not up (`curl -s http://127.0.0.1:20143/api/health`),
+   start it: `PORT=20143 DATA_DIR=/tmp/tp-rebuild-data scripts/dev-test-server.sh up`,
+   with `SKIP_BUILD=1` when `.next` is fresher than your last change.
+5. Re-run `evidence-runner` on the last passing slice before writing
+   anything new, so a regression from an unfinished edit shows up first.
+
+Every slice ends with `scribe` committing it, so a killed session loses at
+most one slice. Never leave a slice half-built across a turn end without a
+`progress.md` entry that says exactly which files are unfinished.
+</resuming>
+
 <verification>
 The check loop closes on its own only if you run it. The isolated instance
 is yours; production on 20128 and the other listeners on 20127, 20129, 20140
@@ -224,15 +274,19 @@ cd tests && npx vitest run --reporter=json --outputFile.json=/tmp/run.json \
   && node __baseline__/verify-no-regression.mjs /tmp/run.json
 ```
 
-Browser checks go through the `playwright` MCP (screenshots, a11y
-snapshots, console errors) and `@axe-core/playwright`, which is installed.
-Write your own end-to-end specs under `tests/e2e/` against
-`E2E_BASE_URL=http://127.0.0.1:20143`; the config there has no `webServer`
-on purpose. Screenshot every screen at 390, 768 and 1440, in `en`, `de`,
-`vi`, `zh-CN`, and `fa` (`dir="rtl"`), and look at them: a picture is worth
-a thousand tokens. Console must be clean. Lighthouse and a performance
-trace are available through the `chrome-devtools` MCP when a screen feels
-slow.
+`docs/design/scripts/evidence.mjs` is the deterministic check:
+`node docs/design/scripts/evidence.mjs --slice <name> --routes <a,b>` loads
+each route at 390, 768 and 1440 in `en`, `de`, `vi`, `zh-CN`, and `fa`
+(`dir="rtl"`), screenshots it, and fails on a non-200, a console error, a
+request to any non-loopback host, a serious or critical axe violation,
+horizontal overflow, a missing `dir="rtl"`, or a string in
+`docs/design/strings.json` absent from any literal file. Its report is
+`docs/design/evidence/<slice>/report.json`. `evidence-runner` runs it for
+you. Write your own end-to-end specs under `tests/e2e/` for behaviour the
+script cannot see (a drain confirmation, a 412 rendered, a stream going
+stale); the config there has no `webServer` on purpose. Lighthouse and a
+performance trace are available through the `chrome-devtools` MCP when a
+screen feels slow.
 
 Done means all of this is true and shown, not asserted:
 
@@ -243,14 +297,13 @@ Done means all of this is true and shown, not asserted:
 - Every mutating action shows precondition, blast radius, reversibility,
   and the exact refusal shapes above.
 - No credential, raw key, or session identity is rendered anywhere.
-- Smoke, lint, the unit baseline gate, and your e2e specs pass on the
-  isolated instance, with output in the transcript.
-- axe reports zero serious or critical violations on every screen.
-- Every visible string exists in all thirty-five literal files; the four
-  RTL locales render mirrored without overflow at 390 px.
-- No runtime request leaves the browser for a third-party host.
-- `docs/design/plan.md`, `progress.md`, `tests.json` are current and the
-  worktree is committed and clean.
+- `evidence.mjs` reports `PASS` for every slice in `tests.json`, and
+  smoke, lint, the unit baseline gate, and your e2e specs pass on the
+  isolated instance, all with output returned by `evidence-runner`.
+- `screenshot-reviewer` reports zero defects on the final evidence set.
+- `docs/design/plan.md`, `strings.json`, `progress.md`, `tests.json` are
+  current, every slice in `tests.json` is `passing`, and `git status` is
+  clean.
 </verification>
 
 <autonomy>
