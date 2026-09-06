@@ -7,6 +7,7 @@ import { latestVersion } from '../../src/lib/db/migrations/index.js';
 import { QUOTA_HISTORY_TABLES } from '../../src/lib/db/schema/quotaHistory.js';
 import { CONFIG_VERSION_TABLES } from '../../src/lib/db/configVersionSchema.js';
 import { CONTEXT_EVIDENCE_TABLES, REQUEST_IDENTITY_COLUMNS } from '../../src/lib/db/contextEvidenceSchema.js';
+import { API_KEY_BUDGET_COLUMNS, BUDGET_TABLES } from '../../src/lib/db/budgetSchema.js';
 import { DATA_FILE } from '../../src/lib/db/paths.js';
 
 const additions = ['requestId', 'logicalRequestId', 'attempt', 'contextSessionId', 'projectId',
@@ -18,9 +19,10 @@ describe('usage attribution additive migration', () => {
     mkdirSync(dirname(DATA_FILE), { recursive: true });
     const old = new DatabaseSync(DATA_FILE);
     for (const [name, definition] of Object.entries(TABLES)) {
-      if (name === 'usageRateSnapshots' || name in QUOTA_HISTORY_TABLES || name in CONFIG_VERSION_TABLES || name in CONTEXT_EVIDENCE_TABLES) continue;
+      if (name === 'usageRateSnapshots' || name in QUOTA_HISTORY_TABLES || name in CONFIG_VERSION_TABLES || name in CONTEXT_EVIDENCE_TABLES || name in BUDGET_TABLES) continue;
       const columns = Object.fromEntries(Object.entries(definition.columns).filter(([key]) =>
         !(name === 'usageHistory' && additions.includes(key))
+        && !(name === 'apiKeys' && key in API_KEY_BUDGET_COLUMNS)
         && !(name === 'requestStats' && ['rateSnapshotId', 'pricingCapturedAt', 'dispatchCoverage', ...Object.keys(REQUEST_IDENTITY_COLUMNS)].includes(key))));
       old.exec(buildCreateTableSql(name, { ...definition, columns }));
     }
@@ -36,7 +38,7 @@ describe('usage attribution additive migration', () => {
     expect(rows.map((row) => row.cost)).toEqual([1.25, 0]);
     for (const row of rows) for (const field of additions) expect(row[field]).toBeNull();
     expect(db.all('SELECT * FROM usageRateSnapshots')).toEqual([]);
-    for (const table of Object.keys({ ...QUOTA_HISTORY_TABLES, ...CONFIG_VERSION_TABLES, ...CONTEXT_EVIDENCE_TABLES })) {
+    for (const table of Object.keys({ ...QUOTA_HISTORY_TABLES, ...CONFIG_VERSION_TABLES, ...CONTEXT_EVIDENCE_TABLES, ...BUDGET_TABLES })) {
       expect(db.all(`SELECT * FROM ${table}`)).toEqual([]);
     }
     db.run('INSERT INTO usageHistory(timestamp,requestId) VALUES(?,?)', ['2026-09-06T13:00:00.000Z', 'attempt-1']);
