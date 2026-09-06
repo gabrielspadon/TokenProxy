@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Deterministic evidence for one slice of the operator surface. Runs against
 // the isolated instance only, writes files, prints one line per check, exits
-// non-zero on any failure. No model reads screenshots by default: the numbers
-// in evidence/<slice>/report.json are what the lead reads.
+// non-zero on any failure. The lead reads the screenshots it writes; the
+// numbers in evidence/<slice>/report.json are the pass/fail record.
 //
 //   node docs/design/scripts/evidence.mjs --slice login --routes /login
 //   node docs/design/scripts/evidence.mjs --slice all --routes /dashboard,/dashboard/keys

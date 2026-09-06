@@ -183,17 +183,25 @@ resumable.
 | Work | Owner |
 |---|---|
 | Design, tokens, layout, copy, components, styles, state, wiring | you |
+| Looking at every screenshot, judging it, deciding the fix | you |
 | Reading more than three server files for a fact | `backend-reader` |
 | Exact field names, auth class, refusal shapes for a route | `contract-reader` |
-| Running evidence, smoke, lint, e2e; returning counts | `evidence-runner` |
-| Looking at the screenshots for visual defects | `screenshot-reviewer` |
+| Producing screenshots and running smoke, lint, e2e; returning counts | `evidence-runner` |
+| A second pair of eyes on the screenshots after you have looked | `screenshot-reviewer` |
 | Adding missing strings to the 34 literal files | `locale-writer` |
 | Writing `progress.md`, `tests.json`, committing a slice | `scribe` |
 
-Never take a screenshot yourself, never open a `.png`, never edit a literal
-file, never write `progress.md` by hand. Ask the owning agent and read its
-numbers. Delegate a task to an agent by name with the exact inputs it needs
-(slice name, routes, string list, changed paths) in one message.
+You look at what you build. After every slice, open the screenshots under
+`docs/design/evidence/<slice>/` with the Read tool, at least one per width
+and one in `fa`, and critique them the way the skill asks: what reads as a
+default, what is the memorable thing, what would you remove. A picture is
+worth a thousand tokens, and it is the only way you will catch a clipped
+label, a baseline that drifts, or a screen that is merely correct. What you
+do not do is take the screenshots or run the checks yourself; the agents
+produce them so your tokens go to seeing and deciding, not to driving a
+browser. Never edit a literal file or write `progress.md` by hand. Delegate
+a task to an agent by name with the exact inputs it needs (slice name,
+routes, string list, changed paths) in one message.
 
 Order of work:
 
@@ -217,11 +225,13 @@ Order of work:
 
 The evidence loop, after every slice:
 
-1. `evidence-runner` with the slice name and routes. It returns failing lines.
-2. Fix what is yours; send string gaps to `locale-writer`; rerun 1 until
-   `PASS`.
-3. `screenshot-reviewer` on the slice's evidence directory. Fix real
-   defects; taste comments are not defects. Rerun 1 if you changed anything.
+1. `evidence-runner` with the slice name and routes. It returns failing
+   lines and writes the screenshots.
+2. Read the screenshots yourself. Fix what you see and what the numbers
+   say; send string gaps to `locale-writer`; rerun 1 until `PASS`.
+3. `screenshot-reviewer` on the slice's evidence directory, for the
+   defects a second look finds. Fix real defects; taste comments are not
+   defects. Rerun 1 and look again if you changed anything.
 4. `scribe` with the slice name, sections, changed paths, evidence summary,
    and what is next. It commits. Read back the `git log` line it returns.
 
@@ -300,7 +310,8 @@ Done means all of this is true and shown, not asserted:
 - `evidence.mjs` reports `PASS` for every slice in `tests.json`, and
   smoke, lint, the unit baseline gate, and your e2e specs pass on the
   isolated instance, all with output returned by `evidence-runner`.
-- `screenshot-reviewer` reports zero defects on the final evidence set.
+- You have read the final screenshot of every slice at every width and
+  in `fa`, and `screenshot-reviewer` reports zero defects on the same set.
 - `docs/design/plan.md`, `strings.json`, `progress.md`, `tests.json` are
   current, every slice in `tests.json` is `passing`, and `git status` is
   clean.
