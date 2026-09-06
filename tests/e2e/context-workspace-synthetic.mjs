@@ -18,6 +18,32 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const report = { fixture: 'synthetic SQLite runtime', checks: [], pageErrors: [] };
+async function firstViewRows() {
+  return page.getByRole('table', { name: 'Session request attempts' }).evaluate((table) => {
+    let top = 0, bottom = innerHeight;
+    for (let parent = table.parentElement; parent; parent = parent.parentElement) {
+      if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(parent).overflowY)) {
+        const bounds = parent.getBoundingClientRect();
+        top = Math.max(top, bounds.top);
+        bottom = Math.min(bottom, bounds.bottom);
+      }
+    }
+    const rows = [...table.querySelectorAll('tbody tr')].map((row) => {
+      const bounds = row.getBoundingClientRect();
+      return { top: bounds.top, bottom: bounds.bottom,
+        fullyVisible: bounds.top >= top && bounds.bottom <= bottom,
+        partlyVisible: bounds.bottom > top && bounds.top < bottom };
+    });
+    return { viewport: { width: innerWidth, height: innerHeight }, clip: { top, bottom },
+      fullRows: rows.filter((row) => row.fullyVisible).length,
+      intersectingRows: rows.filter((row) => row.partlyVisible).length, rows: rows.slice(0, 6) };
+  });
+}
+async function accessibilityViolations() {
+  const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+  return result.violations.map((v) => ({ id: v.id,
+    nodes: v.nodes.map((n) => ({ target: n.target, failure: n.failureSummary })) }));
+}
 page.on('pageerror', (e) => report.pageErrors.push(e.message));
 try {
   const login = await page.request.post(`${base}/api/auth/login`, {
@@ -37,10 +63,12 @@ try {
   assert.equal(await attempts.locator('tbody tr').count(), 25);
   assert.equal(await sessions.count(), 3);
   await page.evaluate(() => window.scrollTo(0, 0));
+  report.firstView1440 = await firstViewRows();
   await page.screenshot({ path: path.join(output, 'synthetic-context-1440.png'), fullPage: true });
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.waitForTimeout(350);
   await page.evaluate(() => window.scrollTo(0, 0));
+  report.firstView1920 = await firstViewRows();
   await page.screenshot({ path: path.join(output, 'synthetic-context-1920.png'), fullPage: true });
   const next = page.getByRole('button', { name: 'Next attempts page', exact: true });
   for (const number of [2, 3]) {
@@ -87,13 +115,18 @@ try {
   assert(animations.every((item) => item.running === 0));
   assert(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches));
   report.checks.push({ reducedMotionPreference: true, canvasAnimations: animations });
-  const accessibility = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
-    .analyze();
-  report.accessibility = accessibility.violations.map((v) => ({
-    id: v.id,
-    nodes: v.nodes.map((n) => ({ target: n.target, failure: n.failureSummary })),
-  }));
+  report.accessibility = await accessibilityViolations();
+  assert.deepEqual(report.accessibility, []);
+  report.inspectorTabs = [];
+  for (const [name, target] of [['Recorded controls', 'controls'], ['Session routing', 'routing']]) {
+    await dock.getByText(name, { exact: true }).click();
+    assert(await dock.getByRole('radio', { name, exact: true }).isChecked());
+    const violations = await accessibilityViolations();
+    report.inspectorTabs.push({ name, violations });
+    assert.deepEqual(violations, []);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(output, `synthetic-context-${target}.png`), fullPage: true });
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(350);
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -104,6 +137,8 @@ try {
   report.mobileOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > innerWidth
   );
+  report.mobileAccessibility = await accessibilityViolations();
+  assert.deepEqual(report.mobileAccessibility, []);
   assert.deepEqual(report.pageErrors, []);
   assert.equal(report.mobileOverflow, false);
 } catch (error) {
