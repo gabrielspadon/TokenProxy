@@ -14,8 +14,8 @@ const request = () => ({ model: "gpt-4.1", body: body(), stream: false, credenti
 const bootstrap = () => Response.json({ jwt: `fixture.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url")}.fixture` });
 beforeEach(() => { vi.restoreAllMocks(); fetchMock.mockReset(); mimo.resetJwtCache(); });
 
-it.each(["vertex", "github-messages", "github-responses"])("brackets the exact paid wire request for %s", async kind => {
-  const executor = kind === "vertex" ? new VertexExecutor() : new GithubExecutor();
+it.each(["vertex", "ollama", "github-messages", "github-responses"])("brackets the exact paid wire request for %s", async kind => {
+  const executor = kind === "vertex" ? new VertexExecutor() : kind === "ollama" ? new OllamaLocalExecutor() : new GithubExecutor();
   const options = request();
   if (kind === "github-messages") options.model = "claude-sonnet-4.6";
   if (kind === "github-responses") executor.knownCodexModels.add(options.model);
@@ -115,6 +115,24 @@ it("marks only the recognized GitHub endpoint rejection as proven nonacceptance"
   expect(afterDispatch).toHaveBeenCalledWith({ response: refused, nonacceptance: "model-endpoint-unsupported" });
   expect(fallback).toHaveBeenCalledOnce();
   expect(refused.bodyUsed).toBe(true);
+});
+
+it("retains two distinct physical callbacks across actual GitHub endpoint fallback", async () => {
+  const executor = new GithubExecutor(), events = [];
+  const options = request();
+  fetchMock.mockResolvedValueOnce(new Response("The requested model is not supported", { status: 400 }))
+    .mockResolvedValueOnce(new Response("quota", { status: 429 }));
+  const beforeDispatch = vi.fn(event => { events.push(["before", event.url]); });
+  const afterDispatch = vi.fn(event => { events.push(["after", event.response.status, event.nonacceptance ?? null]); });
+  const result = await executor.execute({ ...options, beforeDispatch, afterDispatch });
+  expect(result.response.status).toBe(429);
+  expect(beforeDispatch).toHaveBeenCalledTimes(2);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(events).toEqual([
+    ["before", executor.config.baseUrl], ["after", 400, null],
+    ["after", 400, "model-endpoint-unsupported"],
+    ["before", executor.config.responsesUrl], ["after", 429, null],
+  ]);
 });
 
 it("keeps replay-unsafe GitHub failures intact without trying another endpoint", async () => {
