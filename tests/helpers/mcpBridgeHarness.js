@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm";
 
 const source = readFileSync(new URL("../../src/lib/mcp/stdioSseBridge.js", import.meta.url), "utf8");
 
-export function createMockBridge({ register = true } = {}) {
+export function createMockBridge({ register = true, platform = "win32" } = {}) {
   const children = [];
   const spawn = vi.fn(() => {
     const proc = Object.assign(new EventEmitter(), {
@@ -19,8 +19,9 @@ export function createMockBridge({ register = true } = {}) {
   });
   const send = vi.fn();
   let nextId = 0;
+  const processMock = { env: {}, platform, kill: vi.fn() };
   const sandbox = {
-    module: { exports: {} }, globalThis: {}, process: { env: {}, platform: "win32" }, console,
+    module: { exports: {} }, globalThis: {}, process: processMock, console,
     Buffer, setTimeout, clearTimeout,
     require(name) {
       if (name === "child_process") return { spawn };
@@ -38,6 +39,5 @@ export function createMockBridge({ register = true } = {}) {
   runInNewContext(source, sandbox);
   const api = sandbox.module.exports;
   const sid = register ? api.registerSession("fixture", send) : null;
-  return { emit: (bytes) => children[0].stdout.emit("data", bytes), send, api, children, spawn, sid };
+  return { emit: (bytes) => children[0].stdout.emit("data", bytes), send, api, children, spawn, sid, processMock };
 }
-

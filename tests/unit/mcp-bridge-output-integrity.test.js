@@ -100,6 +100,19 @@ describe("MCP session isolation", () => {
       children[0].emit("close", 0);
     } finally { vi.useRealTimers(); }
   });
+
+  it("signals only the dedicated POSIX process group belonging to the cancelled session", () => {
+    const { api, children, sid, processMock, spawn } = bridge({ platform: "darwin" });
+    children[0].pid = 12001;
+    api.registerSession("fixture", vi.fn());
+    children[1].pid = 12002;
+    api.unregisterSession("fixture", sid);
+    expect(spawn.mock.calls[0][2].detached).toBe(true);
+    expect(processMock.kill.mock.calls).toEqual([[-12001, "SIGTERM"]]);
+    expect(children[1].kill).not.toHaveBeenCalled();
+    children[0].emit("close", 0);
+    children[1].emit("close", 0);
+  });
 });
 const asEvent = (line) => `event: message\ndata: ${line}\n\n`;
 
