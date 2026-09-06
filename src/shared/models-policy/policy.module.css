@@ -25,7 +25,7 @@
   margin: 5px 0;
   color: #5b6980;
 }
-.root input:disabled {
+.root input:disabled:not([type='checkbox']):not([type='radio']) {
   color: #5b6980;
   -webkit-text-fill-color: #5b6980;
   opacity: 1;
