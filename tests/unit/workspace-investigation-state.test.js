@@ -28,10 +28,11 @@ it('restores a named filter set without replacing retained selected evidence',as
 
 it('recovers exact comparison identities across lens remounts, saves and legacy restores',async()=>{
   await render();await act(async()=>{current.setSelectedRecord({kind:'context-attempt',id:'selected',sessionId:8});current.setContextView({sessionId:8,baseline:{id:'baseline',sessionId:7}});});
-  const definition=current.captureDefinition('context');expect(definition.schemaVersion).toBe(2);
+  const definition=current.captureDefinition('context');expect(definition.schemaVersion).toBe(3);
   await render('economics');await act(async()=>current.setScope({provider:'outside'}));expect(current.contextView.baseline).toEqual({id:'baseline',sessionId:7});
   await act(async()=>{current.setContextView({baseline:null});current.restoreInvestigation({kind:'investigation',definition});});
   expect(current.contextView.baseline).toEqual({id:'baseline',sessionId:7});expect(current.selectedRecord.id).toBe('selected');
-  const legacy={...definition,schemaVersion:1,context:{sessionId:8,page:1,clientTool:null,projectLabel:null}};
+  const {groupSortBy:_g,groupSortDirection:_d,costSource:_c,attemptKind:_a,...legacyEconomics}=definition.economics;
+  const legacy={...definition,schemaVersion:1,economics:{...legacyEconomics,cohort:null},context:{sessionId:8,page:1,clientTool:null,projectLabel:null}};
   await act(async()=>current.restoreInvestigation({kind:'investigation',definition:legacy}));expect(current.contextView.baseline).toBeNull();
 });

@@ -1,36 +1,31 @@
 // Ensure proxyFetch is loaded to patch globalThis.fetch
-import 'open-sse/index.js';
+import "open-sse/index.js";
 
 import {
   getDailyConnectionUsage,
   getProviderConnectionById,
   updateProviderConnection,
-} from '@/lib/localDb';
-import * as localDb from '@/lib/localDb';
-import { retainQuotaUsage } from '@/lib/db/repos/quotaHistoryRepo.js';
-import { getUsageForProvider } from 'open-sse/services/usage.js';
-import { getExecutor } from 'open-sse/executors/index.js';
-import {
-  resolveConnectionProxyConfig,
-  toConnectionProxyOptions,
-} from '@/lib/network/connectionProxy';
-import { getCodexSubscriptionEntitlement } from 'open-sse/services/usage/codex.js';
-import { deriveQuotaSnapshot, isQuotaEligible } from '@/shared/utils/quotaPause.js';
-import { runAntigravityUsageProbe } from '@/lib/antigravityVerification';
-import { ANTIGRAVITY_SAFE_ERROR_MESSAGE } from 'open-sse/services/antigravityValidation.js';
-import { runUsageProbe } from '@/lib/usageProbeGate.js';
+} from "@/lib/localDb";
+import * as localDb from "@/lib/localDb";
+import { retainQuotaUsage } from "@/lib/db/repos/quotaHistoryRepo.js";
+import { getUsageForProvider } from "open-sse/services/usage.js";
+import { getExecutor } from "open-sse/executors/index.js";
+import { resolveConnectionProxyConfig, toConnectionProxyOptions } from "@/lib/network/connectionProxy";
+import { getCodexSubscriptionEntitlement } from "open-sse/services/usage/codex.js";
+import { deriveQuotaSnapshot, isQuotaEligible } from "@/shared/utils/quotaPause.js";
+import { runAntigravityUsageProbe } from "@/lib/antigravityVerification";
+import { ANTIGRAVITY_SAFE_ERROR_MESSAGE } from "open-sse/services/antigravityValidation.js";
+import { runUsageProbe } from "@/lib/usageProbeGate.js";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
-const AUTH_EXPIRED_PATTERNS = ['expired', 'authentication', 'unauthorized', '401', 're-authorize'];
+const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
 
 function snapshotOwner(connection) {
   const data = connection.providerSpecificData || {};
   return {
-    persistPoolSnapshot:
-      data.proxyPoolId && typeof localDb.updateConnectionProxyPoolSnapshotIfBound === 'function'
-        ? (pair) =>
-            localDb.updateConnectionProxyPoolSnapshotIfBound(connection.id, data.proxyPoolId, pair)
-        : undefined,
+    persistPoolSnapshot: data.proxyPoolId && typeof localDb.updateConnectionProxyPoolSnapshotIfBound === "function"
+      ? (pair) => localDb.updateConnectionProxyPoolSnapshotIfBound(connection.id, data.proxyPoolId, pair)
+      : undefined,
   };
 }
 
@@ -77,7 +72,7 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
     if (connection.accessToken) {
       return { connection, refreshed: false };
     }
-    throw new Error('Failed to refresh credentials. Please re-authorize the connection.');
+    throw new Error("Failed to refresh credentials. Please re-authorize the connection.");
   }
 
   // Build update object
@@ -116,9 +111,7 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
   const providerSpecificUpdates = {
     ...(refreshResult.providerSpecificData || {}),
     ...(refreshResult.copilotToken ? { copilotToken: refreshResult.copilotToken } : {}),
-    ...(refreshResult.copilotTokenExpiresAt
-      ? { copilotTokenExpiresAt: refreshResult.copilotTokenExpiresAt }
-      : {}),
+    ...(refreshResult.copilotTokenExpiresAt ? { copilotTokenExpiresAt: refreshResult.copilotTokenExpiresAt } : {}),
   };
   if (Object.keys(providerSpecificUpdates).length > 0) {
     updateData.providerSpecificData = {
@@ -148,21 +141,18 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
  */
 export async function GET(request, { params }) {
   const { connectionId } = await params;
-  const force = new URL(request.url).searchParams.get('force') === '1';
+  const force = new URL(request.url).searchParams.get("force") === "1";
   // Live provider call, and the dashboard starts one per connection at once.
   // See src/lib/usageProbeGate.js for why that needed a ceiling (#3061).
   try {
     return await runUsageProbe(
-      `${connectionId}|${force ? 'force' : 'cached'}`,
+      `${connectionId}|${force ? "force" : "cached"}`,
       () => handleUsageRequest(connectionId, force),
-      request.signal
+      request.signal,
     );
   } catch (err) {
-    if (err?.code === 'PROBE_QUEUE_FULL') {
-      return Response.json(
-        { error: 'Too many pending usage probes' },
-        { status: 429, headers: { 'Retry-After': '2' } }
-      );
+    if (err?.code === "PROBE_QUEUE_FULL") {
+      return Response.json({ error: "Too many pending usage probes" }, { status: 429, headers: { "Retry-After": "2" } });
     }
     if (request.signal?.aborted) {
       return new Response(null, { status: 499 });
@@ -174,10 +164,11 @@ export async function GET(request, { params }) {
 async function handleUsageRequest(connectionId, force) {
   let connection;
   try {
+
     // Get connection from database
     connection = await getProviderConnectionById(connectionId);
     if (!connection) {
-      return Response.json({ error: 'Connection not found' }, { status: 404 });
+      return Response.json({ error: "Connection not found" }, { status: 404 });
     }
 
     // Who may be probed is one rule, in @/shared/utils/quotaPause.js, so this
@@ -185,30 +176,23 @@ async function handleUsageRequest(connectionId, force) {
     // three private copies of it is how a pasted Codex token ended up listed
     // nowhere and probed nowhere (#1322).
     if (!isQuotaEligible(connection)) {
-      return Response.json({ message: 'Usage not available for this connection' });
+      return Response.json({ message: "Usage not available for this connection" });
     }
     // Narrower than eligibility on purpose: a hand-pasted token carries no
     // refresh token, so only a real OAuth grant takes the refresh branches.
-    const isOAuth = connection.authType === 'oauth';
+    const isOAuth = connection.authType === "oauth";
 
     // Resolve the persisted route before refresh or usage egress.
-    const proxyConfig = await resolveConnectionProxyConfig(
-      connection.providerSpecificData,
-      snapshotOwner(connection)
-    );
-    if (proxyConfig?.kind === 'required-unavailable') {
-      return Response.json(
-        {
-          error: 'Required proxy is unavailable',
-          code: 'required_proxy_unavailable',
-        },
-        { status: 503 }
-      );
+    const proxyConfig = await resolveConnectionProxyConfig(connection.providerSpecificData, snapshotOwner(connection));
+    if (proxyConfig?.kind === "required-unavailable") {
+      return Response.json({
+        error: "Required proxy is unavailable",
+        code: "required_proxy_unavailable",
+      }, { status: 503 });
     }
-    const proxyOptions =
-      proxyConfig?.kind === 'usable'
-        ? toConnectionProxyOptions(proxyConfig)
-        : { ...(proxyConfig || {}), strictProxy: proxyConfig?.strictProxy === true };
+    const proxyOptions = proxyConfig?.kind === "usable"
+      ? toConnectionProxyOptions(proxyConfig)
+      : { ...(proxyConfig || {}), strictProxy: proxyConfig?.strictProxy === true };
 
     // Refresh credentials only for OAuth connections (apikey has no token refresh)
     if (isOAuth) {
@@ -216,26 +200,18 @@ async function handleUsageRequest(connectionId, force) {
         const result = await refreshAndUpdateCredentials(connection, false, proxyOptions);
         connection = result.connection;
       } catch (refreshError) {
-        const safeError =
-          connection.provider === 'antigravity' ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : refreshError;
-        console.error('[Usage API] Credential refresh failed:', safeError);
-        return Response.json(
-          {
-            error:
-              connection.provider === 'antigravity'
-                ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
-                : `Credential refresh failed: ${refreshError.message}`,
-          },
-          { status: 401 }
-        );
+        const safeError = connection.provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : refreshError;
+        console.error("[Usage API] Credential refresh failed:", safeError);
+        return Response.json({
+          error: connection.provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : `Credential refresh failed: ${refreshError.message}`
+        }, { status: 401 });
       }
     }
 
     // Fetch usage from provider API
-    let usage =
-      connection.provider === 'antigravity'
-        ? await runAntigravityUsageProbe(connection, proxyOptions, { force })
-        : await getUsageForProvider(connection, proxyOptions, { force });
+    let usage = connection.provider === "antigravity"
+      ? await runAntigravityUsageProbe(connection, proxyOptions, { force })
+      : await getUsageForProvider(connection, proxyOptions, { force });
 
     // If provider returned an auth-expired message instead of throwing,
     // force-refresh token and retry once (OAuth only)
@@ -243,16 +219,13 @@ async function handleUsageRequest(connectionId, force) {
       try {
         const retryResult = await refreshAndUpdateCredentials(connection, true, proxyOptions);
         connection = retryResult.connection;
-        usage =
-          connection.provider === 'antigravity'
-            ? await runAntigravityUsageProbe(connection, proxyOptions, { force })
-            : await getUsageForProvider(connection, proxyOptions, { force });
+        usage = connection.provider === "antigravity"
+          ? await runAntigravityUsageProbe(connection, proxyOptions, { force })
+          : await getUsageForProvider(connection, proxyOptions, { force });
       } catch (retryError) {
         console.warn(
           `[Usage] ${connection.provider}: force refresh failed:`,
-          connection.provider === 'antigravity'
-            ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
-            : retryError.message
+          connection.provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : retryError.message,
         );
       }
     }
@@ -269,18 +242,21 @@ async function handleUsageRequest(connectionId, force) {
     await retainQuotaUsage(connection, usage);
 
     if (
-      connection.provider === 'grok-cli' &&
-      usage?.message?.includes('does not expose a numeric included quota')
+      connection.provider === "grok-cli" &&
+      usage?.message?.includes("does not expose a numeric included quota")
     ) {
       const daily = await getDailyConnectionUsage(connection.id);
       const total = 800;
       usage = {
         plan: usage.plan || null,
         quotas: {
-          'Daily use': {
+          "Daily use": {
             used: daily.requests,
             total,
-            remainingPercentage: Math.max(0, ((total - daily.requests) / total) * 100),
+            remainingPercentage: Math.max(
+              0,
+              ((total - daily.requests) / total) * 100,
+            ),
             resetAt: daily.resetAt,
             unlimited: false,
           },
@@ -289,7 +265,7 @@ async function handleUsageRequest(connectionId, force) {
     }
 
     // Codex OAuth subscription expiry (fail-open, never affects quota response)
-    if (connection.provider === 'codex' && connection.authType === 'oauth') {
+    if (connection.provider === "codex" && connection.authType === "oauth") {
       try {
         const sub = await getCodexSubscriptionEntitlement({
           accessToken: connection.accessToken,
@@ -300,30 +276,21 @@ async function handleUsageRequest(connectionId, force) {
           now: Date.now(),
         });
         if (sub) {
-          if (sub.subscriptionActiveUntil)
-            usage.subscriptionActiveUntil = sub.subscriptionActiveUntil;
+          if (sub.subscriptionActiveUntil) usage.subscriptionActiveUntil = sub.subscriptionActiveUntil;
           if (sub.subscriptionPlan) usage.subscriptionPlan = sub.subscriptionPlan;
           if (sub.subscriptionSource) usage.subscriptionSource = sub.subscriptionSource;
           const patch = sub.patch || {};
           const psd = connection.providerSpecificData || {};
           const nextPsd = { ...psd };
           let changed = false;
-          for (const k of [
-            'codexSubscriptionActiveUntil',
-            'codexSubscriptionPlan',
-            'codexSubscriptionSource',
-            'codexSubscriptionFetchedAt',
-            'codexSubscriptionAttemptAt',
-          ]) {
+          for (const k of ["codexSubscriptionActiveUntil","codexSubscriptionPlan","codexSubscriptionSource","codexSubscriptionFetchedAt","codexSubscriptionAttemptAt"]) {
             if (patch[k] !== undefined && patch[k] !== psd[k]) {
               nextPsd[k] = patch[k];
               changed = true;
             }
           }
           if (changed) {
-            try {
-              await updateProviderConnection(connection.id, { providerSpecificData: nextPsd });
-            } catch {}
+            try { await updateProviderConnection(connection.id, { providerSpecificData: nextPsd }); } catch {}
           }
         }
       } catch {}
@@ -336,8 +303,8 @@ async function handleUsageRequest(connectionId, force) {
     // Additive: `usage` keeps its shape, and the DB status rides alongside it.
     const now = Date.now();
     const modelLocks = Object.entries(connection)
-      .filter(([key, until]) => key.startsWith('modelLock_') && until)
-      .map(([key, until]) => ({ model: key.slice('modelLock_'.length), until }))
+      .filter(([key, until]) => key.startsWith("modelLock_") && until)
+      .map(([key, until]) => ({ model: key.slice("modelLock_".length), until }))
       // An expired lock is cleared lazily elsewhere, so filter by time here
       // rather than reporting a lock that no longer excludes anything.
       .filter(({ until }) => {
@@ -357,15 +324,12 @@ async function handleUsageRequest(connectionId, force) {
       },
     });
   } catch (error) {
-    const provider = connection?.provider ?? 'unknown';
-    const isAntigravity = provider === 'antigravity';
-    console.warn(
-      `[Usage] ${provider}:`,
-      isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : error.message
-    );
+    const provider = connection?.provider ?? "unknown";
+    const isAntigravity = provider === "antigravity";
+    console.warn(`[Usage] ${provider}:`, isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : error.message);
     return Response.json(
       { error: isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : error.message },
-      { status: isAntigravity ? 502 : 500 }
+      { status: isAntigravity ? 502 : 500 },
     );
   }
 }
