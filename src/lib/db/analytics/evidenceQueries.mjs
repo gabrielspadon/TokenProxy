@@ -79,7 +79,7 @@ export function readEvidence(db,input) {
     timeBounds: { startInclusive: scope.start || null, endExclusive: scope.end || null, firstReturned: timestamps[0] || null,lastReturned: timestamps.at(-1) || null },
     totalRecords: result.totalRecords, returnedRecords: result.items.length, complete: true, missingSelection: Boolean(selection && (mode==='attempt-comparison' ? !result.items.some(row=>String(row.id)===selection.id) : !result.items.length)),
     ...(mode==='attempt-comparison' ? {requestedAttempts:result.requestedAttempts,missingAttempts:result.missingAttempts,comparisonComplete:result.missingAttempts.length===0} : {}),
-    limits: EXPORT_LIMITS, coverage, omissions: ['credentials','request/response content','private session identity','freeform error/reason content','unverified cost linkage'],
+    limits: EXPORT_LIMITS, coverage, omissions: ['credentials','request/response content','raw client identifiers and private session affinity hashes','freeform error/reason content','unverified cost linkage'],
     units: { tokens:'tokens',bytes:'bytes',latency:'ms',cost:'USD estimate or separately labeled report',quota:'unknown' },
     caveat: 'Historical pending is not active work. Cost estimates are not subscription spend. Records from different sources are never joined by timestamp.' }, items: result.items, ...(result.clientEvents ? {clientEvents:result.clientEvents} : {}) };
   if (Buffer.byteLength(JSON.stringify(payload)) > EXPORT_LIMITS.bytes) return { refused:true,code:'export_too_large',limits:EXPORT_LIMITS,message:'This evidence exceeds the 8 MiB export limit. Narrow the scope; no partial export was produced.' };
