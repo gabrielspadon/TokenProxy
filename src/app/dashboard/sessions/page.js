@@ -416,13 +416,33 @@ export default function SessionsPage() {
         ) : null}
         {rows.length ? (
           <div className="rows">
-            <div className="row head sessions-row">
-              <span>When</span>
+            <div className="row head sessions-ledger">
+              <span aria-hidden="true" />
+              <span>When (UTC)</span>
               <span>Why it moved</span>
+              <span>Model</span>
               <span>Accounts</span>
             </div>
             {rows.map((r) => (
-              <Receipt key={r.receiptId} r={r} names={names} now={now} />
+              <details key={r.receiptId} className="sessions-fold">
+                <summary className="sessions-ledger">
+                  <span className="sessions-caret" aria-hidden="true" />
+                  <span className="who">
+                    <span className="id" data-i18n-skip>{fmtTime(r.timestamp)}</span>
+                    <span className="sub" data-i18n-skip>{fmtRelative(r.timestamp, now)}</span>
+                  </span>
+                  <span className="status" data-tone={TRIGGER_TONE[r.trigger]}>
+                    {TRIGGER[r.trigger] || <span data-i18n-skip>{r.trigger}</span>}
+                  </span>
+                  <span className="id" data-i18n-skip>{r.model}</span>
+                  <span className="sessions-move" data-i18n-skip>
+                    {r.oldConnectionId ? names.get(r.oldConnectionId)?.displayName || r.oldConnectionId : 'First pin'}
+                    {' → '}
+                    {names.get(r.newConnectionId)?.displayName || r.newConnectionId || 'Not reported'}
+                  </span>
+                </summary>
+                <Receipt r={r} names={names} now={now} />
+              </details>
             ))}
           </div>
         ) : null}
