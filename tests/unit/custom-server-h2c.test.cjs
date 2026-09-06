@@ -139,3 +139,44 @@ test("preserves configured native upgrade rejection without calling it for h2c",
     await expectSocketsClosed(sockets);
   }, { shouldUpgradeCallback() { calls++; return false; } });
 });
+
+test("refuses oversized legacy h2c before waiting for a body", async () => {
+  let calls = 0;
+  await withServer((_req, res) => { calls++; res.end("native admission remains with the application"); }, async (server, sockets) => {
+    server.on("upgrade", (_req, socket) => socket.destroy());
+    const nativePolicy = typeof server.shouldUpgradeCallback === "function";
+    const response = await request(server.address().port, [...upgradeHeaders, `Content-Length: ${129 * 1024 * 1024}`]);
+    assert.match(response, nativePolicy ? /^HTTP\/1\.1 200/ : /^HTTP\/1\.1 413/);
+    assert.equal(calls, nativePolicy ? 1 : 0);
+    await expectSocketsClosed(sockets);
+  });
+});
+
+for (const size of [64, 65]) {
+  for (const split of [false, true]) {
+    test(`honors configured legacy ceiling at ${size} bytes with ${split ? "split" : "coalesced"} input`, async () => {
+      const previous = process.env.TOKENPROXY_PROXY_CLIENT_MAX_BODY_SIZE;
+      process.env.TOKENPROXY_PROXY_CLIENT_MAX_BODY_SIZE = "64b";
+      let calls = 0, received = "";
+      try {
+        await withServer(async (req, res) => {
+          calls++;
+          for await (const chunk of req) received += chunk.toString();
+          res.end("received");
+        }, async (server, sockets) => {
+          server.on("upgrade", (_req, socket) => socket.destroy());
+          const accepted = typeof server.shouldUpgradeCallback === "function" || size === 64;
+          const body = "x".repeat(size);
+          const response = await request(server.address().port, [...upgradeHeaders, `Content-Length: ${size}`], body, { split });
+          assert.match(response, accepted ? /^HTTP\/1\.1 200/ : /^HTTP\/1\.1 413/);
+          assert.equal(calls, accepted ? 1 : 0);
+          assert.equal(received, accepted ? body : "");
+          await expectSocketsClosed(sockets);
+        });
+      } finally {
+        if (previous === undefined) delete process.env.TOKENPROXY_PROXY_CLIENT_MAX_BODY_SIZE;
+        else process.env.TOKENPROXY_PROXY_CLIENT_MAX_BODY_SIZE = previous;
+      }
+    });
+  }
+}

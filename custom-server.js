@@ -444,6 +444,7 @@ http.createServer = (...args) => {
   // Node 26 upgrade streams no longer carry request-body bytes; never parse
   // those streams as if they used the older raw-socket contract.
   if (typeof server.shouldUpgradeCallback !== 'function') {
+    const maxReplayBodyBytes = require('./open-sse/config/proxyBodyLimit.cjs').proxyClientMaxBodyBytes();
     const origEmit = server.emit;
     server.emit = function (event, ...eventArgs) {
       const [req, socket, head] = eventArgs;
@@ -463,8 +464,14 @@ http.createServer = (...args) => {
         socket.destroy();
         return true;
       }
-      const chunks = [head];
-      let received = head.length;
+      if (contentLength > maxReplayBodyBytes) {
+        socket.end('HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () => socket.destroy());
+        return true;
+      }
+      // Ignore pipelined bytes after this Connection: close request. Retain
+      // at most the admitted Content-Length, including a coalesced head.
+      const chunks = [head.subarray(0, contentLength)];
+      let received = chunks[0].length;
 
       const serve = () => {
         // Replay the upgraded request through the existing HTTP/1.1 handler.
@@ -493,8 +500,9 @@ http.createServer = (...args) => {
         const abandon = () => socket.destroy();
         socket.once('end', abandon);
         socket.on('data', function readBody(chunk) {
-          chunks.push(chunk);
-          received += chunk.length;
+          const bodyChunk = chunk.subarray(0, contentLength - received);
+          chunks.push(bodyChunk);
+          received += bodyChunk.length;
           if (received < contentLength) return;
           socket.off('data', readBody);
           socket.off('end', abandon);

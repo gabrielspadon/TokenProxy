@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import proxyBodyLimit from "./open-sse/config/proxyBodyLimit.cjs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -39,7 +40,7 @@ const tpBuildSha = resolveTpBuildSha();
 const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
-const proxyClientMaxBodySize = process.env.TOKENPROXY_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+const proxyClientMaxBodySize = proxyBodyLimit.proxyClientMaxBodySize();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -64,7 +65,7 @@ const nextConfig = {
   // dist/sql-wasm.wasm and the fallback could not load, which is how an install
   // reached "no SQLite driver available" with every link exhausted (#987).
   outputFileTracingIncludes: {
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs"],
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**"],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
   },
