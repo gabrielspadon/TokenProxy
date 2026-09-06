@@ -1317,6 +1317,7 @@ export async function handleChatCore({
     claudePrefixTarget &&
     prefixNotes.length > 0 &&
     !!prefixMessages();
+  let midinjectApplied = false;
   if (midinjectWillRun) {
     const noteText = composeBoundaryNote(prefixNotes);
     let insertIndex = -1;
@@ -1329,10 +1330,12 @@ export async function handleChatCore({
     const res = injectBoundaryNote(translatedBody.messages, insertIndex, noteText);
     if (res.injected) {
       translatedBody.messages = res.messages;
-      measureSaverStage("midinject", true);
+      midinjectApplied = true;
       notePath(rid, "XFORM.midinject-applied");
     }
   }
+
+  measureSaverStage("midinject", midinjectApplied);
 
   if (xf.length && log?.line) log.line(reqTag, "⚙", xf.join(" · "));
 
