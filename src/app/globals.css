@@ -339,9 +339,18 @@
   .measure:last-child { border-inline-end: 0; }
   [dir="rtl"] .measure:last-child { border-inline-start: 0; }
   .measure .label { font-size: var(--t-12); letter-spacing: 0.01em; }
-  .measure .value { font-size: var(--t-24); letter-spacing: -0.015em; }
+  /* A seven-figure token count in tabular mono is about 10em wide, so t-24 in a
+     150px track overflowed into the next cell's label on the usage screen. The
+     emphasis a measure needs comes from the mono face and the ruled row; the
+     one that matters is `big`, and that keeps the largest size. */
+  .measure .value {
+    font-size: var(--t-19);
+    letter-spacing: -0.01em;
+    overflow-wrap: anywhere;
+  }
   .measure.big .value { font-size: var(--t-30); color: var(--signal-deep); }
   .measure .value.unreported { font-size: var(--t-15); font-family: var(--sans); }
+  .measures { grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
 
   /* Section headings get a hairline so the page has visible joints instead of
      relying on vertical space alone to separate one topic from the next. */
@@ -351,6 +360,12 @@
   }
   section > .screen-head { border-block-end: 1px solid var(--rule); padding-block-end: 6px; gap: 8px 16px; }
   section > .screen-head > h2 { border-block-end: 0; padding-block-end: 0; }
+
+  /* A section's lede is part of its heading block, so it sits above the joint
+     rather than colliding with the content below it. On Connections the
+     Releases lede overlapped the definition list under it. */
+  section > h2 + p, section > .screen-head + p { margin-block: 0 12px; color: var(--slate); font-size: var(--t-13); }
+  section > h2 + p + *, section > .screen-head + p + * { margin-block-start: 0; }
 
   /* The rail. A flat word list gave the product no identity at the one place
      every screen shows. The brand sits on the signal ground, and the current
@@ -381,7 +396,7 @@
     max-width: 60ch;
   }
   [dir="rtl"] .empty { padding: 10px 14px 10px 0; border-inline-start: 0; border-inline-end: 2px solid var(--rule); }
-  section + section { margin-block-start: 24px; }
+  section + section { margin-block-start: 32px; }
 
   /* The menu button is a phone control. `@layer layout` already hid it at
      1024px, but `.button` in this later layer re-declares `display` and wins on

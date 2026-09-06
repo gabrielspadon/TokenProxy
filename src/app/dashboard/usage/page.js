@@ -365,28 +365,41 @@ export default function UsagePage() {
             the gateway.
           </p>
         ) : null}
+        {/* Every bucket at zero draws as a flat 120px band of nothing, which
+            reads as a broken chart rather than as "no cost was recorded". Say
+            that instead, and keep the numbers fold below either way. */}
+        {series.length > 0 && peak <= 0 ? (
+          <p className="empty">
+            Every bucket in this period recorded no cost. Requests still ran; the numbers below say
+            how many.
+          </p>
+        ) : null}
         {series.length ? (
           <>
-            <ul className="spark" aria-hidden="true" data-i18n-skip>
-              {series.map((b, i) => (
-                <li
-                  key={b.bucketStart ?? `${b.label}-${i}`}
-                  data-peak={peak > 0 && (b.cost || 0) === peak ? 'true' : undefined}
-                  style={{
-                    height: `${peak > 0 ? Math.max(1, ((b.cost || 0) / peak) * 100) : 1}%`,
-                    animationDelay: `${Math.min(i * 12, 360)}ms`,
-                  }}
-                  title={`${b.label} ${fmtUsd(b.cost || 0)}`}
-                />
-              ))}
-            </ul>
-            <p className="spark-meta">
-              <span data-i18n-skip>{series[0]?.label}</span>
-              <span>
-                <span>Peak</span> <span data-i18n-skip>{fmtUsd(peak)}</span>
-              </span>
-              <span data-i18n-skip>{series[series.length - 1]?.label}</span>
-            </p>
+            {peak > 0 ? (
+              <>
+                <ul className="spark" aria-hidden="true" data-i18n-skip>
+                  {series.map((b, i) => (
+                    <li
+                      key={b.bucketStart ?? `${b.label}-${i}`}
+                      data-peak={(b.cost || 0) === peak ? 'true' : undefined}
+                      style={{
+                        height: `${Math.max(1, ((b.cost || 0) / peak) * 100)}%`,
+                        animationDelay: `${Math.min(i * 12, 360)}ms`,
+                      }}
+                      title={`${b.label} ${fmtUsd(b.cost || 0)}`}
+                    />
+                  ))}
+                </ul>
+                <p className="spark-meta">
+                  <span data-i18n-skip>{series[0]?.label}</span>
+                  <span>
+                    <span>Peak</span> <span data-i18n-skip>{fmtUsd(peak)}</span>
+                  </span>
+                  <span data-i18n-skip>{series[series.length - 1]?.label}</span>
+                </p>
+              </>
+            ) : null}
             <details className="fold">
               <summary>Every bucket as numbers</summary>
               <div className="rows">
