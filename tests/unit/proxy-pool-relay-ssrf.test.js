@@ -127,9 +127,14 @@ describe("POST /api/proxy-pools/[id]/test", () => {
   });
 
   it("answers 400 and persists the reason when a relay pool points at loopback", async () => {
-    mocks.getProxyPoolById.mockResolvedValue({
-      id: "p1", type: "vercel", proxyUrl: "http://127.0.0.1:20136/api/health",
+    // The activation effect now commits atomically with the operation receipt
+    // against the real row, so seed one instead of asserting on a mock call.
+    const { createProxyPool, getProxyPoolById } = await import("../../src/lib/db/repos/proxyPoolsRepo.js");
+    const seeded = await createProxyPool({
+      id: "p1", name: "p1", type: "vercel", proxyUrl: "http://127.0.0.1:20136/api/health",
+      isActive: true, testStatus: "active",
     });
+    mocks.getProxyPoolById.mockResolvedValue(seeded);
 
     const res = await testProxyPool(new Request("http://localhost/api/proxy-pools/p1/test", { method: "POST" }), {
       params: Promise.resolve({ id: "p1" }),
@@ -140,11 +145,9 @@ describe("POST /api/proxy-pools/[id]/test", () => {
     expect(body.ok).toBe(false);
     expect(body.error).toMatch(/Blocked/i);
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(mocks.updateProxyPool).toHaveBeenCalledWith("p1", expect.objectContaining({
-      testStatus: "error",
-      isActive: false,
-      lastError: expect.stringMatching(/Blocked/i),
-    }));
+    const after = await getProxyPoolById("p1");
+    expect(after).toMatchObject({ testStatus: "error", isActive: false });
+    expect(after.lastError).toMatch(/Blocked/i);
   });
 
   it("answers 200 for a public relay pool", async () => {
