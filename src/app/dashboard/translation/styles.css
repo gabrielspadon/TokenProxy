@@ -1,0 +1,38 @@
+/* Translation screen only. Every selector is prefixed .translation-; no
+   global class is redefined and every value comes from globals.css tokens. */
+@layer components {
+  .translation-code {
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    font-size: var(--t-13);
+    max-height: 16rem;
+    overflow: auto;
+    resize: vertical;
+  }
+  pre.translation-code {
+    margin: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--raised);
+  }
+
+  /* Newest line last, capped client-side at 500, filterable, pausable. */
+  .translation-log {
+    font-family: var(--mono);
+    font-size: var(--t-13);
+    max-height: 24rem;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--raised);
+  }
+  .translation-log li {
+    padding: 2px 0;
+    border-block-end: 1px solid var(--rule);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .translation-log li:last-child { border-block-end: 0; }
+}

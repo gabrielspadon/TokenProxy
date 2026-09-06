@@ -1,0 +1,26 @@
+/* System screen only. Every selector is prefixed .system-; no global class is
+   redefined and every value comes from the tokens in globals.css. */
+@layer components {
+  /* The null contract outside .measures: a "Not reported" fact carries its
+     reason in the same .why disclosure the measures use. */
+  .system-facts .why { font-size: var(--t-12); color: var(--slate); }
+  .system-facts .why summary { cursor: pointer; width: fit-content; }
+  .system-facts .why p { margin: 4px 0 0; max-width: 44ch; }
+
+  /* Name on the left, verdict on the right, same as every other check list. */
+  .system-row { grid-template-columns: minmax(0, 1fr) auto; }
+
+  /* Release notes are one backend-authored document, shown whole. */
+  .system-notes {
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    font-size: var(--t-13);
+    max-height: 24rem;
+    overflow: auto;
+    margin-block-start: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--raised);
+  }
+}

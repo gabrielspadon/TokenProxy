@@ -1,0 +1,34 @@
+@layer components {
+  /* Three columns: who, state, action. One column below 640px. */
+  .shaping-layer { grid-template-columns: minmax(0, 1fr); }
+  .shaping-stage { grid-template-columns: minmax(0, 1fr); }
+  .shaping-day { grid-template-columns: minmax(0, 1fr); }
+  .shaping-check { grid-template-columns: minmax(0, 1fr) auto; }
+  .shaping-counts { justify-content: flex-start; gap: 8px; }
+  .shaping-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px 24px;
+    padding-block: 12px;
+    border-block: 1px solid var(--rule);
+  }
+  .shaping-log {
+    font-family: var(--mono);
+    font-size: var(--t-12);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 18rem;
+    overflow: auto;
+    margin: 8px 0 0;
+    padding: 8px;
+    background: var(--raised);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+  }
+
+  @media (min-width: 640px) {
+    .shaping-layer { grid-template-columns: minmax(0, 1fr) 8rem auto; }
+    .shaping-stage { grid-template-columns: minmax(0, 10rem) minmax(0, 2fr) minmax(0, 1fr); }
+    .shaping-day { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+  }
+}

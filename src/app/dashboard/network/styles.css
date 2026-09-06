@@ -1,0 +1,15 @@
+@layer components {
+  .network-node-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .network-pool-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+
+  .network-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+  .network-check { display: flex; gap: 8px; align-items: flex-start; }
+  .network-check input { accent-color: var(--signal); margin-top: 3px; }
+}
+
+@layer states {
+  @media (max-width: 767px) {
+    .network-node-row,
+    .network-pool-row { grid-template-columns: minmax(0, 1fr) auto; }
+  }
+}

@@ -1,0 +1,461 @@
+'use client';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { usePoll } from '@/shared/hooks/usePoll';
+import { useEventStream } from '@/shared/hooks/useEventStream';
+import { useUsageStream } from '@/store/usageStream';
+import { Freshness } from '@/shared/components/Freshness';
+import { Notice } from '@/shared/components/Notice';
+import { QuotaWindow } from '@/shared/components/QuotaWindow';
+import { call } from '@/shared/api';
+import { refusal } from '@/shared/refusal';
+import { fmtRelative, fmtTime } from '@/shared/format';
+import { TONE, WORDS as STATUS } from '@/shared/status';
+import './styles.css';
+
+const HORIZON_MS = 6 * 3600 * 1000;
+const PAGE = 25;
+const WORDS = {
+  ...STATUS,
+  active: 'Running',
+  pending: 'Waiting',
+  done: 'Finished',
+  error: 'Failed',
+};
+
+// The closed trigger vocabulary of the admin ABI, one sentence each. An
+// unmapped value prints raw rather than being renamed to something it is not.
+const TRIGGER = {
+  exhausted: 'Quota exhausted',
+  reset: 'A window reset restored an earlier account',
+  drain: 'The account was drained',
+  model_failure: 'This model failed on that account',
+  manual: 'Set by hand',
+};
+const TRIGGER_TONE = { exhausted: 'warn', reset: 'ok', drain: 'warn', model_failure: 'bad' };
+
+const SINCE = [
+  { value: '', label: 'Any time' },
+  { value: String(3600e3), label: 'The last hour' },
+  { value: String(86400e3), label: 'The last day' },
+  { value: String(7 * 86400e3), label: 'The last week' },
+];
+
+const EMPTY = { connectionId: '', model: '', since: '' };
+
+function pollFresh(p) {
+  if (p.loading) return 'connecting';
+  if (p.error && p.goodAt) return 'stale';
+  if (p.error) return 'reconnecting';
+  return 'live';
+}
+
+function Account({ id, names }) {
+  const c = names.get(id);
+  if (!id) return <span className="unreported">Not reported</span>;
+  return (
+    <Link href={`/dashboard/connections/${id}`} prefetch={false}>
+      <span data-i18n-skip>{c?.displayName || c?.provider || id}</span>
+    </Link>
+  );
+}
+
+function Evidence({ id, windows, names, now }) {
+  if (windows === null) return <span className="unreported">There was no earlier account</span>;
+  if (!windows || windows.length === 0)
+    return <span className="unreported">No window was recorded</span>;
+  const c = names.get(id);
+  return (
+    <div className="rows">
+      {windows.map((w, i) => (
+        <QuotaWindow
+          key={`${w.scope}-${i}`}
+          provider={c?.provider}
+          name={c?.displayName || c?.provider}
+          window={w}
+          horizonMs={HORIZON_MS}
+          now={now}
+        />
+      ))}
+    </div>
+  );
+}
+
+// One switch receipt. Every field is picked by name: `sessionHash` is on the
+// wire and is deliberately not read here, because it is the session identity
+// and this surface never renders one.
+function Receipt({ r, names, now }) {
+  return (
+    <div className="row sessions-row">
+      <div className="who">
+        <span className="name" data-i18n-skip>
+          {fmtTime(r.timestamp)}
+        </span>
+        <span className="sub" data-i18n-skip>
+          {fmtRelative(r.timestamp, now)}
+        </span>
+      </div>
+      <div className="who">
+        <span className="status" data-tone={TRIGGER_TONE[r.trigger]}>
+          {TRIGGER[r.trigger] || <span data-i18n-skip>{r.trigger}</span>}
+        </span>
+        <span className="sub id" data-i18n-skip>
+          {r.model}
+        </span>
+      </div>
+      <div>
+        <dl className="facts">
+          <dt>Left</dt>
+          <dd>
+            {r.oldConnectionId ? (
+              <Account id={r.oldConnectionId} names={names} />
+            ) : (
+              <span className="unreported">Nothing. This was the first pin of that session.</span>
+            )}
+          </dd>
+          <dt>Landed on</dt>
+          <dd>
+            <Account id={r.newConnectionId} names={names} />
+          </dd>
+        </dl>
+        <details className="sessions-evidence">
+          <summary>Quota evidence at the switch</summary>
+          <dl className="facts">
+            <dt>Left</dt>
+            <dd>
+              <Evidence
+                id={r.oldConnectionId}
+                windows={r.windows?.old ?? null}
+                names={names}
+                now={now}
+              />
+            </dd>
+            <dt>Landed on</dt>
+            <dd>
+              <Evidence id={r.newConnectionId} windows={r.windows?.new} names={names} now={now} />
+            </dd>
+            <dt>Receipt</dt>
+            <dd className="id" data-i18n-skip>
+              {r.receiptId}
+            </dd>
+          </dl>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+export default function SessionsPage() {
+  const detail = usePoll('/api/admin/health/detail', 30000);
+  const apply = useUsageStream((s) => s.apply);
+  const usage = useUsageStream((s) => s.data);
+  const receivedAt = useUsageStream((s) => s.receivedAt);
+  const stream = useEventStream('/api/usage/stream?period=today', apply);
+
+  const [draft, setDraft] = useState(EMPTY);
+  const [filters, setFilters] = useState(EMPTY);
+  const [extra, setExtra] = useState([]);
+  const [pagedCursor, setPagedCursor] = useState(undefined);
+  const [pageRefusal, setPageRefusal] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [lookupDraft, setLookupDraft] = useState('');
+  const [lookup, setLookup] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  const url = useMemo(() => {
+    const q = new URLSearchParams({ limit: String(PAGE) });
+    if (filters.connectionId) q.set('connectionId', filters.connectionId);
+    if (filters.model) q.set('model', filters.model);
+    if (filters.since) q.set('since', filters.since);
+    return `/api/admin/receipts?${q}`;
+  }, [filters]);
+  const receipts = usePoll(url, 30000);
+
+  // Reset the paging state the moment `url` changes rather than in an effect
+  // (react-hooks/set-state-in-effect): a new filter query is a new key, so a
+  // stale url reads as null instead of carrying over the old page.
+  const [pagedForUrl, setPagedForUrl] = useState(url);
+  if (url !== pagedForUrl) {
+    setPagedForUrl(url);
+    setExtra([]);
+    setPagedCursor(undefined);
+    setPageRefusal(null);
+  }
+
+  const names = useMemo(
+    () => new Map((detail.data?.checks?.connections || []).map((c) => [c.connectionId, c])),
+    [detail.data]
+  );
+  const sessions = usage?.activeSessions || [];
+  // ponytail: page one is polled and later pages are held here, so a switch
+  // recorded while paged deep arrives on the next poll and dedupes by id.
+  const rows = useMemo(() => {
+    const seen = new Set();
+    const out = [];
+    for (const r of [...(receipts.data?.receipts || []), ...extra]) {
+      if (seen.has(r.receiptId)) continue;
+      seen.add(r.receiptId);
+      out.push(r);
+    }
+    return out;
+  }, [receipts.data, extra]);
+  const cursor = pagedCursor === undefined ? (receipts.data?.nextCursor ?? null) : pagedCursor;
+  const filtered = Boolean(filters.connectionId || filters.model || filters.since);
+
+  const applyFilters = (e) => {
+    e.preventDefault();
+    setFilters({
+      ...draft,
+      since: draft.since ? new Date(Date.now() - Number(draft.since)).toISOString() : '',
+    });
+  };
+
+  const showMore = async () => {
+    if (!cursor || busy) return;
+    setBusy(true);
+    const res = await call(`${url}&cursor=${encodeURIComponent(cursor)}`);
+    setBusy(false);
+    if (!res.ok) {
+      setPageRefusal(refusal(res.status, res.body));
+      return;
+    }
+    setPageRefusal(null);
+    setExtra((x) => [...x, ...(res.body?.receipts || [])]);
+    setPagedCursor(res.body?.nextCursor ?? null);
+  };
+
+  const find = async (e) => {
+    e.preventDefault();
+    const id = lookupDraft.trim();
+    if (!id) return;
+    const res = await call(`/api/admin/receipts/${encodeURIComponent(id)}`);
+    setLookup(res.ok ? { receipt: res.body } : { refusal: refusal(res.status, res.body) });
+  };
+
+  return (
+    <>
+      <div className="screen-head">
+        <h1>Sessions</h1>
+        <Freshness status={stream.status} lastDataAt={receivedAt} />
+      </div>
+
+      <section aria-labelledby="h-inflight">
+        <h2 id="h-inflight">Sessions in flight</h2>
+        <p className="caption">
+          A session is named by the account it is on, never by its own identity. The gateway stores
+          only a one-way hash of that identity, and this surface never shows it.
+        </p>
+        {stream.status === 'stale' ? (
+          <Notice
+            tone="warn"
+            title="The usage stream stopped."
+            next="The sessions below are from the last frame received. Reconnecting in the background."
+          />
+        ) : null}
+        {!usage && stream.status !== 'stale' ? (
+          <p className="skeleton">Waiting for the first frame</p>
+        ) : null}
+        {usage && sessions.length === 0 ? (
+          <p className="empty">
+            No session is in flight right now. One appears here while a request it owns is open.
+          </p>
+        ) : null}
+        {sessions.length ? (
+          <div className="rows">
+            <div className="row head sessions-live">
+              <span>Account</span>
+              <span>Started</span>
+              <span>State</span>
+            </div>
+            {sessions.map((s, i) => (
+              <div
+                key={`${s.provider}-${s.model}-${s.startedAt}-${i}`}
+                className="row sessions-live"
+              >
+                <span className="who">
+                  <span className="name" data-i18n-skip>
+                    {s.account || s.provider}
+                  </span>
+                  <span className="sub">
+                    <span className="id" data-i18n-skip>
+                      {s.model}
+                    </span>{' '}
+                    <span data-i18n-skip>{s.provider}</span>
+                  </span>
+                </span>
+                <span data-i18n-skip>{s.startedAt ? fmtRelative(s.startedAt, now) : ''}</span>
+                <span className="status" data-tone={TONE[s.status] || 'ok'}>
+                  {WORDS[s.status] || <span data-i18n-skip>{s.status}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="h-moves">
+        <div className="screen-head">
+          <h2 id="h-moves">Why sessions moved</h2>
+          <Freshness status={pollFresh(receipts)} lastDataAt={receipts.goodAt} />
+        </div>
+        <p className="caption">
+          One receipt for every time a session left one account for another. Receipts are written
+          once and never edited or deleted.
+        </p>
+        <form className="sessions-filters" onSubmit={applyFilters}>
+          <label className="field">
+            <span>Account</span>
+            <select
+              className="select"
+              value={draft.connectionId}
+              onChange={(e) => setDraft({ ...draft, connectionId: e.target.value })}
+            >
+              <option value="">Every account</option>
+              {(detail.data?.checks?.connections || []).map((c) => (
+                <option key={c.connectionId} value={c.connectionId}>
+                  {c.displayName || c.provider}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Model</span>
+            <input
+              className="input"
+              value={draft.model}
+              onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+            />
+          </label>
+          <label className="field">
+            <span>Since</span>
+            <select
+              className="select"
+              value={draft.since}
+              onChange={(e) => setDraft({ ...draft, since: e.target.value })}
+            >
+              {SINCE.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="button" type="submit">
+            Apply
+          </button>
+        </form>
+        {receipts.error && !receipts.data ? (
+          <Notice {...refusal(receipts.status, receipts.error)} />
+        ) : null}
+        {receipts.loading && !receipts.data ? (
+          <p className="skeleton">Reading the switch log</p>
+        ) : null}
+        {receipts.data && rows.length === 0 && filtered ? (
+          <p className="empty">
+            No switch matches these filters. Widen the account, the model or the time and apply
+            again.
+          </p>
+        ) : null}
+        {receipts.data && rows.length === 0 && !filtered ? (
+          <p className="empty">
+            No switch has been recorded yet. The first time a session is pinned to an account is
+            itself written here.
+          </p>
+        ) : null}
+        {rows.length ? (
+          <div className="rows">
+            <div className="row head sessions-row">
+              <span>When</span>
+              <span>Why it moved</span>
+              <span>Accounts</span>
+            </div>
+            {rows.map((r) => (
+              <Receipt key={r.receiptId} r={r} names={names} now={now} />
+            ))}
+          </div>
+        ) : null}
+        {pageRefusal ? <Notice {...pageRefusal} /> : null}
+        {cursor ? (
+          <p className="sessions-more">
+            <button className="button quiet" type="button" onClick={showMore} disabled={busy}>
+              {busy ? 'Reading' : 'Show older'}
+            </button>
+          </p>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="h-find">
+        <h2 id="h-find">Find one receipt</h2>
+        <p className="caption">
+          A receipt older than the last thousand switches reads exactly like one that never existed.
+          The gateway does not tell the two apart.
+        </p>
+        <form className="sessions-filters" onSubmit={find}>
+          <label className="field">
+            <span>Receipt id</span>
+            <input
+              className="input"
+              value={lookupDraft}
+              onChange={(e) => setLookupDraft(e.target.value)}
+            />
+          </label>
+          <button className="button" type="submit">
+            Find
+          </button>
+        </form>
+        {lookup?.refusal ? <Notice {...lookup.refusal} /> : null}
+        {lookup?.receipt ? (
+          <div className="rows">
+            <Receipt r={lookup.receipt} names={names} now={now} />
+          </div>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="h-stick">
+        <h2 id="h-stick">When a pin moves</h2>
+        <p>
+          A pin holds a session on one account for one model so a conversation keeps landing where
+          its context already is. It does not move just because ranking would now put another
+          account first. It moves only when one of these happens.
+        </p>
+        <ul className="bullets">
+          <li>The account it points at becomes unavailable.</li>
+          <li>The quota of the account it points at is exhausted.</li>
+          <li>An operator puts that account into drain.</li>
+          <li>That one model fails on that account.</li>
+          <li>
+            A higher-priority account that was not eligible when the pin was made becomes eligible
+            again.
+          </li>
+        </ul>
+        <p>
+          A session staying on an account that no longer looks like the best one is this stickiness
+          working, not a fault.
+        </p>
+      </section>
+
+      <section aria-labelledby="h-gap">
+        <h2 id="h-gap">Not reported</h2>
+        <ul className="bullets">
+          <li>
+            The pin itself. No route reads the affinity table, so which account a session is pinned
+            to, when the pin was made, when it was last seen active and when it expires cannot be
+            shown. Only the switches between pins are readable.
+          </li>
+          <li>
+            Whether a connection is being skipped because a quota window crossed its auto-pause
+            threshold. A session pinned to such a connection still reads as healthy.
+          </li>
+          <li>
+            Whether one model on a connection is locked out after a model-scoped failure, and until
+            when. That lockout is one of the reasons a pin moves.
+          </li>
+        </ul>
+      </section>
+    </>
+  );
+}

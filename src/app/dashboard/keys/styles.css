@@ -1,0 +1,33 @@
+@layer components {
+  /* The key row: who, how many clients, what state, then its own disclosure
+     spanning the full width so a ceiling band has room to be read. */
+  .keys-row { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .keys-row .keys-detail { grid-column: 1 / -1; }
+
+  .keys-pick { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .keys-pick input { margin: 0; accent-color: var(--signal); }
+
+  .keys-detail summary { cursor: pointer; width: fit-content; color: var(--slate); font-size: var(--t-13); }
+  .keys-detail[open] summary { margin-block-end: 10px; }
+  .keys-detail > * + * { margin-block-start: 10px; }
+
+  .keys-ceilings { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 24px; }
+  .keys-ceiling { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .keys-ceiling .label { color: var(--slate); font-size: var(--t-13); }
+  .keys-ceiling-value { font-weight: 500; }
+
+  .keys-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+
+  .keys-once { display: flex; flex-direction: column; gap: 8px; margin-block: 14px; }
+  .keys-secret {
+    display: block; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius);
+    background: var(--paper); user-select: all; overflow-wrap: anywhere;
+  }
+}
+
+@layer states {
+  @media (max-width: 767px) {
+    .keys-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .keys-row .status { grid-column: 1 / -1; }
+  }
+}

@@ -1,0 +1,15 @@
+@layer components {
+  .models-search { min-width: 220px; margin-inline-start: auto; }
+  .models-row { grid-template-columns: minmax(0, 1fr); }
+  .models-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px 24px;
+    padding-block: 12px;
+    border-block: 1px solid var(--rule);
+  }
+
+  @media (min-width: 768px) {
+    .models-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 10rem) auto; }
+  }
+}

@@ -1,0 +1,67 @@
+@layer components {
+  /* The period picker sits between the head and the first section. */
+  .usage-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-block-end: 20px;
+  }
+
+  /* One column set for every rollup and the cost series: who, the band, the
+     money. The band column carries the proportion, so it takes the slack. */
+  .usage-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .usage-health,
+  .usage-flight,
+  .usage-history,
+  .usage-price {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .usage-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    margin-block-start: 12px;
+  }
+
+  .usage-details {
+    margin-block-start: 12px;
+  }
+  .usage-details summary {
+    cursor: pointer;
+    width: fit-content;
+    color: var(--slate);
+  }
+  .usage-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px 20px;
+    align-items: end;
+    margin-block-start: 12px;
+    max-width: 720px;
+  }
+  .usage-form .input {
+    max-width: 200px;
+  }
+
+  @media (min-width: 768px) {
+    .usage-grid {
+      grid-template-columns: minmax(140px, 1.2fr) minmax(0, 2fr) minmax(80px, auto);
+    }
+    .usage-health {
+      grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(60px, auto)) minmax(110px, auto);
+    }
+    .usage-flight {
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(60px, auto);
+    }
+    .usage-history {
+      grid-template-columns: minmax(70px, auto) minmax(0, 1.4fr) minmax(0, 1fr) minmax(90px, auto) minmax(70px, auto) minmax(90px, auto);
+    }
+    .usage-price {
+      grid-template-columns: minmax(0, 1fr) minmax(90px, auto);
+    }
+  }
+}
