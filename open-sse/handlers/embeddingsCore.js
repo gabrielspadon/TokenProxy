@@ -62,12 +62,14 @@ export async function handleEmbeddingsCore({
   log?.debug?.("EMBEDDINGS", `${provider.toUpperCase()} | ${model} | input_type=${Array.isArray(input) ? `array[${input.length}]` : "string"}`);
 
   let providerResponse;
+  let serialized;
   try {
-    if (beforeDispatch) await beforeDispatch({ body: requestBody });
+    serialized = JSON.stringify(requestBody);
+    if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url });
     providerResponse = await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(requestBody),
+      body: serialized,
       ...(typeof AbortSignal?.timeout === "function"
         ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
         : {}),
@@ -99,11 +101,11 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
-        if (beforeDispatch) await beforeDispatch({ body: requestBody });
+        if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: retryUrl });
         providerResponse = await fetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,
-          body: JSON.stringify(requestBody),
+          body: serialized,
         });
       } catch (error) {
         return createErrorResult(HTTP_STATUS.BAD_GATEWAY, error.message || 'Embedding retry failed', null, { safeToReplay: false });

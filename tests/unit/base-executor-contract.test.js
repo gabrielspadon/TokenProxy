@@ -187,3 +187,17 @@ describe('BaseExecutor.execute — non-2xx propagation, no silent success', () =
     expect(out.transformedBody).toEqual(body);
   });
 });
+
+it('passes the exact serialized payload and destination to the dispatch boundary', async () => {
+  const ex = new BaseExecutor('p', { baseUrl: 'https://fixture.invalid/v1' });
+  const body = { messages: [{ role: 'user', content: 'évidence' }] };
+  const beforeDispatch = vi.fn(async (evidence) => {
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(evidence.serialized).toBe(JSON.stringify(evidence.body));
+  });
+  fetchMock.mockResolvedValue(Response.json({ choices: [] }));
+  await ex.execute({ model: 'm', body, stream: false, credentials: {}, beforeDispatch });
+  const evidence = beforeDispatch.mock.calls[0][0];
+  expect(fetchMock.mock.calls[0][0]).toBe(evidence.url);
+  expect(fetchMock.mock.calls[0][1].body).toBe(evidence.serialized);
+});

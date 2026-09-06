@@ -312,7 +312,7 @@ export class BaseExecutor {
           "FETCH",
           `${this.provider.toUpperCase()} → ${url} | model=${model} | body=${fmtBytes(bodyStr.length)} | connectTimeout=${deadline.timeoutMs}ms`,
         );
-        if (beforeDispatch) await beforeDispatch({ body: transformedBody });
+        if (beforeDispatch) await beforeDispatch({ body: transformedBody, serialized: bodyStr, url });
         const response = await proxyAwareFetch(
           url,
           {

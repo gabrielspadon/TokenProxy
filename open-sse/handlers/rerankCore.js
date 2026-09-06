@@ -143,12 +143,14 @@ export async function handleRerankCore({
   log?.debug?.("RERANK", `${provider.toUpperCase()} | ${model} | documents=${documents.length}`);
 
   let providerResponse;
+  let serialized;
   try {
-    if (beforeDispatch) await beforeDispatch({ body: requestBody });
+    serialized = JSON.stringify(requestBody);
+    if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: cfg.url });
     providerResponse = await fetch(cfg.url, {
       method: "POST",
       headers: headers(),
-      body: JSON.stringify(requestBody),
+      body: serialized,
       ...(typeof AbortSignal?.timeout === "function"
         ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
         : {}),
@@ -176,11 +178,11 @@ export async function handleRerankCore({
       Object.assign(credentials, newCredentials);
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
       try {
-        if (beforeDispatch) await beforeDispatch({ body: requestBody });
+        if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: cfg.url });
         providerResponse = await fetch(cfg.url, {
           method: "POST",
           headers: headers(),
-          body: JSON.stringify(requestBody),
+          body: serialized,
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
