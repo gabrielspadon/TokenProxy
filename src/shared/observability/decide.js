@@ -1,9 +1,11 @@
 /**
  * Agent-efficient decision log — the emitter.
  *
- * Design: `docs/logging-design.md`. This file is that design's step 1 (the
+ * Design: `docs/logging-design.md`. This file is the design's step 1 (the
  * emitter, the schema and the frozen verdict enum) plus the sink half of its
- * step 6. Steps 3-5 wire the decision points; almost nothing calls this yet.
+ * step 6. Steps 2-5 are shipped too: the decision points across chat.js,
+ * chatCore and its handlers, auth, tokenRefresh, authzLog and drain all emit
+ * through here, and /api/admin/decisions serves the NDJSON sink back out.
  *
  * One decision, one line:
  *
@@ -378,7 +380,9 @@ let sinkDisabled = false;
 // D-9: a dead sink is retried, not permanent — at most one probe per interval.
 const SINK_RETRY_MS = 5 * 60 * 1000;
 
-function sinkFile() {
+/** The sink's on-disk path. Exported for the read endpoint
+ *  (/api/admin/decisions), which serves the same file agents grep. */
+export function sinkFile() {
   if (sinkPath) return sinkPath;
   sinkPath = path.join(DATA_DIR, 'logs', 'decisions.ndjson');
   return sinkPath;
