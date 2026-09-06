@@ -19,6 +19,8 @@ if (!['routes', 'standalone'].includes(mode) || !Number.isInteger(samples) || sa
 const work = mkdtempSync(join(tmpdir(), 'tokenproxy-gateway-bench-')); chmodSync(work, 0o700);
 const runId = randomUUID(), now = () => Number(process.hrtime.bigint()) / 1e6;
 const env = { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR || tmpdir(), LANG: 'en_US.UTF-8', TZ: 'UTC', NODE_ENV: 'production', DATA_DIR: work, BENCH_RUN_ID: runId, JWT_SECRET: randomBytes(32).toString('hex'), INITIAL_PASSWORD: randomBytes(32).toString('hex'), NEXT_TELEMETRY_DISABLED: '1', TOKENPROXY_NO_UPDATE: '1', HOSTNAME: '127.0.0.1' };
+env.BENCH_STRUCTURE_ENABLED = args.structure === 'off' ? '0' : '1';
+env.BENCH_MODEL = args.model || 'fixture-model';
 const children = [], logs = [], providerRecords = new Map(), starts = new Map();
 function child(script, extra = {}, cwd = root) {
   const fd = openSync(join(work, `${script.replaceAll('/', '_')}.log`), 'w', 0o600); logs.push(fd);
@@ -99,7 +101,7 @@ try {
   }
   const standalone = join(root, '.next/standalone');
   if (mode === 'standalone' && !existsSync(join(standalone, 'custom-server.js'))) throw new Error('Build standalone first with --mode=standalone --build=true');
-  const gateway = child(mode === 'routes' ? join(here, 'route-server.mjs') : join(standalone, 'custom-server.js'), {}, mode === 'routes' ? root : standalone);
+  const gateway = child(mode === 'routes' ? join(here, 'route-server.mjs') : join(standalone, 'custom-server.js'), args.profile === 'true' ? { BENCH_DIAGNOSTICS: '1' } : {}, mode === 'routes' ? root : standalone);
   const gatewayUrl = `http://127.0.0.1:${port}`, providerUrl = `http://127.0.0.1:${providerPort}`;
   let ready = false;
   for (let i = 0; i < 300; i++) { const r = await request(`${gatewayUrl}${mode === 'routes' ? '/__ready' : '/api/auth/status'}`, null, {}, { json: true }); if (r.status === 200) { ready = true; break; } if (gateway.exitCode !== null) break; await sleep(100); }
@@ -108,12 +110,12 @@ try {
   const scenarios = (args.scenarios || 'small,large,tools,multimodal,translation,slow-stream,slow-reader,abort-headers,abort-stream,dashboard').split(',');
   const results = [];
   for (const scenario of scenarios) {
-    const translated = scenario === 'translation', profile = translated ? 'small' : scenario;
+    const translated = scenario.startsWith('translation'), profile = scenario === 'translation-large' ? 'large' : translated ? 'small' : scenario;
     const count = ['slow-reader', 'abort-stream'].includes(scenario) ? Math.min(samples, 20) : samples;
     const collected = [], dashboard = [];
     const perform = async (arm, index) => {
       const id = randomUUID();
-      const model = profile === 'multimodal' ? 'gpt-4o' : 'fixture-model';
+      const model = profile === 'multimodal' ? 'gpt-4o' : env.BENCH_MODEL;
       const body = fixture(id, profile, arm === 'gateway' ? `${translated ? 'bench-claude' : 'bench-openai'}/${model}` : model);
       if (translated && arm === 'direct') { body.system = body.messages.shift().content; }
       const path = arm === 'gateway' || !translated ? '/v1/chat/completions' : '/v1/messages';

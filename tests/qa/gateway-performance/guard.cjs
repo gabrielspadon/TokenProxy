@@ -7,6 +7,29 @@ const { monitorEventLoopDelay, performance } = require('node:perf_hooks');
 const ports = new Set(String(process.env.BENCH_ALLOWED_PORTS || '').split(',').map(Number));
 if (!process.env.DATA_DIR || !process.env.BENCH_RUN_ID || !ports.size) throw new Error('Benchmark isolation is required');
 const state = { deniedNetwork: 0, deniedProcesses: 0 };
+let statements = {}, profiler;
+if (process.env.BENCH_DIAGNOSTICS === '1') {
+  const { createRequire } = require('node:module');
+  const { join } = require('node:path');
+  const Database = createRequire(join(process.cwd(), 'package.json'))('better-sqlite3');
+  const prepare = Database.prototype.prepare;
+  Database.prototype.prepare = function (sql) {
+    const statement = prepare.call(this, sql);
+    const table = /(?:INTO|UPDATE|FROM)\s+["`]?([A-Za-z_][A-Za-z0-9_]*)/i.exec(sql)?.[1] || 'other';
+    for (const method of ['run', 'get', 'all']) {
+      const original = statement[method];
+      statement[method] = function (...args) {
+        const start = performance.now();
+        try { return original.apply(this, args); }
+        finally { const key = `${method}:${table}`, value = statements[key] ??= { calls: 0, totalMs: 0, maxMs: 0 }; const duration = performance.now() - start; value.calls++; value.totalMs += duration; value.maxMs = Math.max(value.maxMs, duration); }
+      };
+    }
+    return statement;
+  };
+  const { Session } = require('node:inspector');
+  profiler = new Session(); profiler.connect();
+}
+const profileCall = (method) => new Promise((resolve, reject) => profiler.post(method, (error, value) => error ? reject(error) : resolve(value)));
 const denial = () => Object.assign(new Error('Benchmark guard denied external I/O'), { code: 'BENCH_IO_DENIED' });
 const connect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function (...args) {
@@ -39,13 +62,22 @@ syncBuiltinESMExports();
 const delay = monitorEventLoopDelay({ resolution: 1 }); delay.enable();
 let cpu = process.cpuUsage(), started = performance.now(), rssBase = process.memoryUsage().rss, peakRss = rssBase;
 const sample = setInterval(() => { peakRss = Math.max(peakRss, process.memoryUsage().rss); }, 10); sample.unref();
-process.on('message', msg => {
+process.on('message', async msg => {
   if (msg?.type === 'metrics-reset') {
+    statements = {};
+    if (profiler) { await profileCall('Profiler.enable'); await profileCall('Profiler.start'); }
     delay.reset(); cpu = process.cpuUsage(); started = performance.now(); rssBase = process.memoryUsage().rss; peakRss = rssBase;
     process.send?.({ type: 'metrics-reset', id: msg.id });
   }
   if (msg?.type === 'metrics') {
     const used = process.cpuUsage(cpu);
-    process.send?.({ type: 'metrics', id: msg.id, metrics: { elapsedMs: performance.now() - started, cpuUserMs: used.user / 1000, cpuSystemMs: used.system / 1000, rssBaseBytes: rssBase, peakRssBytes: peakRss, rssGrowthBytes: peakRss - rssBase, memory: process.memoryUsage(), eventLoopLagMs: { p50: delay.percentile(50) / 1e6, p95: delay.percentile(95) / 1e6, p99: delay.percentile(99) / 1e6, max: delay.max / 1e6 }, ...state } });
+    const measured = { elapsedMs: performance.now() - started, cpuUserMs: used.user / 1000, cpuSystemMs: used.system / 1000, rssBaseBytes: rssBase, peakRssBytes: peakRss, rssGrowthBytes: peakRss - rssBase, memory: process.memoryUsage(), eventLoopLagMs: { p50: delay.percentile(50) / 1e6, p95: delay.percentile(95) / 1e6, p99: delay.percentile(99) / 1e6, max: delay.max / 1e6 }, ...state };
+    if (profiler) {
+      const { profile } = await profileCall('Profiler.stop');
+      const file = require('node:path').join(process.env.DATA_DIR, `profile-${msg.id}.cpuprofile`);
+      require('node:fs').writeFileSync(file, JSON.stringify(profile), { mode: 0o600 });
+      measured.profileFile = file; measured.statements = statements;
+    }
+    process.send?.({ type: 'metrics', id: msg.id, metrics: measured });
   }
 });
