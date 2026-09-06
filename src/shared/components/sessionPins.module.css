@@ -167,6 +167,81 @@
   gap: 8px;
   margin-top: 10px;
 }
+.timeline {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e5ef;
+}
+.timelineControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 0 0 12px;
+}
+.timelineList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.timelineList > li {
+  padding: 8px 0 8px 12px;
+  border-inline-start: 3px solid #cdd5e4;
+}
+.timelineList > li + li {
+  border-top: 1px solid #eef1f7;
+}
+.timelineList > li[data-kind='switch'] {
+  border-inline-start-color: #a4b1cd;
+}
+.timelineList > li[data-kind='action'] {
+  border-inline-start-color: #455bca;
+}
+.timelineList p {
+  margin: 3px 0 0;
+}
+.timelineList button {
+  margin-top: 5px;
+  font-size: 12px;
+  text-decoration: underline;
+  text-decoration-color: #bac6dd;
+  text-underline-offset: 3px;
+}
+.timelineList button:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: 3px;
+}
+.timelineKind {
+  font-weight: 600;
+}
+.timelineAt {
+  color: #596981;
+  font-variant-numeric: tabular-nums;
+}
+.timelineIds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 4px 0 0;
+}
+.timelineIds div {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+}
+.timelineIds dt {
+  color: #596981;
+}
+.timelineIds dd {
+  margin: 0;
+}
+.timelineIds code {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .dockBody {
   padding: 12px 20px 20px;
 }

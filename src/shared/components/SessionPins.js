@@ -5,6 +5,15 @@ import { tableFeatures, useTable } from '@tanstack/react-table';
 import { call } from '@/shared/api';
 import { useOptionalWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { quotaTimestamp } from '@/shared/workspace/quotaWorkbenchModel';
+import {
+  TIMELINE_KINDS,
+  TIMELINE_KIND_LABEL,
+  TIMELINE_PAGE_SIZE,
+  timelineIdentifiers,
+  timelineSummary,
+  timelineUnavailable,
+  timelineUrl,
+} from '@/shared/workspace/pinTimelineModel';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import styles from './sessionPins.module.css';
 
@@ -43,6 +52,172 @@ export function receiptState(action) {
     default:
       return 'Uncertain';
   }
+}
+
+// The full timeline pages through retained history for one binding. It reads
+// its own pages, so opening it never re-reads or reorders the pin list, and it
+// renders inside the dock so the comparison table above cannot shift.
+function Timeline({ pin, onReceipt }) {
+  const [filters, setFilters] = useState({ kind: '', connectionId: '' });
+  const [paging, setPaging] = useState({ cursor: '', trail: [] });
+  const [read, setRead] = useState({ key: null, body: null, error: '' });
+  const url = timelineUrl({
+    pinId: pin.id,
+    kind: filters.kind,
+    connectionId: filters.connectionId,
+    cursor: paging.cursor,
+    pageSize: TIMELINE_PAGE_SIZE,
+  });
+  useEffect(() => {
+    let active = true;
+    void call(url).then((response) => {
+      if (!active) return;
+      setRead({
+        key: url,
+        body: response.ok ? response.body : null,
+        error: response.ok ? '' : response.body?.code || 'Timeline could not be read',
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [url]);
+  const page = read.key === url ? read.body : null;
+  const error = read.key === url ? read.error : '';
+  const loading = read.key !== url;
+  // A filter change restarts paging: a cursor is only valid inside the set it
+  // was cut from.
+  const refine = (update) => {
+    setPaging({ cursor: '', trail: [] });
+    setFilters((current) => ({ ...current, ...update }));
+  };
+  const accounts = [
+    ...new Set(
+      (page?.items || [])
+        .map((item) => item.connectionId)
+        .filter((value) => typeof value === 'string' && value)
+    ),
+  ].sort();
+  return (
+    <div className={styles.timeline}>
+      <div className={styles.timelineControls}>
+        <label className={styles.field}>
+          <span>Source</span>
+          <select
+            disabled={loading}
+            value={filters.kind}
+            onChange={(event) => refine({ kind: event.target.value })}
+          >
+            {TIMELINE_KINDS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.field}>
+          <span>Account</span>
+          <select
+            disabled={loading}
+            value={filters.connectionId}
+            onChange={(event) => refine({ connectionId: event.target.value })}
+          >
+            <option value="">Every account</option>
+            {[
+              ...new Set([...accounts, ...(filters.connectionId ? [filters.connectionId] : [])]),
+            ].map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {error && (
+        <p role="alert" className={styles.alert}>
+          {error.replaceAll('_', ' ')}. Retry before reading this history.
+        </p>
+      )}
+      {loading && <p role="status">Reading timeline…</p>}
+      {page && (
+        <>
+          <p className={styles.note}>
+            {page.total} retained {page.total === 1 ? 'entry' : 'entries'} in this scope, ordered by{' '}
+            {page.boundaries?.ordering || 'recorded time'}. Requests are timed by{' '}
+            <code>{page.timeBasis?.request || 'unknown'}</code>, switches by{' '}
+            <code>{page.timeBasis?.switch || 'unknown'}</code> and receipts by{' '}
+            <code>{page.timeBasis?.action || 'unknown'}</code>.
+          </p>
+          {timelineUnavailable(page).map((text) => (
+            <p key={text} className={styles.notice}>
+              {text}
+            </p>
+          ))}
+          {page.complete === false && (
+            <p className={styles.notice}>
+              {page.instruction || 'This page exceeded its response bound and was not rendered.'}
+            </p>
+          )}
+          {page.items.length ? (
+            <ol className={styles.timelineList} aria-label="Full pin timeline">
+              {page.items.map((item) => (
+                <li key={`${item.kind}:${item.id}`} data-kind={item.kind}>
+                  <span className={styles.timelineKind}>
+                    {TIMELINE_KIND_LABEL[item.kind] || 'Unknown source'}
+                  </span>{' '}
+                  <span className={styles.timelineAt}>{timestamp(item.at)}</span>
+                  <p>{timelineSummary(item)}</p>
+                  <dl className={styles.timelineIds}>
+                    {timelineIdentifiers(item).map((identifier) => (
+                      <div key={identifier.label}>
+                        <dt>{identifier.label}</dt>
+                        <dd>
+                          <code>{identifier.value}</code>
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {item.kind === 'action' && (
+                    <button type="button" onClick={() => onReceipt(item.actionId)}>
+                      Open receipt <code>{item.actionId.slice(0, 8)}</code>
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className={styles.empty}>No retained history matches this source and account.</p>
+          )}
+          <div className={styles.pager}>
+            {paging.trail.length > 0 && (
+              <Button
+                variant="default"
+                size="compact-sm"
+                disabled={loading}
+                onClick={() =>
+                  setPaging({ cursor: paging.trail.at(-1), trail: paging.trail.slice(0, -1) })
+                }
+              >
+                Previous entries
+              </Button>
+            )}
+            {page.next && (
+              <Button
+                variant="default"
+                size="compact-sm"
+                disabled={loading}
+                onClick={() =>
+                  setPaging({ cursor: page.next, trail: [...paging.trail, paging.cursor] })
+                }
+              >
+                More entries
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function History({ pin, bound, busy, onReceipt }) {
@@ -100,6 +275,8 @@ function Inspector({
   preview,
   receipt,
   bound,
+  expanded,
+  onExpand,
   onSubmit,
   onApply,
   onReceipt,
@@ -133,6 +310,18 @@ function Inspector({
         apply to later requests only; admitted work stays on its current account.
       </p>
       <History pin={pin} bound={bound} busy={busy} onReceipt={onReceipt} />
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        aria-expanded={expanded}
+        aria-controls="pin-full-timeline"
+        onClick={onExpand}
+      >
+        {expanded ? 'Hide full timeline' : 'Full timeline'}
+      </Button>
+      <div id="pin-full-timeline" hidden={!expanded}>
+        {expanded && <Timeline pin={pin} onReceipt={onReceipt} />}
+      </div>
       <h4>Change this binding</h4>
       <form onSubmit={onSubmit} className={styles.form}>
         <label className={styles.field}>
@@ -266,6 +455,7 @@ export default function SessionPins({ onChanged } = {}) {
   const [preview, setPreview] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [mutationError, setMutationError] = useState('');
+  const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
   const generation = useRef(0);
   const url = pinsUrl(scope, cursor);
@@ -303,6 +493,9 @@ export default function SessionPins({ onChanged } = {}) {
     setReceipt(null);
     setMutationError('');
     setTarget('');
+    // The timeline is scoped to one binding, so a different pin collapses it
+    // rather than showing the previous pin's history under a new heading.
+    setExpanded(false);
   }, []);
   const pins = page?.pins || [];
   const selected = pins.find((pin) => pin.id === selectedId) || null;
@@ -466,6 +659,8 @@ export default function SessionPins({ onChanged } = {}) {
               pin={selected}
               busy={busy}
               bound={bound}
+              expanded={expanded}
+              onExpand={() => setExpanded((value) => !value)}
               form={{ action, target, deadline, setAction, setTarget, setDeadline }}
               preview={preview}
               receipt={receipt}
