@@ -674,23 +674,10 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-// Each attempt gets its own copy of the request body.
-//
-// The translators mutate what they are handed — prepareClaudeRequest rewrites
-// msg.content in place, stamps cache_control onto blocks and de-prefixes a
-// model sitting on a tool, and the Kiro and Gemini paths do the same kind of
-// thing — because for a single request the body is theirs to consume. A combo
-// hands the SAME object to every model in turn, so provider two received a
-// history already rewritten to suit provider one, and a chain that works model
-// by model fails as a combo (#3619). chat.js only spreads the top level, which
-// leaves messages, tools and system shared.
-//
-// Fusion is the sharper case: its panel runs concurrently on one body, so the
-// mutations interleave.
-//
-// Fails open. A body that cannot be cloned is passed through as before rather
-// than failing the request, since the sharing bug is worse than the clone but
-// not worse than a 500.
+// Each sequential or concurrent combo dispatch starts from the original body.
+// The chat coordinator and core also isolate their own nested request data.
+// Direct callers may attach non-cloneable handles; the core preserves those
+// handles while copying their surrounding JSON containers.
 function bodyForAttempt(body) {
   try {
     return structuredClone(body);

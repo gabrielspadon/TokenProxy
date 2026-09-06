@@ -92,10 +92,8 @@ async function createAntigravityVerificationHooks(connectionId) {
   return createHooks(connectionId);
 }
 
-// The wait a local admission refusal advertises. There is no queue behind the
-// per-provider cap yet (see HANDOFF in the leaf report), so the honest budget is
-// the overlay spec's own floor rather than a number invented to look precise:
-// the in-flight requests this cap is counting have no knowable finish time.
+// Minimum wait advertised after local admission refuses a request. Queue
+// expiry does not predict when the currently running requests will finish.
 const ADMISSION_RETRY_HINT_MS = 1000;
 // Retry-After floor from overlay-spec §4: a retryable status always names some
 // delay, because `Retry-After: 0` reads as "retry immediately" and turns a
