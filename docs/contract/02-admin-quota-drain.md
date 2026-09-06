@@ -111,8 +111,8 @@ Without it: `GET /api/admin/drain` filters to `isDraining === true` only. With i
 - Auth: operator class, read method.
 - Query/body: none.
 - **One scan, not N per-connection reads** (comment, lines 12-13) — cohort question. Loads all connections via `getProviderConnections()` and all windows via `getAllWindows()` (a single query returning a `Map<connectionId, windowRow[]>`, see `quotaWindowsRepo.js` below), then joins in memory.
-- Response 200: `{snapshots: [QuotaSnapshot, ...]}` — one per connection via `toQuotaSnapshot(conn, byConnection.get(conn.id) ?? [])`. A connection with no rows in the map gets an **empty `windows` array**, not an omitted snapshot.
-- Error 500: `adminError(500, "state_unavailable", error?.message || "Quota state could not be read.")`.
+- Response 200 includes `{snapshots, asOf, mode:"passive", historyAvailable:false}`. One snapshot per configured connection, with an empty `windows` array when it has no stored evidence. All snapshots in the batch share the response's `asOf` time.
+- Error 500 returns fixed text `Quota state could not be read.` Storage exception text is never returned.
 
 ### GET /api/admin/quota/{connectionId}
 `src/app/api/admin/quota/[connectionId]/route.js:1-28`
@@ -123,31 +123,40 @@ Without it: `GET /api/admin/drain` filters to `isDraining === true` only. With i
 - Response 200: `toQuotaSnapshot(conn, await getWindows(connectionId))`.
 
 ### QuotaSnapshot shape
-`toQuotaSnapshot(conn, windows)` — `src/lib/admin/project.js:100-102`:
+`toQuotaSnapshot(conn, windows)` in `src/lib/admin/project.js` returns the stored rows and observation metadata.
 ```
-{ connectionId: conn.id, provider: conn.provider, windows: toWindowRecords(windows) }
+{ connectionId, provider, asOf, mode: "passive", historyAvailable: false, windows }
 ```
 
-### WindowRecord shape (the quota unit itself)
-`toWindowRecord(row)` — `src/lib/admin/project.js:38-47`. **Every field is required in the output; a row missing a field is completed, never dropped**, per the comment directly above it (lines 35-37): *"an absent window reads to a ranker as an account with fewer constraints, which ranks it ABOVE accounts that reported honestly."* This is a documented anti-corruption stance, stated here rather than papered over:
-```
-{
-  scope: String(row?.scope ?? ""),
-  remaining: num(row?.remaining),          // Number(value), else 0 if not finite
-  limit: num(row?.limit),                  // Number(value), else 0 if not finite
-  resetAt: isoOrNull(row?.resetAt) ?? new Date(0).toISOString(),
-  observedAt: isoOrNull(row?.observedAt) ?? new Date(0).toISOString(),
-  confidence: CONFIDENCE[row?.confidence] ?? "unknown",
-}
-```
-- `scope` — the window's identity string (e.g. which quota bucket/model group this is), coerced to `""` if absent, never `null`.
-- `remaining`, `limit` — **absolute units, not a percentage**, per the repo-level comment in `quotaWindowsRepo.js` ("Written and read as absolute units") and per the task's operator-semantics requirement. A non-finite/missing value silently becomes `0`, which reads as "zero remaining, zero limit" — indistinguishable at the wire level from a genuinely exhausted, zero-limit window. **A caller cannot tell "no data" from "confirmed zero" from these two fields alone.**
-- `resetAt` — ISO timestamp of when the window replenishes. Falls back to the Unix epoch (`new Date(0).toISOString()`, i.e. `1970-01-01T00:00:00.000Z`) if the row's value is missing or unparseable. **The epoch fallback is itself a defaulted "no data" signal disguised as a real past timestamp** — nothing in the wire shape flags it as synthetic.
-- `observedAt` — ISO timestamp of when this evidence was last read from the provider. Same epoch-fallback behavior as `resetAt`.
-- `confidence` — one of `"measured"`, `"estimated"`, `"unknown"`. Mapping (`CONFIDENCE` const, `project.js:22`): store-side `"fresh"` or `"measured"` → `"measured"`; store-side `"stale"` or `"estimated"` → `"estimated"`; anything else (including missing) → `"unknown"`. Per the comment directly above the const (lines 16-21): the store speaks freshness (fresh/stale/unknown), the ABI speaks provenance (measured/estimated/unknown) — evidence read fresh from a provider response IS "measured"; evidence carried forward past its observation window IS "estimated"; anything else is `"unknown"`, which is the deliberately safe default because **"unknown" evidence must never be allowed to outrank known evidence when the scheduler ranks accounts** (rule referenced in the comment).
+### WindowRecord and observation evidence
 
-### Confidence — what a failed quota lookup means
-A `confidence:"unknown"` (or a row that never existed, yielding `windows: []`) does **not** mean "up to date" or "no constraint." It means the gateway has no trustworthy reading and is reporting that absence honestly via the confidence field (or the empty array) rather than fabricating a value. `remaining`/`limit` being `0` under `"unknown"` confidence is the read-as-exhausted trap described above — the wire shape gives no separate boolean for "this row is synthetic/defaulted."
+`toWindowRecord` retains each row. The pair `(connectionId, scope)` identifies a window uniquely.
+
+- `remaining` and `limit` preserve finite nonnegative numeric values, including real zero. Missing, blank, invalid, boolean and negative values become `null`.
+- `resetAt` and `observedAt` are nullable ISO timestamps. No epoch fallback or future reset is synthesized. `resetState` is `passed`, `upcoming` or `unknown`; `resetSemantics` is `stored-deadline` or `unknown`.
+- `source` is `quotaWindows` for current quota rows and `stored-quota-evidence` for legacy receipt/qualification projections. The store retains no unit, so `unit` is `null`. `scale` is `absolute` for measured rows and `unknown` otherwise. Unknown-confidence rows may have a synthetic denominator of 100; that number does not establish a quota unit.
+- `confidence` describes recorded provenance. Stored `fresh`, `stale` and `measured` map to `measured`; `estimated` remains `estimated`; other values become `unknown`. An old measurement remains a measurement.
+- `freshness` contains `state`, nullable `ageMs`, `maxAgeMs:900000` and `basis:"stored-observation-age-and-deadline"`. A missing/future observation is unknown; age over 15 minutes or a passed reset is stale. This GET never refreshes a provider. Identical observations may be deduplicated by the writer, so the stored timestamp can lag the most recent unchanged response.
+- `durationMs` is inferred only from explicit fixed minute/hour/day/week durations in parentheses, with `durationSource:"scope-label"`. Bare monthly/yearly names and calendar durations remain unknown. `windowType` is `general`, `scoped` or `unknown`, classified by the local ranker vocabulary and labelled with `windowTypeSource:"scope-label"`.
+- `percentage` is independently joined from `connection.lastQuotaSnapshot` by exact scope. It is either `null` or `{value, unit:"percent", source:"connection.lastQuotaSnapshot", measurement:"derived-percentage", observedAt, resetAt, freshness}`. Its timestamp and scale are independent of the quota row. No percentage is inferred from `remaining/limit`, and no snapshot-only rows are added.
+
+These fields describe current stored evidence. There is no quota history to chart and no assertion that a past reset replenished the provider account.
+
+### GET /api/admin/eligibility
+
+Operator-only passive batch read with required `provider` and `model` query parameters. Provider aliases normalize to canonical ids; the model is the exact provider-local identifier. Every configured account appears, including accounts belonging to other providers.
+
+The response contains `asOf`, `mode:"passive"`, `requested:{provider,model,routePrefix}`, `basis:"persisted-local-gates"`, `upstreamVerified:false`, `limitations`, `capabilities` and `accounts`. `routePrefix` retains the submitted provider prefix because the existing model-disable gate checks that exact prefix before alias normalization.
+
+Each account contains `connectionId`, `provider`, `verdict`, `localAdmission`, `reasons`, `enabled`, `draining`, `cooldownUntil`, `legacyCooldownUntil`, `modelSupport`, `qualification` and `quotaEvidence`.
+
+- `verdict` is `blocked` when persisted gates reject selection, `admissible` when gates allow selection and the explicit account allowlist includes the model, or `unknown` when account-specific model support is absent. `localAdmission` separately reports `allowed` or `blocked`. Admissible never guarantees upstream service.
+- `reasons` contains fixed safe labels and `{code,source,observedAt,until,effect}` evidence, with `effect` equal to `blocks-selection` or `context`. Gates cover account disablement, provider mismatch, draining, explicit model exclusions, active model/account locks, recorded quota thresholds and the real local quota ranker. The provider-disable switch is enforced only for no-auth providers; authenticated-provider flags and per-account model-list hides are contextual notes. Legacy cooldown is display context, not an independent routing gate.
+- `modelSupport.status` is `configured`, `excluded` or `unknown`, sourced from the account's nonempty `providerSpecificData.enabledModels` allowlist. No dedicated timestamp or upstream verification exists for that setting, so `observedAt` is null and `upstreamVerified` is false.
+- `qualification` is a recorded `credential-check`, with `passed`, `failed` or `unknown` status and a nullable observed time. `modelSupportVerified` is always false. The current probe implementation may check only token presence or expiry, or accept a deliberately invalid request. Its default-model label cannot prove generation support.
+- `quotaEvidence` retains projected windows plus window count and percentage observation time. Capability values come from `routing-capability-resolver`, including defaults, and are explicitly upstream-unverified.
+
+No account selection, reservation, discovery, provider contact or refresh occurs. In-memory quota, proxy readiness and request-specific constraints may change actual routing. A failed read returns a sanitized 500; missing/invalid query identifiers return 400 before state reads. Responses use `Cache-Control: no-store`.
 
 ### quotaWindowsRepo.js — the underlying store
 `src/lib/db/repos/quotaWindowsRepo.js:1-104`. One row per `(connectionId, scope)`, unique-keyed (`ON CONFLICT(connectionId, scope) DO UPDATE`). Columns: `connectionId, scope, remaining, "limit"` (quoted — SQLite keyword), `resetAt, observedAt, confidence`. `rowToWindow(row)` (lines 15-23) returns the raw row **as-is, with no repair** — comment at lines 11-14: *"A row whose numbers did not survive the round trip (a NULL limit, a text remaining) is returned as-is rather than repaired: `normalizeAccountWindows` is the single authority on what a usable window is, and a repair here would hide bad evidence from it."* `normalizeAccountWindows` lives outside this domain's scope (not under `src/app/api/admin` or an admin lib file) and was not opened. `getAllWindows()` returns a `Map<connectionId, windowRow[]>` in one query; `getWindows(connectionId)` filters to one connection.
@@ -173,8 +182,8 @@ A `confidence:"unknown"` (or a row that never existed, yielding `windows: []`) d
 `src/app/api/admin/qualification/[connectionId]/recheck/route.js`
 
 - Auth: operator class, mutating (loopback-bound).
-- Guards against a double-click spending two real generations via `beginRecheck`/`endRecheck` — a process-local `Set` of in-flight connection ids (`state.js`, `beginRecheck`/`endRecheck`, lines ~243-251). Comment: *"Process-local on purpose. This exists to stop one operator's double-click from spending two real generations."* Not durable across restarts or multi-process deployments — an explicit, named limitation.
-- Runs `testSingleConnection` (from `src/app/api/providers/[id]/test/testUtils`) against `getDefaultModel()`, writes the probe result via `writeQualification`, then re-reads `getWindows(connectionId).catch(() => [])` (quota re-read is best-effort — a failure here does not fail the recheck) and returns `qualificationDetail({conn, drain, probe, windows})`.
+- Deduplicates concurrent credential checks via the process-local `beginRecheck`/`endRecheck` set. This guard is not durable across restarts or multiple processes.
+- Runs provider-specific `testSingleConnection`, stores its result with a `getDefaultModel()` label, then re-reads stored quota rows. The check may contact providers or rotate tokens but does not universally generate against that labelled model or refresh quota.
 
 ### QualificationDetail shape
 `qualificationDetail(...)` — `src/lib/admin/qualification.js`:
@@ -184,7 +193,7 @@ A `confidence:"unknown"` (or a row that never existed, yielding `windows: []`) d
   status,                              // connectionStatus(conn, {isDraining, now}); "error" when the last probe itself failed
   checkedAt,                           // probe.checkedAt ?? conn.lastErrorAt ?? conn.updatedAt ?? null
   generation: {
-    ok: probe ? Boolean(probe.ok) : conn.testStatus === "active",   // whether the real completion succeeded
+    ok: probe ? Boolean(probe.ok) : conn.testStatus === "active",   // legacy credential-check/status result
     model: probe?.model ?? null,
     latencyMs: Number.isFinite(probe?.latencyMs) ? probe.latencyMs : null,
     error: redactError(probe?.error ?? conn.lastError),
@@ -194,7 +203,7 @@ A `confidence:"unknown"` (or a row that never existed, yielding `windows: []`) d
 ```
 `displayName`, `isActive`, `isDraining`, `lastQualifiedAt` and `lastError` are not on this object (verified against `src/lib/admin/qualification.js:12-32`); read them from the list route's `toConnection` projection.
 
-Comment at file top: `generation` is "the ABI's credential-safe evidence: whether a real completion succeeded, against which model, how long it took, and a redacted reason if not. Never the generated content, and never the probe's request or response body."
+The legacy `generation` field name and earlier source comments overstate this evidence. A true `ok` may represent a token presence/expiry check or default active status. Use the new eligibility projection's explicit credential-check and model-support fields when presenting account/model evidence.
 
 ---
 
@@ -243,7 +252,7 @@ Four inputs decide this string, in this exact precedence: draining outranks ever
 > Two facts the gateway acts on every time it routes are not reported by any operator-readable field today.
 
 1. `connectionStatus`'s four inputs (draining / active / rate-limit window / degraded probe state — exactly the four branches quoted above from `project.js:76-84`) do not include a fifth real gating condition the gateway also checks when routing: **per-window auto-pause**. DESIGN.md §2 (lines 286-289, "Configure per-window auto-pause thresholds") describes operator-configurable auto-pause thresholds per quota window ("consecutive failures... until the underlying condition recovers"); a connection can be skipped by the router because one of its quota windows crossed its configured auto-pause threshold, and **this skip is invisible in `status`** — it is not one of the five `connectionStatus` branches and no field in `DrainState`, `Connection`, or `QuotaSnapshot` reports it.
-2. **Per-model lockout is not exposed.** DESIGN.md (context around lines 1299-1340, the lockout/backoff section) describes a lockout mechanism that escalates through progressively longer intervals and can apply per-model, not just per-connection. The admin ABI's `lastError`/`generation.error` fields are free text (redacted, truncated) and the connection-level status is connection-scoped only — **nothing in this domain's routes exposes a per-model lock list.**
+2. The account-level health status remains connection-scoped. The passive eligibility route now exposes active locks for a requested model, with safe reasons and expiry times; it does not return unrestricted stored failure text or every model's lock metadata.
 
 DESIGN.md's own closing line: *"Closing either gap is a change to the gateway, not to the experience built over it. Until they are closed, a person is reading a status that is truthful about four things and silent about two."* This doc does not paper over that — no field for auto-pause-skip or per-model-lockout exists anywhere in `src/app/api/admin/**` or `src/lib/admin/**` as read for this contract.
 

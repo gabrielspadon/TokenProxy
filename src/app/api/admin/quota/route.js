@@ -22,11 +22,11 @@ export async function GET(request) {
   if (denied) return denied;
 
   try {
-    const conns = await getProviderConnections();
-    const byConnection = await getAllWindows();
-    const snapshots = conns.map((conn) => toQuotaSnapshot(conn, byConnection.get(conn.id) ?? []));
-    return adminJson({ snapshots });
-  } catch (error) {
-    return adminError(500, "state_unavailable", error?.message || "Quota state could not be read.");
+    const [conns, byConnection] = await Promise.all([getProviderConnections(), getAllWindows()]);
+    const now = Date.now();
+    const snapshots = conns.map((conn) => toQuotaSnapshot(conn, byConnection.get(conn.id) ?? [], { now }));
+    return adminJson({ snapshots, asOf: new Date(now).toISOString(), mode: "passive", historyAvailable: false });
+  } catch {
+    return adminError(500, "state_unavailable", "Quota state could not be read.");
   }
 }

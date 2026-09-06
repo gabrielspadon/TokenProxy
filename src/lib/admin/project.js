@@ -12,18 +12,18 @@
  */
 
 import { isConnectionDegraded } from "@/lib/db/repos/connectionsRepo.js";
+import { classifyWindow, windowHorizonMs } from "@/shared/utils/quotaRanking.js";
 
-// The store and the ranker speak freshness (fresh/stale/unknown); the ABI
-// speaks provenance (measured/estimated/unknown). They are not the same axis,
-// but they map cleanly: evidence read fresh from a provider response IS the
-// measured reading, and evidence carried forward past its observation is
-// exactly what the ABI calls estimated. Anything else is unknown, which is the
-// safe direction — rule 2 forbids unknown from outranking known evidence.
-const CONFIDENCE = { fresh: "measured", measured: "measured", stale: "estimated", estimated: "estimated" };
+// An old measurement remains measured. Its age is a separate axis. The source
+// writer uses unknown for synthetic percentage-scale rows, so do not infer an
+// absolute quota unit from a denominator of 100.
+const CONFIDENCE = { fresh: "measured", measured: "measured", stale: "measured", estimated: "estimated" };
+const FRESHNESS_MAX_AGE_MS = 15 * 60_000; // same evidence-age policy as quotaWindowBridge
 
 function num(value) {
+  if (value == null || typeof value === "boolean" || !["number", "string"].includes(typeof value) || String(value).trim() === "") return null;
   const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function isoOrNull(value) {
@@ -32,22 +32,50 @@ function isoOrNull(value) {
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
 
-// WindowRecord requires all six fields, so a row missing one is completed
-// rather than dropped: an absent window reads to a ranker as an account with
-// fewer constraints, which ranks it ABOVE accounts that reported honestly.
-export function toWindowRecord(row) {
+export function quotaFreshness(observedAt, resetAt, now = Date.now()) {
+  const observed = isoOrNull(observedAt);
+  const reset = isoOrNull(resetAt);
+  const ageMs = observed ? now - Date.parse(observed) : null;
+  const resetPassed = reset ? Date.parse(reset) <= now : null;
+  const state = ageMs === null || ageMs < 0 ? "unknown"
+    : ageMs > FRESHNESS_MAX_AGE_MS || resetPassed ? "stale" : "fresh";
+  return { state, ageMs: ageMs !== null && ageMs >= 0 ? ageMs : null, maxAgeMs: FRESHNESS_MAX_AGE_MS,
+    basis: "stored-observation-age-and-deadline" };
+}
+
+export function toWindowRecord(row, { now = Date.now(), source = "stored-quota-evidence" } = {}) {
+  const scope = String(row?.scope ?? "");
+  const resetAt = isoOrNull(row?.resetAt);
+  const observedAt = isoOrNull(row?.observedAt);
+  // Bare monthly/yearly names do not specify an exact period. The ranker has
+  // ordering fallbacks for those names; a passive view must not call them facts.
+  const horizon = /\(\s*\d+(?:\.\d+)?\s*(?:m|min|h|d|w)\s*\)/i.test(scope) ? windowHorizonMs(scope) : null;
+  const durationMs = Number.isFinite(horizon) && horizon >= 60_000 ? horizon : null;
+  const confidence = CONFIDENCE[row?.confidence] ?? "unknown";
   return {
-    scope: String(row?.scope ?? ""),
+    scope,
     remaining: num(row?.remaining),
     limit: num(row?.limit),
-    resetAt: isoOrNull(row?.resetAt) ?? new Date(0).toISOString(),
-    observedAt: isoOrNull(row?.observedAt) ?? new Date(0).toISOString(),
-    confidence: CONFIDENCE[row?.confidence] ?? "unknown",
+    resetAt,
+    observedAt,
+    confidence,
+    source,
+    unit: null,
+    scale: confidence === "measured" ? "absolute" : "unknown",
+    scaleNote: confidence === "measured" ? "Provider units were not retained."
+      : "The stored scale may be synthetic; a denominator of 100 does not establish absolute entitlement.",
+    durationMs,
+    durationSource: durationMs === null ? null : "scope-label",
+    windowType: classifyWindow(scope) ?? "unknown",
+    windowTypeSource: "scope-label",
+    resetSemantics: resetAt ? "stored-deadline" : "unknown",
+    resetState: resetAt ? (Date.parse(resetAt) <= now ? "passed" : "upcoming") : "unknown",
+    freshness: quotaFreshness(observedAt, resetAt, now),
   };
 }
 
 export function toWindowRecords(rows) {
-  return Array.isArray(rows) ? rows.map(toWindowRecord) : [];
+  return Array.isArray(rows) ? rows.map((row) => toWindowRecord(row)) : [];
 }
 
 /**
@@ -97,8 +125,25 @@ export function toConnection(conn, { isDraining = false, now = Date.now() } = {}
   };
 }
 
-export function toQuotaSnapshot(conn, windows) {
-  return { connectionId: conn.id, provider: conn.provider, windows: toWindowRecords(windows) };
+export function toQuotaSnapshot(conn, windows, { now = Date.now() } = {}) {
+  const stored = Array.isArray(windows) ? windows : [];
+  const percentages = Array.isArray(conn.lastQuotaSnapshot?.windows) ? conn.lastQuotaSnapshot.windows : [];
+  const percentageObservedAt = isoOrNull(conn.lastQuotaSnapshot?.fetchedAt);
+  return {
+    connectionId: conn.id, provider: conn.provider, asOf: new Date(now).toISOString(),
+    mode: "passive", historyAvailable: false,
+    windows: stored.map((row) => {
+      const out = toWindowRecord(row, { now, source: "quotaWindows" });
+      const snapshot = percentages.find((entry) => entry?.key === row.scope);
+      const value = num(snapshot?.remainingPercentage);
+      out.percentage = value !== null && value <= 100 ? {
+        value, unit: "percent", source: "connection.lastQuotaSnapshot", measurement: "derived-percentage",
+        observedAt: percentageObservedAt, resetAt: isoOrNull(snapshot.resetAt),
+        freshness: quotaFreshness(percentageObservedAt, snapshot.resetAt, now),
+      } : null;
+      return out;
+    }),
+  };
 }
 
 // accountSwitches rows carry the trigger vocabulary the scheduler writes
