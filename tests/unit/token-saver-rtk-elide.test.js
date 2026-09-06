@@ -9,7 +9,9 @@
 //   - wired as a size-based catch-all AFTER autodetect, never sniffed
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { elide } from "../../open-sse/rtk/filters/elide.js";
 import { ELIDE_MIN_CHARS } from "../../open-sse/rtk/constants.js";
 
@@ -172,12 +174,12 @@ describe("elide: via compressMessages", () => {
     expect(stats.hits).toEqual([]);
   });
 
-  it("stats: hit carries filter 'elide' and saved = before - after chars", () => {
+  it("stats: hit carries filter 'elide' and saved = before - after UTF-8 bytes", () => {
     const text = singleLineBlob();
     const { before, after, stats } = compressOne(text);
     expect(stats.hits).toHaveLength(1);
     expect(stats.hits[0].filter).toBe("elide");
-    expect(stats.hits[0].saved).toBe(before.length - after.length);
+    expect(stats.hits[0].saved).toBe(Buffer.byteLength(before) - Buffer.byteLength(after));
     expect(stats.bytesBefore - stats.bytesAfter).toBe(stats.hits[0].saved);
   });
 

@@ -1,55 +1,36 @@
-// Schema distillation token-saver: strips JSON-Schema keywords that carry no
-// validation signal for Anthropic/OpenAI tool calling (the upstream validates
-// nothing, it only reads name/description/enum/required/property structure),
-// and collapses whitespace runs inside input_schema description strings.
-//
-// Conservative on purpose:
-//   - tool.name and tool.description are NEVER touched.
-//   - keywords are dropped inside input_schema only, recursively; anything
-//     outside input_schema is copied verbatim.
-//   - enum / required / additionalProperties / type / items / properties and
-//     every other structural keyword survive.
-//   - deep copy only: the caller's array is never mutated.
-//   - engages only when the serialized tools array is >= MIN_BYTES; below
-//     that the rewrite does not pay for itself.
-
+// Annotation removal is an explicit lossy option. Descriptions, defaults and
+// examples are model-readable instructions even when validators ignore them.
+// Safe mode leaves the schema intact; there is no whitespace to recover from
+// an already-parsed schema without modifying literal values.
 const MIN_BYTES = 8192;
-const STRIP_KEYS = new Set(["default", "examples", "example", "$schema", "title"]);
-// Keys whose object value is a map of schema NAMES to schemas: an entry key is
-// a property/definition name, never a keyword, so it must survive even when it
-// collides with STRIP_KEYS (a property literally named "title"). The entry
-// VALUE still gets keyword stripping recursively.
-const NAME_MAP_KEYS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependencies"]);
+const STRIP_KEYS = new Set(["default", "examples", "example", "title"]);
+const NAME_MAP_KEYS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+const SCHEMA_KEYS = new Set(["items", "additionalItems", "additionalProperties", "unevaluatedItems", "unevaluatedProperties", "contains", "not", "if", "then", "else", "propertyNames", "contentSchema"]);
+const SCHEMA_ARRAY_KEYS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
 
-function collapseWs(text) {
-  return text.replace(/\s{2,}/g, " ");
-}
-
-function distillNode(node, notes, parentKey) {
-  if (Array.isArray(node)) return node.map((n) => distillNode(n, notes, parentKey));
-  if (!node || typeof node !== "object") return node;
-  const inNameMap = NAME_MAP_KEYS.has(parentKey);
+function distillNode(node, notes) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return structuredClone(node);
   const out = {};
   for (const [key, value] of Object.entries(node)) {
-    if (!inNameMap && STRIP_KEYS.has(key)) {
+    if (STRIP_KEYS.has(key)) {
       notes.add(`stripped:${key}`);
       continue;
     }
-    if (key === "description" && typeof value === "string") {
-      const collapsed = collapseWs(value);
-      if (collapsed !== value) notes.add("ws:description");
-      // defineProperty, not out[key] = : a key literally named "__proto__"
-      // would otherwise silently swap the object's prototype instead of
-      // becoming an own property and be lost on the next JSON.stringify.
-      Object.defineProperty(out, key, { value: collapsed, enumerable: true, configurable: true, writable: true });
-      continue;
+    let copied;
+    if (NAME_MAP_KEYS.has(key) || key === "dependencies") {
+      copied = value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).map(([name, schema]) => [name, distillNode(schema, notes)]))
+        : structuredClone(value);
+    } else if (SCHEMA_ARRAY_KEYS.has(key) || (key === "items" && Array.isArray(value))) {
+      copied = Array.isArray(value) ? value.map((schema) => distillNode(schema, notes)) : structuredClone(value);
+    } else if (SCHEMA_KEYS.has(key)) {
+      copied = distillNode(value, notes);
+    } else {
+      // enum/const and extension annotations contain DATA, not schemas. A data
+      // property called title/default/description must survive byte for byte.
+      copied = structuredClone(value);
     }
-    Object.defineProperty(out, key, {
-      value: distillNode(value, notes, key),
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
+    Object.defineProperty(out, key, { value: copied, enumerable: true, configurable: true, writable: true });
   }
   return out;
 }
@@ -61,11 +42,20 @@ function distillNode(node, notes, parentKey) {
  *   otherwise the INPUT ARRAY ITSELF (unchanged, savedBytes 0) — callers can
  *   always assign the result, mutation-free by construction.
  */
-export function distillToolSchemas(tools) {
+export function distillToolSchemas(tools, { allowLossy = false } = {}) {
+  if (!allowLossy) return { tools, savedBytes: 0, notes: [], semanticPreserving: true };
+  try {
+    return distillLossy(tools);
+  } catch {
+    return { tools, savedBytes: 0, notes: [], semanticPreserving: true };
+  }
+}
+
+function distillLossy(tools) {
   if (!Array.isArray(tools) || tools.length === 0) {
     return { tools, savedBytes: 0, notes: [] };
   }
-  const before = JSON.stringify(tools).length;
+  const before = Buffer.byteLength(JSON.stringify(tools), "utf8");
   if (before < MIN_BYTES) {
     return { tools, savedBytes: 0, notes: [] };
   }
@@ -94,9 +84,9 @@ export function distillToolSchemas(tools) {
     }
     return out;
   });
-  const after = JSON.stringify(copy).length;
+  const after = Buffer.byteLength(JSON.stringify(copy), "utf8");
   const savedBytes = Math.max(0, before - after);
   // Second pass over an already-distilled array must be a fixed point; if a
   // shape quirk made it not one, report honestly instead of looping.
-  return { tools: copy, savedBytes, notes: [...notes] };
+  return { tools: savedBytes > 0 ? copy : tools, savedBytes, notes: [...notes], semanticPreserving: savedBytes === 0 };
 }

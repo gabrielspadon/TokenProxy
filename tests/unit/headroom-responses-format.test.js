@@ -3,7 +3,9 @@
 // assigned the returned OpenAI messages back to body.input, violating the
 // Responses format contract. body.input must stay Responses-shaped.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compressWithHeadroom } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom as compressWithPolicy } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 describe("compressWithHeadroom openai-responses format (#1998)", () => {
   afterEach(() => {

@@ -4,7 +4,9 @@
 // (content swapped in place) or left byte-identical.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compressWithHeadroom } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom as compressWithPolicy } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const PROXY = "http://127.0.0.1:8787";
 const BIG = "x".repeat(2000);
@@ -162,7 +164,7 @@ describe("claude shape validator", () => {
     const { body, before, result, diagnostics } = await run(claudeBody(), "claude", async () => okRes(candidate));
     expect(result).toBeNull();
     expect(body).toEqual(before);
-    expect(JSON.stringify(diagnostics)).toContain("Claude");
+    expect(JSON.stringify(diagnostics)).toContain("protected content");
   });
 
   it("rejects a dropped claude message", async () => {
@@ -272,7 +274,7 @@ describe("openai-responses: instruction items kept (fix #2132 shape)", () => {
       const sent = JSON.parse(init.body);
       // proxy echoes the projection with content swapped out
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        sent.messages.map((m) => m.role === "system" || m.role === "developer" ? m : ({ ...m, content: "s" })),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });
@@ -336,7 +338,7 @@ describe("openai-responses pivot guard (3571)", () => {
     const { result, fetchMock } = await run(body, "openai-responses", async (url, init) => {
       const sent = JSON.parse(init.body);
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        sent.messages.map((m) => m.role === "system" || m.role === "developer" ? m : ({ ...m, content: "s" })),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });
@@ -362,7 +364,7 @@ describe("openai-responses pivot guard (3571)", () => {
     const { result } = await run(body, "openai-responses", async (url, init) => {
       const sent = JSON.parse(init.body);
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        sent.messages.map((m) => m.role === "system" || m.role === "developer" ? m : ({ ...m, content: "s" })),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });
@@ -390,7 +392,7 @@ describe("openai-responses pivot guard (3571)", () => {
     const { result } = await run(body, "openai-responses", async (url, init) => {
       const sent = JSON.parse(init.body);
       return okRes(
-        sent.messages.map((m) => ({ ...m, content: "s" })),
+        sent.messages.map((m) => m.role === "system" || m.role === "developer" ? m : ({ ...m, content: "s" })),
         { tokens_before: 50000, tokens_after: 500, tokens_saved: 49500 },
       );
     });

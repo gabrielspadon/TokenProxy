@@ -1,7 +1,9 @@
 // Size-boundary behavior of compressMessages: MIN_COMPRESS_SIZE (500) and
 // RAW_CAP (10 MiB) edges, plus the zero-compressible-block no-op path.
 import { describe, it, expect } from "vitest";
-import { compressMessages, formatRtkLog } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy, formatRtkLog } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { MIN_COMPRESS_SIZE, RAW_CAP } from "../../open-sse/rtk/constants.js";
 
 // Grep-shaped lines of exactly 30 chars each, so any length is prefix-able.
@@ -70,7 +72,7 @@ describe("zero compressible blocks", () => {
     const before = structuredClone(body);
     const stats = compressMessages(body, true);
     expect(JSON.stringify(body)).toBe(JSON.stringify(before));
-    expect(stats).toEqual({ bytesBefore: 0, bytesAfter: 0, hits: [] });
+    expect(stats).toEqual({ bytesBefore: 0, bytesAfter: 0, hits: [], mode: "lossy-opt-in", semanticPreserving: true });
     expect(formatRtkLog(stats)).toBeNull();
   });
 

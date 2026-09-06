@@ -14,6 +14,9 @@ import { compressPrefixByQuery } from "../../../open-sse/utils/queryAwareCompres
 import { dropOldestPairs } from "../../../open-sse/utils/pairDropper.js";
 import { reorderByRelevance } from "../../../open-sse/utils/embedReorder.js";
 import { injectBoundaryNote, composeBoundaryNote } from "../../../open-sse/utils/midPrefixInject.js";
+import { compressWithHeadroom } from "../../../open-sse/rtk/headroom.js";
+import { jsonCompact } from "../../../open-sse/rtk/filters/jsonCompact.js";
+import { isErrorResult } from "../../../open-sse/rtk/errorFlags.js";
 import { compressMessages } from "../../../open-sse/rtk/index.js";
 import { injectCaveman } from "../../../open-sse/rtk/caveman.js";
 import { injectPonytail } from "../../../open-sse/rtk/ponytail.js";
@@ -106,7 +109,7 @@ export const STAGES = {
   schema: {
     async run(body) {
       if (!Array.isArray(body.tools)) return;
-      const d = distillToolSchemas(body.tools);
+      const d = distillToolSchemas(body.tools, { allowLossy: false });
       if (d.savedBytes > 0) body.tools = d.tools;
     },
   },
@@ -153,7 +156,7 @@ export const STAGES = {
   rtk: {
     async run(body) {
       body.messages = structuredClone(body.messages);
-      compressMessages(body, true);
+      compressMessages(body, true, { allowLossy: false });
     },
   },
   privacy: {
@@ -163,31 +166,38 @@ export const STAGES = {
       redactOutbound(body, ctx.settings.privacyTerms || []);
     },
   },
-  // External compressor stand-in: chatCore gates the real one on context
-  // pressure and skips bodies over 256 KB. This mock keeps the gate and applies
-  // a deterministic lossless whitespace collapse to historical text blocks, so
-  // the audit can reason about where the stage should sit. It is labelled a
-  // mock in every report.
+  // Exercise the real proxy wrapper using an in-process deterministic stub.
+  // Only insignificant whitespace around valid JSON tokens is removed. This
+  // validates wrapper behavior, never a remote compression model's quality.
   headroom: {
     mock: true,
     async run(body, ctx) {
-      const p = pressureOf(body, ctx);
-      if (!p.over) return;
-      if (bytes(body) > 256 * 1024) return;
-      if (JSON.stringify(body.messages).includes('"is_error":true')) return;
-      const msgs = structuredClone(body.messages);
-      for (let i = 0; i < msgs.length - 2; i++) {
-        const c = msgs[i].content;
-        if (!Array.isArray(c)) continue;
-        for (const b of c) {
-          if (b?.type === "text" && typeof b.text === "string") b.text = b.text.replace(/[ \t]{2,}/g, " ");
-          if (b?.type === "tool_result" && Array.isArray(b.content)) {
-            for (const s of b.content) if (s?.type === "text" && typeof s.text === "string") s.text = s.text.replace(/[ \t]{2,}/g, " ");
+      const realFetch = globalThis.fetch;
+      globalThis.fetch = async (_url, init) => {
+        const { messages } = JSON.parse(init.body);
+        const before = bytes(messages);
+        const visit = (node, tool = false) => {
+          if (!node || typeof node !== "object") return;
+          if (Array.isArray(node)) { node.forEach((part) => visit(part, tool)); return; }
+          const inTool = tool || node.role === "tool" || node.type === "tool_result";
+          for (const [key, value] of Object.entries(node)) {
+            if (inTool && (key === "text" || key === "content") && typeof value === "string") {
+              node[key] = jsonCompact(value) ?? value;
+            } else if (value && typeof value === "object") visit(value, inTool);
           }
-        }
-      }
-      if (JSON.stringify(msgs) !== JSON.stringify(body.messages)) ctx.prefixRewritten = true;
-      body.messages = msgs;
+        };
+        visit(messages);
+        const after = bytes(messages);
+        return Response.json({ messages, tokens_before: before, tokens_after: after, tokens_saved: before - after,
+          auditMetrics: "synthetic byte counts used only to exercise profitability gates" });
+      };
+      try {
+        ctx.headroomStats = await compressWithHeadroom(body, {
+          enabled: true, url: "http://offline.invalid", model: "offline", format: "claude",
+          contextPressure: pressureOf(body, ctx), allowLossy: false,
+        });
+        if (ctx.headroomStats) ctx.prefixRewritten = true;
+      } finally { globalThis.fetch = realFetch; }
     },
   },
   inject: {
@@ -282,9 +292,11 @@ export function cacheString(body) {
 }
 
 export function commonPrefix(a, b) {
-  const n = Math.min(a.length, b.length);
+  const left = Buffer.from(a, "utf8");
+  const right = Buffer.from(b, "utf8");
+  const n = Math.min(left.length, right.length);
   let i = 0;
-  while (i < n && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  while (i < n && left[i] === right[i]) i++;
   return i;
 }
 
@@ -349,9 +361,9 @@ export function invariants(entry, out, ctx) {
   // Error results are evidence: byte-identical to what the client sent.
   const entryResults = toolResultsOf(em);
   for (const [id, b] of entryResults) {
-    if (b.is_error !== true) continue;
+    if (!isErrorResult(b)) continue;
     const o = results.get(id);
-    if (o && JSON.stringify(o.content) !== JSON.stringify(b.content)) { v.push("error-result-modified"); break; }
+    if (!o || JSON.stringify(o.content) !== JSON.stringify(b.content)) { v.push("error-result-modified"); break; }
   }
 
   // The live query (last user message text) is never rewritten.

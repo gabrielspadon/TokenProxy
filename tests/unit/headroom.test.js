@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, resetHeadroomCircuitBreaker } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom as compressWithPolicy, formatHeadroomLog, formatHeadroomSizeLog, resetHeadroomCircuitBreaker } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 import { parseHeadroomTimeoutMs } from "../../src/lib/headroom/detect.js";
 
 afterEach(() => {
@@ -558,7 +560,7 @@ describe("compressWithHeadroom", () => {
         messages: [
           { role: "user", content: "compressed earlier user" },
           { role: "assistant", content: "compressed assistant", tool_calls: [{ id: "tool_1", type: "function", function: { name: "read_file", arguments: "{\"path\":\"a.js\"}" } }] },
-          { role: "system", content: "compressed system instruction" },
+          { role: "system", content: "native system instruction" },
           { role: "user", content: "compressed current user" },
           { role: "tool", content: [{ type: "text", text: "compressed tool output" }], tool_call_id: "tool_1" },
         ],
@@ -644,7 +646,7 @@ describe("compressWithHeadroom", () => {
     });
     expect(body.conversationState.history[0].userInputMessage.content).toBe("compressed earlier user");
     expect(body.conversationState.history[1].assistantResponseMessage.content).toBe("compressed assistant");
-    expect(body.conversationState.currentMessage.userInputMessage.systemInstruction).toBe("compressed system instruction");
+    expect(body.conversationState.currentMessage.userInputMessage.systemInstruction).toBe("native system instruction");
     expect(body.conversationState.currentMessage.userInputMessage.content).toBe("compressed current user");
     expect(body.conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults[0].content[0].text)
       .toBe("compressed tool output");
@@ -682,7 +684,7 @@ describe("compressWithHeadroom", () => {
 
     expect(stats).toBeNull();
     expect(body).toEqual(original);
-    expect(diagnostics.reason).toBe("proxy response did not preserve Kiro message order");
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it("fails open on bad response", async () => {
@@ -821,7 +823,7 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
 
   it("valid same-shape compression with real shrink still commits (not blanket reject)", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(proxyReply([
-      { role: "system", content: "sys" },
+      { role: "system", content: "system prompt ".repeat(20) },
       { role: "user", content: "compressed q" },
       { role: "assistant", content: "compressed a" },
     ]));
@@ -832,7 +834,7 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
     });
 
     expect(stats).not.toBeNull();
-    expect(body.messages.map((m) => m.content)).toEqual(["sys", "compressed q", "compressed a"]);
+    expect(body.messages.map((m) => m.content)).toEqual(["system prompt ".repeat(20), "compressed q", "compressed a"]);
   });
 
   it("tool_call_id mutated → null; faithful tool_call_id commits", async () => {

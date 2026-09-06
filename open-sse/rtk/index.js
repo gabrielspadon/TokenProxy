@@ -5,38 +5,64 @@ import { elide } from "./filters/elide.js";
 import { autoDetectFilter } from "./autodetect.js";
 import { safeApply } from "./applyFilter.js";
 
-// Item-level error check (DEFECT D-err-4): an error flag nested INSIDE a
-// content-array item is still evidence; the block-level isErrorToolResult
-// only sees the enclosing node, so each item must be checked before
-// compressing. Covers all three flag spellings seen across formats.
-// R-F2: error:true (strict boolean) and status:'failed' are failure flags in
-// the wild (e.g. some executor shapes) and join the vocabulary.
-function isErrorItem(item) {
-  return !!item && (item.is_error === true || item.isError === true || item.error === true ||
-    item.status === "error" || item.status === "failed");
+import { isErrorResult } from "./errorFlags.js";
+import { jsonCompact } from "./filters/jsonCompact.js";
+
+// Compute every replacement before writing anything. Parsed request bodies have
+// writable data properties; accessors/frozen targets fail before the first write.
+// No whole-body clone is needed, so the cost follows tool output bytes only.
+function commitReplacements(patches) {
+  for (const { node, key } of patches) {
+    const descriptor = Object.getOwnPropertyDescriptor(node, key);
+    if (!descriptor || !("value" in descriptor) || !descriptor.writable) {
+      throw new TypeError("compression target is not a writable data property");
+    }
+  }
+  let committed = 0;
+  try {
+    for (const { node, key, value } of patches) {
+      node[key] = value;
+      committed++;
+    }
+  } catch (error) {
+    for (let i = committed - 1; i >= 0; i--) {
+      const { node, key, original } = patches[i];
+      node[key] = original;
+    }
+    throw error;
+  }
 }
 
-// Compress tool_result content in-place. Returns stats or null if disabled/failed.
-// A failed tool result is a trace, and compressing it destroys the evidence
-// whoever reads it is looking for. Skipping those is part of this module's
-// contract, but the vocabulary differs by shape: Claude puts `is_error` on the
-// block, OpenAI Responses puts `status` on the function_call_output, and Kiro
-// uses `isError`. headroom.js recognises all three at hasErrorToolBlock; this
-// path recognised only the first, and only on one of its four shapes, so an
-// error result reached the compressor through the other three.
-function isErrorToolResult(node) {
-  if (!node || typeof node !== "object") return false;
-  return node.is_error === true || node.isError === true || node.error === true ||
-    node.status === "error" || node.status === "failed";
+function newStats(allowLossy) {
+  return {
+    bytesBefore: 0, bytesAfter: 0, hits: [],
+    mode: allowLossy ? "lossy-opt-in" : "semantic-preserving",
+    semanticPreserving: true,
+  };
 }
 
-export function compressMessages(body, enabled) {
+function stageText(node, key, stats, shape, patches, allowLossy) {
+  const original = node[key];
+  const value = compressText(original, stats, shape, allowLossy);
+  if (value !== original) patches.push({ node, key, value, original });
+}
+
+export function compressMessages(body, enabled, { allowLossy = false } = {}) {
+  try {
+    return compressBody(body, enabled, allowLossy);
+  } catch (error) {
+    console.warn("[RTK] request traversal failed:", error?.message);
+    return null;
+  }
+}
+
+function compressBody(body, enabled, allowLossy) {
   if (!enabled) return null;
   if (!body) return null;
 
   // Kiro format: conversationState.history + conversationState.currentMessage
   if (body.conversationState) {
-    return compressKiroFormat(body, enabled);
+    return compressKiroFormat(body, allowLossy);
   }
 
   // Support both OpenAI/Claude "messages" and OpenAI Responses "input"
@@ -45,7 +71,8 @@ export function compressMessages(body, enabled) {
     : null;
   if (!items) return null;
 
-  const stats = { bytesBefore: 0, bytesAfter: 0, hits: [] };
+  const stats = newStats(allowLossy);
+  const patches = [];
   try {
     for (let i = 0; i < items.length; i++) {
       const msg = items[i];
@@ -53,14 +80,14 @@ export function compressMessages(body, enabled) {
 
       // Shape 4: OpenAI Responses — top-level { type:"function_call_output", output: string | [{type:"input_text", text}] }
       if (msg.type === "function_call_output") {
-        if (isErrorToolResult(msg)) continue;
+        if (isErrorResult(msg)) continue;
         if (typeof msg.output === "string") {
-          msg.output = compressText(msg.output, stats, "openai-responses-string");
+          stageText(msg, "output", stats, "openai-responses-string", patches, allowLossy);
         } else if (Array.isArray(msg.output)) {
           for (let k = 0; k < msg.output.length; k++) {
             const part = msg.output[k];
-            if (part && part.type === "input_text" && typeof part.text === "string" && !isErrorItem(part)) {
-              part.text = compressText(part.text, stats, "openai-responses-array");
+            if (part && part.type === "input_text" && typeof part.text === "string" && !isErrorResult(part)) {
+              stageText(part, "text", stats, "openai-responses-array", patches, allowLossy);
             }
           }
         }
@@ -69,8 +96,8 @@ export function compressMessages(body, enabled) {
 
       // Shape 1: OpenAI tool message — { role:"tool", content: "string" }
       if (msg.role === "tool" && typeof msg.content === "string") {
-        if (isErrorToolResult(msg)) continue;
-        msg.content = compressText(msg.content, stats, "openai-tool");
+        if (isErrorResult(msg)) continue;
+        stageText(msg, "content", stats, "openai-tool", patches, allowLossy);
         continue;
       }
 
@@ -78,11 +105,11 @@ export function compressMessages(body, enabled) {
 
       // Shape 1b: OpenAI tool message — { role:"tool", content:[{type:"text", text:"..."}] }
       if (msg.role === "tool") {
-        if (isErrorToolResult(msg)) continue;
+        if (isErrorResult(msg)) continue;
         for (let k = 0; k < msg.content.length; k++) {
           const part = msg.content[k];
-          if (part && part.type === "text" && typeof part.text === "string" && !isErrorItem(part)) {
-            part.text = compressText(part.text, stats, "openai-tool-array");
+          if (part && part.type === "text" && typeof part.text === "string" && !isErrorResult(part)) {
+            stageText(part, "text", stats, "openai-tool-array", patches, allowLossy);
           }
         }
         continue;
@@ -92,22 +119,23 @@ export function compressMessages(body, enabled) {
       for (let j = 0; j < msg.content.length; j++) {
         const block = msg.content[j];
         if (!block || block.type !== "tool_result") continue;
-        if (isErrorToolResult(block)) continue; // preserve error traces
+        if (isErrorResult(block)) continue; // preserve error traces
 
         if (typeof block.content === "string") {
           // Shape 2: claude string form
-          block.content = compressText(block.content, stats, "claude-string");
+          stageText(block, "content", stats, "claude-string", patches, allowLossy);
         } else if (Array.isArray(block.content)) {
           // Shape 3: claude array form — compress each text part
           for (let k = 0; k < block.content.length; k++) {
             const part = block.content[k];
-            if (part && part.type === "text" && typeof part.text === "string" && !isErrorItem(part)) {
-              part.text = compressText(part.text, stats, "claude-array");
+            if (part && part.type === "text" && typeof part.text === "string" && !isErrorResult(part)) {
+              stageText(part, "text", stats, "claude-array", patches, allowLossy);
             }
           }
         }
       }
     }
+    commitReplacements(patches);
   } catch (e) {
     console.warn("[RTK] compressMessages error:", e.message);
     return null;
@@ -116,8 +144,9 @@ export function compressMessages(body, enabled) {
 }
 
 // Compress Kiro format: conversationState.history[].userInputMessage.userInputMessageContext.toolResults[].content[].text
-function compressKiroFormat(body, enabled) {
-  const stats = { bytesBefore: 0, bytesAfter: 0, hits: [] };
+function compressKiroFormat(body, allowLossy) {
+  const stats = newStats(allowLossy);
+  const patches = [];
   try {
     const state = body.conversationState;
     const allMessages = [...(Array.isArray(state?.history) ? state.history : [])];
@@ -128,16 +157,17 @@ function compressKiroFormat(body, enabled) {
       if (!Array.isArray(toolResults)) continue;
 
       for (const tr of toolResults) {
-        if (isErrorItem(tr)) continue; // preserve error traces
+        if (isErrorResult(tr)) continue; // preserve error traces
         if (!Array.isArray(tr.content)) continue;
 
         for (const part of tr.content) {
-          if (part && typeof part.text === "string") {
-            part.text = compressText(part.text, stats, "kiro-tool-result");
+          if (part && typeof part.text === "string" && !isErrorResult(part)) {
+            stageText(part, "text", stats, "kiro-tool-result", patches, allowLossy);
           }
         }
       }
     }
+    commitReplacements(patches);
   } catch (e) {
     console.warn("[RTK] compressKiroFormat error:", e.message);
     return null;
@@ -145,8 +175,8 @@ function compressKiroFormat(body, enabled) {
   return stats;
 }
 
-function compressText(text, stats, shape) {
-  const bytesIn = text.length;
+function compressText(text, stats, shape, allowLossy) {
+  const bytesIn = Buffer.byteLength(text, "utf8");
   stats.bytesBefore += bytesIn;
 
   if (bytesIn < MIN_COMPRESS_SIZE || bytesIn > RAW_CAP) {
@@ -154,25 +184,28 @@ function compressText(text, stats, shape) {
     return text;
   }
 
-  const fn = autoDetectFilter(text)
-    // Size-based catch-all, NOT part of the sniffing chain: elide is tried
-    // only when no structured filter claimed the block.
-    || (text.length > ELIDE_MIN_CHARS ? elide : null);
+  const compact = jsonCompact(text);
+  const fn = typeof compact === "string" ? jsonCompact : allowLossy
+    ? autoDetectFilter(text) || (text.length > ELIDE_MIN_CHARS ? elide : null)
+    : null;
   if (!fn) {
     stats.bytesAfter += bytesIn;
     return text;
   }
 
-  const out = safeApply(fn, text);
+  const out = fn === jsonCompact ? compact : safeApply(fn, text);
+  const bytesOut = Buffer.byteLength(out, "utf8");
 
   // Safety: never return empty, never grow the input
-  if (!out || out.length === 0 || out.length >= bytesIn) {
+  if (!out || out.length === 0 || bytesOut >= bytesIn) {
     stats.bytesAfter += bytesIn;
     return text;
   }
 
-  stats.bytesAfter += out.length;
-  stats.hits.push({ shape, filter: fn.filterName || fn.name, saved: bytesIn - out.length });
+  stats.bytesAfter += bytesOut;
+  const semanticPreserving = fn.semanticPreserving === true;
+  stats.semanticPreserving &&= semanticPreserving;
+  stats.hits.push({ shape, filter: fn.filterName || fn.name, saved: bytesIn - bytesOut, semanticPreserving });
   return out;
 }
 

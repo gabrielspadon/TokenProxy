@@ -5,7 +5,9 @@
 // JSON.stringify, so padding chars are solved arithmetically.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { compressWithHeadroom } from '../../open-sse/rtk/headroom.js';
+import { compressWithHeadroom as compressWithPolicy } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const PROXY = 'http://127.0.0.1:8787';
 const LIMIT = 256 * 1024; // MAX_COMPRESS_BODY_BYTES

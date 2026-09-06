@@ -15,7 +15,9 @@
 // The saver still runs; instruction items are simply kept local, the same rule
 // the Claude branch already applies to `system`.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { compressWithHeadroom, resetHeadroomCircuitBreaker } from '../../open-sse/rtk/headroom.js';
+import { compressWithHeadroom as compressWithPolicy, resetHeadroomCircuitBreaker } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -33,7 +35,7 @@ function proxyCompressingEverything(transform = (m) => ({ ...m, content: 'C' }))
     fn.lastPayload = JSON.parse(init.body);
     return new Response(
       JSON.stringify({
-        messages: fn.lastPayload.messages.map(transform),
+        messages: fn.lastPayload.messages.map((m) => m.role === "system" || m.role === "developer" ? m : transform(m)),
         tokens_before: 1000,
         tokens_after: 100,
         tokens_saved: 900,
@@ -145,7 +147,7 @@ describe('#2132 headroom must not drop Responses instruction items', () => {
 
     expect(stats).toBeNull();
     expect(body.input).toEqual(before);
-    expect(diagnostics.reason).toBe('Responses round trip did not preserve input items');
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it('still refuses a body carrying non-message input items', async () => {

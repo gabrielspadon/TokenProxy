@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compressMessages } from "open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const core = readFileSync(join(root, "open-sse/handlers/chatCore.js"), "utf8");

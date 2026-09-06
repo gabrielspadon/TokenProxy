@@ -84,7 +84,9 @@ import {
 import { handleNonStreamingResponse } from "../../open-sse/handlers/chatCore/nonStreamingHandler.js";
 import { handleForcedSSEToJson } from "../../open-sse/handlers/chatCore/sseToJsonHandler.js";
 import { handleChatCore } from "../../open-sse/handlers/chatCore.js";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { getModelInfo } from "../../open-sse/config/models.js";
 
 const AT = Date.parse("2026-09-04T00:00:00.000Z");

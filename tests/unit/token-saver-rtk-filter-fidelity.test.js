@@ -2,7 +2,9 @@
 // unicode + CRLF git diffs, ANSI-coloured grep output, prose that merely
 // mentions "commit", a 1 MiB single-line blob, and the dedup-log 2000-line cap.
 import { describe, it, expect } from "vitest";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 import { DEDUP_LINE_MAX, GIT_DIFF_HUNK_MAX_LINES } from "../../open-sse/rtk/constants.js";
 
 const wrapTool = (t) => ({ messages: [{ role: "tool", tool_call_id: "c1", content: t }] });

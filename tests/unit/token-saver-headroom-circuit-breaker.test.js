@@ -6,9 +6,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  compressWithHeadroom,
+  compressWithHeadroom as compressWithPolicy,
   resetHeadroomCircuitBreaker,
 } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const PROXY = "http://127.0.0.1:8787";
 const BIG = "x".repeat(2000);

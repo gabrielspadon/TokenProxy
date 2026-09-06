@@ -7,7 +7,9 @@
 // skipped as "unsupported <format> request shape"; Ollama DID match, and had its
 // provider-only fields discarded by the wholesale message swap on commit.
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { compressWithHeadroom, resetHeadroomCircuitBreaker } from "../../open-sse/rtk/headroom.js";
+import { compressWithHeadroom as compressWithPolicy, resetHeadroomCircuitBreaker } from "../../open-sse/rtk/headroom.js";
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -31,9 +33,9 @@ function respond(messages, extra = {}) {
 }
 
 describe("#2620 gemini-family contents[] projection", () => {
-  it("compresses systemInstruction and contents text parts in place", async () => {
+  it("preserves systemInstruction and compresses opted-in contents text parts", async () => {
     global.fetch = respond([
-      { role: "system", content: "sys!" },
+      { role: "system", content: `you are helpful${PAD}` },
       { role: "user", content: "u!" },
       { role: "assistant", content: "a!" },
     ]);
@@ -52,7 +54,7 @@ describe("#2620 gemini-family contents[] projection", () => {
     expect(stats.tokens_saved).toBe(900);
     // Gemini's "model" role is projected as assistant for the OpenAI-only proxy.
     expect(respond.lastPayload.messages.map((m) => m.role)).toEqual(["system", "user", "assistant"]);
-    expect(body.systemInstruction.parts[0].text).toBe("sys!");
+    expect(body.systemInstruction.parts[0].text).toBe(`you are helpful${PAD}`);
     expect(body.contents[0].parts[0].text).toBe("u!");
     expect(body.contents[1].parts[0].text).toBe("a!");
     // Structure is preserved: roles are still Gemini's own.
@@ -80,7 +82,7 @@ describe("#2620 gemini-family contents[] projection", () => {
   });
 
   it("reads antigravity's nested body.request and vertex's snake_case system_instruction", async () => {
-    global.fetch = respond([{ role: "system", content: "s!" }, { role: "user", content: "u!" }]);
+    global.fetch = respond([{ role: "system", content: `instructions${PAD}` }, { role: "user", content: "u!" }]);
     const body = {
       project: "p",
       request: {
@@ -94,7 +96,7 @@ describe("#2620 gemini-family contents[] projection", () => {
     });
 
     expect(stats.tokens_saved).toBe(900);
-    expect(body.request.system_instruction.parts[0].text).toBe("s!");
+    expect(body.request.system_instruction.parts[0].text).toBe(`instructions${PAD}`);
     expect(body.request.contents[0].parts[0].text).toBe("u!");
     expect(body.project).toBe("p");
   });
@@ -116,7 +118,7 @@ describe("#2620 gemini-family contents[] projection", () => {
 
     expect(stats).toBeNull();
     expect(JSON.stringify(body)).toBe(before);
-    expect(diagnostics.reason).toBe("proxy response did not preserve Gemini message order");
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it("still skips a contents[] body when the format is not a Gemini one", async () => {

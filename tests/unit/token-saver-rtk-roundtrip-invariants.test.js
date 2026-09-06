@@ -2,7 +2,9 @@
 // Covers the module contract stated in open-sse/rtk/headroom.js:1-2:
 // tool ids, is_error flags and cache_control blocks must survive compression.
 import { describe, it, expect } from "vitest";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 
 // --- fixtures ---------------------------------------------------------------
 

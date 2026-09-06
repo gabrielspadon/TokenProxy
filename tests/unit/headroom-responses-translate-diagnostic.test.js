@@ -4,7 +4,9 @@
 // failure looked identical to a successful compression.
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
-import { compressWithHeadroom } from '../../open-sse/rtk/headroom.js';
+import { compressWithHeadroom as compressWithPolicy } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 describe('compressWithHeadroom openai-responses translation failure', () => {
   afterEach(() => {

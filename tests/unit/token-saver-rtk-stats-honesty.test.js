@@ -1,13 +1,9 @@
-// Stats honesty: stats.bytesBefore/bytesAfter must equal the independent
-// per-block char ledger, charsSaved must equal the sum of per-hit savings,
-// and appliedCount (hits.length) must equal the number of rewritten blocks.
-//
-// Note on units: the fields are named bytes* but the implementation counts
-// JS string length (UTF-16 code units), i.e. chars. These tests recompute
-// the ledger in the same char units and additionally pin the char semantics
-// with multibyte content.
+// UTF-8 text-byte ledger is independently recomputed for every eligible block.
+// Provider token counts remain separate from these directly observed lengths.
 import { describe, it, expect } from "vitest";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 
 const PAD = "x".repeat(90);
 
@@ -91,7 +87,7 @@ function mixedBody() {
 }
 
 describe("stats honesty", () => {
-  it("bytesBefore/bytesAfter equal the independent per-block char ledger", () => {
+  it("bytesBefore/bytesAfter equal the independent per-block UTF-8 byte ledger", () => {
     const body = mixedBody();
     const before = structuredClone(body);
     const stats = compressMessages(body, true);
@@ -100,13 +96,13 @@ describe("stats honesty", () => {
     const afterTexts = ledgerTexts(body);
     expect(afterTexts.length).toBe(beforeTexts.length);
 
-    const expectedBefore = beforeTexts.reduce((n, t) => n + t.length, 0);
-    const expectedAfter = afterTexts.reduce((n, t) => n + t.length, 0);
+    const expectedBefore = beforeTexts.reduce((n, t) => n + Buffer.byteLength(t, "utf8"), 0);
+    const expectedAfter = afterTexts.reduce((n, t) => n + Buffer.byteLength(t, "utf8"), 0);
     expect(stats.bytesBefore).toBe(expectedBefore);
     expect(stats.bytesAfter).toBe(expectedAfter);
   });
 
-  it("charsSaved (bytesBefore - bytesAfter) equals the sum of per-hit savings", () => {
+  it("bytesSaved (bytesBefore - bytesAfter) equals the sum of per-hit savings", () => {
     const body = mixedBody();
     const stats = compressMessages(body, true);
     const hitsSaved = stats.hits.reduce((n, h) => n + h.saved, 0);
@@ -131,14 +127,14 @@ describe("stats honesty", () => {
     const before = structuredClone(body);
     const stats = compressMessages(body, true);
     const deltas = ledgerTexts(before)
-      .map((t, i) => t.length - ledgerTexts(body)[i].length)
+      .map((t, i) => Buffer.byteLength(t, "utf8") - Buffer.byteLength(ledgerTexts(body)[i], "utf8"))
       .filter((d) => d > 0)
       .sort((a, b) => a - b);
     const saved = stats.hits.map((h) => h.saved).sort((a, b) => a - b);
     expect(saved).toEqual(deltas);
   });
 
-  it("multibyte content: ledger is counted in chars (UTF-16 units), not UTF-8 bytes", () => {
+  it("multibyte content: ledger is counted in UTF-8 bytes, not UTF-16 units", () => {
     // one compressible git-log block laced with multibyte chars
     const multibyte = makeGitLog().replace(/subject line/g, "sübject lïne — 日本語");
     const body = {
@@ -147,10 +143,10 @@ describe("stats honesty", () => {
       ],
     };
     const stats = compressMessages(body, true);
-    // stats track String.length (chars); Buffer.byteLength would differ
-    expect(stats.bytesBefore).toBe(multibyte.length);
-    expect(stats.bytesBefore).not.toBe(Buffer.byteLength(multibyte, "utf8"));
-    expect(stats.bytesAfter).toBe(body.messages[0].content[0].content.length);
+    // Byte units differ from String.length for this multilingual payload.
+    expect(stats.bytesBefore).not.toBe(multibyte.length);
+    expect(stats.bytesBefore).toBe(Buffer.byteLength(multibyte, "utf8"));
+    expect(stats.bytesAfter).toBe(Buffer.byteLength(body.messages[0].content[0].content, "utf8"));
   });
 
   it("body with no targeted fields: zero ledger, zero stats", () => {

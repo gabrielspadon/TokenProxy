@@ -3,7 +3,9 @@
 // must never be compressed, in whichever of the three flag shapes they arrive:
 // is_error, isError, status === "error".
 import { describe, it, expect } from "vitest";
-import { compressMessages } from "../../open-sse/rtk/index.js";
+import { compressMessages as compressWithPolicy } from "../../open-sse/rtk/index.js";
+// These fixtures validate the explicitly opted-in legacy filters.
+const compressMessages = (body, enabled) => compressWithPolicy(body, enabled, { allowLossy: true });
 
 const PAD = "x".repeat(90);
 

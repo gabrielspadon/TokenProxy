@@ -4,12 +4,14 @@
 // error/metric gates on callCompress responses. All network mocked.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  compressWithHeadroom,
+  compressWithHeadroom as compressWithPolicy,
   formatHeadroomLog,
   formatHeadroomSizeLog,
   isHeadroomPhantomSavings,
   resetHeadroomCircuitBreaker,
 } from '../../open-sse/rtk/headroom.js';
+// Legacy proxy-contract fixtures explicitly permit lossy text compression.
+const compressWithHeadroom = (body, options) => compressWithPolicy(body, { ...options, allowLossy: true });
 
 const URL_OK = 'http://127.0.0.1:8787';
 
@@ -321,7 +323,7 @@ describe('Claude branch guards', () => {
       diagnostics,
     });
     expect(res).toBeNull();
-    expect(diagnostics.reason).toContain('Claude message shape');
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it('reports an unsupported claude shape when messages is absent', async () => {
@@ -372,10 +374,10 @@ describe('Kiro projection', () => {
     // Mirror the projected roles: system, user, tool, assistant, user.
     mockCompress({
       messages: [
-        { role: 'system', content: 's' },
+        { role: 'system', content: 'sys' },
         { role: 'user', content: 'u1' },
-        { role: 'tool', content: 't' },
-        { role: 'assistant', content: 'a' },
+        { role: 'tool', content: 't', tool_call_id: 't1' },
+        { role: 'assistant', content: 'a', tool_calls: [{ id: 't1', type: 'function', function: { name: 'f', arguments: JSON.stringify({ a: 1 }) } }] },
         { role: 'user', content: 'u2' },
       ],
       tokens_before: 1000,
@@ -392,7 +394,7 @@ describe('Kiro projection', () => {
     expect(res).not.toBeNull();
     const history = body.conversationState.history;
     expect(history[0].userInputMessage.content).toBe('u1');
-    expect(history[0].userInputMessage.systemInstruction).toBe('s');
+    expect(history[0].userInputMessage.systemInstruction).toBe('sys');
     expect(history[0].userInputMessage.userInputMessageContext.toolResults[0].content[0].text).toBe(
       't'
     );
@@ -421,7 +423,7 @@ describe('Kiro projection', () => {
       diagnostics,
     });
     expect(res).toBeNull();
-    expect(diagnostics.reason).toContain('Kiro message order');
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it('rejects a reply message with no extractable text', async () => {
@@ -445,7 +447,7 @@ describe('Kiro projection', () => {
       diagnostics,
     });
     expect(res).toBeNull();
-    expect(diagnostics.reason).toContain('missing Kiro text content');
+    expect(diagnostics.reason).toContain("protected content");
   });
 
   it('skips a Kiro body that projects to no messages', async () => {
@@ -471,8 +473,8 @@ describe('Kiro projection', () => {
       messages: [
         { role: 'system', content: 'sys' },
         { role: 'user', content: bigText() },
-        { role: 'tool', content: bigText() },
-        { role: 'assistant', content: bigText() },
+        { role: 'tool', content: bigText(), tool_call_id: 't1' },
+        { role: 'assistant', content: bigText(), tool_calls: [{ id: 't1', type: 'function', function: { name: 'f', arguments: JSON.stringify({ a: 1 }) } }] },
         { role: 'user', content: 'current question' },
       ],
       tokens_saved: 900,
@@ -505,7 +507,7 @@ describe('Gemini projection', () => {
     const body = geminiBody();
     mockCompress({
       messages: [
-        { role: 'system', content: 's' },
+        { role: 'system', content: 'system text' },
         { role: 'user', content: 'u' },
         { role: 'assistant', content: 'a' },
       ],
@@ -521,7 +523,7 @@ describe('Gemini projection', () => {
       diagnostics: {},
     });
     expect(res).not.toBeNull();
-    expect(body.systemInstruction.parts[0].text).toBe('s');
+    expect(body.systemInstruction.parts[0].text).toBe('system text');
     expect(body.contents[0].parts[0].text).toBe('u');
     expect(body.contents[0].parts[1].functionCall).toBeDefined(); // untouched
     expect(body.contents[1].parts[0].text).toBe('a');
@@ -531,7 +533,7 @@ describe('Gemini projection', () => {
     const body = { request: geminiBody() };
     mockCompress({
       messages: [
-        { role: 'system', content: 's' },
+        { role: 'system', content: 'system text' },
         { role: 'user', content: 'u' },
         { role: 'assistant', content: 'a' },
       ],
