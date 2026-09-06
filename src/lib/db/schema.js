@@ -11,8 +11,11 @@ import { INVESTIGATION_TABLES } from "./investigationSchema.js";
 import { SESSION_PIN_COLUMNS, SESSION_PIN_TABLES } from "./sessionPinSchema.js";
 import { SHAPING_TABLES } from "./shapingSchema.js";
 import { COMPATIBILITY_TABLES } from "./compatibilitySchema.js";
+import { OPERATION_TABLES } from "./operationSchema.js";
 
-export const SCHEMA_VERSION = 13;
+// 14 = operation events (durable operation evidence). 15 is reserved for
+// project budgets - do not reuse it.
+export const SCHEMA_VERSION = 14;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -36,6 +39,7 @@ export const TABLES = {
   ...SESSION_PIN_TABLES,
   ...SHAPING_TABLES,
   ...COMPATIBILITY_TABLES,
+  ...OPERATION_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
