@@ -1,4 +1,5 @@
 import "open-sse/index.js";
+import { randomUUID } from "node:crypto";
 
 import {
   getProviderCredentials,
@@ -45,6 +46,17 @@ import { recordApiKeyDevice } from "@/sse/services/apiKeyDevices.js";
 const REQUEST_CONNECTION_HEADER = "x-connection-id";
 // The header a caller uses to cap how many accounts one request may spend.
 const REQUEST_MAX_ATTEMPTS_HEADER = "x-max-attempts";
+const logicalRequestIds = new WeakMap();
+
+function logicalRequestId(request) {
+  if (!request || typeof request !== "object") return randomUUID();
+  let id = logicalRequestIds.get(request);
+  if (!id) {
+    id = randomUUID();
+    logicalRequestIds.set(request, id);
+  }
+  return id;
+}
 
 /**
  * Read the caller's attempt ceiling. Anything that is not a positive safe
@@ -791,6 +803,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const ACCOUNT_RETRY_LIMIT = 3;
   const failCountByConn = new Map();
   let upstreamAttempt = 0;
+  const telemetryRequestId = logicalRequestId(request);
   let lastError = null;
   let lastStatus = null;
   // Envoy request-buffer overflow (507): retry the SAME account once — the
@@ -968,7 +981,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // Same Request object as handleChat saw, so this is the SAME rid: the
         // admission line and the request lines join on one grep.
         requestId: requestRid(request),
-        contextTelemetry: { logicalRequestId: rid, attempt: ++upstreamAttempt },
+        contextTelemetry: { logicalRequestId: telemetryRequestId, attempt: ++upstreamAttempt },
         body: { ...body, model: `${provider}/${effectiveModel}` },
         modelInfo: { provider, model: effectiveModel },
         credentials: refreshedCredentials,
@@ -995,6 +1008,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         privacyEnabled: !!chatSettings.privacyFilterEnabled,
         privacyTerms: chatSettings.privacyFilterTerms || [],
         headroomEnabled: comboTokenSaver.headroomEnabled,
+        headroomAllowLossy: chatSettings.headroomAllowLossy === true,
         headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
         headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
         headroomTimeoutMs: chatSettings.headroomTimeoutMs ?? parseHeadroomTimeoutMs(),
