@@ -252,8 +252,8 @@ describe("the API surface carries it without breaking older callers", () => {
 
   it("GET pairs each key's ceilings with what it has already spent", () => {
     const route = read("../../src/app/api/keys/route.js");
-    expect(route).toContain("getApiKeyUsageTotals");
-    expect(route).toContain("usage: totals[k.key] || zero");
+    expect(route).toContain("getKeyUsageSnapshot");
+    expect(route).toContain("usage: history?.totals[k.id] ?? null");
   });
 
   it("PUT sets each ceiling independently and leaves omitted ones alone", () => {

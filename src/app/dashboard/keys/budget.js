@@ -37,7 +37,7 @@ export function keyBudgetMeasurements(key) {
     ceiling: amount(key[dimension.limit]),
     recorded: amount((budget?.recorded ?? key.usage)?.[dimension.used]),
     held: amount(budget?.outstanding?.[dimension.used]),
-    unknownRecorded: budget?.recorded ? amount(budget.recorded[dimension.unknownRecorded]) : null,
+    unknownRecorded: amount((budget?.recorded ?? key.usage)?.[dimension.unknownRecorded]),
     unknownHeld: amount(budget?.outstanding?.[dimension.unknownHeld]),
     source: budget?.recorded ? 'Lifetime application ledger' : 'Retained usage history',
   }));

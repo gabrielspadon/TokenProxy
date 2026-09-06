@@ -34,16 +34,6 @@ function pollFresh(p) {
   return 'live';
 }
 
-// Mirrors exceededLimit in src/lib/db/repos/apiKeysRepo.js: at the ceiling is
-// over it, and the first one reached is the one reported.
-function exceeded(k) {
-  const u = k.usage || {};
-  for (const c of CEILINGS) {
-    if (k[c.field] != null && (u[c.used] || 0) >= k[c.field]) return c;
-  }
-  return null;
-}
-
 function keyState(k) {
   return keyBudgetState(k).state;
 }
@@ -375,7 +365,7 @@ export default function KeysPage() {
           big
           label="Requests"
           measure={
-            keys.data
+            keys.data && rows.every(k => Number.isFinite(k.usage?.requests))
               ? { value: rows.reduce((n, k) => n + ((k.usage || {}).requests || 0), 0) }
               : null
           }
@@ -384,6 +374,12 @@ export default function KeysPage() {
       </div>
 
       <section aria-labelledby="h-keys">
+        <p className="caption">{keys.data?.usageState === 'unavailable'
+          ? 'Historical usage is temporarily unavailable. Current key controls and budget reservations remain available.'
+          : keys.data?.usageFreshness?.source === 'last-persisted-snapshot'
+            ? `History reflects the persisted database snapshot from ${keys.data.usageFreshness.persistedAt}.`
+            : keys.data?.usageFreshness?.snapshotCompletedAt
+              ? `History was read at ${keys.data.usageFreshness.snapshotCompletedAt}.` : 'Historical usage has not been reported.'}</p>
         <div className="screen-head">
           <h2 id="h-keys">Client keys</h2>
           <button type="button" className="button" onClick={() => open('create')}>
@@ -414,7 +410,6 @@ export default function KeysPage() {
               {rows.map((k) => {
                 const st = keyState(k);
                 const budgetState = keyBudgetState(k);
-                const hit = exceeded(k);
                 const on = picked.includes(k.id);
                 return (
                   <div className="row keys-row" key={k.id}>
@@ -463,7 +458,7 @@ export default function KeysPage() {
                     </span>
                     <details className="keys-detail">
                       <summary>Details</summary>
-                      {hit ? (
+                      {budgetState.state === 'over' ? (
                         <Notice
                           tone="bad"
                           title="This key is over one of its own ceilings."
@@ -473,7 +468,7 @@ export default function KeysPage() {
                       <KeyBudget record={k} />
                       <dl className="facts">
                         <dt>Requests</dt>
-                        <dd data-i18n-skip>{fmtNum((k.usage || {}).requests || 0)}</dd>
+                        <dd data-i18n-skip>{Number.isFinite(k.usage?.requests) ? fmtNum(k.usage.requests) : 'Unknown'}</dd>
                         <dt>Machine</dt>
                         <dd className="id" data-i18n-skip>
                           {k.machineId}

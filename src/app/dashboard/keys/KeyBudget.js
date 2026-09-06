@@ -8,7 +8,7 @@ export function KeyBudget({ record }) {
     <p className="caption">Recorded usage and outstanding reservations are separate. A reservation is allowance held for unfinished or unresolved work, and does not establish a provider charge.</p>
     <div className="keys-budget-table" tabIndex={0} role="region" aria-label="Key budget measurements">
       <table>
-        <caption>{budget?.recorded ? 'Lifetime application ledger' : 'Retained usage history'} · USD values are recorded estimates</caption>
+        <caption>{budget?.recorded ? 'Lifetime application ledger' : 'Retained history for the current credential'} · USD values are recorded estimates</caption>
         <thead><tr><th>Resource</th><th>Recorded</th><th>Held allowance</th><th>Ceiling</th><th>Missing evidence</th></tr></thead>
         <tbody>{keyBudgetMeasurements(record).map(row => {
           const render = value => value === null ? 'Unknown' : row.used === 'costUsd' ? fmtUsd(value) : fmtNum(value);
@@ -18,6 +18,8 @@ export function KeyBudget({ record }) {
         })}</tbody>
       </table>
     </div>
+    {!budget?.recorded ? <p className="caption">History totals cover the current credential. They do not reconstruct earlier credentials after rotation. Missing samples remain separate from measured totals.</p> : null}
+    {record.usage?.ambiguousZeroCostRows > 0 ? <p className="caption">{fmtNum(record.usage.ambiguousZeroCostRows)} historical records contain zero cost without a recorded pricing source. They do not establish free usage.</p> : null}
     <dl className="facts">
       <dt>Policy</dt><dd>{budget?.policy === 'strict' ? 'Verified bounds' : budget?.policy === 'reserve-remaining' ? 'Reserve remaining allowance' : 'Unknown'}</dd>
       <dt>Before dispatch</dt><dd>{count(budget?.outstanding?.reserved)} reservations</dd>

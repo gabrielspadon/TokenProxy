@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, createApiKey, updateApiKey } from "@/lib/localDb";
-import { deleteApiKeys, getApiKeyUsageTotals, pickLimits } from "@/lib/db/repos/apiKeysRepo.js";
+import { deleteApiKeys, pickLimits } from "@/lib/db/repos/apiKeysRepo.js";
+import { getKeyUsageSnapshot } from "@/lib/db/repos/keyUsageRepo.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { getApiKeyDeviceCount } from "@/sse/services/apiKeyDevices.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
@@ -15,20 +16,23 @@ export async function GET(request) {
   if (denied) return denied;
   try {
     const keys = await getApiKeys();
-    // Each key carries its ceilings; without what it has already spent, a
-    // ceiling is a number with nothing to compare it to (#3371). One grouped
-    // query, not one per key.
-    const totals = await getApiKeyUsageTotals();
     const budgets = await getApiKeyBudgetSummaries();
-    const zero = { promptTokens: 0, completionTokens: 0, costUsd: 0, requests: 0 };
+    let history = null;
+    try {
+      const signals = [AbortSignal.timeout(250), ...(request.signal ? [request.signal] : [])];
+      history = await getKeyUsageSnapshot({ signal: AbortSignal.any(signals) });
+    } catch { /* Historical analytics cannot delay current key controls. */ }
     return NextResponse.json({
+      usageState: history ? 'available' : 'unavailable',
+      usageScope: history?.scope ?? 'retained-history-for-current-credential',
+      usageFreshness: history?.freshness ?? null,
       // How many distinct clients are on the key right now, beside what it has
       // spent: a shared or leaked key shows up here before it shows up in the
       // bill (#930). A live in-memory window, so an absent key is 0 rather than
       // unknown.
       keys: keys.map((k) => ({
         ...publicApiKey(k),
-        usage: totals[k.key] || zero,
+        usage: history?.totals[k.id] ?? null,
         budget: budgets[k.id] ?? null,
         deviceCount: getApiKeyDeviceCount(k.key),
       })),
