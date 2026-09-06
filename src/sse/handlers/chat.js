@@ -33,7 +33,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { EMPTY_CONTENT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
-import { decide, idPrefix, relativeReset, requestRid, req, reqSummary } from "@/shared/observability/decide.js";
+import { decide, idPrefix, relativeReset, requestRid, reqSummary } from "@/shared/observability/decide.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { looksLikeClaudeWrappedModel,
@@ -73,14 +73,24 @@ const ADMISSION_RETRY_HINT_MS = 1000;
 // refusal into a hot loop.
 const RETRY_AFTER_FLOOR_MS = 1000;
 
-// Simple in-memory sliding-window rate limiter to stop abuse of the expensive AI calls below.
-// Both knobs are env-tunable because the hardcoded 60/min ceiling was measured
-// as the first thing a multi-agent client hits: a sweep through the isolated
-// test instance produced 429 on 97% of requests at concurrency 10 on one key,
-// long before any provider or event-loop limit (p99 event-loop delay was
-// 14ms at the same load once keys were spread). One agent session fans out
-// subagents that legitimately share one key, so the per-key floor must be
-// raisable without a code change.
+// Admission is TWO gates, split on whether the caller authenticated.
+//
+// UNAUTHENTICATED (client IP, or "anonymous"): the sliding-window HARD refusal
+// below, unchanged. A caller that presented no credential is the abuse
+// boundary, and it gets counted and refused.
+//
+// AUTHENTICATED (a valid api key): QUEUED, never counted. A request-count
+// window is the wrong shape for this topology -- ~30 trusted parallel agents
+// share ONE key through a loopback gateway, so any fixed per-key ceiling either
+// refuses legitimate bursts or stops protecting. Measured on production, six
+// hours of journal: 7,745 of 17,422 requests (44.5% of ALL traffic) refused
+// here, every one on a single key at 60/60s, against 5 real upstream 429s in
+// the same window. The gate was manufacturing the storm it exists to prevent.
+// What actually needs bounding is CONCURRENCY (how many upstream calls one key
+// has in flight) and MEMORY, neither of which a request counter measures, so an
+// authenticated request over the concurrency ceiling WAITS in a bounded FIFO
+// queue and 429 becomes the overflow valve it should always have been: only a
+// full queue or a spent wait budget refuses.
 function readPositiveIntEnv(name, fallback) {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
@@ -142,6 +152,137 @@ export const __rateLimiter = {
   },
 };
 
+// Authenticated admission: a per-key concurrency gate in front of a bounded
+// FIFO wait queue. Three knobs, env-tunable for the same reason the window's
+// are -- the right numbers are a property of the deployment (how many agents,
+// how slow the upstream), not of this file.
+const ADMISSION_MAX_INFLIGHT = readPositiveIntEnv("ADMISSION_MAX_INFLIGHT", 32);
+const ADMISSION_QUEUE_DEPTH = readPositiveIntEnv("ADMISSION_QUEUE_DEPTH", 512);
+const ADMISSION_MAX_WAIT_MS = readPositiveIntEnv("ADMISSION_MAX_WAIT_MS", 30 * 1000);
+
+// key -> { active, queue, idleSince }. Same memory shape as rateLimitHits and
+// therefore the same #1245 obligation: one entry per key ever seen, so it is
+// swept on the same cadence rather than grown for the process lifetime.
+const admissionKeys = new Map();
+let lastAdmissionSweep = Date.now();
+
+function sweepAdmissionKeys(now) {
+  if (now - lastAdmissionSweep < RATE_LIMIT_WINDOW_MS) return;
+  lastAdmissionSweep = now;
+  for (const [k, state] of admissionKeys) {
+    if (state.active > 0 || state.queue.length > 0) continue;
+    if (now - state.idleSince >= RATE_LIMIT_WINDOW_MS) admissionKeys.delete(k);
+  }
+}
+
+// The earliest instant a QUEUE slot can free without waiting on an upstream
+// nobody can predict: the head waiter either gets in or is evicted at its own
+// deadline. Real state, which is what separates this hint from a constant.
+function queueReliefMs(state, now) {
+  const head = state.queue[0];
+  return Math.max(RETRY_AFTER_FLOOR_MS, head ? head.deadline - now : ADMISSION_MAX_WAIT_MS);
+}
+
+/**
+ * Take one in-flight slot for `key`, waiting in FIFO order when the key is at
+ * its ceiling. Resolves to an admission or to a refusal; it never throws and
+ * never rejects, because an admission decision is not an error.
+ *
+ * ponytail: the slot is held from admission until the handler RETURNS, which
+ * for a streamed answer is first byte rather than last. Hand it to the response
+ * body (releaseAccountLeaseOnResponse is the shape) if stream-duration
+ * concurrency ever needs bounding too.
+ */
+function acquireAdmission(key) {
+  const now = Date.now();
+  sweepAdmissionKeys(now);
+  let state = admissionKeys.get(key);
+  if (!state) {
+    state = { active: 0, queue: [], idleSince: now };
+    admissionKeys.set(key, state);
+  }
+  if (state.active < ADMISSION_MAX_INFLIGHT) {
+    state.active += 1;
+    return Promise.resolve({ admitted: true, waitedMs: 0, queued: state.queue.length, active: state.active });
+  }
+  if (state.queue.length >= ADMISSION_QUEUE_DEPTH) {
+    return Promise.resolve({
+      admitted: false,
+      why: "queue-full",
+      waitedMs: 0,
+      retryAfterMs: queueReliefMs(state, now),
+      queued: state.queue.length,
+      active: state.active,
+    });
+  }
+  return new Promise((resolve) => {
+    const waiter = { enqueuedAt: now, deadline: now + ADMISSION_MAX_WAIT_MS, settled: false, timer: null };
+    // Settled exactly once, by whichever path gets there first: a release
+    // handing the slot over, or the wait budget running out.
+    waiter.settle = (admitted) => {
+      if (waiter.settled) return;
+      waiter.settled = true;
+      clearTimeout(waiter.timer);
+      const at = state.queue.indexOf(waiter);
+      if (at !== -1) state.queue.splice(at, 1);
+      const endedAt = Date.now();
+      const waitedMs = endedAt - waiter.enqueuedAt;
+      if (admitted) {
+        state.active += 1;
+        resolve({ admitted: true, waitedMs, queued: state.queue.length, active: state.active });
+        return;
+      }
+      if (state.active === 0 && state.queue.length === 0) state.idleSince = endedAt;
+      resolve({
+        admitted: false,
+        why: "wait-timeout",
+        waitedMs,
+        retryAfterMs: queueReliefMs(state, endedAt),
+        queued: state.queue.length,
+        active: state.active,
+      });
+    };
+    waiter.timer = setTimeout(() => waiter.settle(false), ADMISSION_MAX_WAIT_MS);
+    // A queued request is never the reason a process refuses to exit.
+    waiter.timer?.unref?.();
+    state.queue.push(waiter);
+  });
+}
+
+/** Give the slot back, handing it straight to the head of the queue. */
+function releaseAdmission(key) {
+  const state = admissionKeys.get(key);
+  if (!state) return;
+  state.active = Math.max(0, state.active - 1);
+  const next = state.queue[0];
+  if (next) next.settle(true);
+  else if (state.active === 0) state.idleSince = Date.now();
+}
+
+// Test seam, matching __rateLimiter's: the queue is a process-wide singleton,
+// so a suite needs to drive it and start from empty without reaching in.
+export const __admissionQueue = {
+  acquire: acquireAdmission,
+  release: releaseAdmission,
+  size: () => admissionKeys.size,
+  stateOf: (key) => {
+    const state = admissionKeys.get(key);
+    return state ? { active: state.active, queued: state.queue.length } : null;
+  },
+  limits: () => ({
+    inflight: ADMISSION_MAX_INFLIGHT,
+    depth: ADMISSION_QUEUE_DEPTH,
+    waitMs: ADMISSION_MAX_WAIT_MS,
+  }),
+  reset: () => {
+    for (const state of admissionKeys.values()) {
+      for (const waiter of [...state.queue]) waiter.settle(false);
+    }
+    admissionKeys.clear();
+    lastAdmissionSweep = Date.now();
+  },
+};
+
 function withoutClientCredentialHeaders(clientRawRequest) {
   if (!clientRawRequest?.headers) return clientRawRequest;
   const entries = clientRawRequest.headers instanceof Headers
@@ -160,41 +301,96 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
-  const presentedApiKey = resolvedApiKey.apiKey;
-  const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
+  const apiKey = resolvedApiKey.valid ? resolvedApiKey.apiKey : null;
   const rateLimitKey = apiKey || request.headers.get("x-forwarded-for") || "anonymous";
   // The request id for everything this call emits. Adopted from the front
   // proxy's x-tp-rid when it sent one, minted here otherwise.
   const rid = requestRid(request);
-  if (isRateLimited(rateLimitKey)) {
-    const resetAt = rateLimitResetAtMs(rateLimitKey);
-    // This was `log.warn("CHAT", "Rate limit exceeded")`: 15,548 lines in a
-    // measured six-hour window, 73.9% of the whole journal, naming neither the
-    // caller, the limit, the window nor the reset -- while all four were in
-    // scope on the next line. It is now one folded ADM.ratelimited carrying all
-    // four: the window lives inside `limit=60/60s`, so there is no `win` field.
-    // `key` is a SHA-256 prefix, which tells two callers apart without the
-    // line ever holding the credential. `why` is a closed three-value enum.
-    // `model` is deliberately absent: the body is not parsed until after this
-    // gate and reading it here to decorate a log line would consume the
-    // request stream.
-    decide("ADM", "ratelimited", {
+  // A SHA-256 prefix, never the credential: two callers stay distinguishable
+  // and no admission line has ever carried a key. One spelling across all three
+  // admission verdicts, so `rg 'key=api:20f88033'` returns the whole story.
+  const keyTag = apiKey
+    ? `api:${idPrefix(apiKey)}`
+    : rateLimitKey === "anonymous" ? "anon" : `ip:${idPrefix(rateLimitKey)}`;
+
+  // UNAUTHENTICATED: the hard window. No credential, no queue.
+  if (!apiKey) {
+    if (isRateLimited(rateLimitKey)) {
+      const resetAt = rateLimitResetAtMs(rateLimitKey);
+      // This was `log.warn("CHAT", "Rate limit exceeded")`: 15,548 lines in a
+      // measured six-hour window, 73.9% of the whole journal, naming neither
+      // the caller, the limit, the window nor the reset -- while all four were
+      // in scope on the next line. It is now one folded ADM.ratelimited
+      // carrying all four: the window lives inside `limit=60/60s`, so there is
+      // no `win` field. `why` is a closed enum. `model` is deliberately absent:
+      // the body is not parsed until after this gate and reading it here to
+      // decorate a log line would consume the request stream.
+      decide("ADM", "ratelimited", {
+        rid,
+        key: keyTag,
+        limit: `${RATE_LIMIT_MAX_REQUESTS}/${RATE_LIMIT_WINDOW_MS / 1000}s`,
+        reset: relativeReset(resetAt),
+        why: rateLimitKey === "anonymous" ? "anon-window" : "ip-window",
+      });
+      // D-10: VERDICTS.REQ.refused had no emitters — the refusal IS the
+      // request's summary line.
+      reqSummary("refused", { rid, why: "rate-limited" });
+      return errorResponse(HTTP_STATUS.RATE_LIMITED, "Too many requests, please slow down", {
+        retryAfter: { at: resetAt },
+        failurePhase: "admission",
+      });
+    }
+    return handleAdmittedChat(request, clientRawRequest, options, { resolvedApiKey, rid });
+  }
+
+  // AUTHENTICATED: shaped, not refused. A wait is the answer; a 429 is only
+  // what is left when the queue itself is out of room.
+  const slot = await acquireAdmission(rateLimitKey);
+  if (!slot.admitted) {
+    decide("ADM", "evicted", {
       rid,
-      key: apiKey
-        ? `api:${idPrefix(apiKey)}`
-        : rateLimitKey === "anonymous" ? "anon" : `ip:${idPrefix(rateLimitKey)}`,
-      limit: `${RATE_LIMIT_MAX_REQUESTS}/${RATE_LIMIT_WINDOW_MS / 1000}s`,
-      reset: relativeReset(resetAt),
-      why: apiKey ? "api-key-window" : rateLimitKey === "anonymous" ? "anon-window" : "ip-window",
+      key: keyTag,
+      waited: `${slot.waitedMs}ms`,
+      limit: `${ADMISSION_MAX_INFLIGHT}x${ADMISSION_QUEUE_DEPTH}/${ADMISSION_MAX_WAIT_MS}ms`,
+      why: slot.why,
+      queued: slot.queued,
+      active: slot.active,
+      status: HTTP_STATUS.RATE_LIMITED,
     });
-    // D-10: VERDICTS.REQ.refused had no emitters — the refusal IS the request's
-    // summary line.
-    reqSummary("refused", { rid, why: "rate-limited" });
-    return errorResponse(HTTP_STATUS.RATE_LIMITED, "Too many requests, please slow down", {
-      retryAfter: { at: resetAt },
+    reqSummary("refused", { rid, why: "admission-overflow" });
+    return errorResponse(HTTP_STATUS.RATE_LIMITED, "Too many concurrent requests, please retry", {
+      retryAfter: { ms: slot.retryAfterMs },
       failurePhase: "admission",
     });
   }
+  // Only a request that actually WAITED costs a line: shaping is the news,
+  // nominal admission is not, and one line per request is exactly the volume
+  // this whole design exists to avoid.
+  if (slot.waitedMs > 0) {
+    decide("ADM", "queued", {
+      rid,
+      key: keyTag,
+      waited: `${slot.waitedMs}ms`,
+      limit: `${ADMISSION_MAX_INFLIGHT}x${ADMISSION_QUEUE_DEPTH}/${ADMISSION_MAX_WAIT_MS}ms`,
+      queued: slot.queued,
+      active: slot.active,
+    });
+  }
+  try {
+    return await handleAdmittedChat(request, clientRawRequest, options, { resolvedApiKey, rid });
+  } finally {
+    releaseAdmission(rateLimitKey);
+  }
+}
+
+/**
+ * The request proper, downstream of admission. Split out of handleChat only so
+ * the concurrency slot has a `finally` to be released in without wrapping four
+ * hundred lines in a try block; every caller still arrives through handleChat.
+ */
+async function handleAdmittedChat(request, clientRawRequest, options, { resolvedApiKey, rid }) {
+  const presentedApiKey = resolvedApiKey.apiKey;
+  const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
 
   let body = options.body;
   if (body === undefined) {

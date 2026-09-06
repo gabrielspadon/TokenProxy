@@ -33,7 +33,7 @@ vi.mock("@/lib/localDb", () => ({
 // `log.warn("AUTH", ...)` line is gone, and a stray reintroduction fails here.
 
 import { __decide } from "@/shared/observability/decide.js";
-import { handleChat, __rateLimiter } from "@/sse/handlers/chat.js";
+import { handleChat, __rateLimiter, __admissionQueue } from "@/sse/handlers/chat.js";
 
 let lines = [];
 let warnLines = [];
@@ -44,6 +44,7 @@ beforeEach(() => {
   __decide.resetState();
   __decide.disableSink();
   __rateLimiter.reset();
+  __admissionQueue.reset();
   lines = [];
   warnLines = [];
   logSpy = vi.spyOn(console, "log").mockImplementation((l) => lines.push(l));
@@ -114,5 +115,28 @@ describe("chat.js API-key gate", () => {
     expect(res.status).toBe(401);
     const refused = lines.find((l) => l.includes("REQ.refused"));
     expect(refused).toMatch(/REQ\.refused rid=[0-9a-f]{8} why=key-invalid$/);
+  });
+
+  // The 429 storm: 7,745 of 17,422 production requests refused on ONE key at
+  // 60/60s, five real upstream 429s in the same window. An authenticated caller
+  // is no longer counted by that window at all -- it takes a concurrency slot,
+  // and only queue overflow can refuse it.
+  it("an authenticated caller takes a concurrency slot, not a window hit", async () => {
+    authMocks.isValidApiKey.mockResolvedValue(true);
+    const key = "sk-parallel-agents";
+    // Burn the window on this exact key. The old gate answered 429 from here on.
+    let limited = false;
+    for (let n = 0; n < 10000 && !limited; n++) limited = __rateLimiter.isRateLimited(key);
+    expect(limited).toBe(true);
+
+    // Park the request inside the handler, downstream of admission, so the slot
+    // it holds is observable rather than already released.
+    settingsMocks.getSettings.mockReturnValue(new Promise(() => {}));
+    const pending = handleChat(chatRequest({ authorization: `Bearer ${key}` }));
+    await vi.waitFor(() => expect(__admissionQueue.stateOf(key)).toEqual({ active: 1, queued: 0 }));
+
+    expect(lines.filter((l) => l.includes("ADM.ratelimited"))).toHaveLength(0);
+    expect(lines.filter((l) => l.includes("REQ.refused"))).toHaveLength(0);
+    expect(pending).toBeInstanceOf(Promise);
   });
 });
