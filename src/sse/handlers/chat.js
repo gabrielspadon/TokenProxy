@@ -867,7 +867,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Lowest precedence: a replay pin is about reaching the account that just
     // failed and a combo pin is configuration, so both outrank what the caller
     // asked for on this single request.
-    else if (requestedConnectionId) credentialOptions.preferredConnectionId = requestedConnectionId;
+    else if (requestedConnectionId) {
+      credentialOptions.preferredConnectionId = requestedConnectionId;
+      credentialOptions.strictPreferredConnection = true;
+    }
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, credentialOptions);
     // The slot this selection reserved (auth.js reserve). It is held for the
     // WHOLE attempt and given back exactly once, whichever of this loop's many
@@ -914,12 +917,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             "CHAT",
             `[${provider}/${model}] ${errorMsg} [${status}] (${credentials.retryAfterHuman})`,
           );
-          return rejectedAttemptResponse(unavailableResponse(
+          const response = unavailableResponse(
             status,
             `[${provider}/${model}] ${errorMsg}`,
             credentials.retryAfter,
             credentials.retryAfterHuman,
-          ));
+          );
+          return credentials.mustWait ? terminalAttemptResponse(response) : rejectedAttemptResponse(response);
         }
         if (excludeConnectionIds.size === 0) {
           log.warn("AUTH", `No active credentials for provider: ${provider}`);
@@ -983,7 +987,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // admission line and the request lines join on one grep.
         requestId: requestRid(request),
         contextTelemetry: { logicalRequestId: telemetryRequestId, attempt: ++upstreamAttempt },
-        body: { ...body, model: `${provider}/${effectiveModel}` },
+        body: { ...structuredClone(body), model: `${provider}/${effectiveModel}` },
         modelInfo: { provider, model: effectiveModel },
         credentials: refreshedCredentials,
         callerSignal,
