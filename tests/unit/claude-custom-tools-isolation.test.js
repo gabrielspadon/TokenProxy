@@ -119,4 +119,23 @@ describe("Claude custom tools through compatible-provider preparation", () => {
     expect(sent.conversationState.callback).toBe(callback);
     expect(sent.signal).toBe(signal);
   });
+
+  it("compresses fresh tool output on repeated attempts without rewriting the caller", async () => {
+    const body = fixture();
+    const toolData = { records: Array.from({ length: 60 }, (_, id) => ({ id, path: "a  b.txt", note: "Keep exact spacing." })) };
+    const originalText = JSON.stringify(toolData, null, 4);
+    body.messages[2].content[0] = { type: "tool_result", tool_use_id: "call_read", content: originalText };
+    body.messages.push({ role: "user", content: "Report the exact paths." });
+    const original = structuredClone(body);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await handleChatCore(args(body, { rtkEnabled: true }));
+      await result.response.text();
+      expect(result.success).toBe(true);
+    }
+    const sentTexts = mocks.execute.mock.calls.map(([call]) => call.body.messages[2].content[0].content);
+    expect(sentTexts[0].length).toBeLessThan(originalText.length);
+    expect(JSON.parse(sentTexts[0])).toEqual(toolData);
+    expect(sentTexts[1]).toBe(sentTexts[0]);
+    expect(body).toEqual(original);
+  });
 });
