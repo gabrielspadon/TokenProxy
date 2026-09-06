@@ -38,13 +38,14 @@ export function utc(value, short = false) {
   if (!value || !Number.isFinite(date.getTime())) return 'Unknown';
   return short ? date.toISOString().slice(11, 19) : date.toISOString().replace('T', ' ').slice(0, 19);
 }
-export function contextUrl(scope, { sessionId, page = 1, projectLabel, clientTool } = {}) {
+export function contextUrl(scope, { sessionId, requestId, page = 1, projectLabel, clientTool } = {}) {
   const query = new URLSearchParams({ page: String(page), pageSize: sessionId ? '25' : '20' });
   for (const key of ['provider', 'model', 'connectionId']) if (scope[key]) query.set(key, scope[key]);
   if (scope.start) query.set('from', scope.start);
   if (scope.end) query.set('until', scope.end);
   if (projectLabel) query.set('projectLabel', projectLabel);
   if (clientTool) query.set('clientTool', clientTool);
+  if (requestId) query.set('requestId', requestId);
   return `/api/context${sessionId ? `/sessions/${encodeURIComponent(sessionId)}` : ''}?${query}`;
 }
 export function bucketScope(point, bucketMs, scope) {

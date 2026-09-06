@@ -68,10 +68,10 @@ export function selectionExcluded(selected, scope) {
 }
 export function validateDefinition(value) {
   object(value, ['schemaVersion','lens','scope','selection','comparisonIds','context','economics']);
-  if (value.schemaVersion !== 1) throw new InvestigationError('Unsupported investigation version.');
+  if (![1,2].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
   const ids = value.comparisonIds ?? [];
   if (!Array.isArray(ids) || ids.length > 100 || new Set(ids).size !== ids.length) throw new InvestigationError('Compare at most 100 distinct accounts.');
-  const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool']);
+  const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool',...(value.schemaVersion===2 ? ['baseline'] : [])]);
   const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort']);
   const page = context.page ?? 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 10000) throw new InvestigationError('Invalid attempt page.');
@@ -84,9 +84,15 @@ export function validateDefinition(value) {
     object(economics.cohort, ['provider','model','connectionId']);
     cohort = Object.fromEntries(Object.entries(economics.cohort).map(([key,item]) => [key,text(item,key)]));
   }
-  return { schemaVersion: 1, lens: choice(value.lens, Object.keys(LENS_PATHS)), scope: validateScope(value.scope), selection,
+  let baseline = null;
+  if (context.baseline != null) {
+    object(context.baseline,['id','sessionId']);
+    const exact = validateSelection({kind:'context-attempt',...context.baseline});
+    baseline = {id:exact.id,sessionId:exact.sessionId};
+  }
+  return { schemaVersion: value.schemaVersion, lens: choice(value.lens, Object.keys(LENS_PATHS)), scope: validateScope(value.scope), selection,
     comparisonIds: ids.map((id) => text(id,'comparison account',200,false)),
-    context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client') },
+    context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client'), ...(value.schemaVersion===2 ? {baseline} : {}) },
     economics: { groupBy: choice(economics.groupBy,['provider','model','account'],'provider'), status: choice(economics.status,['all','succeeded','failed','pending'],'all'),
       sortBy: choice(economics.sortBy,sorts,'timestamp'), sortDirection: choice(economics.sortDirection,['asc','desc'],'desc'), cohort } };
 }
@@ -96,7 +102,7 @@ export function validateSave(input, updating = false) {
   const definition = validateDefinition(input.definition);
   if (kind === 'bookmark' && !definition.selection) throw new InvestigationError('Select an exact record before saving a bookmark.');
   if (kind === 'bookmark') definition.lens=selectionLens(definition.selection);
-  if (kind === 'filter-set') { definition.selection = null; definition.comparisonIds = []; definition.context = { sessionId: null, page: 1, projectLabel: null, clientTool: null }; definition.economics.cohort = null; }
+  if (kind === 'filter-set') { definition.selection = null; definition.comparisonIds = []; definition.context = { sessionId: null, page: 1, projectLabel: null, clientTool: null, ...(definition.schemaVersion===2 ? {baseline:null} : {}) }; definition.economics.cohort = null; }
   if (updating && (!Number.isSafeInteger(input.version) || input.version < 1)) throw new InvestigationError('Expected version is required.');
   return { name: text(input.name,'name',80,false).trim(), kind, definition, ...(updating ? { version: input.version } : {}) };
 }

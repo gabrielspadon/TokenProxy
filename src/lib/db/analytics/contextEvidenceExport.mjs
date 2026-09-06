@@ -6,7 +6,11 @@ const CONTROL_KEYS = ['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroo
 export function readContextEvidenceExport(db, definition, mode, limit) {
   const selection = mode === 'selected' ? definition.selection : null;
   const scope = definition.scope, clauses = ['r.contextSessionId IS NOT NULL'], args = [];
-  if (selection) {
+  const requestedAttempts = mode==='attempt-comparison' ? [{role:'selected',id:definition.selection.id,sessionId:definition.selection.sessionId},{role:'baseline',...definition.context.baseline}] : null;
+  if (requestedAttempts) {
+    clauses.push('((r.id=? AND r.contextSessionId=?) OR (r.id=? AND r.contextSessionId=?))');
+    for (const item of requestedAttempts) args.push(item.id,item.sessionId);
+  } else if (selection) {
     clauses.push('r.contextSessionId=?'); args.push(selection.sessionId);
     if (selection.kind === 'context-attempt') { clauses.push('r.id=?'); args.push(selection.id); }
   } else {
@@ -36,7 +40,7 @@ export function readContextEvidenceExport(db, definition, mode, limit) {
     return {...turn,controls:Object.fromEntries(Object.entries(turn.controls).filter(([key,value])=>CONTROL_KEYS.includes(key)&&typeof value==='boolean')),
       stages:stages.get(row.id)||[],structures:related.structures.get(row.id)||[],costRecords:related.costs.get(row.id)||[]};
   });
-  return { items,totalRecords,clientEvents:db.all(`SELECT e.* ${eventJoin} ORDER BY e.occurredAt,e.id`,args).map(publicContextEvent),
+  return { items,totalRecords,requestedAttempts,missingAttempts:requestedAttempts?.filter(item=>!rows.some(row=>row.id===item.id&&row.contextSessionId===item.sessionId)) || [],clientEvents:db.all(`SELECT e.* ${eventJoin} ORDER BY e.occurredAt,e.id`,args).map(publicContextEvent),
     coverage:{attributedAttempts:totalRecords,contextOnly:true,reconstruction:false,
       attemptsWithStructure:related.structures.size,rejectedStructures:related.rejectedStructures,relatedClientEvents:eventCount,
       attemptsWithLinkedCost:related.costs.size,requestedAccounts:mode==='comparison'?definition.comparisonIds:null,

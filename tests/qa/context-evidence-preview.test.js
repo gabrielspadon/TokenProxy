@@ -49,7 +49,7 @@ it.skipIf(!process.env.CONTEXT_EVIDENCE_PREVIEW_OUT)('creates a clearly syntheti
   for(let index=0;index<23;index++) await ingestContextEvent(key,{eventId:randomUUID(),type:'compaction',occurredAt:new Date().toISOString(),clientId:'synthetic-cli',clientSessionId:'synthetic-session',taskId:'synthetic-task',projectId:'synthetic-project',requestId:first.id,logicalRequestId:first.logicalRequestId,sessionId:first.contextSessionId,beforeTokens:10000+index,afterTokens:12000+index,tokenMeasurementMethod:'client-estimate'});
   await ingestContextEvent(key,{eventId:randomUUID(),type:'handoff',occurredAt:new Date().toISOString(),clientId:'synthetic-cli',taskId:'synthetic-task',targetClientId:'synthetic-reviewer',targetTaskId:'synthetic-review',requestId:reports[1].id});
   await ingestContextEvent(key,{eventId:randomUUID(),type:'task_outcome',occurredAt:new Date().toISOString(),clientId:'synthetic-cli',taskId:'synthetic-unlinked',outcome:'success'});
-  const view=await getContextSession(first.contextSessionId,{page:1,pageSize:25});expect(view.pagination.totalItems).toBe(31);expect(view.turns[0].structures).toHaveLength(3);expect(view.turns[0].stages.length).toBeGreaterThanOrEqual(13);
+  const view=await getContextSession(first.contextSessionId,{page:1,pageSize:25});expect(view.pagination.totalItems).toBe(31);expect(view.turns[0].structures).toHaveLength(3);expect(view.turns[0].stages).toHaveLength(14);
   const exported=readEvidence(db,{operation:'evidence',mode:'population',definition:{schemaVersion:1,lens:'context',scope:{period:'all'},comparisonIds:[]}});
   expect(exported.items).toHaveLength(31);expect(exported.clientEvents).toHaveLength(24);
   await mkdir(path.join(output,'runtime/db'),{recursive:true,mode:0o700});

@@ -58,6 +58,19 @@ describe('Context evidence export',()=>{
     const mismatch=readEvidence(db,query('selected',{selection:{kind:'context-attempt',id:'r1',sessionId:2}}));
     expect(mismatch.items).toEqual([]); expect(mismatch.clientEvents).toEqual([]); expect(mismatch.manifest.missingSelection).toBe(true);
   });
+  it('exports two exact attempt/session tuples independently of account comparison and shared filters',()=>{
+    attempt('r1','a'); attempt('r2','b'); attempt('r3','a'); event('e1'); event('e2','r2'); event('e3','r3');
+    const input=query('attempt-comparison',{schemaVersion:2,selection:{kind:'context-attempt',id:'r2',sessionId:1},context:{baseline:{id:'r1',sessionId:1}},comparisonIds:['unrelated'],scope:{...INITIAL_SCOPE,provider:'absent'}});
+    const result=readEvidence(db,input);
+    expect(result.items.map(row=>row.id)).toEqual(['r1','r2']);expect(result.clientEvents.map(row=>row.id)).toEqual(['e1','e2']);
+    expect(result.manifest).toMatchObject({comparisonComplete:true,missingAttempts:[],timeBounds:{startInclusive:null,endExclusive:null},requestedAttempts:[{role:'selected',id:'r2',sessionId:1},{role:'baseline',id:'r1',sessionId:1}]});
+    expect(result.items.every(row=>row.structures.length===3)).toBe(true);
+    input.definition.context.baseline.sessionId=99;
+    const mismatch=readEvidence(db,input);expect(mismatch.items.map(row=>row.id)).toEqual(['r2']);expect(mismatch.clientEvents.map(row=>row.id)).toEqual(['e2']);
+    expect(mismatch.manifest).toMatchObject({comparisonComplete:false,missingAttempts:[{role:'baseline',id:'r1',sessionId:99}]});
+    input.definition.context.baseline.id='r2'; expect(()=>readEvidence(db,input)).toThrow(/distinct/);
+    input.definition.schemaVersion=1; expect(()=>readEvidence(db,input)).toThrow();
+  });
   it('withholds malformed or mismatched boundaries and preserves historical absence',()=>{
     attempt(); native.prepare("UPDATE contextStructures SET data=? WHERE boundary='physical-dispatch'").run('{"raw":"PRIVATE"}');
     native.prepare("UPDATE contextStructures SET boundary='unrecognized' WHERE boundary='gateway-shaped'").run();

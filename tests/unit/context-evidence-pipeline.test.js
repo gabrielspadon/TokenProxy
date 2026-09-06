@@ -58,6 +58,21 @@ describe("actual request capture, persistence and readonly query", () => {
     expect(JSON.stringify(result)).not.toMatch(/private café|private-client|fixture-key-only|upstream-fixture/);
   });
 
+  it("restores a saved exact comparison and exports both actual attempts and reports in one worker snapshot", async()=>{
+    await handleChatCore(args());await finish();mocks.fetch.mockResolvedValue(completion());
+    await handleChatCore(args({contextTelemetry:{logicalRequestId:randomUUID()}}));const rows=await finish();expect(rows).toHaveLength(2);
+    for (const row of rows) expect((await post(event({requestId:row.id,logicalRequestId:row.logicalRequestId,sessionId:row.contextSessionId}))).status).toBe(201);
+    const definition={schemaVersion:2,lens:'context',scope:{period:'all',provider:'deliberately-outside'},selection:{kind:'context-attempt',id:rows[1].id,sessionId:rows[1].contextSessionId},context:{baseline:{id:rows[0].id,sessionId:rows[0].contextSessionId}},comparisonIds:[]};
+    const token=await createDashboardAuthToken();
+    const request=(path,body)=>new NextRequest(`http://localhost/api/admin/investigations${path}`,{method:'POST',headers:{cookie:`auth_token=${token}`,'content-type':'application/json','x-tp-peer-token':process.env.TOKENPROXY_PEER_TOKEN,'x-tp-real-ip':'127.0.0.1'},body:JSON.stringify(body)});
+    const collection=await import('../../src/app/api/admin/investigations/route.js');
+    const saved=await (await collection.POST(request('',{name:'Synthetic exact pair',kind:'investigation',definition}))).json();expect(saved.definition.context.baseline).toEqual(definition.context.baseline);
+    const exporter=await import('../../src/app/api/admin/investigations/export/route.js');
+    const response=await exporter.POST(request('/export',{mode:'attempt-comparison',definition:saved.definition}));expect(response.status).toBe(200);
+    const result=await response.json();expect(result.items.map(row=>row.id).sort()).toEqual(rows.map(row=>row.id).sort());expect(result.items.every(row=>row.structures.length===3)).toBe(true);
+    expect(result.clientEvents).toHaveLength(2);expect(result.manifest).toMatchObject({comparisonComplete:true,missingAttempts:[]});expect(result.freshness.snapshotStartedAt).toBeTruthy();
+  });
+
   it("links exact physical UUIDs, content-free boundaries and explicit identity through the worker", async () => {
     const input=args(), before=structuredClone(input.body);
     const result=await handleChatCore(input); expect(result.response.status).toBe(200);

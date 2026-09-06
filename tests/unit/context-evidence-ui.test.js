@@ -59,7 +59,13 @@ describe('Content-free Context evidence views',()=>{
     expect(table('Signed shaping comparison').textContent).toContain('+10 B');
     expect(table('Attempt measurement comparison').querySelectorAll('tbody tr')[1].textContent).toContain('UnknownUnavailable');
     expect(container.textContent).toContain('no causal relationship asserted');
-    expect(container.textContent).toContain('Baseline values are a retained read');
+    expect(container.textContent).toContain('Baseline values are the labeled read');
+  });
+  it('distinguishes baseline loading, failure and missing exact identity without substitution',async()=>{
+    const baseline={identity:{id:'gone',sessionId:7}};
+    await render(<ContextAttemptComparison turn={turn} baseline={{...baseline,loading:true}}/>);expect(container.textContent).toContain('Reading exact baseline #gone');
+    await render(<ContextAttemptComparison turn={turn} baseline={{...baseline,error:'Reader busy',refresh:vi.fn()}}/>);expect(container.textContent).toContain('Baseline unavailable');expect(container.textContent).not.toContain('no longer retained');
+    await render(<ContextAttemptComparison turn={turn} baseline={baseline}/>);expect(container.textContent).toContain('Baseline #gone in session #7 is no longer retained');expect(table('Signed shaping comparison')).toBeNull();
   });
   it('preserves unknown cost versus zero and identifies the exact ledger denominator',async()=>{
     await render(<ContextCostEvidence records={[{ledgerId:9,recordedCostUsd:0,estimatedCostUsd:null,reportedCostUsd:null,costSource:null}]}/>);

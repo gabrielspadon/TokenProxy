@@ -38,7 +38,7 @@ beforeEach(() => {
   fixture = contextFixture(); state.chart = null;
   router = { pathname: '/dashboard/context', asPath: '/dashboard/context', push: vi.fn(), replace: vi.fn(), prefetch: vi.fn().mockResolvedValue(undefined) };
   state.workspace = { scope: { ...initialScope }, setScope: vi.fn(), accounts: [{ connectionId: 'synthetic-account', displayName: 'Synthetic account' }], snapshot: null, observeSnapshot: vi.fn() };
-  fetchMock = vi.fn(async (url, options) => options?.method === 'PATCH' ? response({ updated: true }) : response(String(url).includes('/sessions/') ? fixture.detail : fixture.overview));
+  fetchMock = vi.fn(async (url, options) => options?.method === 'PATCH' ? response({ updated: true }) : response(String(url).includes('/sessions/') ? {...fixture.detail,turns:fixture.detail.turns.map(row=>({...row,contextSessionId:fixture.detail.session.id}))} : fixture.overview));
   vi.stubGlobal('fetch', fetchMock);
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
@@ -196,7 +196,7 @@ describe('Context workspace', () => {
   });
   it('saves an operator label with a PATCH and exposes an authorization refusal', async () => {
     await render(); await clickText('Edit project label');
-    fetchMock.mockImplementation(async (url, options) => options?.method === 'PATCH' ? response({ error: 'Operator authorization required' }, 403) : response(String(url).includes('/sessions/') ? fixture.detail : fixture.overview));
+    fetchMock.mockImplementation(async (url, options) => options?.method === 'PATCH' ? response({ error: 'Operator authorization required' }, 403) : response(String(url).includes('/sessions/') ? {...fixture.detail,turns:fixture.detail.turns.map(row=>({...row,contextSessionId:fixture.detail.session.id}))} : fixture.overview));
     await clickText('Save label');
     expect(fetchMock.mock.calls.find(([, options]) => options?.method === 'PATCH')[1]).toMatchObject({ body: JSON.stringify({ projectLabel: 'Synthetic research' }) });
     expect(container.textContent).toContain('Project label not saved');

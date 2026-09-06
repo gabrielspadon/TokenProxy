@@ -6,7 +6,7 @@ export { INITIAL_SCOPE } from '@/lib/db/analytics/investigationModel.mjs';
 
 const WorkspaceContext = createContext(null);
 const EMPTY = [];
-const INITIAL_CONTEXT = { sessionId: null, page: 1, projectLabel: null, clientTool: null };
+const INITIAL_CONTEXT = { sessionId: null, page: 1, projectLabel: null, clientTool: null, baseline:null };
 const INITIAL_ECONOMICS = { groupBy:'provider', status:'all', sortBy:'timestamp', sortDirection:'desc', cohort:null };
 export function analyticsUrl(scope, view = 'activity', extra = {}) {
   const query = new URLSearchParams({ view, groupBy: 'account', pageSize: '50', ...extra });
@@ -76,13 +76,13 @@ export function WorkspaceProvider({ children }) {
     setEconomicsView,
     savedEntry,
     setSavedEntry,
-    captureDefinition: (lens) => validateDefinition({schemaVersion:1,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
+    captureDefinition: (lens) => validateDefinition({schemaVersion:2,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
     restoreInvestigation: (entry) => {
       const definition = validateDefinition(entry.definition);
       setScopeValue(definition.scope);
       if (entry.kind !== 'filter-set') {
         setSelectedRecordValue(definition.selection); setComparisonIds(definition.comparisonIds);
-        setContextValue(definition.context); setEconomicsValue(definition.economics);
+        setContextValue({...INITIAL_CONTEXT,...definition.context}); setEconomicsValue(definition.economics);
       }
       setSavedEntry(entry);
     },

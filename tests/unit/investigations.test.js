@@ -23,6 +23,15 @@ describe('Persistent operator workspaces',()=>{
     expect(investigationStore(db).get(row.id)).toMatchObject({...input,version:1,ownerScope:'installation-operator'});
     expect(store.list()).toHaveLength(1);
   });
+  it('round trips version 2 exact baselines while preserving version 1 definitions',()=>{
+    const v1=store.create(saved());expect(store.get(v1.id).definition.schemaVersion).toBe(1);
+    expect(store.get(v1.id).definition.context).not.toHaveProperty('baseline');
+    const input=saved({definition:definition({schemaVersion:2,lens:'context',selection:{kind:'context-attempt',id:'selected',sessionId:8},context:{baseline:{id:'baseline',sessionId:7}}})});
+    const v2=store.create(input);
+    expect(investigationStore(db).get(v2.id).definition.context.baseline).toEqual({id:'baseline',sessionId:7});
+    expect(validateSave({...input,kind:'filter-set'}).definition.context.baseline).toBeNull();
+    for(const baseline of [{id:'x'},{id:'x',sessionId:0},{id:'x',sessionId:7,body:'private'}]) expect(()=>store.create({...input,definition:{...input.definition,context:{baseline}}})).toThrow();
+  });
   it('rejects lost updates and stale deletes without changing stored bytes',()=>{
     const row=store.create(saved());
     const updated=store.update(row.id,{...saved({name:'Second tab'}),version:1});
