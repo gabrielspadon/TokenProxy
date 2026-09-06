@@ -101,54 +101,64 @@ export async function saveRequestStats(detail) {
     const latency = detail.latency || {};
     const { persistUsagePricing } = await import("./usagePricing.js");
     db.transaction(() => {
-    if (shouldIgnorePending(db.get(`SELECT status FROM requestStats WHERE id=?`, [detail.id]), detail)) return;
-    db.run(
-      `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
-         promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens,
-         latencyTotal, latencyTtft)
-       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         timestamp = excluded.timestamp,
-         status = excluded.status,
-         promptTokens = excluded.promptTokens,
-         completionTokens = excluded.completionTokens,
-         cachedTokens = excluded.cachedTokens,
-         cacheCreationTokens = excluded.cacheCreationTokens,
-         reasoningTokens = excluded.reasoningTokens,
-         latencyTotal = excluded.latencyTotal,
-         latencyTtft = excluded.latencyTtft`,
-      [
-        detail.id,
-        detail.timestamp || new Date().toISOString(),
-        detail.provider || null,
-        detail.model || null,
-        detail.connectionId || null,
-        detail.status || "success",
-        tokens.prompt_tokens || 0,
-        tokens.completion_tokens || 0,
-        tokens.cached_tokens || 0,
-        tokens.cache_creation_input_tokens || 0,
-        tokens.reasoning_tokens || 0,
-        latency.total || 0,
-        latency.ttft || 0,
-      ]
-    );
-    const coverage = detail.contextTelemetry?.dispatchCoverage;
-    if (["physical-dispatch", "executor-invocation"].includes(coverage)) {
-      db.run(`UPDATE requestStats SET dispatchCoverage=? WHERE id=?`, [coverage, detail.id]);
-    }
-    const snapshot = detail.contextTelemetry?.pricingSnapshot;
-    const snapshotId = persistUsagePricing(db, snapshot);
-    if (snapshotId) db.run(`UPDATE requestStats SET rateSnapshotId=COALESCE(rateSnapshotId,?),
-      pricingCapturedAt=COALESCE(pricingCapturedAt,?) WHERE id=?`, [snapshotId, snapshot.capturedAt, detail.id]);
-    try {
-      db.transaction(() => saveContextMetrics(db, { ...detail, timestamp: detail.timestamp || new Date().toISOString() }));
-    } catch {
-      // Optional observability must never roll back authoritative billed usage.
-      db.run(`UPDATE requestStats SET contextSessionId=NULL,contextTelemetryError='invalid-metrics' WHERE id=?`, [detail.id]);
-      db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
-      db.run(`DELETE FROM contextStructures WHERE requestId=?`, [detail.id]);
-    }
+      const existing = db.get(`SELECT * FROM requestStats WHERE id=?`, [detail.id]);
+      if (shouldIgnorePending(existing, detail)) return;
+      const timestamp = detail.timestamp || new Date().toISOString();
+      const values = {
+        timestamp, status: detail.status || "success", promptTokens: tokens.prompt_tokens || 0,
+        completionTokens: tokens.completion_tokens || 0, cachedTokens: tokens.cached_tokens || 0,
+        cacheCreationTokens: tokens.cache_creation_input_tokens || 0, reasoningTokens: tokens.reasoning_tokens || 0,
+        latencyTotal: latency.total || 0, latencyTtft: latency.ttft || 0,
+      };
+      if (!existing || Object.entries(values).some(([field, value]) => existing[field] !== value)) db.run(
+        `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
+           promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens,
+           latencyTotal, latencyTtft)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           timestamp = excluded.timestamp,
+           status = excluded.status,
+           promptTokens = excluded.promptTokens,
+           completionTokens = excluded.completionTokens,
+           cachedTokens = excluded.cachedTokens,
+           cacheCreationTokens = excluded.cacheCreationTokens,
+           reasoningTokens = excluded.reasoningTokens,
+           latencyTotal = excluded.latencyTotal,
+           latencyTtft = excluded.latencyTtft`,
+        [
+          detail.id,
+          timestamp,
+          detail.provider || null,
+          detail.model || null,
+          detail.connectionId || null,
+          detail.status || "success",
+          tokens.prompt_tokens || 0,
+          tokens.completion_tokens || 0,
+          tokens.cached_tokens || 0,
+          tokens.cache_creation_input_tokens || 0,
+          tokens.reasoning_tokens || 0,
+          latency.total || 0,
+          latency.ttft || 0,
+        ]
+      );
+      const coverage = detail.contextTelemetry?.dispatchCoverage;
+      if (["physical-dispatch", "executor-invocation"].includes(coverage) && existing?.dispatchCoverage !== coverage) {
+        db.run(`UPDATE requestStats SET dispatchCoverage=? WHERE id=?`, [coverage, detail.id]);
+      }
+      const snapshot = detail.contextTelemetry?.pricingSnapshot;
+      // The foreign-key join already proves this immutable rate card was stored.
+      const snapshotId = snapshot?.id && snapshot.id === existing?.rateSnapshotId
+        ? existing.rateSnapshotId : persistUsagePricing(db, snapshot);
+      if (snapshotId && (!existing?.rateSnapshotId || !existing?.pricingCapturedAt)) db.run(`UPDATE requestStats SET rateSnapshotId=COALESCE(rateSnapshotId,?),
+        pricingCapturedAt=COALESCE(pricingCapturedAt,?) WHERE id=?`, [snapshotId, snapshot.capturedAt, detail.id]);
+      try {
+        db.transaction(() => saveContextMetrics(db, { ...detail, timestamp }));
+      } catch {
+        // Optional observability must never roll back authoritative billed usage.
+        db.run(`UPDATE requestStats SET contextSessionId=NULL,contextTelemetryError='invalid-metrics' WHERE id=?`, [detail.id]);
+        db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
+        db.run(`DELETE FROM contextStructures WHERE requestId=?`, [detail.id]);
+      }
     });
     await maybeCleanup(db);
   } catch (e) {

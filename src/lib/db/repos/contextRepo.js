@@ -35,7 +35,9 @@ export function saveContextMetrics(db, detail) {
   if (!c) return;
   if (!/^[a-f0-9]{32,64}$/.test(c.sessionHash || "")) throw new Error("Invalid context identity");
   const stages = normalizeContextStages(c.stages);
-  const identity = normalizeContextIdentity(c.explicitIdentity);
+  const existing = db.get(`SELECT * FROM requestStats WHERE id=?`, [detail.id]);
+  const identity = Object.fromEntries(Object.entries(normalizeContextIdentity(c.explicitIdentity))
+    .filter(([field, value]) => value !== null && existing?.[field] == null));
   if (Object.keys(identity).length) {
     const fields = Object.keys(identity);
     db.run(`UPDATE requestStats SET ${fields.map((field) => `${field}=COALESCE(${field},?)`).join(",")} WHERE id=?`, [...Object.values(identity), detail.id]);
@@ -43,27 +45,47 @@ export function saveContextMetrics(db, detail) {
   saveContextStructures(db, detail.id, c.structures);
   const controls = Object.fromEntries(Object.entries(c.controls || {}).filter(([k,v]) => CONTROL_NAMES.has(k) && typeof v === "boolean"));
   const at = detail.timestamp;
-  db.run(`INSERT INTO contextSessions(sessionHash, identitySource, firstSeenAt, lastSeenAt) VALUES(?, ?, ?, ?)
+  const identitySource = ["explicit", "inferred", "routing"].includes(c.identitySource) ? c.identitySource : "request";
+  const session = db.get(`SELECT id,identitySource,firstSeenAt,lastSeenAt FROM contextSessions WHERE sessionHash=?`, [c.sessionHash]);
+  if (!session || session.identitySource !== identitySource || at < session.firstSeenAt || at > session.lastSeenAt) db.run(`INSERT INTO contextSessions(sessionHash, identitySource, firstSeenAt, lastSeenAt) VALUES(?, ?, ?, ?)
     ON CONFLICT(sessionHash) DO UPDATE SET identitySource=excluded.identitySource, firstSeenAt = MIN(firstSeenAt, excluded.firstSeenAt), lastSeenAt = MAX(lastSeenAt, excluded.lastSeenAt)`,
-  [c.sessionHash, ["explicit", "inferred", "routing"].includes(c.identitySource) ? c.identitySource : "request", at, at]);
-  const sessionId = db.get(`SELECT id FROM contextSessions WHERE sessionHash = ?`, [c.sessionHash]).id;
+  [c.sessionHash, identitySource, at, at]);
+  const sessionId = session?.id ?? db.get(`SELECT id FROM contextSessions WHERE sessionHash = ?`, [c.sessionHash]).id;
   const u = detail.tokens;
   const hasUsage = u && present(u.prompt_tokens, u.input_tokens, u.completion_tokens, u.output_tokens, u.cached_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens);
   const source = detail.status === "pending" || !hasUsage ? "missing" : u.estimated ? "estimated" : "provider";
   const cacheRead = present(u?.cached_tokens, u?.cache_read_input_tokens, u?.prompt_tokens_details?.cached_tokens, u?.input_tokens_details?.cached_tokens);
   const cacheWrite = present(u?.cache_creation_input_tokens, u?.cache_write_tokens);
-  db.run(`UPDATE requestStats SET contextTelemetryError=NULL,contextSessionId=?, logicalRequestId=?, requestedModel=?, clientTool=?,
-    contextEstimate=?, inputEstimate=?, bodyBeforeBytes=?, bodyAfterBytes=?, cachePrefixBytes=?, compactHint=?,
-    usageSource=?, usageInputPresent=?, usageOutputPresent=?, cacheReadPresent=?, cacheWritePresent=?,
-    messageCount=?, toolCount=?, routeKind=?, formatPair=?, selection=?, contextControls=?, attempt=? WHERE id=?`,
-  [sessionId, short(c.logicalRequestId, 128), short(c.requestedModel), short(c.clientTool, 60), number(c.contextEstimate), number(c.inputEstimate),
-    stages[0]?.beforeBytes ?? number(c.bodyAfterBytes), stages.at(-1)?.afterBytes ?? number(c.bodyAfterBytes), number(c.cachePrefixBytes), c.compactHint ? 1 : 0,
-    source, u && present(u.prompt_tokens, u.input_tokens) ? 1 : 0, u && present(u.completion_tokens, u.output_tokens) ? 1 : 0,
-    cacheRead ? 1 : 0, cacheWrite ? 1 : 0, number(c.messageCount), number(c.toolCount), short(c.routeKind, 40), short(c.formatPair, 100), short(c.selection, 80), JSON.stringify(controls), number(c.attempt), detail.id]);
-  db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
-  for (const s of stages) db.run(`INSERT INTO contextStages(requestId, ordinal, stage, beforeBytes, afterBytes, deltaBytes, outcome, risk) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-    [detail.id, s.ordinal, s.stage, s.beforeBytes, s.afterBytes, s.deltaBytes, s.outcome, s.risk]);
-  db.run(`INSERT INTO _meta(key,value) VALUES('contextRecordingStartedAt',?) ON CONFLICT(key) DO NOTHING`, [at]);
+  const metrics = {
+    contextTelemetryError: null, contextSessionId: sessionId, logicalRequestId: short(c.logicalRequestId, 128),
+    requestedModel: short(c.requestedModel), clientTool: short(c.clientTool, 60), contextEstimate: number(c.contextEstimate),
+    inputEstimate: number(c.inputEstimate), bodyBeforeBytes: stages[0]?.beforeBytes ?? number(c.bodyAfterBytes),
+    bodyAfterBytes: stages.at(-1)?.afterBytes ?? number(c.bodyAfterBytes), cachePrefixBytes: number(c.cachePrefixBytes),
+    compactHint: c.compactHint ? 1 : 0, usageSource: source, usageInputPresent: u && present(u.prompt_tokens, u.input_tokens) ? 1 : 0,
+    usageOutputPresent: u && present(u.completion_tokens, u.output_tokens) ? 1 : 0, cacheReadPresent: cacheRead ? 1 : 0,
+    cacheWritePresent: cacheWrite ? 1 : 0, messageCount: number(c.messageCount), toolCount: number(c.toolCount),
+    routeKind: short(c.routeKind, 40), formatPair: short(c.formatPair, 100), selection: short(c.selection, 80),
+    contextControls: JSON.stringify(controls), attempt: number(c.attempt),
+  };
+  if (Object.entries(metrics).some(([field, value]) => existing?.[field] !== value)) {
+    db.run(`UPDATE requestStats SET ${Object.keys(metrics).map((field) => `${field}=?`).join(",")} WHERE id=?`,
+      [...Object.values(metrics), detail.id]);
+  }
+  const storedStages = new Map(db.all(`SELECT * FROM contextStages WHERE requestId=?`, [detail.id]).map((stage) => [stage.ordinal, stage]));
+  for (const s of stages) {
+    const stored = storedStages.get(s.ordinal);
+    if (stored && Object.entries(s).every(([field, value]) => stored[field] === value)) continue;
+    db.run(`INSERT INTO contextStages(requestId, ordinal, stage, beforeBytes, afterBytes, deltaBytes, outcome, risk) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(requestId,ordinal) DO UPDATE SET stage=excluded.stage,beforeBytes=excluded.beforeBytes,afterBytes=excluded.afterBytes,
+        deltaBytes=excluded.deltaBytes,outcome=excluded.outcome,risk=excluded.risk`,
+      [detail.id, s.ordinal, s.stage, s.beforeBytes, s.afterBytes, s.deltaBytes, s.outcome, s.risk]);
+  }
+  if ([...storedStages.keys()].some((ordinal) => ordinal >= stages.length)) {
+    db.run(`DELETE FROM contextStages WHERE requestId=? AND ordinal>=?`, [detail.id, stages.length]);
+  }
+  if (!db.get(`SELECT value FROM _meta WHERE key='contextRecordingStartedAt'`)) {
+    db.run(`INSERT INTO _meta(key,value) VALUES('contextRecordingStartedAt',?) ON CONFLICT(key) DO NOTHING`, [at]);
+  }
 }
 
 export function shouldIgnorePending(existing, detail) {

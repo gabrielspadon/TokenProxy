@@ -96,6 +96,12 @@ export function saveContextStructures(db, requestId, structures) {
   if (structures.length > 3) throw new ContextEvidenceError("Too many structural boundaries");
   const normalized = structures.filter(Boolean).map(normalizeContextStructure);
   if (new Set(normalized.map((value) => value.boundary)).size !== normalized.length) throw new ContextEvidenceError("Duplicate structural boundary");
-  for (const structure of normalized) db.run(`INSERT INTO contextStructures(requestId,boundary,version,data) VALUES(?,?,?,?)
-    ON CONFLICT(requestId,boundary) DO UPDATE SET version=excluded.version,data=excluded.data`, [requestId, structure.boundary, structure.version, JSON.stringify(structure)]);
+  const existing = new Map(db.all(`SELECT boundary,version,data FROM contextStructures WHERE requestId=?`, [requestId])
+    .map((row) => [row.boundary, row]));
+  for (const structure of normalized) {
+    const data = JSON.stringify(structure), stored = existing.get(structure.boundary);
+    if (stored?.version === structure.version && stored.data === data) continue;
+    db.run(`INSERT INTO contextStructures(requestId,boundary,version,data) VALUES(?,?,?,?)
+      ON CONFLICT(requestId,boundary) DO UPDATE SET version=excluded.version,data=excluded.data`, [requestId, structure.boundary, structure.version, data]);
+  }
 }
