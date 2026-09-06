@@ -1,0 +1,201 @@
+/* The routing panel. This is the one place on the surface that is allowed to
+   be loud, so everything else stays quiet. The subject is a gateway moving
+   traffic, and the encoding is literal: a wire per provider, thickness is that
+   provider's share of today, a travelling dot is a request open right now,
+   and the two flow bars are direction — cool leaving for the provider, warm
+   coming back. Nothing here is decoration that does not carry a number. */
+
+@layer components {
+  .route {
+    --ground: #0f1c1e;
+    --ground-2: #16292b;
+    --panel-ink: #f0f6f5;
+    --panel-slate: #8fa8a6;
+    --panel-rule: #2a4245;
+    --out: #4fc3a8;
+    --back: #e8a56b;
+    --dead: #a3222b;
+
+    position: relative;
+    display: grid;
+    gap: 20px;
+    padding: 20px;
+    border-radius: 6px;
+    background: radial-gradient(120% 140% at 0% 0%, var(--ground-2), var(--ground) 62%);
+    color: var(--panel-ink);
+    overflow: hidden;
+  }
+
+  /* Hairline top edge so the panel reads as lit from above without a shadow. */
+  .route::before {
+    content: "";
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--out) 18%, var(--panel-rule) 60%, transparent);
+    opacity: 0.7;
+  }
+
+  .route-hub {
+    display: grid;
+    align-content: start;
+    gap: 2px;
+    padding-block-end: 16px;
+    border-block-end: 1px solid var(--panel-rule);
+  }
+  .route-hub .label { color: var(--panel-slate); font-size: var(--t-13); }
+  .route-hub .value {
+    font-family: var(--mono);
+    font-size: var(--t-30);
+    font-weight: 500;
+    line-height: 1.05;
+    letter-spacing: -0.01em;
+  }
+  .route-hub .route-live { color: var(--panel-slate); font-size: var(--t-13); }
+  .route-hub .route-live .fig { color: var(--out); font-family: var(--mono); }
+  .route-hub .skeleton { color: var(--panel-slate); }
+
+  /* The spine. Every lane leaves the gateway from the same edge, so one line
+     owns that edge instead of fourteen line-ends floating unattached. */
+  .route-lanes { position: relative; display: grid; gap: 2px; }
+  .route-lanes::before {
+    content: "";
+    position: absolute;
+    inset-block: 6px;
+    inset-inline-start: 0;
+    width: 2px;
+    background: linear-gradient(180deg, transparent, var(--out) 12%, var(--out) 88%, transparent);
+    opacity: 0.55;
+  }
+  [dir="rtl"] .route-lanes::before { inset-inline-start: auto; inset-inline-end: 0; }
+
+  .lane {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px 16px;
+    padding: 11px 0 11px 16px;
+    align-items: center;
+    border-block-end: 1px solid color-mix(in oklab, var(--panel-rule) 60%, transparent);
+  }
+  [dir="rtl"] .lane { padding: 11px 16px 11px 0; }
+  .lane:last-child { border-block-end: 0; }
+  .lane[data-called="false"] { opacity: 0.55; }
+
+  /* The wire gets its own channel between the provider's name and its token
+     numbers, so it spans real distance without crossing any text. Running it
+     behind the lane instead read as a strikethrough through the labels.
+     Thickness is share of today's requests, floored at 2px so a provider that
+     took one request is still a wire and not a hairline. */
+  .lane-track {
+    position: relative;
+    display: block;
+    min-height: 14px;
+    min-width: 0;
+  }
+  .lane-track::before {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    inset-block-start: 50%;
+    height: calc(2px + var(--w, 0) * 9px);
+    transform: translateY(-50%);
+    border-radius: 5px;
+    background: linear-gradient(90deg, color-mix(in oklab, var(--out) 55%, transparent) 0%, color-mix(in oklab, var(--out) 16%, transparent) 55%, transparent 92%);
+  }
+  [dir="rtl"] .lane-track::before { background: linear-gradient(270deg, color-mix(in oklab, var(--out) 55%, transparent) 0%, color-mix(in oklab, var(--out) 16%, transparent) 55%, transparent 92%); }
+  .lane[data-tone="warn"] .lane-track::before { background: linear-gradient(90deg, color-mix(in oklab, var(--back) 55%, transparent), transparent 92%); }
+  .lane[data-tone="bad"] .lane-track::before { background: linear-gradient(90deg, color-mix(in oklab, var(--dead) 65%, transparent), transparent 92%); }
+
+  /* One dot per request open right now, capped in the component at six. They
+     travel the wire because that is what the request is doing. Animating the
+     logical inset means RTL travels the other way with no second keyframe.
+     With motion off, each dot keeps the static position `--at` gives it, so the
+     lane still reads as "this many are open" rather than collapsing to one. */
+  .lane-dot {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: calc(var(--at, 0.5) * 100%);
+    width: 6px;
+    height: 6px;
+    margin-block-start: -3px;
+    margin-inline-start: -3px;
+    border-radius: 50%;
+    background: var(--panel-ink);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--out) 45%, transparent);
+    animation: lane-travel 2.6s linear infinite;
+    animation-delay: calc(var(--i, 0) * -0.65s);
+  }
+  @keyframes lane-travel {
+    from { inset-inline-start: 0%; opacity: 0; }
+    14% { opacity: 1; }
+    86% { opacity: 1; }
+    to { inset-inline-start: 100%; opacity: 0; }
+  }
+
+  .lane-mark {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: 0;
+    width: 7px;
+    height: 7px;
+    margin-block-start: -3.5px;
+    border-radius: 1px;
+    background: var(--out);
+  }
+  .lane-mark[data-tone="bad"] { background: var(--dead); }
+
+  .lane-node { display: grid; gap: 1px; min-width: 0; order: 1; }
+  .lane-node .name { font-weight: 500; }
+  .lane-node .sub { color: var(--panel-slate); font-size: var(--t-13); }
+  .lane-node .sub .status { color: var(--panel-ink); }
+  .lane-node .sub .status::before { background: var(--panel-slate); }
+  .lane-node .sub .status[data-tone="ok"]::before { background: var(--out); }
+  .lane-node .sub .status[data-tone="warn"]::before { background: var(--back); }
+  .lane-node .sub .status[data-tone="bad"]::before { background: var(--dead); }
+  .lane-count + .lane-count { margin-inline-start: 12px; }
+
+  .lane-flow { display: grid; gap: 3px; order: 2; min-width: 0; }
+  .flow {
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(40px, 1fr) minmax(0, auto);
+    align-items: center;
+    gap: 8px;
+    font-size: var(--t-12);
+    color: var(--panel-slate);
+  }
+  .flow .v { font-family: var(--mono); color: var(--panel-ink); text-align: end; }
+  .flow .bar {
+    position: relative;
+    height: 3px;
+    border-radius: 2px;
+    background: color-mix(in oklab, var(--panel-rule) 80%, transparent);
+  }
+  .flow .bar::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: calc(var(--f, 0) * 100%);
+    min-width: 2px;
+    border-radius: 2px;
+  }
+  .flow .bar.out::after { background: var(--out); }
+  .flow .bar.in::after { background: var(--back); }
+
+  .route .empty { color: var(--panel-slate); }
+
+  @media (min-width: 900px) {
+    .route { grid-template-columns: minmax(180px, 220px) minmax(0, 1fr); gap: 0 28px; padding: 24px 28px; }
+    .route-hub { align-content: center; padding-block-end: 0; border-block-end: 0; border-inline-end: 1px solid var(--panel-rule); padding-inline-end: 28px; }
+    [dir="rtl"] .route-hub { border-inline-end: 0; border-inline-start: 1px solid var(--panel-rule); padding-inline-end: 0; padding-inline-start: 28px; }
+    .lane {
+      grid-template-columns: minmax(140px, 0.9fr) minmax(60px, 1fr) minmax(180px, 260px);
+      gap: 2px 20px;
+    }
+    .lane-node { order: 1; }
+    .lane-track { order: 2; }
+    .lane-flow { order: 3; }
+  }
+}

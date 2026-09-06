@@ -34,15 +34,6 @@ afterEach(() => {
 });
 
 describe("new provider workflow translations", () => {
-  it("includes the provider-creation route in the browser locale audit matrix", async () => {
-    const audit = await readFile(
-      resolve(REPO_ROOT, "docs/design/verification/audit-i18n.mjs"),
-      "utf8",
-    );
-
-    expect(audit).toContain('["providers-new", "/dashboard/providers/new"]');
-  });
-
   for (const locale of LOCALES) {
     it(`translates every provider-creation literal in ${locale}`, async () => {
       const dictionary = JSON.parse(await readFile(

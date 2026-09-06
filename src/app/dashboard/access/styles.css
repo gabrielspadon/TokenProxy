@@ -1,0 +1,13 @@
+@layer components {
+  /* A fact list on this screen carries sentences, not one-word values, so the
+     term column stops growing and the description wraps against the measure. */
+  dl.access-facts { grid-template-columns: minmax(0, 15ch) minmax(0, 1fr); max-width: 68ch; }
+  .access-facts dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+  .access-facts .why { font-size: var(--t-12); color: var(--slate); flex-basis: 100%; }
+  .access-facts .why summary { cursor: pointer; width: fit-content; }
+  .access-facts .why p { margin: 4px 0 0; max-width: 40ch; }
+  .access-facts .empty { padding: 0; }
+
+  .access-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 12px; }
+  .access-fields { display: flex; flex-direction: column; gap: 12px; margin-block: 12px; }
+}

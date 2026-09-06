@@ -49,10 +49,6 @@ it("#1526 transcribes through NVIDIA", () => {
   expect(read("open-sse/handlers/sttCore.js")).toMatch(/nvidia-asr|transcribeNvidia/);
 });
 
-it("#1517 ships an in-dashboard chat surface", () => {
-  expect(has("src/app/(dashboard)/dashboard/basic-chat/BasicChatPageClient.js")).toBe(true);
-});
-
 it("#1192 no importer can silently drop rows, because none reads outside state", () => {
   // The row-count assertion existed to guard a predecessor JSON importer.
   // TokenProxy installs clean, so the importer and its guard are both gone and

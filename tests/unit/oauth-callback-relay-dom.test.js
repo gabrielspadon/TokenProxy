@@ -8,12 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
-const mocks = vi.hoisted(() => ({ search: "" }));
-
-vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(mocks.search),
-}));
-
 const { default: CallbackPage, callbackOutcome } = await import("../../src/app/callback/page.js");
 
 const RELAY_KEY = "oauth_callback";
@@ -25,7 +19,7 @@ const readRelay = () => {
 };
 
 function mount(search) {
-  mocks.search = search;
+  window.history.replaceState(null, "", `/callback?${search}`);
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -61,6 +55,7 @@ describe("OAuth callback relay lifetime", () => {
 
     expect(readRelay()).toMatchObject({ code: "abc123", state: "s1" });
     expect(typeof readRelay().timestamp).toBe("number");
+    expect(readRelay().expiresAt - readRelay().timestamp).toBe(RELAY_TTL_MS);
   });
 
   it("drops the relay once the TTL elapses, even while the page stays open", () => {
@@ -94,13 +89,15 @@ describe("OAuth callback relay lifetime", () => {
     expect(removeSpy).toHaveBeenCalledWith("pagehide", expect.any(Function));
   });
 
-  it("still renders the provider's refusal rather than a success tick", () => {
-    mounted = mount("error=access_denied&error_description=You%20said%20no");
+  it("renders the provider's refusal rather than a success line, and drops the code", () => {
+    mounted = mount("code=abc&error=access_denied&error_description=You%20said%20no");
 
     const alert = mounted.container.querySelector('[role="alert"]');
     expect(alert).not.toBeNull();
-    expect(alert.textContent).toContain("Authorization Failed");
+    expect(alert.textContent).toContain("The provider refused the sign-in.");
     expect(alert.textContent).toContain("You said no");
+    expect(readRelay()).toMatchObject({ error: "access_denied" });
+    expect(readRelay().code).toBeUndefined();
     expect(callbackOutcome({ error: "access_denied", code: "abc" })).toBe("error");
   });
 });

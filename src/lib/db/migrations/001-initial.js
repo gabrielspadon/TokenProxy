@@ -1,10 +1,10 @@
 // TokenProxy's first schema. A fresh install creates every table and index
 // declared in TABLES; there is no earlier version to upgrade from.
-import { TABLES, buildCreateTableSql } from "../schema.js";
+import { TABLES, buildCreateTableSql } from '../schema.js';
 
-export default {
+const migration = {
   version: 1,
-  name: "initial",
+  name: 'initial',
   up(db) {
     for (const [name, def] of Object.entries(TABLES)) {
       db.exec(buildCreateTableSql(name, def));
@@ -12,3 +12,5 @@ export default {
     }
   },
 };
+
+export default migration;

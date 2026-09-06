@@ -1,0 +1,61 @@
+/* Sessions. Only what the shared classes do not already carry. */
+@layer components {
+  /* One column on a phone, three where a receipt's three questions fit side
+     by side: when, why, and between which accounts. */
+  .sessions-row,
+  .sessions-live {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .sessions-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px 16px;
+    margin-block: 12px;
+  }
+  .sessions-filters .field {
+    min-width: 0;
+    flex: 1 1 180px;
+  }
+  .sessions-filters .button {
+    flex: none;
+  }
+
+  /* The quota evidence is the reason for the move, so it opens on demand
+     rather than pushing every other receipt off the screen. */
+  .sessions-evidence {
+    margin-block-start: 6px;
+    font-size: var(--t-13);
+  }
+  .sessions-evidence summary {
+    cursor: pointer;
+    width: fit-content;
+    color: var(--slate);
+  }
+  .sessions-evidence > .facts {
+    margin-block-start: 6px;
+  }
+  .sessions-evidence .rows {
+    border-block-start: 0;
+  }
+  .sessions-evidence .row {
+    padding-block: 6px;
+    border-block-end: 0;
+  }
+
+  .sessions-more {
+    margin-block-start: 12px;
+  }
+
+  @media (min-width: 768px) {
+    .sessions-row {
+      grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1fr) minmax(0, 2fr);
+    }
+    .sessions-live {
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+    }
+  }
+}
