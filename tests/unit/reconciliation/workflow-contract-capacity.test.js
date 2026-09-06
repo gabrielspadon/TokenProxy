@@ -126,11 +126,14 @@ describe('Workflow Contract, gateway side: one slot per admitted request, none p
     expect(heldTotal(registry)).toBe(ACTIVE_BATCH);
     expect(registry.inFlight()).toBeLessThan(DECLARED_AGENTS);
 
-    // Two accounts full, the third untouched: the batch consumed capacity in
-    // ranked order and stopped at its own size.
+    // Spread, not fill-first: a fresh pin goes to the account with the fewest
+    // open leases, so one batch touches every account, drives none to its
+    // ceiling, and stops at its own size.
     const snapshot = registry.snapshot();
-    expect(Object.keys(snapshot)).toHaveLength(2);
-    for (const n of Object.values(snapshot)) expect(n).toBe(CAPACITY_PER_ACCOUNT);
+    expect(Object.keys(snapshot)).toHaveLength(3);
+    const held = Object.values(snapshot);
+    for (const n of held) expect(n).toBeLessThan(CAPACITY_PER_ACCOUNT);
+    expect(Math.max(...held) - Math.min(...held)).toBeLessThanOrEqual(1);
   });
 
   it('the declared lifetime total is not an input: declaring 180 and declaring 20 are identical', () => {
@@ -177,13 +180,15 @@ describe('Workflow Contract, gateway side: one slot per admitted request, none p
     const workflowFootprint = registry.snapshot();
 
     // A different session, arriving with 172 of the workflow's agents still
-    // unstarted. It is admitted, on the account the batch did not reach.
+    // unstarted. It is admitted, on the account carrying the fewest of the
+    // batch's leases.
+    const lightest = Math.min(...Object.values(workflowFootprint));
     const foreign = dispatch({ registry, repos, accounts, sessionHash: 'other-session' });
     expect(admitted(foreign)).toBe(true);
     expect(foreign.reason).toBe('first-pin');
-    expect(Object.keys(workflowFootprint)).not.toContain(foreign.connection.id);
+    expect(workflowFootprint[foreign.connection.id] ?? 0).toBe(lightest);
     expect(registry.inFlight()).toBe(ACTIVE_BATCH + 1);
-    expect(registry.inFlight(foreign.connection.id)).toBe(1);
+    expect(registry.inFlight(foreign.connection.id)).toBe(lightest + 1);
   });
 
   it('five waves of eight: peak concurrency stays at the batch while 40 requests are served', () => {

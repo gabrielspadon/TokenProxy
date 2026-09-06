@@ -64,6 +64,21 @@ describe("accountFallback: checkFallbackError rules", () => {
       expect(res2.cooldownMs).toBe(getQuotaCooldown(2));
     });
 
+    // Overload is not depletion. A 529/503 is the provider's capacity, not
+    // this key's quota: the cooldown stays inside the same-account retry
+    // ceiling (chat.js SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS) so the loop retries
+    // the SAME account before rotating, and a rotation that would spend a
+    // prompt-cache write on the next account is the last resort, not the first.
+    it.each([
+      [529, "Overloaded", getQuotaCooldown(1)],
+      [503, "Service Unavailable", TRANSIENT_COOLDOWN_MS],
+    ])("keeps a %s %s on the same account with a short cooldown, not a quota lock", (status, text, cooldownMs) => {
+      const res = checkFallbackError(status, text, 0);
+      expect(res.shouldFallback).toBe(true);
+      expect(res.cooldownMs).toBe(cooldownMs);
+      expect(res.cooldownMs).toBeLessThan(30 * 1000);
+    });
+
     it("returns transient cooldown for unknown errors", () => {
       const res = checkFallbackError(500, "Internal server glitch");
       expect(res).toEqual({ shouldFallback: true, cooldownMs: TRANSIENT_COOLDOWN_MS });

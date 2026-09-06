@@ -142,8 +142,12 @@ describe('affinity.state.exit: fifteen identities remain stable across a second 
 
     const { selectAndReserve } = await import('@/sse/services/accountScheduler.js');
 
-    // Turn 1: acct-a resets soonest, so raw ranking (no prior pin exists yet)
-    // takes it for every identity.
+    // Turn 1: no prior pin exists, so each identity is placed by live load
+    // first (the pins the earlier identities just wrote, read inside the same
+    // transaction) and by soonest reset on a tie. Fifteen identities over
+    // three accounts therefore spread five apiece, and what each one got is
+    // recorded so turn 2 and the restart can assert it did not move.
+    const firstPin = new Map();
     const turn1 = await openRepos(NOW);
     const accountsTurn1 = [
       { id: 'acct-a', windows: usableWindow(HOUR) },
@@ -160,15 +164,22 @@ describe('affinity.state.exit: fifteen identities remain stable across a second 
         repos: turn1.repos,
       });
       expect(result.unavailable).toBeUndefined();
-      expect(result.connection.id).toBe('acct-a');
       expect(result.reason).toBe('first-pin');
+      firstPin.set(sessionHash, result.connection.id);
       turn1.registry.release(result.lease);
     }
+    const perAccount = new Map();
+    for (const id of firstPin.values()) perAccount.set(id, (perAccount.get(id) ?? 0) + 1);
+    expect([...perAccount.entries()].sort()).toEqual([
+      ['acct-a', 5],
+      ['acct-b', 5],
+      ['acct-c', 5],
+    ]);
 
     // Turn 2, two hours later: acct-b now resets soonest — ranking ALONE
-    // would move every session there. Every identity is still pinned to
-    // acct-a, and acct-a is still fully usable, so the only thing that can
-    // hold them there is the pin itself.
+    // would move every session there. Every identity is still pinned where
+    // turn 1 put it, every account is still fully usable, so the only thing
+    // that can hold them there is the pin itself.
     const turn2Now = NOW + 2 * HOUR;
     const turn2 = await openRepos(turn2Now);
     const accountsTurn2 = [
@@ -185,7 +196,7 @@ describe('affinity.state.exit: fifteen identities remain stable across a second 
         registry: turn2.registry,
         repos: turn2.repos,
       });
-      expect(result.connection.id).toBe('acct-a');
+      expect(result.connection.id).toBe(firstPin.get(sessionHash));
       expect(result.reason).toBe('pinned');
       turn2.registry.release(result.lease);
     }
@@ -207,7 +218,7 @@ describe('affinity.state.exit: fifteen identities remain stable across a second 
 
     for (const sessionHash of IDENTITIES) {
       const pin = await affinity.getPin(sessionHash, MODEL, { now: at(3 * HOUR) });
-      expect(pin?.connectionId).toBe('acct-a');
+      expect(pin?.connectionId).toBe(firstPin.get(sessionHash));
     }
   });
 });
