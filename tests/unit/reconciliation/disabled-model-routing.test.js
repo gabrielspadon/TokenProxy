@@ -106,9 +106,10 @@ async function send(handler, model, headers = {}) {
 }
 
 describe('operator edits preserve equivalent persisted scopes', () => {
-  it('does not treat a malformed historical list as an explicit empty override', async () => {
+  it.each(['null', '{"broken"'])('does not treat malformed historical value %s as an explicit empty override', async (value) => {
     await disable('cc', [MODEL]);
-    adapter.run('INSERT INTO kv(scope, key, value) VALUES (?, ?, ?)', ['disabledModels', 'claude::account-a', 'null']);
+    adapter.run('INSERT INTO kv(scope, key, value) VALUES (?, ?, ?)', ['disabledModels', 'claude::account-a', value]);
+    expect(await select()).toBeNull();
     await disable('claude', ['claude-sonnet-5'], 'account-a');
     expect(await db.getDisabledByProvider('claude', 'account-a')).toEqual([MODEL, 'claude-sonnet-5']);
     expect(await select()).toBeNull();
