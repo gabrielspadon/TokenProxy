@@ -6,6 +6,7 @@ const {createDashboardAuthToken}=await import("../../src/lib/auth/dashboardSessi
 const {getAdapter}=await import("../../src/lib/db/driver.js");
 const {saveRequestStats}=await import("../../src/lib/db/repos/requestStatsRepo.js");
 const {getContextOverview}=await import("../../src/lib/db/repos/contextRepo.js");
+const {ContextAnalyticsError}=await import("../../src/lib/db/analytics/client.js");
 let db,id,cookie;
 const req=(path,{method="GET",operator=false,local=false,inference=false,body}={})=>({url:`http://localhost${path}`,method,
  headers:new Headers({...local?{"x-tp-peer-token":"context-peer-fixture","x-tp-real-ip":"127.0.0.1"}:{},...inference?{authorization:"Bearer synthetic-context-inference-key"}:{}}),
@@ -40,5 +41,16 @@ describe("context operator API boundary",()=>{
   expect((await overview(req("/api/context?pageSize=10000",{operator:true}))).status).toBe(400);
   expect((await session(req("/api/context/sessions/99999",{operator:true}),{params:Promise.resolve({id:"99999"})})).status).toBe(404);
   expect((await patch(req(`/api/context/sessions/${id}`,{method:"PATCH",operator:true,local:true,body:{prompt:"forbidden"}}),{params:Promise.resolve({id:String(id)})})).status).toBe(400);
+ });
+ it("returns explicit summary projection and overload without leaking worker errors",async()=>{
+  const response=await overview(req("/api/context?view=summary",{operator:true}));
+  expect(response.status).toBe(200);
+  const data=await response.json();expect(data.view).toBe("summary");expect(data).not.toHaveProperty("sessions");expect(data.freshness.source).toBe("committed-sqlite");
+  expect((await overview(req("/api/context?view=unknown",{operator:true}))).status).toBe(400);
+  const run=vi.spyOn(globalThis._contextAnalytics.client,"run").mockRejectedValue(new ContextAnalyticsError("private worker detail"));
+  try {
+   const failed=await overview(req("/api/context",{operator:true}));
+   expect(failed.status).toBe(503);expect(await failed.text()).not.toContain("private worker detail");
+  } finally {run.mockRestore();}
  });
 });

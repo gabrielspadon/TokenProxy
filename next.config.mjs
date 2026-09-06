@@ -64,7 +64,7 @@ const nextConfig = {
   // dist/sql-wasm.wasm and the fallback could not load, which is how an install
   // reached "no SQLite driver available" with every link exhausted (#987).
   outputFileTracingIncludes: {
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm"],
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs"],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
   },

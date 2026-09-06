@@ -247,6 +247,9 @@ function buildCliPackage() {
   }
   console.log("✅ Copied standalone build\n");
 
+  // Worker entrypoints are loaded by path, outside the Next server bundle.
+  copyRecursive(path.join(appDir, "src/lib/db/analytics"), path.join(cliAppDir, "src/lib/db/analytics"));
+
   // Step 3a: Copy custom server (injects real socket IP, strips spoofable XFF).
   const customServerSrc = path.join(appDir, "custom-server.js");
   if (fs.existsSync(customServerSrc)) {

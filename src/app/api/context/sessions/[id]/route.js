@@ -1,19 +1,20 @@
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { adminError, adminJson, parseAdminBody } from "@/lib/admin/policy.js";
 import { ContextQueryError, getContextSession, parseContextFilter, updateContextSession } from "@/lib/db/repos/contextRepo.js";
+import { ContextAnalyticsError } from "@/lib/db/analytics/client.js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 const unavailable = (error) => error instanceof ContextQueryError
   ? adminError(400, "invalid_request", error.message)
-  : adminError(500, "state_unavailable", "Context telemetry could not be read.");
+  : adminError(error instanceof ContextAnalyticsError ? 503 : 500, "state_unavailable", "Context telemetry could not be read.");
 
 export async function GET(request, { params }) {
   const denied = await requireAdmin(request);
   if (denied) return denied;
   try {
     const { id } = await params;
-    const result = await getContextSession(id, parseContextFilter(new URL(request.url).searchParams));
+    const result = await getContextSession(id, parseContextFilter(new URL(request.url).searchParams), { signal: request.signal });
     return result ? adminJson(result) : adminError(404, "not_found", "Session not found.");
   } catch (error) { return unavailable(error); }
 }
