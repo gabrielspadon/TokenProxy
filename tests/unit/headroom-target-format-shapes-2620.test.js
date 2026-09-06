@@ -23,7 +23,9 @@ function respond(messages, extra = {}) {
   return vi.fn(async (_url, init) => {
     respond.lastPayload = JSON.parse(init.body);
     return new Response(JSON.stringify({
-      messages,
+      messages: messages.map((message, i) => message.role === "user" && respond.lastPayload.messages[i]?.role === "user"
+        ? { ...message, content: respond.lastPayload.messages[i].content }
+        : message),
       tokens_before: 1000,
       tokens_after: 100,
       tokens_saved: 900,
@@ -55,7 +57,7 @@ describe("#2620 gemini-family contents[] projection", () => {
     // Gemini's "model" role is projected as assistant for the OpenAI-only proxy.
     expect(respond.lastPayload.messages.map((m) => m.role)).toEqual(["system", "user", "assistant"]);
     expect(body.systemInstruction.parts[0].text).toBe(`you are helpful${PAD}`);
-    expect(body.contents[0].parts[0].text).toBe("u!");
+    expect(body.contents[0].parts[0].text).toBe(`question${PAD}`);
     expect(body.contents[1].parts[0].text).toBe("a!");
     // Structure is preserved: roles are still Gemini's own.
     expect(body.contents.map((c) => c.role)).toEqual(["user", "model"]);
@@ -75,19 +77,19 @@ describe("#2620 gemini-family contents[] projection", () => {
     });
 
     expect(respond.lastPayload.messages).toHaveLength(1);
-    expect(body.contents[0].parts[0].text).toBe("u!");
+    expect(body.contents[0].parts[0].text).toBe(`question${PAD}`);
     expect(body.contents[0].parts[1]).toEqual(fnCall);
     expect(body.contents[0].parts[2]).toEqual(fnResp);
     expect(body.contents[0].parts[3]).toEqual(inline);
   });
 
   it("reads antigravity's nested body.request and vertex's snake_case system_instruction", async () => {
-    global.fetch = respond([{ role: "system", content: `instructions${PAD}` }, { role: "user", content: "u!" }]);
+    global.fetch = respond([{ role: "system", content: `instructions${PAD}` }, { role: "assistant", content: "a!" }]);
     const body = {
       project: "p",
       request: {
         system_instruction: { parts: [{ text: `instructions${PAD}` }] },
-        contents: [{ role: "user", parts: [{ text: `question${PAD}` }] }],
+        contents: [{ role: "model", parts: [{ text: `answer${PAD}` }] }],
       },
     };
 
@@ -97,7 +99,7 @@ describe("#2620 gemini-family contents[] projection", () => {
 
     expect(stats.tokens_saved).toBe(900);
     expect(body.request.system_instruction.parts[0].text).toBe(`instructions${PAD}`);
-    expect(body.request.contents[0].parts[0].text).toBe("u!");
+    expect(body.request.contents[0].parts[0].text).toBe("a!");
     expect(body.project).toBe("p");
   });
 
@@ -162,7 +164,7 @@ describe("#2620 commandcode params.messages", () => {
     });
 
     expect(stats.tokens_saved).toBe(900);
-    expect(body.params.messages[0].content).toEqual([{ type: "text", text: "q!" }]);
+    expect(body.params.messages[0].content).toEqual([{ type: "text", text: `question${PAD}` }]);
     expect(body.params.messages[1].content).toEqual([{ type: "text", text: "r!" }]);
     expect(body.threadId).toBe("t-1");
     expect(body.params.system).toBe("sys prompt");
@@ -219,7 +221,7 @@ describe("#2620 commit preserves fields outside the OpenAI contract", () => {
     });
 
     expect(stats.tokens_saved).toBe(900);
-    expect(body.messages[0].content).toBe("u!");
+    expect(body.messages[0].content).toBe(`question${PAD}`);
     expect(body.messages[0].images).toEqual(["QUJD"]);
     expect(body.messages[1].thinking).toBe(`reasoning${PAD}`);
     expect(body.messages[2].tool_name).toBe("read_file");
@@ -262,7 +264,7 @@ describe("R-F1: Kiro/Gemini projections never write into caller-shared objects",
     expect(stats.tokens_saved).toBe(900);
     expect(callerState).toEqual(stateBefore); // caller's object not mutated
     expect(body.conversationState).not.toBe(callerState); // private copy committed
-    expect(body.conversationState.history[0].userInputMessage.content).toBe("u!");
+    expect(body.conversationState.history[0].userInputMessage.content).toBe(`question${PAD}`);
     expect(body.conversationState.history[1].assistantResponseMessage.content).toBe("a!");
   });
 
@@ -283,8 +285,8 @@ describe("R-F1: Kiro/Gemini projections never write into caller-shared objects",
   });
 
   it("Gemini: the caller's contents array is untouched; the body carries the compressed copy", async () => {
-    global.fetch = respond([{ role: "user", content: "u!" }]);
-    const callerContents = [{ role: "user", parts: [{ text: `question${PAD}` }] }];
+    global.fetch = respond([{ role: "assistant", content: "a!" }]);
+    const callerContents = [{ role: "model", parts: [{ text: `answer${PAD}` }] }];
     const contentsBefore = structuredClone(callerContents);
     const body = { contents: callerContents };
 
@@ -294,12 +296,12 @@ describe("R-F1: Kiro/Gemini projections never write into caller-shared objects",
 
     expect(callerContents).toEqual(contentsBefore);
     expect(body.contents).not.toBe(callerContents);
-    expect(body.contents[0].parts[0].text).toBe("u!");
+    expect(body.contents[0].parts[0].text).toBe("a!");
   });
 
   it("antigravity: the caller's nested request.contents is untouched", async () => {
-    global.fetch = respond([{ role: "user", content: "u!" }]);
-    const callerRequest = { contents: [{ role: "user", parts: [{ text: `question${PAD}` }] }] };
+    global.fetch = respond([{ role: "assistant", content: "a!" }]);
+    const callerRequest = { contents: [{ role: "model", parts: [{ text: `answer${PAD}` }] }] };
     const requestBefore = structuredClone(callerRequest);
     const body = { project: "p", request: callerRequest };
 
@@ -309,7 +311,7 @@ describe("R-F1: Kiro/Gemini projections never write into caller-shared objects",
 
     expect(callerRequest).toEqual(requestBefore);
     expect(body.request.contents).not.toBe(callerRequest.contents);
-    expect(body.request.contents[0].parts[0].text).toBe("u!");
+    expect(body.request.contents[0].parts[0].text).toBe("a!");
   });
 });
 

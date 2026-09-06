@@ -210,11 +210,11 @@ describe("CCR marker rejection", () => {
 
   it("does not reject on unrelated metadata mentioning ccr outside message content", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      messages: [{ role: "user", content: "compressed fine" }],
+      messages: [{ role: "assistant", content: "compressed fine" }],
       tokens_before: 100, tokens_after: 10, tokens_saved: 90,
       debug_note: "ccr engine v2", // unrelated metadata — not message content
     }), { status: 200 }));
-    const body = { messages: [{ role: "user", content: "long original content" }] };
+    const body = { messages: [{ role: "assistant", content: "long original content" }] };
     const stats = await compressWithHeadroom(body, {
       enabled: true, url: "http://localhost:8787", model: "m", format: "openai", diagnostics: {},
     });
@@ -401,10 +401,10 @@ describe("no-gain / phantom / conflicting metrics guard", () => {
 
   it("phantom gain (tokens shrink claimed, bytes grow) keeps original body", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      messages: [{ role: "user", content: bigOriginal + " EXTRA PADDING THAT GROWS PAYLOAD".repeat(10) }],
+      messages: [{ role: "assistant", content: bigOriginal + " EXTRA PADDING THAT GROWS PAYLOAD".repeat(10) }],
       tokens_before: 1000, tokens_after: 5, tokens_saved: 995,
     }), { status: 200 }));
-    const body = { messages: [{ role: "user", content: bigOriginal }] };
+    const body = { messages: [{ role: "assistant", content: bigOriginal }] };
     const before = JSON.stringify(body);
     const diag = {};
     const stats = await compressWithHeadroom(body, {
@@ -431,10 +431,10 @@ describe("no-gain / phantom / conflicting metrics guard", () => {
 
   it("real gain commits replacement", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      messages: [{ role: "user", content: "tiny" }],
+      messages: [{ role: "assistant", content: "tiny" }],
       tokens_before: 900, tokens_after: 3, tokens_saved: 897,
     }), { status: 200 }));
-    const body = { messages: [{ role: "user", content: bigOriginal }] };
+    const body = { messages: [{ role: "assistant", content: bigOriginal }] };
     const stats = await compressWithHeadroom(body, {
       enabled: true, url: "http://localhost:8787", model: "m", format: "openai", diagnostics: {},
     });
@@ -494,10 +494,10 @@ describe("string-number token metric gates", () => {
 
   it("valid string-encoded metrics with real gains still commit", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({
-      messages: [{ role: "user", content: "tiny" }],
+      messages: [{ role: "assistant", content: "tiny" }],
       tokens_before: "900", tokens_after: "3", tokens_saved: "897",
     }), { status: 200 }));
-    const body = { messages: [{ role: "user", content: bigOriginal }] };
+    const body = { messages: [{ role: "assistant", content: bigOriginal }] };
     const stats = await compressWithHeadroom(body, {
       enabled: true, url: "http://localhost:8787", model: "m", format: "openai", diagnostics: {},
     });
@@ -521,12 +521,12 @@ describe("compressWithHeadroom", () => {
   it("compresses messages in-place", async () => {
     const longContent = "very verbose original context ".repeat(30);
     global.fetch = vi.fn(async () => new Response(JSON.stringify({
-      messages: [{ role: "user", content: "short" }],
+      messages: [{ role: "assistant", content: "short" }],
       tokens_before: 100,
       tokens_after: 20,
       tokens_saved: 80,
     }), { status: 200 }));
-    const body = { messages: [{ role: "user", content: longContent }] };
+    const body = { messages: [{ role: "assistant", content: longContent }] };
 
     const stats = await compressWithHeadroom(body, { enabled: true, url: "http://headroom:8787/", model: "gpt-4o" });
 
@@ -535,17 +535,17 @@ describe("compressWithHeadroom", () => {
     expect(global.fetch).toHaveBeenCalledWith("http://headroom:8787/v1/compress", expect.objectContaining({ method: "POST" }));
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toMatchObject({
       model: "gpt-4o",
-      messages: [{ role: "user", content: longContent }],
+      messages: [{ role: "assistant", content: longContent }],
     });
   });
 
   it("compresses responses input in-place", async () => {
     const longText = "a".repeat(500);
     global.fetch = vi.fn(async () => new Response(JSON.stringify({
-      messages: [{ role: "user", content: "short" }],
+      messages: [{ role: "assistant", content: "short" }],
       tokens_before: 100, tokens_after: 2, tokens_saved: 98,
     }), { status: 200 }));
-    const body = { input: [{ role: "user", content: longText }] };
+    const body = { input: [{ role: "assistant", content: longText }] };
 
     await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787" });
 
@@ -561,7 +561,7 @@ describe("compressWithHeadroom", () => {
           { role: "user", content: "compressed earlier user" },
           { role: "assistant", content: "compressed assistant", tool_calls: [{ id: "tool_1", type: "function", function: { name: "read_file", arguments: "{\"path\":\"a.js\"}" } }] },
           { role: "system", content: "native system instruction" },
-          { role: "user", content: "compressed current user" },
+          { role: "user", content: requestPayload.messages[3].content },
           { role: "tool", content: [{ type: "text", text: "compressed tool output" }], tool_call_id: "tool_1" },
         ],
         tokens_before: 100,
@@ -605,7 +605,7 @@ describe("compressWithHeadroom", () => {
                 {
                   toolUseId: "tool_1",
                   status: "success",
-                  content: [{ text: "long tool output" }],
+                  content: [{ text: "long tool output".concat(" padding".repeat(100)) }],
                 },
               ],
             },
@@ -641,13 +641,13 @@ describe("compressWithHeadroom", () => {
         },
         { role: "system", content: "native system instruction" },
         { role: "user", content: "current user".concat(" with padding ".repeat(60)) },
-        { role: "tool", content: "long tool output", tool_call_id: "tool_1" },
+        { role: "tool", content: "long tool output".concat(" padding".repeat(100)), tool_call_id: "tool_1" },
       ],
     });
     expect(body.conversationState.history[0].userInputMessage.content).toBe("compressed earlier user");
     expect(body.conversationState.history[1].assistantResponseMessage.content).toBe("compressed assistant");
     expect(body.conversationState.currentMessage.userInputMessage.systemInstruction).toBe("native system instruction");
-    expect(body.conversationState.currentMessage.userInputMessage.content).toBe("compressed current user");
+    expect(body.conversationState.currentMessage.userInputMessage.content).toBe("current user".concat(" with padding ".repeat(60)));
     expect(body.conversationState.currentMessage.userInputMessage.userInputMessageContext.toolResults[0].content[0].text)
       .toBe("compressed tool output");
     expect(body.profileArn).toBe("arn:test");
@@ -726,13 +726,13 @@ describe("compressWithHeadroom", () => {
   });
   it("uses a 15s default timeout so large prompt compression can finish", async () => {
     global.fetch = vi.fn(async () => new Response(JSON.stringify({
-      messages: [{ role: "user", content: "short" }],
+      messages: [{ role: "assistant", content: "short" }],
       tokens_before: 100,
       tokens_after: 20,
       tokens_saved: 80,
     }), { status: 200 }));
     const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => new AbortController().signal);
-    const body = { messages: [{ role: "user", content: "meaningful original content that is fairly long here ".repeat(30) }] };
+    const body = { messages: [{ role: "assistant", content: "meaningful original content that is fairly long here ".repeat(30) }] };
 
     const stats = await compressWithHeadroom(body, { enabled: true, url: "http://localhost:8787" });
 
@@ -824,7 +824,7 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
   it("valid same-shape compression with real shrink still commits (not blanket reject)", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(proxyReply([
       { role: "system", content: "system prompt ".repeat(20) },
-      { role: "user", content: "compressed q" },
+      { role: "user", content: long },
       { role: "assistant", content: "compressed a" },
     ]));
     const body = threeMessageBody();
@@ -834,7 +834,7 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
     });
 
     expect(stats).not.toBeNull();
-    expect(body.messages.map((m) => m.content)).toEqual(["system prompt ".repeat(20), "compressed q", "compressed a"]);
+    expect(body.messages.map((m) => m.content)).toEqual(["system prompt ".repeat(20), long, "compressed a"]);
   });
 
   it("tool_call_id mutated → null; faithful tool_call_id commits", async () => {
@@ -862,7 +862,7 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
 
     // Faithful ids + shrunk text → commit.
     vi.spyOn(global, "fetch").mockResolvedValueOnce(proxyReply([
-      { role: "user", content: "compressed q" },
+      { role: "user", content: long },
       { role: "assistant", content: null, tool_calls: [toolCall] },
       { role: "tool", tool_call_id: "call_1", content: "compressed result" },
     ]));
@@ -900,11 +900,11 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
   it("generic body.input through default branch enforces same contract", async () => {
     // Dropped item (2→1) → reject.
     vi.spyOn(global, "fetch").mockResolvedValueOnce(proxyReply([
-      { role: "user", content: "tiny" },
+      { role: "assistant", content: "tiny" },
     ]));
     const body = {
       input: [
-        { role: "user", content: long },
+        { role: "assistant", content: long },
         { role: "assistant", content: long },
       ],
     };
@@ -918,7 +918,7 @@ describe("OpenAI structural validation (adversarial proxy)", () => {
 
     // Valid shrink → commit.
     vi.spyOn(global, "fetch").mockResolvedValueOnce(proxyReply([
-      { role: "user", content: "c" },
+      { role: "assistant", content: "c" },
       { role: "assistant", content: "c" },
     ]));
     const stats = await compressWithHeadroom(body, {

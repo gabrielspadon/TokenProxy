@@ -238,9 +238,9 @@ describe('OpenAI shape guard', () => {
   });
 
   it('keeps the original on phantom byte savings on the openai path', async () => {
-    const body = { messages: [{ role: 'user', content: bigText() }] };
+    const body = { messages: [{ role: 'assistant', content: bigText() }] };
     mockCompress({
-      messages: [{ role: 'user', content: bigText(399) }],
+      messages: [{ role: 'assistant', content: bigText(399) }],
       tokens_before: 1000,
       tokens_after: 500,
       tokens_saved: 500,
@@ -259,9 +259,9 @@ describe('OpenAI shape guard', () => {
   });
 
   it('reads commandcode messages one level down under params', async () => {
-    const body = { params: { messages: [{ role: 'user', content: bigText() }] } };
+    const body = { params: { messages: [{ role: 'assistant', content: bigText() }] } };
     mockCompress({
-      messages: [{ role: 'user', content: 'compressed short' }],
+      messages: [{ role: 'assistant', content: 'compressed short' }],
       tokens_before: 1000,
       tokens_after: 100,
       tokens_saved: 900,
@@ -375,10 +375,10 @@ describe('Kiro projection', () => {
     mockCompress({
       messages: [
         { role: 'system', content: 'sys' },
-        { role: 'user', content: 'u1' },
+        { role: 'user', content: bigText() },
         { role: 'tool', content: 't', tool_call_id: 't1' },
         { role: 'assistant', content: 'a', tool_calls: [{ id: 't1', type: 'function', function: { name: 'f', arguments: JSON.stringify({ a: 1 }) } }] },
-        { role: 'user', content: 'u2' },
+        { role: 'user', content: 'current question' },
       ],
       tokens_before: 1000,
       tokens_after: 100,
@@ -393,13 +393,13 @@ describe('Kiro projection', () => {
     });
     expect(res).not.toBeNull();
     const history = body.conversationState.history;
-    expect(history[0].userInputMessage.content).toBe('u1');
+    expect(history[0].userInputMessage.content).toBe(bigText());
     expect(history[0].userInputMessage.systemInstruction).toBe('sys');
     expect(history[0].userInputMessage.userInputMessageContext.toolResults[0].content[0].text).toBe(
       't'
     );
     expect(history[1].assistantResponseMessage.content).toBe('a');
-    expect(body.conversationState.currentMessage.userInputMessage.content).toBe('u2');
+    expect(body.conversationState.currentMessage.userInputMessage.content).toBe('current question');
   });
 
   it('rejects a role-mismatched projection reply', async () => {
@@ -407,10 +407,10 @@ describe('Kiro projection', () => {
     mockCompress({
       messages: [
         { role: 'user', content: 'wrong-first-role' },
-        { role: 'user', content: 'u1' },
+        { role: 'user', content: bigText() },
         { role: 'tool', content: 't' },
         { role: 'assistant', content: 'a' },
-        { role: 'user', content: 'u2' },
+        { role: 'user', content: 'current question' },
       ],
       tokens_saved: 900,
     });
@@ -431,10 +431,10 @@ describe('Kiro projection', () => {
     mockCompress({
       messages: [
         { role: 'system', content: [{ type: 'image' }] },
-        { role: 'user', content: 'u1' },
+        { role: 'user', content: bigText() },
         { role: 'tool', content: 't' },
         { role: 'assistant', content: 'a' },
-        { role: 'user', content: 'u2' },
+        { role: 'user', content: 'current question' },
       ],
       tokens_saved: 900,
     });
@@ -508,7 +508,7 @@ describe('Gemini projection', () => {
     mockCompress({
       messages: [
         { role: 'system', content: 'system text' },
-        { role: 'user', content: 'u' },
+        { role: 'user', content: bigText() },
         { role: 'assistant', content: 'a' },
       ],
       tokens_before: 1000,
@@ -524,7 +524,7 @@ describe('Gemini projection', () => {
     });
     expect(res).not.toBeNull();
     expect(body.systemInstruction.parts[0].text).toBe('system text');
-    expect(body.contents[0].parts[0].text).toBe('u');
+    expect(body.contents[0].parts[0].text).toBe(bigText());
     expect(body.contents[0].parts[1].functionCall).toBeDefined(); // untouched
     expect(body.contents[1].parts[0].text).toBe('a');
   });
@@ -534,7 +534,7 @@ describe('Gemini projection', () => {
     mockCompress({
       messages: [
         { role: 'system', content: 'system text' },
-        { role: 'user', content: 'u' },
+        { role: 'user', content: bigText() },
         { role: 'assistant', content: 'a' },
       ],
       tokens_before: 1000,
@@ -549,7 +549,7 @@ describe('Gemini projection', () => {
       diagnostics: {},
     });
     expect(res).not.toBeNull();
-    expect(body.request.contents[0].parts[0].text).toBe('u');
+    expect(body.request.contents[0].parts[0].text).toBe(bigText());
   });
 
   it('skips a gemini body with no text parts', async () => {

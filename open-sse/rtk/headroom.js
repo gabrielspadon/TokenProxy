@@ -1,5 +1,5 @@
 import { isErrorResult } from "./errorFlags.js";
-import { validateCompressedMessages } from "./contentPolicy.js";
+import { currentUserRequestMatches, validateCompressedMessages } from "./contentPolicy.js";
 // ponytail: Claude OpenAI-pivot imports dropped — direct Claude path ships;
 // re-enable only with a round-trip no-loss proof (tool ids, is_error, cache_control).
 import {
@@ -645,7 +645,7 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
       return null;
     }
   }
-  if (!validateCompressedMessages(messages, data.messages, { allowLossy })) {
+  if (!validateCompressedMessages(messages, data.messages, { allowLossy, compressUserMessages })) {
     setDiagnostic(diagnostics, "proxy changed protected content or metadata (tool pairing identity/message count or order)");
     return null;
   }
@@ -663,6 +663,10 @@ export async function compressWithHeadroom(body, options = {}) {
     const candidate = structuredClone(body);
     const result = await compressCandidate(candidate, options);
     if (!result) return null;
+    if (!currentUserRequestMatches(body, candidate)) {
+      setDiagnostic(options.diagnostics, "proxy changed the current user request");
+      return null;
+    }
     const keys = Object.keys(candidate).filter((key) => JSON.stringify(body[key]) !== JSON.stringify(candidate[key]));
     for (const key of keys) {
       const descriptor = Object.getOwnPropertyDescriptor(body, key);

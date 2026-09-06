@@ -3,6 +3,7 @@
 // any error/timeout returns { body: null, summary } and leaves the request untouched.
 import { FORMATS } from "../translator/formats.js";
 import { isErrorResult } from "./errorFlags.js";
+import { currentUserRequestMatches } from "./contentPolicy.js";
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MIN_CHARS = 25000;
@@ -31,7 +32,7 @@ function toolEvidence(messages) {
   const visit = (value) => {
     if (!value || typeof value !== "object") return;
     if (Array.isArray(value)) { value.forEach(visit); return; }
-    if (value.type === "tool_use") { evidence.push(value); return; }
+    if (["tool_use", "thinking", "redacted_thinking"].includes(value.type)) { evidence.push(value); return; }
     if (value.type === "tool_result") {
       const { content, ...metadata } = value;
       evidence.push(isErrorResult(value) ? value : metadata);
@@ -105,6 +106,9 @@ export async function compressWithPxpipe(body, { enabled, allowLossy = false, fo
     }
     if (toolEvidence(newBody.messages) !== toolEvidence(body.messages)) {
       return skipped("tool_evidence_changed", { originalChars });
+    }
+    if (!currentUserRequestMatches(body, newBody)) {
+      return skipped("current_user_changed", { originalChars });
     }
     if (JSON.stringify(newBody.messages) === JSON.stringify(body.messages)) {
       return skipped("unchanged_transform", { originalChars });

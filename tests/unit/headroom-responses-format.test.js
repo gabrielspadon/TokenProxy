@@ -17,7 +17,7 @@ describe("compressWithHeadroom openai-responses format (#1998)", () => {
     global.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
-        messages: [{ role: "user", content: "compressed text" }],
+        messages: [{ role: "assistant", content: "compressed text" }],
         tokens_before: 100,
         tokens_after: 90,
         tokens_saved: 10,
@@ -28,8 +28,8 @@ describe("compressWithHeadroom openai-responses format (#1998)", () => {
       input: [
         {
           type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "a long original message ".repeat(20) }],
+          role: "assistant",
+          content: [{ type: "output_text", text: "a long original message ".repeat(20) }],
         },
       ],
     };
@@ -45,7 +45,7 @@ describe("compressWithHeadroom openai-responses format (#1998)", () => {
     // body.input must remain Responses items (type:"message" + content array),
     // NOT the raw OpenAI messages ({ role, content: "<string>" }) the bug produced.
     expect(Array.isArray(body.input)).toBe(true);
-    expect(body.input[0]).toMatchObject({ type: "message", role: "user" });
+    expect(body.input[0]).toMatchObject({ type: "message", role: "assistant" });
     expect(Array.isArray(body.input[0].content)).toBe(true);
     expect(typeof body.input[0].content).not.toBe("string");
   });

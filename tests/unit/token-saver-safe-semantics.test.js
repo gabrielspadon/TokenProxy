@@ -190,6 +190,56 @@ describe("Headroom contract with a deterministic offline upstream", () => {
     expect(body).toEqual(before);
   });
 
+  it.each([false, true])("preserves the latest request under lossy consent with user compression %s", async (compressUserMessages) => {
+    const body = fixture();
+    const before = structuredClone(body);
+    const messages = body.messages;
+    const { result } = await compress(body, (candidate) => {
+      candidate[1].content = jsonCompact(candidate[1].content);
+      candidate[2].content = "Current requirements erased";
+      return candidate;
+    }, { allowLossy: true, compressUserMessages });
+    expect(result).toBeNull();
+    expect(body).toEqual(before);
+    expect(body.messages).toBe(messages);
+  });
+
+  it.each([false, true])("honors historical user-compression setting %s locally", async (compressUserMessages) => {
+    const body = fixture();
+    body.messages.splice(1, 0, { role: "user", content: "historical question ".repeat(200) });
+    const before = structuredClone(body);
+    const { result } = await compress(body, (candidate) => {
+      candidate[1].content = "Historical summary";
+      candidate[2].content = jsonCompact(candidate[2].content);
+      return candidate;
+    }, { allowLossy: true, compressUserMessages });
+    if (compressUserMessages) {
+      expect(result).not.toBeNull();
+      expect(body.messages[1].content).toBe("Historical summary");
+      expect(body.messages.at(-1)).toEqual(before.messages.at(-1));
+    } else {
+      expect(result).toBeNull();
+      expect(body).toEqual(before);
+    }
+  });
+
+  it("protects every part of a projected Gemini current user message", async () => {
+    const body = { contents: [
+      { role: "model", parts: [{ text: "historical response ".repeat(200) }] },
+      { role: "user", parts: [{ text: "Current anchor A" }, { text: "Current anchor B" }] },
+    ] };
+    const before = structuredClone(body);
+    const contents = body.contents;
+    const { result } = await compress(body, (candidate) => {
+      candidate[0].content = "Historical summary";
+      candidate[1].content = "Current anchor A erased";
+      return candidate;
+    }, { format: "gemini", allowLossy: true, compressUserMessages: true });
+    expect(result).toBeNull();
+    expect(body).toEqual(before);
+    expect(body.contents).toBe(contents);
+  });
+
   it.each([{ is_error: true }, { isError: true }, { error: true }, { status: "failed" }, { status: "error" }])
   ("refuses nested tool errors before any upstream call %j", async (flag) => {
     const body = { messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "id",
@@ -204,7 +254,7 @@ describe("Headroom contract with a deterministic offline upstream", () => {
 });
 
 describe("PXPIPE explicit visual-loss policy", () => {
-  const original = () => ({ system: "Keep this instruction exact", messages: [{ role: "user", content: "x".repeat(30000) }] });
+  const original = () => ({ system: "Keep this instruction exact", messages: [{ role: "assistant", content: "x".repeat(30000) }, { role: "user", content: "Current request" }] });
   const response = (body, info = {}) => ({ applied: true, body: new TextEncoder().encode(JSON.stringify(body)),
     info: { compressedChars: 25000, imageCount: 1, imagePixels: 750, ...info } });
   const options = { enabled: true, allowLossy: true, format: "claude", minChars: 100 };
@@ -220,7 +270,7 @@ describe("PXPIPE explicit visual-loss policy", () => {
   it.each(["instructions", "roles", "unchanged", "inflated-cost"])("rejects invalid visual result %s and retains input", async (attack) => {
     const body = original();
     const before = structuredClone(body);
-    const candidate = { ...body, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }] };
+    const candidate = { ...body, messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }, body.messages.at(-1)] };
     if (attack === "instructions") candidate.system = "Replaced instructions";
     if (attack === "roles") candidate.messages = [];
     if (attack === "unchanged") candidate.messages = body.messages;
@@ -235,10 +285,31 @@ describe("PXPIPE explicit visual-loss policy", () => {
     vi.useFakeTimers();
     try {
       const body = original();
-      const candidate = { ...body, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }] };
+      const candidate = { ...body, messages: [{ role: "assistant", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }] }, body.messages.at(-1)] };
       const result = await compressWithPxpipe(body, { ...options, transform: async () => response(candidate) });
       expect(result.summary).toMatchObject({ applied: true, semanticPreserving: false, mode: "visual-lossy-opt-in", tokenMeasurement: "estimated" });
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
+  });
+
+  it.each(["current-user", "thinking", "signature", "redacted-thinking"])("rejects visual loss of %s with exact fail-open", async (attack) => {
+    const body = original();
+    body.messages.splice(1, 0, { role: "assistant", content: [
+      { type: "thinking", thinking: "Live reasoning", signature: "signature" },
+      { type: "redacted_thinking", data: "opaque signed reasoning" },
+    ] });
+    const before = structuredClone(body);
+    const messages = body.messages;
+    const candidate = structuredClone(body);
+    candidate.messages[0].content = [{ type: "image", source: { type: "base64", media_type: "image/png", data: "offline-fixture" } }];
+    if (attack === "current-user") candidate.messages.at(-1).content = "Current request erased";
+    if (attack === "thinking") candidate.messages[1].content[0].thinking = "Rewritten reasoning";
+    if (attack === "signature") candidate.messages[1].content[0].signature = "changed";
+    if (attack === "redacted-thinking") candidate.messages[1].content[1].data = "changed";
+    const result = await compressWithPxpipe(body, { ...options, transform: async () => response(candidate) });
+    expect(result.body).toBeNull();
+    expect(result.summary.applied).toBe(false);
+    expect(body).toEqual(before);
+    expect(body.messages).toBe(messages);
   });
 });
