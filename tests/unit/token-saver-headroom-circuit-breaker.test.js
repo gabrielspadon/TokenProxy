@@ -23,7 +23,7 @@ function okRes(messages) {
 }
 
 function body() {
-  return { model: "m", messages: [{ role: "user", content: BIG }] };
+  return { model: "m", messages: [{ role: "assistant", content: BIG }, { role: "user", content: "Current request." }] };
 }
 
 async function call(b = body()) {
@@ -119,7 +119,7 @@ describe("circuit breaker", () => {
       if (mode === "fail") {
         return new Response(JSON.stringify({ error: "boom" }), { status: 500 });
       }
-      return okRes([{ role: "user", content: "ok" }]);
+      return okRes([{ role: "assistant", content: "ok" }, { role: "user", content: "Current request." }]);
     });
 
     await call(); // failure 1
