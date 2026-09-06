@@ -846,6 +846,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const credentialOptions = {
       clientHeaders: clientRawRequest?.headers || null,
       clientBody: body,
+      clientApiKey: apiKey,
       // Decision-log context for auth.js (docs/logging-design.md 3.2): rid
       // joins every SEL/LEASE/LOCK line this selection emits.
       logCtx: { rid },
@@ -1017,6 +1018,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ponytailEnabled: comboTokenSaver.ponytailEnabled,
         ponytailLevel: chatSettings.ponytailLevel || "full",
         pxpipeEnabled: comboTokenSaver.pxpipeEnabled,
+        pxpipeAllowLossy: chatSettings.pxpipeAllowLossy === true,
         pxpipeMinChars: chatSettings.pxpipeMinChars,
         pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
         // Lazily warms the in-process module on first use; null when not installed (fail-open)
