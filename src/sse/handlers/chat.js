@@ -58,6 +58,15 @@ export function readAttemptCeiling(request) {
   return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
 }
 
+function terminalAttemptResponse(response, cooldownMs = 0) {
+  const headers = new Headers(response.headers);
+  headers.set("x-tokenproxy-replay-safe", "false");
+  if (cooldownMs > 0 && isRetryableStatus(response.status) && !headers.has("retry-after")) {
+    headers.set("retry-after", String(Math.max(1, Math.ceil(cooldownMs / 1000))));
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 async function createAntigravityVerificationHooks(connectionId) {
   const { createAntigravityVerificationHooks: createHooks } = await import("@/lib/antigravityVerification");
   return createHooks(connectionId);
@@ -774,11 +783,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // Per-connection consecutive-failure counter: the SAME account is retried
   // up to ACCOUNT_RETRY_LIMIT times before the loop excludes it and switches.
   const ACCOUNT_RETRY_LIMIT = 3;
-  // Above this, the account is genuinely out rather than glitching, so retrying
-  // it is wasted time. COOLDOWN.short is 5s and COOLDOWN.long is 2 minutes, so
-  // this sits between them and lets a backed-off transient error still retry.
-  const SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS = 30 * 1000;
   const failCountByConn = new Map();
+  let upstreamAttempt = 0;
   let lastError = null;
   let lastStatus = null;
   // Envoy request-buffer overflow (507): retry the SAME account once — the
@@ -956,6 +962,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // Same Request object as handleChat saw, so this is the SAME rid: the
         // admission line and the request lines join on one grep.
         requestId: requestRid(request),
+        contextTelemetry: { logicalRequestId: rid, attempt: ++upstreamAttempt },
         body: { ...body, model: `${provider}/${effectiveModel}` },
         modelInfo: { provider, model: effectiveModel },
         credentials: refreshedCredentials,
@@ -967,6 +974,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         apiKey,
         ccFilterNaming: !!chatSettings.ccFilterNaming,
         rtkEnabled: comboTokenSaver.rtkEnabled,
+        rtkAllowLossy: chatSettings.rtkAllowLossy === true,
         schemaDistillEnabled: comboTokenSaver.schemaDistillEnabled,
         thinkingStripEnabled: comboTokenSaver.thinkingStripEnabled,
         queryAwareCompressionEnabled: comboTokenSaver.queryAwareCompressionEnabled,
@@ -1023,12 +1031,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
         },
-        // Stream finished with no text/thinking/output tokens (upstream 200'd on
-        // nothing). The response already went out to this client — this only
-        // locks the account+model so the *next* request (including this
-        // client's own empty-stream retry) skips it and falls to the next
-        // combo/account candidate, then comes back into rotation once the lock
-        // expires.
+        // Record accepted empty generations without replaying the request.
         onEmptyStream: async () => {
           await markAccountUnavailable(
             credentials.connectionId,
@@ -1037,7 +1040,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             provider,
             model,
             Date.now() + EMPTY_CONTENT_COOLDOWN_MS,
-            null,
+            { safeToReplay: false },
             { rid }
           );
         }
@@ -1045,21 +1048,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
       if (callerSignal?.aborted) return errorResponse(499, "Request aborted");
 
-      // A streaming 200 is not proof of an answer. Combo mode already refuses an
-      // empty stream and moves to the next member (peekStreamForContent in
-      // open-sse/services/combo.js), and the non-streaming path already refuses
-      // one through hasUsefulContent in nonStreamingHandler.js. The SINGLE-model
-      // streaming path had neither, so an upstream that opened SSE and closed
-      // with nothing was forwarded verbatim and the client waited forever on a
-      // stream the log called "complete".
-      //
-      // That gap is the whole differential in #2535: the built-in model test
-      // probes with `stream: false` (src/app/api/models/test/ping.js), so it takes
-      // the guarded branch and reports the model healthy while every streaming
-      // client hangs. onEmptyStream below fires only after the body has already
-      // gone out (see the buildOnStreamComplete docstring in streamingHandler.js)
-      // and so protects the NEXT request; peeking here is what gets THIS one
-      // retried on another account.
+      // A successful upstream status can represent billable work even when no
+      // usable output arrives. Inspect the stream, but never replay that work.
       if (result.success) {
         const peeked = await peekStreamForContent(result.response);
         if (callerSignal?.aborted) return errorResponse(499, "Request aborted");
@@ -1085,8 +1075,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const reason = peeked.upstreamError?.reason || "provider returned an empty stream";
         lastError = reason;
         lastStatus = peeked.upstreamError?.status || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} ${reason} → NEXT ACCOUNT`);
-        decide("UP", "failover", { rid, from: String(credentials.connectionId).slice(0, 8), to: "pool", why: String(reason).slice(0, 40) });
+        log.warn("CHAT", `ACC:${credentials.connectionName} accepted generation ended without usable content`);
+        decide("UP", "no-replay", { rid, why: "accepted-empty-generation" });
         await markAccountUnavailable(
           credentials.connectionId,
           HTTP_STATUS.BAD_GATEWAY,
@@ -1094,11 +1084,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           provider,
           model,
           Date.now() + EMPTY_CONTENT_COOLDOWN_MS,
-          null,
+          { safeToReplay: false },
           { rid }
         );
-        excludeConnectionIds.add(credentials.connectionId);
-        continue;
+        return terminalAttemptResponse(errorResponse(lastStatus, reason, {
+          retryAfter: { ms: EMPTY_CONTENT_COOLDOWN_MS },
+          failurePhase: "provider",
+        }));
       }
 
       if (result.clientAborted || result.status === 499) {
@@ -1108,7 +1100,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         leaseHandedOff = true;
         return releaseAccountLeaseOnResponse(result.response, accountLease);
       }
-      if (!requestReplayAttempted && isRequestReplayBufferError(result.status, result.error)) {
+      if (result.failureMetadata?.safeToReplay === true
+          && !requestReplayAttempted && isRequestReplayBufferError(result.status, result.error)) {
         requestReplayAttempted = true;
         requestReplayConnectionId = credentials.connectionId;
         log.warn("RETRY", `ACC:${credentials.connectionName} replaying once after upstream request-buffer overflow`);
@@ -1124,10 +1117,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         provider,
         model,
         result.resetsAtMs,
+        result.failureMetadata || null,
+        { rid },
       ];
-      if (result.failureMetadata) accountFailureArgs.push(result.failureMetadata);
-      accountFailureArgs.push({ rid });
-      const { shouldFallback, cooldownMs } = await markAccountUnavailable(...accountFailureArgs);
+      const { shouldFallback, cooldownMs, mustWait, retrySameAccount } = await markAccountUnavailable(...accountFailureArgs);
+
+      if (result.failureMetadata?.safeToReplay !== true || mustWait) {
+        decide("UP", "no-replay", { rid, why: mustWait ? "account-cooldown" : "generation-outcome-uncertain" });
+        leaseHandedOff = true;
+        return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
+      }
 
       if (shouldFallback) {
         // A rate limit is the most actionable thing a caller can be told, and the
@@ -1145,7 +1144,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           log.warn("CHAT", `[${provider}/${model}] attempt ceiling ${maxAttempts} reached`);
           decide("UP", "attempt-ceiling", { rid, attempts: maxAttempts });
           leaseHandedOff = true;
-          return releaseAccountLeaseOnResponse(result.response, accountLease);
+          return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
         }
         const fails = (failCountByConn.get(credentials.connectionId) || 0) + 1;
         failCountByConn.set(credentials.connectionId, fails);
@@ -1159,15 +1158,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // identical credential after a 401, 402 or 403 spends an upstream call to
         // be told the same thing. Rotation to a DIFFERENT credential still runs
         // below — a distinct key is a distinct fact, which is what #2429 pins.
-        if (isRetryableStatus(result.status)
-            && fails < ACCOUNT_RETRY_LIMIT && cooldownMs <= SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS) {
+        if (retrySameAccount === true && isRetryableStatus(result.status)
+            && fails < ACCOUNT_RETRY_LIMIT && cooldownMs === 0) {
           // Same account, immediate retry — cooldown was skipped for transient
           // errors, so this is a fast re-dispatch rather than a wait.
           log.warn("RETRY", `⇄ ACC:${credentials.connectionName} failed (${result.status}) attempt ${fails}/${ACCOUNT_RETRY_LIMIT} → RETRY SAME`);
           decide("UP", "retry", { rid, conn: String(credentials.connectionId).slice(0, 8), attempt: fails, why: `status-${result.status}` });
           continue;
         }
-        if (cooldownMs > SAME_ACCOUNT_RETRY_MAX_COOLDOWN_MS) {
+        if (cooldownMs > 0) {
           log.warn("FALLBACK", `⇄ ACC:${credentials.connectionName} locked ${Math.round(cooldownMs / 1000)}s (${result.status}) → NEXT ACCOUNT`);
           decide("UP", "failover", { rid, from: String(credentials.connectionId).slice(0, 8), to: "pool", why: `locked-${Math.round(cooldownMs / 1000)}s` });
           excludeConnectionIds.add(credentials.connectionId);

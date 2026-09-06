@@ -4,7 +4,7 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
-import { unavailableResponse } from "../utils/error.js";
+import { errorResponse, unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { peekStreamForContent } from "../utils/streamContent.js";
@@ -740,6 +740,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
     try {
       const result = await handleSingleModel(bodyForAttempt(body), modelStr);
+      if (result.headers.get("x-tokenproxy-replay-safe") === "false") {
+        return withComboTrackingHeaders(result, modelStr);
+      }
       
       // Success (2xx) — but a 200 is not proof of a usable answer. A provider can
       // open an SSE stream, send nothing but keepalives and close cleanly; that
@@ -760,17 +763,10 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         // stream both reported "empty stream", so a combo that exhausted every
         // member answered 503 with no trace of the rate limit that caused it
         // (#1996).
-        if (upstreamError) {
-          lastError = upstreamError.reason;
-          if (!lastStatus) lastStatus = upstreamError.status || 502;
-          log.warn("COMBO", `Model ${modelStr} returned an upstream error as content, trying next: ${upstreamError.reason}`);
-          continue;
-        }
-
-        lastError = "provider returned an empty stream";
-        if (!lastStatus) lastStatus = 503;
-        log.warn("COMBO", `Model ${modelStr} returned an empty stream, trying next`);
-        continue;
+        const response = errorResponse(upstreamError?.status || 502,
+          upstreamError?.reason || "Provider accepted the request but returned no usable content");
+        response.headers.set("x-tokenproxy-replay-safe", "false");
+        return withComboTrackingHeaders(response, modelStr);
       }
 
       // A caller abort is terminal, not a model result. Preserve its exact
@@ -856,10 +852,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       if (!lastStatus) lastStatus = result.status;
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
-      // Catch unexpected exceptions to ensure fallback continues
-      lastError = error.message || String(error);
-      if (!lastStatus) lastStatus = 500;
-      log.warn("COMBO", `Model ${modelStr} threw error, trying next`, { error: lastError });
+      const response = errorResponse(502, error.message || "Provider attempt failed with an uncertain outcome");
+      response.headers.set("x-tokenproxy-replay-safe", "false");
+      return withComboTrackingHeaders(response, modelStr);
     }
   }
 
