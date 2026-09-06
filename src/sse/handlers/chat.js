@@ -317,6 +317,7 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const apiKey = resolvedApiKey.valid ? resolvedApiKey.apiKey : null;
   const rateLimitKey = apiKey || request.headers.get("x-forwarded-for") || "anonymous";
   // The request id for everything this call emits. Adopted from the front

@@ -38,6 +38,7 @@ const CREATE_ROTATION_STATUSES = new Set([
 // caller can apply that key's model allowlist once it knows the model.
 async function requireValidApiKey(request) {
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return { error: resolvedApiKey.refusal };
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
   const settings = await getSettings();

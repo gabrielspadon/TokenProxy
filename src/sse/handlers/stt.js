@@ -40,6 +40,7 @@ export async function handleStt(request) {
 
   const settings = await getSettings();
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
   if (settings.requireApiKey) {

@@ -47,6 +47,7 @@ export async function handleRerank(request) {
   log.request("POST", `${url.pathname} | ${modelStr}`);
 
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
   if (apiKey) {
