@@ -9,8 +9,9 @@ import { CONTEXT_EVIDENCE_TABLES, REQUEST_IDENTITY_COLUMNS, REQUEST_IDENTITY_IND
 import { API_KEY_BUDGET_COLUMNS, BUDGET_TABLES } from "./budgetSchema.js";
 import { INVESTIGATION_TABLES } from "./investigationSchema.js";
 import { SESSION_PIN_COLUMNS, SESSION_PIN_TABLES } from "./sessionPinSchema.js";
+import { SHAPING_TABLES } from "./shapingSchema.js";
 
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -32,6 +33,7 @@ export const TABLES = {
   ...BUDGET_TABLES,
   ...INVESTIGATION_TABLES,
   ...SESSION_PIN_TABLES,
+  ...SHAPING_TABLES,
   _meta: {
     columns: {
       key: "TEXT PRIMARY KEY",
