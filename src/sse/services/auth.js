@@ -61,7 +61,7 @@ import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaR
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
 import { resolveRoutingSessionIdentity } from './routingIdentity.js';
-import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
+import { accountAdmissionReason, temporaryPinWait } from './accountAdmissionPolicy.js';
 import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 import { getDisabledModels } from '@/lib/disabledModelsDb';
 import { isAccountModelDisabled } from '@/shared/utils/disabledModelPolicy.js';
@@ -493,27 +493,16 @@ export async function getProviderCredentials(
     const drainExcluded = [];
     const modelLocked = [];
     const availableConnections = connections.filter((c) => {
-      if (strictPreferredConnection && c.id !== preferredConnectionId) return false;
-      if (excludeSet.has(c.id)) return false;
-      if (!accountSupportsModel(c, model)) return false;
-      if (modelDisabled(c)) {
-        emit('SEL', 'skipped', { conn: prefix8(c.id), why: 'model-disabled' });
-        return false;
-      }
-      if (draining.has(c.id)) {
-        drainExcluded.push(prefix8(c.id));
-        return false;
-      }
-      if (c.id === ignoreLockConn) return true;
-      if (isModelLockActive(c, model)) {
+      const admissionReason = accountAdmissionReason(c, { model, preferredConnectionId,
+        strictPreferredConnection, excluded: excludeSet.has(c.id), disabled: modelDisabled(c),
+        draining: draining.has(c.id), ignoreLockConn });
+      if (admissionReason === 'model-disabled') emit('SEL', 'skipped', { conn: prefix8(c.id), why: admissionReason });
+      if (admissionReason === 'account-draining') drainExcluded.push(prefix8(c.id));
+      if (admissionReason === 'model-locked') {
         const failure = getActiveModelFailure(c, model);
-        modelLocked.push({
-          conn: prefix8(c.id),
-          lock: String(getModelLockKey(model)).slice(0, 60),
-          until: failure?.until ?? null,
-        });
-        return false;
+        modelLocked.push({ conn: prefix8(c.id), lock: String(getModelLockKey(model)).slice(0, 60), until: failure?.until ?? null });
       }
+      if (admissionReason) return false;
       return true;
     });
     if (drainExcluded.length) {
@@ -534,14 +523,11 @@ export async function getProviderCredentials(
       const repos = await createSchedulerRepos({ now: Date.now() });
       const pin = repos.getPin({ sessionHash: routingSessionHash, model: model || MODEL_ANY });
       const pinned = connections.find((c) => c.id === pin?.connectionId);
-      const failure = pinned && getActiveModelFailure(pinned, model);
-      const failureClass = failure && (pinned[failure.failureKey]?.failureClass
-        || classifyAccountFailure(failure.status, failure.message));
-      if (failure && (failureClass === 'rate' || failureClass === 'transient')
-          && !excludeSet.has(pinned.id) && !draining.has(pinned.id)
-          && !modelDisabled(pinned)
-          && accountSupportsModel(pinned, model) && pinned.id !== ignoreLockConn
-          && (!strictPreferredConnection || preferredConnectionId === pinned.id)) {
+      const failure = temporaryPinWait(pinned, { model, preferredConnectionId,
+        strictPreferredConnection, excluded: excludeSet.has(pinned?.id), disabled: pinned ? modelDisabled(pinned) : false,
+        draining: draining.has(pinned?.id), ignoreLockConn });
+      const failureClass = failure?.failureClass;
+      if (failure) {
         return {
           allRateLimited: true, retryAfter: failure.until,
           retryAfterHuman: formatRetryAfter(failure.until), lastError: failure.message,

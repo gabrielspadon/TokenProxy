@@ -90,6 +90,70 @@ function activeLoadFor(candidates, model, nowMs, registry, repos) {
   return load;
 }
 
+/** Pure ordering shared by live admission and the offline simulator. No leases or writes. */
+export function planAccountSelection({ accounts = [], pin = null, activeLoad = null, model = null, now } = {}) {
+  const nowMs = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(nowMs)) throw new TypeError('planAccountSelection requires an injected clock');
+  const candidates = accounts;
+  const previousPinId = pin?.connectionId ?? null;
+  const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad, model });
+
+  // Pin health decides whether placement is allowed at all. Recovered accounts
+  // rejoin the order only when the old pin cannot serve. Healthy pins also
+  // survive capacity pressure, with a retry hint instead of a cache re-prime.
+  const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad, model });
+  // The repin verdict as a trace entry, in the design's vocabulary. The
+  // scheduler never prints: auth.js walks `trace` and calls decide().
+  // pin-hit is NOMINAL (row 29: silent, carried to the caller for REQ sel=).
+  const id8 = (v) => String(v ?? '').slice(0, 8);
+  const SEL_TRIGGER = {
+    [TRIGGERS.INITIAL_PIN]: 'initial-pin',
+    [TRIGGERS.RESET]: 'quota-reset',
+    [TRIGGERS.UNAVAILABLE]: 'unavailable',
+  };
+  // action 'none' contributes nothing on the success path: a degraded
+  // cohort still serves from the fallback order, so a refusal line here
+  // would describe a refusal that never happened. The refusal entries are
+  // added at the two exits that actually refuse (below).
+  const repinTrace = repin.action === 'keep'
+    ? [{ cls: 'SEL', verdict: 'pin-hit', fields: { conn: id8(repin.to), why: repin.reason } }]
+    : repin.action === 'none'
+      ? []
+      : [{
+          cls: 'SEL',
+          verdict: repin.trigger === TRIGGERS.EXHAUSTION ? 'pin-expired' : 'repin',
+          fields: {
+            from: repin.from ? id8(repin.from) : 'none',
+            to: id8(repin.to),
+            trigger: SEL_TRIGGER[repin.trigger] ?? repin.trigger,
+            why: repin.reason,
+          },
+        }];
+  // ELIGIBILITY IS NOT NEGOTIABLE, degraded or not. This read `degraded ?
+  // ranked : eligible`, and `ranked` carries every record including the ones
+  // whose quota is provably at its limit, so a pool whose accounts disagreed
+  // about window shape (the common case: ten Claude connections reported four
+  // shapes) selected depleted accounts and paid a 429 to discover it.
+  // rankAccounts now degrades ORDERING only and still answers `eligible`
+  // truthfully, so there is one list to walk.
+  const order = eligible;
+  const decidedId = repin.connectionId;
+  // The policy layer may NAME one account the ranker calls ineligible: the
+  // all-depleted hold, where every reading says depleted and the pin is held
+  // so the upstream — not an aging snapshot — decides. That is a decision
+  // about one specific account, so it is looked up in `ranked` only after
+  // `eligible` misses, and everything else that gets tried still comes from
+  // `eligible`. The old code took `ranked` wholesale whenever the pool
+  // degraded, which is how list order replaced quota order.
+  const decided = decidedId
+    ? order.find((r) => r.id === decidedId) ?? ranked.find((r) => r.id === decidedId) ?? null
+    : null;
+  const preferred = decided
+    ? repin.action === 'keep' ? [decided] : [decided, ...order.filter((r) => r.id !== decidedId)]
+    : order;
+  return { ranked, eligible, degraded, rankReason, rankingTrace, repin, repinTrace, preferred };
+}
+
 /**
  * Select an account for one request and reserve a slot on it, atomically.
  *
@@ -177,61 +241,9 @@ export function selectAndReserve({
     // read ever shows up in a profile.
     const activeLoad = activeLoadFor(candidates, model, nowMs, registry, repos);
 
-    const { ranked, eligible, degraded, reason: rankReason, trace: rankingTrace } = rankAccounts(candidates, { now: nowMs, previousPinId, activeLoad, model });
-
-    // Pin health decides whether placement is allowed at all. Recovered accounts
-    // rejoin the order only when the old pin cannot serve. Healthy pins also
-    // survive capacity pressure, with a retry hint instead of a cache re-prime.
-    const repin = decideRepin({ pin, accounts: candidates, now: nowMs, activeLoad, model });
-    // The repin verdict as a trace entry, in the design's vocabulary. The
-    // scheduler never prints: auth.js walks `trace` and calls decide().
-    // pin-hit is NOMINAL (row 29: silent, carried to the caller for REQ sel=).
-    const id8 = (v) => String(v ?? '').slice(0, 8);
-    const SEL_TRIGGER = {
-      [TRIGGERS.INITIAL_PIN]: 'initial-pin',
-      [TRIGGERS.RESET]: 'quota-reset',
-      [TRIGGERS.UNAVAILABLE]: 'unavailable',
-    };
-    // action 'none' contributes nothing on the success path: a degraded
-    // cohort still serves from the fallback order, so a refusal line here
-    // would describe a refusal that never happened. The refusal entries are
-    // added at the two exits that actually refuse (below).
-    const repinTrace = repin.action === 'keep'
-      ? [{ cls: 'SEL', verdict: 'pin-hit', fields: { conn: id8(repin.to), why: repin.reason } }]
-      : repin.action === 'none'
-        ? []
-        : [{
-            cls: 'SEL',
-            verdict: repin.trigger === TRIGGERS.EXHAUSTION ? 'pin-expired' : 'repin',
-            fields: {
-              from: repin.from ? id8(repin.from) : 'none',
-              to: id8(repin.to),
-              trigger: SEL_TRIGGER[repin.trigger] ?? repin.trigger,
-              why: repin.reason,
-            },
-          }];
-    // ELIGIBILITY IS NOT NEGOTIABLE, degraded or not. This read `degraded ?
-    // ranked : eligible`, and `ranked` carries every record including the ones
-    // whose quota is provably at its limit, so a pool whose accounts disagreed
-    // about window shape (the common case: ten Claude connections reported four
-    // shapes) selected depleted accounts and paid a 429 to discover it.
-    // rankAccounts now degrades ORDERING only and still answers `eligible`
-    // truthfully, so there is one list to walk.
-    const order = eligible;
-    const decidedId = repin.connectionId;
-    // The policy layer may NAME one account the ranker calls ineligible: the
-    // all-depleted hold, where every reading says depleted and the pin is held
-    // so the upstream — not an aging snapshot — decides. That is a decision
-    // about one specific account, so it is looked up in `ranked` only after
-    // `eligible` misses, and everything else that gets tried still comes from
-    // `eligible`. The old code took `ranked` wholesale whenever the pool
-    // degraded, which is how list order replaced quota order.
-    const decided = decidedId
-      ? order.find((r) => r.id === decidedId) ?? ranked.find((r) => r.id === decidedId) ?? null
-      : null;
-    const preferred = decided
-      ? repin.action === 'keep' ? [decided] : [decided, ...order.filter((r) => r.id !== decidedId)]
-      : order;
+    const { degraded, rankReason, rankingTrace, repin, repinTrace, preferred } = planAccountSelection({
+      accounts: candidates, pin, activeLoad, model, now: nowMs,
+    });
 
     if (preferred.length === 0) {
       const detail = rankReason ? `:${rankReason}` : '';
