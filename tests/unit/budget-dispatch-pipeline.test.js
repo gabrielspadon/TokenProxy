@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({fetch:vi.fn(),executor:null}));
+vi.mock('@/dashboardGuard',()=>({hasValidCliToken:async request=>request.headers.get('x-fixture-operator')==='yes',isLocalRequest:()=>true}));
+vi.mock('@/lib/auth/dashboardSession',()=>({verifyDashboardAuthToken:async()=>false}));
 vi.mock('../../open-sse/utils/proxyFetch.js',()=>({proxyAwareFetch:(...a)=>mocks.fetch(...a)}));
 vi.mock('../../open-sse/executors/index.js',()=>({getExecutor:()=>mocks.executor}));
 vi.mock('../../src/shared/utils/machineId.js',()=>({getConsistentMachineId:async()=> 'budget-fixture-machine'}));
@@ -20,7 +22,7 @@ beforeEach(()=>{
  mocks.fetch.mockReset();mocks.executor=new BaseExecutor('openai',{baseUrl:'https://api.openai.com/v1/chat/completions',noAuth:true});
 });
 afterEach(()=>vi.unstubAllGlobals());
-async function key(limits){const r=await createKey(new Request('http://localhost/api/keys',{method:'POST',body:JSON.stringify({name:'fixture',...limits})}));expect(r.status).toBe(201);return r.json();}
+async function key(limits){const r=await createKey(new Request('http://localhost/api/keys',{method:'POST',headers:{'x-fixture-operator':'yes'},body:JSON.stringify({name:'fixture',...limits})}));expect(r.status).toBe(201);return r.json();}
 async function request(k,body={}){
  const req=new Request('http://localhost/v1/chat/completions',{method:'POST',headers:{authorization:`Bearer ${k.key}`},body:JSON.stringify({model:'openai/gpt-4o',messages:[{role:'user',content:'fixture'}],stream:false,max_completion_tokens:20,...body})});
  const auth=await resolveClientApiKey(req,validateApiKey);if(auth.refusal)return {success:false,response:auth.refusal};

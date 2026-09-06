@@ -1,5 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+vi.mock('@/dashboardGuard',()=>({hasValidCliToken:async request=>request.headers.get('x-fixture-operator')==='yes',isLocalRequest:()=>true}));
+vi.mock('@/lib/auth/dashboardSession',()=>({verifyDashboardAuthToken:async()=>false}));
 import { getAdapter } from '@/lib/db/driver.js';
 import { exportDb, importDb } from '@/lib/db/index.js';
 import { createApiKey, updateApiKey, getApiKeyById } from '@/lib/db/repos/apiKeysRepo.js';
@@ -9,7 +11,7 @@ import { PUT as update } from '@/app/api/keys/[id]/route.js';
 let db;
 beforeAll(async()=>{db=await getAdapter();});
 beforeEach(()=>{for(const t of ['apiKeyBudgetReservations','apiKeyBudgetAccounts','usageHistory','apiKeys'])db.run(`DELETE FROM ${t}`);});
-const req=body=>new Request('http://localhost/api/keys',{method:'POST',body:JSON.stringify(body)});
+const req=body=>new Request('http://localhost/api/keys',{method:'POST',headers:{'x-fixture-operator':'yes'},body:JSON.stringify(body)});
 async function make(limits={}) {const k=await createApiKey('recovery','mock');return updateApiKey(k.id,{maxCompletionTokens:100,...limits});}
 const reserve=k=>reserveBudget({apiKey:k.key,requestId:randomUUID(),logicalRequestId:'recovery',bounds:{completionTokens:30}});
 describe('persistent budget policy and conservative recovery',()=>{
