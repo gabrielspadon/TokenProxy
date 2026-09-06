@@ -1,7 +1,7 @@
 @layer components {
   /* A fact list on this screen carries sentences, not one-word values, so the
      term column stops growing and the description wraps against the measure. */
-  .access-facts { grid-template-columns: minmax(0, 15ch) minmax(0, 1fr); max-width: 68ch; }
+  dl.access-facts { grid-template-columns: minmax(0, 15ch) minmax(0, 1fr); max-width: 68ch; }
   .access-facts dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
   .access-facts .why { font-size: var(--t-12); color: var(--slate); flex-basis: 100%; }
   .access-facts .why summary { cursor: pointer; width: fit-content; }
