@@ -56,7 +56,7 @@ export function projectEligibility({ connections, windowsByConnection, drains = 
     }
     const exhausted = getExhaustedQuotaWindow(conn, model, now);
     if (exhausted) blockers.push(reason("model-quota-gate", "The persisted model quota triggers the routing exhaustion gate.", "connection.lastQuotaSnapshot", conn.lastQuotaSnapshot?.fetchedAt, exhausted.until));
-    const pause = getPausedWindow(conn);
+    const pause = getPausedWindow(conn, now);
     if (pause) blockers.push(reason("quota-threshold", "The persisted quota snapshot triggers a configured pause threshold.", "connection.lastQuotaSnapshot", conn.lastQuotaSnapshot?.fetchedAt));
     const windows = windowsByConnection.get(conn.id) ?? [];
     const ranked = rankAccounts([{ id: conn.id, windows }], { now, model }).ranked[0];
