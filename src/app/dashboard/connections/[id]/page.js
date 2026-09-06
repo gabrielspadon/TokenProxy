@@ -235,14 +235,16 @@ export default function ConnectionPage({ params }) {
               <button type="button" className="button quiet" onClick={() => openAction("reauth", { force: false, secret: "", machineId: "" })}><Icon name="i-lock" />Replace the credential</button>
               <button type="button" className="button danger" onClick={() => openAction("del")}><Icon name="i-delete" />Delete</button>
             </div>
-            <h3 className="connections-tune">Tuning</h3>
-            <div className="verb-row">
-              <button type="button" className="button quiet" onClick={() => openAction("priority", { priority: String(c.priority ?? 1) })}><Icon name="i-edit" />Priority</button>
-              <button type="button" className="button quiet" onClick={() => openAction("thresholds", { ...(c.quotaPauseThresholds || {}) })}><Icon name="i-edit" />Pause thresholds</button>
-              <button type="button" className="button quiet" onClick={() => openAction("pool", { poolId: psd.proxyPoolId || "" })}><Icon name="i-network" />Proxy pool</button>
-              <button type="button" className="button quiet" onClick={() => openAction("endpoint", { baseUrl: psd.baseUrl || "", apiType: psd.apiType || "" })}><Icon name="i-send" />Endpoint</button>
-              <button type="button" className="button quiet" onClick={() => openAction("concurrent", { maxConcurrent: maxConcurrent === undefined ? "" : String(maxConcurrent) })}><Icon name="i-shaping" />Concurrency ceiling</button>
-            </div>
+            <details className="fold">
+              <summary>Tuning</summary>
+              <div className="verb-row">
+                <button type="button" className="button quiet" onClick={() => openAction("priority", { priority: String(c.priority ?? 1) })}><Icon name="i-edit" />Priority</button>
+                <button type="button" className="button quiet" onClick={() => openAction("thresholds", { ...(c.quotaPauseThresholds || {}) })}><Icon name="i-edit" />Pause thresholds</button>
+                <button type="button" className="button quiet" onClick={() => openAction("pool", { poolId: psd.proxyPoolId || "" })}><Icon name="i-network" />Proxy pool</button>
+                <button type="button" className="button quiet" onClick={() => openAction("endpoint", { baseUrl: psd.baseUrl || "", apiType: psd.apiType || "" })}><Icon name="i-send" />Endpoint</button>
+                <button type="button" className="button quiet" onClick={() => openAction("concurrent", { maxConcurrent: maxConcurrent === undefined ? "" : String(maxConcurrent) })}><Icon name="i-shaping" />Concurrency ceiling</button>
+              </div>
+            </details>
             {drainState?.isDraining ? (
               <p className="caption">Draining since <span data-i18n-skip>{drainState.requestedAt ? fmtTime(drainState.requestedAt) : "—"}</span>, <span data-i18n-skip>{fmtNum(drainState.activeStreams)}</span> streams still open.</p>
             ) : null}
