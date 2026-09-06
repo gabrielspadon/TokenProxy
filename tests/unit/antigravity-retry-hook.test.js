@@ -5,15 +5,20 @@ import antigravity from "../../open-sse/providers/registry/antigravity.js";
 
 const MAX = 10000;
 function res(status, headers = {}, body = null) {
-  return {
-    status,
-    headers: { get: (k) => headers[k.toLowerCase()] ?? null },
-    clone: () => ({ text: async () => (body == null ? "" : JSON.stringify(body)) }),
-  };
+  return new Response(body == null ? null : JSON.stringify(body), { status, headers });
 }
 
 describe("antigravity computeRetryDelay hook (D3)", () => {
   const ag = new AntigravityExecutor();
+
+  it('does not hold an aborted request while inspecting retry diagnostics', async()=>{
+    const controller=new AbortController();
+    const response=new Response(new ReadableStream(),{status:429});
+    const result=ag.computeRetryDelay(response,1,0,{signal:controller.signal});
+    const outcome=result.then(value=>({value}),error=>({error}));
+    controller.abort();expect((await outcome).error.name).toBe('AbortError');
+    await response.body.cancel();
+  });
 
   it("uses Retry-After header (seconds → ms) when within cap", async () => {
     expect(await ag.computeRetryDelay(res(429, { "retry-after": "5" }), 1)).toBe(5000);

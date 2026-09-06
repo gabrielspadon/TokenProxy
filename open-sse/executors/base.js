@@ -1,4 +1,7 @@
 import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
+import { setTimeout as retryDelay } from "node:timers/promises";
+import { isReplaySafeRejection } from "../utils/replaySafety.js";
+import { inspectErrorBody } from "../utils/inspectErrorBody.js";
 import {
   HTTP_STATUS,
   RETRY_CONFIG,
@@ -259,13 +262,13 @@ export class BaseExecutor {
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
 
-    // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
+    // Plan a retry. The discarded response is cancelled before waiting.
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
-      if (!response || response.status < 400 || response.status >= 600) return false;
+      if (!isReplaySafeRejection(response)) return null;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts)
-        return false;
+        return null;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.
       let waitMs = delayMs;
       if (response && this.computeRetryDelay) {
@@ -273,17 +276,30 @@ export class BaseExecutor {
           response,
           retryAttemptsByUrl[urlIndex] + 1,
           delayMs,
+          { signal },
         );
-        if (dynamic === false) return false; // hook vetoes retry (e.g. Retry-After too long)
+        if (dynamic === false) return null; // hook vetoes retry (e.g. Retry-After too long)
         if (dynamic != null) waitMs = dynamic;
       }
+      if (!Number.isFinite(waitMs) || waitMs < 0) return null;
       retryAttemptsByUrl[urlIndex]++;
       log?.debug?.(
         "RETRY",
         `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts} after ${waitMs / 1000}s`,
       );
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-      return true;
+      return waitMs;
+    };
+
+    const cancelBody = response => {
+      try { Promise.resolve(response?.body?.cancel?.()).catch(() => {}); } catch {}
+    };
+    const discardResponse = async response => {
+      try {
+        if (typeof response.clone === 'function') {
+          const inspected = await inspectErrorBody(response, { signal });
+          if (inspected.complete && inspected.text?.trim()) lastRetriedErrorText = inspected.text;
+        }
+      } finally { cancelBody(response); }
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
@@ -328,6 +344,7 @@ export class BaseExecutor {
         );
         await notifyDispatchResponse(afterDispatch, response);
         deadline.clear();
+        if (signal?.aborted) { cancelBody(response); signal.throwIfAborted(); }
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";
         dbg(
@@ -342,50 +359,36 @@ export class BaseExecutor {
           return { response, url, headers, transformedBody };
         }
 
-        if (
-          await tryRetry(
+        const waitMs = await tryRetry(
             urlIndex,
             response.status,
             `status ${response.status}`,
             response,
-          )
-        ) {
-          // This response is about to be replaced by the next attempt and
-          // never reaches the caller — read its body now, while it's still
-          // the only copy, in case the eventual final attempt has nothing.
-          // clone() is guarded because unit tests script minimal response
-          // doubles ({status, headers}) that don't implement it.
-          if (typeof response.clone === "function") {
-            try {
-              const text = await response.clone().text();
-              if (text && text.trim()) lastRetriedErrorText = text;
-            } catch {
-              // best-effort capture only, never blocks the actual retry
-            }
-          }
+          );
+        if (waitMs !== null) {
+          await discardResponse(response);
+          await retryDelay(waitMs, undefined, { signal });
           urlIndex--;
           continue;
         }
 
-        if (response.status >= 400 && response.status < 600 && this.shouldRetry(response.status, urlIndex)) {
+        if (isReplaySafeRejection(response) && this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.(
             "RETRY",
             `${response.status} on ${url}, trying fallback ${urlIndex + 1}`,
           );
           lastStatus = response.status;
+          await discardResponse(response);
           continue;
         }
 
         if (lastRetriedErrorText && response.status >= 500 && typeof response.clone === "function") {
-          let finalText = "";
-          try {
-            finalText = await response.clone().text();
-          } catch {
-            finalText = "";
-          }
-          if (!finalText || !finalText.trim()) {
+          const inspected = await inspectErrorBody(response, { signal });
+          if (inspected.complete && !inspected.text?.trim()) {
             const preservedHeaders = new Headers(response.headers);
             preservedHeaders.delete("content-length");
+            preservedHeaders.set("x-tokenproxy-error-body-source", "previous-rejected-attempt");
+            cancelBody(response);
             return {
               response: new Response(lastRetriedErrorText, {
                 status: response.status,

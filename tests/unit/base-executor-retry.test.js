@@ -9,8 +9,8 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 
-function res(status) {
-  return { status, headers: { get: () => "" } };
+function res(status, permission = 'true') {
+  return { status, headers: new Headers({ 'x-tokenproxy-replay-safe': permission }) };
 }
 
 function makeExec(config) {

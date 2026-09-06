@@ -1,4 +1,5 @@
 import { getAdapter } from "../../lib/db/driver.js";
+import { isReplaySafeRejection } from "../../../open-sse/utils/replaySafety.js";
 import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain } from "../../lib/db/repos/budgetRepo.js";
 
 // OpenAI's native chat contract includes visible and reasoning tokens in this
@@ -44,9 +45,7 @@ export async function beginBudgetDispatch(context, apiKey, wire) {
 }
 export async function observeBudgetResponse(context, { response, nonacceptance } = {}) {
   if (!context?.budgetReservationId) return;
-  const rejected = [401, 403].includes(response?.status)
-    || (response?.status === 400 && nonacceptance === "model-endpoint-unsupported");
-  if (rejected && response.headers?.get?.("x-tokenproxy-replay-safe") !== "false") {
+  if (isReplaySafeRejection(response)) {
     const db = await getAdapter();
     db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
       WHERE requestId=? AND state IN ('dispatched','uncertain') AND usageRowId IS NULL`,

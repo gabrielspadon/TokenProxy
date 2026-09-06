@@ -23,7 +23,7 @@ describe('independent executor POST replay boundary', () => {
   });
 
   it.each(['not-a-date', '-5', '0', 'Infinity', '1e308', 'Wed, 01 Jan 2020 00:00:00 GMT'])('ignores invalid or nonfuture Retry-After %s while retaining bounded explicit-rejection retries', async (retryAfter) => {
-    const response = Response.json({ error: 'overloaded' }, { status: 503, headers: { 'retry-after': retryAfter } });
+    const response = Response.json({ error: 'overloaded' }, { status: 503, headers: { 'retry-after': retryAfter, 'x-tokenproxy-replay-safe':'true' } });
     expect(extractRetryAfterDeadline(response)).toBeNull();
     mocks.fetch.mockResolvedValueOnce(response).mockResolvedValue(Response.json({ answer: 'once' }));
     expect((await executor().execute(options)).response.status).toBe(200);
@@ -42,7 +42,7 @@ describe('independent executor POST replay boundary', () => {
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
   it('retains a bounded retry for an explicit rejected HTTP response', async () => {
-    mocks.fetch.mockResolvedValueOnce(Response.json({ error: 'overloaded' }, { status: 503 })).mockResolvedValue(Response.json({ answer: 'once' }));
+    mocks.fetch.mockResolvedValueOnce(Response.json({ error: 'overloaded' }, { status: 503, headers: { 'x-tokenproxy-replay-safe':'true' } })).mockResolvedValue(Response.json({ answer: 'once' }));
     expect((await executor().execute(options)).response.status).toBe(200);
     expect(mocks.fetch).toHaveBeenCalledTimes(2);
   });

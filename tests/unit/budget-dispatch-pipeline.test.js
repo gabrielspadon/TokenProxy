@@ -14,6 +14,7 @@ import { resolveClientApiKey } from '../../src/lib/auth/clientApiKey.js';
 import { getRequestIdentity } from '../../src/sse/services/requestIdentity.js';
 import { getBudgetStatus } from '../../src/lib/db/repos/budgetRepo.js';
 import { dispatchBudgetBounds } from '../../src/sse/services/budgetDispatch.js';
+import { LocalTransportPoolRefusal, revokeLocalTransportRefusalProof } from '../../open-sse/utils/dispatcherCache.js';
 import { readActivityAnalytics } from '../../src/lib/db/analytics/activityQueries.mjs';
 const db=await getAdapter();
 const completion=()=>new Response('data: '+JSON.stringify({id:'fixture',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',content:'answer'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:7}})+'\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
@@ -34,6 +35,50 @@ async function request(k,body={}){
 }
 async function settled(k){await vi.waitFor(async()=>expect((await getBudgetStatus(k.id)).reservations[0],JSON.stringify(db.all("SELECT tokens,cost,usageSource FROM usageHistory"))).toMatchObject({state:'settled'}));return getBudgetStatus(k.id);}
 describe('API key through real admission, transport, ledger and query',()=>{
+ it.each([401,429,503])('the field-strip retry owns final%s status, reset, body cleanup and exposure',async status=>{
+  const k=await key({maxCompletionTokens:100});
+  const field=`fixture_field_${status}`;
+  const rejected=Response.json({error:{message:`property '${field}' is unsupported`}},{status:400});
+  const latest=Response.json({error:{message:'latest physical rejection'}},{status,headers:status===429?{'retry-after':'30'}:{}});
+  mocks.fetch.mockResolvedValueOnce(rejected).mockResolvedValueOnce(latest);
+  const result=await request(k,{messages:[{role:'user',content:'fixture',[field]:'unsupported fixture'}]});
+  expect(result.response.status).toBe(status);expect(result.failureMetadata.safeToReplay).toBe(status!==503);
+  expect(await result.response.text()).toContain('latest physical rejection');
+  if(status===429)expect(result.resetsAtMs).toBeGreaterThan(Date.now()+29000);
+  expect(latest.bodyUsed).toBe(true);expect(mocks.fetch).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(mocks.fetch.mock.calls[1][1].body).messages[0]).not.toHaveProperty(field);
+  const reservations=(await getBudgetStatus(k.id)).reservations;
+  expect(reservations.map(row=>row.state).sort()).toEqual(status===503?['released','uncertain']:['released','released']);
+  expect(db.get('SELECT COUNT(*) AS n FROM usageHistory').n).toBe(0);
+ });
+ it.each([429,503])('keeps budget exposure consistent with a proven%s retry',async status=>{
+  const k=await key({maxCompletionTokens:100,budgetPolicy:'reserve-remaining'});
+  mocks.executor=new BaseExecutor('openai',{baseUrl:'https://api.openai.com/v1/chat/completions',noAuth:true,retry:{[status]:{attempts:1,delayMs:0}}});
+  mocks.fetch.mockResolvedValueOnce(Response.json({error:{message:'rejected'}},{status,headers:{'x-tokenproxy-replay-safe':'true'}})).mockResolvedValueOnce(completion());
+  const result=await request(k,{max_completion_tokens:undefined});expect(result.response.status).toBe(200);await result.response.text();
+  await vi.waitFor(()=>expect(db.get("SELECT COUNT(*) AS n FROM apiKeyBudgetReservations WHERE state='settled'").n).toBe(1));
+  expect(db.all('SELECT state FROM apiKeyBudgetReservations').map(r=>r.state).sort()).toEqual(['released','settled']);
+  expect(mocks.fetch).toHaveBeenCalledTimes(2);expect(db.get('SELECT COUNT(*) AS n FROM usageHistory').n).toBe(1);
+ });
+ it.each([{}, {'x-tokenproxy-replay-safe':'false'}, {'x-tokenproxy-replay-safe':'true','x-should-retry':'false'}])('retains ambiguous5xx exposure and makes exactly one dispatch (%j)',async headers=>{
+  const k=await key({maxCompletionTokens:100});mocks.fetch.mockResolvedValue(Response.json({error:{message:'uncertain'}},{status:503,headers}));
+  const result=await request(k);expect(result.response.status).toBe(503);expect(result.failureMetadata.safeToReplay).toBe(false);
+  expect((await getBudgetStatus(k.id)).reservations[0].state).toBe('uncertain');expect(mocks.fetch).toHaveBeenCalledTimes(1);
+ });
+ it.each(['transport_pool_capacity','transport_pools_closed','transport_pool_cleanup'])('releases an owned pre-transport refusal%s with a local503 receipt',async code=>{
+  const k=await key({maxCompletionTokens:100});mocks.fetch.mockRejectedValueOnce(new LocalTransportPoolRefusal(code));
+  const result=await request(k);expect(result.response.status).toBe(503);expect(result.failureMetadata).toMatchObject({failurePhase:'admission',transportDispatched:false});
+  expect(result.response.headers.get('x-should-retry')).toBe('true');
+  const reservation=(await getBudgetStatus(k.id)).reservations[0];expect(reservation.state).toBe('released');
+  expect(JSON.parse(db.get('SELECT resolutionEvidence FROM apiKeyBudgetReservations').resolutionEvidence)).toEqual({source:'transport',kind:'proven-no-dispatch',code});
+  expect(db.get('SELECT COUNT(*) AS n FROM usageHistory').n).toBe(0);
+ });
+ it.each(['forged','revoked'])('does not release exposure for%s local refusal proof',async kind=>{
+  const k=await key({maxCompletionTokens:100});
+  const error=kind==='forged'?Object.assign(new Error('unproven'),{code:'transport_pool_capacity',statusCode:503}):new LocalTransportPoolRefusal('transport_pool_capacity');
+  if(kind==='revoked')revokeLocalTransportRefusalProof(error);mocks.fetch.mockRejectedValueOnce(error);
+  const result=await request(k);expect(result.response.status).toBe(502);expect((await getBudgetStatus(k.id)).reservations[0].state).toBe('uncertain');
+ });
  it('strict default admits a documented output bound and joins one exact request',async()=>{
   const k=await key({maxCompletionTokens:100});expect(k.budgetPolicy).toBe('strict');
   let atWire;mocks.fetch.mockImplementation(async()=>{atWire=db.get("SELECT * FROM apiKeyBudgetReservations WHERE state='dispatched'");expect(atWire.reservedCompletionTokens).toBe(20);return completion();});

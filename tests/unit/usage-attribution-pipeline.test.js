@@ -98,7 +98,7 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
       const row = db.get("SELECT * FROM requestStats WHERE status='pending'");
       dispatched.push(row.id);
       expect(row.dispatchCoverage).toBe("physical-dispatch");
-      return dispatched.length === 1 ? Response.json({ error: { message: "temporarily unavailable" } }, { status: 503 }) : completion();
+      return dispatched.length === 1 ? Response.json({ error: { message: "temporarily unavailable" } }, { status: 503, headers: { 'x-tokenproxy-replay-safe': 'true' } }) : completion();
     });
     const result = await handleChatCore(args()); await result.response.text();
     const [row] = await persisted();

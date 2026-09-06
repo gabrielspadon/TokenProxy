@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { persistUsagePricing } from "./usagePricing.js";
+import { isLocalTransportPoolRefusal } from "../../../../open-sse/utils/dispatcherCache.js";
 
 const LIVE = "state IN ('reserved','dispatched','uncertain')";
 const DIMENSIONS = [
@@ -151,6 +152,18 @@ export async function markBudgetUncertain(requestId, reason = "outcome-unavailab
   const db = await getAdapter();
   db.run(`UPDATE apiKeyBudgetReservations SET state='uncertain',updatedAt=?,resolutionEvidence=?
     WHERE requestId=? AND state='dispatched'`, [now(), JSON.stringify({ source: "gateway", reason }), requestId]);
+}
+
+// This automatic receipt accepts an owned transport proof, never an operator
+// assertion, status code or caller-supplied error-shaped object.
+export async function releaseUndispatchedBudgetReservation(requestId, error) {
+  if (!requestId || !isLocalTransportPoolRefusal(error)) return false;
+  const db = await getAdapter();
+  const result = durableTransaction(db, () => db.run(`UPDATE apiKeyBudgetReservations
+    SET state='released',updatedAt=?,resolutionEvidence=?
+    WHERE requestId=? AND state='dispatched' AND usageRowId IS NULL`,
+  [now(), JSON.stringify({ source: 'transport', kind: 'proven-no-dispatch', code: error.code }), requestId]));
+  return result.changes === 1;
 }
 
 // Both functions below run inside saveRequestUsage's transaction. A duplicate

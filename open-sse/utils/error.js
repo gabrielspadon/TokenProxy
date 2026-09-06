@@ -7,6 +7,7 @@ import {
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { redactSecretsText } from "./redact.js";
 import { RID_HEADER } from "../../src/shared/observability/decide.js";
+import { inspectErrorBody } from "./inspectErrorBody.js";
 
 /**
  * Build OpenAI-compatible error response body
@@ -275,12 +276,21 @@ function extractBodyResetsAtMs(errorPayload) {
  * @param {object} [executor] - Optional executor with parseError() override for provider-specific parsing
  * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number, errorPayload?: object|null}>}
  */
-export async function parseUpstreamError(response, executor = null) {
+export async function parseUpstreamError(response, executor = null, { signal } = {}) {
   let bodyText = "";
   try {
-    bodyText = await response.text();
-  } catch {
+    if (typeof response.clone === 'function') {
+      const inspected = await inspectErrorBody(response, { signal });
+      if (inspected.complete) bodyText = inspected.text;
+    } else {
+      // Test/adapter response doubles have no native stream to inspect.
+      bodyText = await response.text();
+    }
+  } catch (error) {
+    if (signal?.aborted) throw error;
     bodyText = "";
+  } finally {
+    try { Promise.resolve(response.body?.cancel()).catch(() => {}); } catch {}
   }
 
   let errorPayload = null;

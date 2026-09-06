@@ -62,7 +62,7 @@ describe("actual request capture, persistence and readonly query", () => {
   });
   it("keeps client and gateway evidence with each retry but never carries forward old dispatch evidence", async () => {
     mocks.executor = new BaseExecutor("openrouter", { baseUrl: "https://fixture.invalid/v1", noAuth: true, retry: { 503: { attempts: 1, delayMs: 0 } } });
-    mocks.fetch.mockResolvedValueOnce(Response.json({error:{message:"unavailable"}},{status:503})).mockResolvedValueOnce(completion());
+    mocks.fetch.mockResolvedValueOnce(Response.json({error:{message:"unavailable"}},{status:503,headers:{'x-tokenproxy-replay-safe':'true'}})).mockResolvedValueOnce(completion());
     const result=await handleChatCore(args()); const rows=await finish();
     expect(rows).toHaveLength(2); expect(new Set(rows.map((r)=>r.id)).size).toBe(2);
     expect(rows.every((r)=>r.logicalRequestId===logicalRequestId)).toBe(true);

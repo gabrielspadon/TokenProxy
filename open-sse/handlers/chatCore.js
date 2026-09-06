@@ -1,7 +1,9 @@
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
+import { isReplaySafeRejection, withReplaySafety } from "../utils/replaySafety.js";
 import { createContextTelemetry, recordContextAttempt, nextContextAttempt } from "./chatCore/contextTelemetry.js";
 import { requireBudgetDispatchCoverage, beginBudgetDispatch, observeBudgetResponse, budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
-import { BudgetAdmissionError, markBudgetUncertain } from "../../src/lib/db/repos/budgetRepo.js";
+import { BudgetAdmissionError, markBudgetUncertain, releaseUndispatchedBudgetReservation } from "../../src/lib/db/repos/budgetRepo.js";
+import { isLocalTransportPoolRefusal } from "../utils/dispatcherCache.js";
 import { createHash } from "node:crypto";
 import { detectFormat } from "../services/provider.js";
 import { resolveUpstreamRoute } from "./chatCore/upstreamRoute.js";
@@ -1664,6 +1666,17 @@ export async function handleChatCore({
   // exception: it is decoded by the executor into OpenAI-compatible output.
   let providerResponseFormat = targetFormat;
   const mapTransportError = async (error) => {
+    if (isLocalTransportPoolRefusal(error)) {
+      await releaseUndispatchedBudgetReservation(contextTelemetry?.budgetReservationId, error);
+      trackPendingRequest(model, provider, connectionId, false, true);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
+      streamController.handleComplete();
+      reqSummary("refused", { rid, conn: connPrefix, status: 503, why: error.code, ...saverFields });
+      const response = withReplaySafety(Response.json({ error: { type: 'local_admission_error', code: error.code,
+        message: error.message, failure_phase: 'admission' } }, { status: 503 }), false, 1000, true);
+      return withSaverHeaders({ success: false, status: 503, error: error.message, response,
+        failureMetadata: { safeToReplay: false, failurePhase: 'admission', transportDispatched: false }, rid }, saverMeta);
+    }
     if (error instanceof BudgetAdmissionError) {
       trackPendingRequest(model, provider, connectionId, false, true);
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
@@ -1777,7 +1790,7 @@ export async function handleChatCore({
   // Handle 401/403 - try token refresh (skip for noAuth providers)
   if (
     !executor.noAuth &&
-    providerResponse.headers?.get?.("x-tokenproxy-replay-safe") !== "false" &&
+    isReplaySafeRejection(providerResponse) &&
     (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
@@ -1814,6 +1827,7 @@ export async function handleChatCore({
           }
         }
         try {
+          try { Promise.resolve(providerResponse.body?.cancel()).catch(() => {}); } catch {}
           contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
           const retryResult = await executeAttempt({
             model,
@@ -1851,11 +1865,11 @@ export async function handleChatCore({
   // Provider returned error
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    const { statusCode, message, resetsAtMs, validation, errorPayload } = await parseUpstreamError(
-      providerResponse,
-      executor,
-    );
-    const safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
+    let parsedError;
+    try { parsedError = await parseUpstreamError(providerResponse, executor, { signal: executionSignal }); }
+    catch (error) { return mapTransportError(error); }
+    let { statusCode, message, resetsAtMs, validation, errorPayload } = parsedError;
+    let safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600
       ? statusCode
       : HTTP_STATUS.BAD_GATEWAY;
 
@@ -1869,7 +1883,7 @@ export async function handleChatCore({
         log?.warn?.("VERIFICATION", `validation callback failed for ${String(connectionId).slice(0, 8)}`);
       }
     }
-    const failureMetadata = projectClientModelStatus({
+    let failureMetadata = projectClientModelStatus({
       provider,
       requestedModel: model,
       status: statusCode,
@@ -1879,7 +1893,7 @@ export async function handleChatCore({
     // Adaptive unsupported-parameter retry: on a 400 naming rejected fields,
     // record them per provider+model, strip, and retry once immediately.
     const rejectedOn400 =
-      statusCode === HTTP_STATUS.BAD_REQUEST && providerResponse.headers?.get?.("x-tokenproxy-replay-safe") !== "false"
+      statusCode === HTTP_STATUS.BAD_REQUEST && isReplaySafeRejection(providerResponse)
         ? extractRejectedFieldNamesFromError(message).filter((f) => {
             const existing = getRejectedFields(provider, model);
             return !existing.has(f.toLowerCase());
@@ -1913,11 +1927,14 @@ export async function handleChatCore({
             toolNameMap,
             connectTimeout,
           });
-          if (retryResult.response.ok) {
-            providerResponse = retryResult.response;
-            providerUrl = retryResult.url;
-            providerResponseFormat = retryResult.responseFormat || targetFormat;
-            translatedBody = stripped;
+          providerResponse = retryResult.response;
+          providerUrl = retryResult.url;
+          providerHeaders = retryResult.headers;
+          finalBody = retryResult.transformedBody || stripped;
+          providerResponseFormat = retryResult.responseFormat || targetFormat;
+          translatedBody = stripped;
+          reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
+          if (providerResponse.ok) {
             trackPendingRequest(model, provider, connectionId, false);
             appendRequestLog({
               model,
@@ -2012,8 +2029,14 @@ export async function handleChatCore({
               streamState,
             });
           } else {
-            if (retryResult.response.headers?.get?.("x-tokenproxy-replay-safe") === "false") {
-              return mapTransportError(new Error("Provider accepted the field-strip retry but its response failed; replay disabled"));
+            // The last physical response owns status, reset and replay proof.
+            // Parse it once, then finalize below without a third field edit.
+            ({ statusCode, message, resetsAtMs, validation, errorPayload } = await parseUpstreamError(providerResponse, executor, { signal: executionSignal }));
+            safeStatusCode = Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 600 ? statusCode : HTTP_STATUS.BAD_GATEWAY;
+            failureMetadata = projectClientModelStatus({ provider, requestedModel: model, status: statusCode, payload: errorPayload });
+            if (validation && typeof onValidationRequired === 'function') {
+              try { await onValidationRequired({validation,observationId:verificationContext?.observationId}); }
+              catch { log?.warn?.('VERIFICATION','Validation callback failed after field-strip rejection'); }
             }
             log?.warn?.(
               "FIELDSTRIP",
@@ -2077,7 +2100,7 @@ export async function handleChatCore({
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
     // An executor may convert an accepted SSE failure to HTTP. Preserve its
     // explicit no-replay provenance instead of treating it as a rejection.
-    const safeToReplay = providerResponse.headers?.get?.("x-tokenproxy-replay-safe") !== "false";
+    const safeToReplay = isReplaySafeRejection(providerResponse);
     return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay }, rid), saverMeta);
   }
 

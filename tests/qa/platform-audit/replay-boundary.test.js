@@ -33,6 +33,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('independent money boundary at the real chat coordinator', () => {
+  it.each([402,503])('does not bench or rotate an account for local admission%s', async status => {
+    const result = failure(status,false);
+    result.failureMetadata.failurePhase = 'admission';
+    result.response.headers.set('x-should-retry',status===503?'true':'false');
+    mocks.core.mockResolvedValueOnce(result).mockImplementation(success);
+    const response = await handleChat(request());
+    expect(response.status).toBe(status);expect(mocks.core).toHaveBeenCalledTimes(1);
+    expect(mocks.credentials).toHaveBeenCalledTimes(1);expect(mocks.mark).not.toHaveBeenCalled();
+    expect(response.headers.get('x-should-retry')).toBe(status===503?'true':'false');
+    await response.text();
+  });
   it.each([false, 'false', 'true', 1, null])('requires literal consent for historical user compression (%s)', async (value) => {
     mocks.settings.mockResolvedValue({ requireApiKey: false, providerThinking: {}, providerStrategies: {},
       headroomAllowLossy: true, headroomCompressUserMessages: value });

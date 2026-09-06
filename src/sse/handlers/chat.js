@@ -1111,6 +1111,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         leaseHandedOff = true;
         return releaseAccountLeaseOnResponse(result.response, accountLease);
       }
+      if (result.failureMetadata?.failurePhase === 'admission') {
+        // Local resource pressure is not provider or account health evidence.
+        leaseHandedOff = true;
+        return releaseAccountLeaseOnResponse(result.response, accountLease);
+      }
       if (result.failureMetadata?.safeToReplay === true
           && !requestReplayAttempted && isRequestReplayBufferError(result.status, result.error)) {
         requestReplayAttempted = true;
