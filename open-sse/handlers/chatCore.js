@@ -1741,6 +1741,7 @@ export async function handleChatCore({
   // Handle 401/403 - try token refresh (skip for noAuth providers)
   if (
     !executor.noAuth &&
+    providerResponse.headers?.get?.("x-tokenproxy-replay-safe") !== "false" &&
     (providerResponse.status === HTTP_STATUS.UNAUTHORIZED ||
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
@@ -1841,7 +1842,7 @@ export async function handleChatCore({
     // Adaptive unsupported-parameter retry: on a 400 naming rejected fields,
     // record them per provider+model, strip, and retry once immediately.
     const rejectedOn400 =
-      statusCode === HTTP_STATUS.BAD_REQUEST
+      statusCode === HTTP_STATUS.BAD_REQUEST && providerResponse.headers?.get?.("x-tokenproxy-replay-safe") !== "false"
         ? extractRejectedFieldNamesFromError(message).filter((f) => {
             const existing = getRejectedFields(provider, model);
             return !existing.has(f.toLowerCase());
@@ -1973,6 +1974,9 @@ export async function handleChatCore({
               streamState,
             });
           } else {
+            if (retryResult.response.headers?.get?.("x-tokenproxy-replay-safe") === "false") {
+              return mapTransportError(new Error("Provider accepted the field-strip retry but its response failed; replay disabled"));
+            }
             log?.warn?.(
               "FIELDSTRIP",
               `Retry still failed: ${retryResult.response.status} ${retryResult.response.statusText}`,
@@ -2033,7 +2037,10 @@ export async function handleChatCore({
     }
     reqLogger.logError(new Error(sinkMessage), finalBody || translatedBody);
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
-    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay: true }, rid), saverMeta);
+    // An executor may convert an accepted SSE failure to HTTP. Preserve its
+    // explicit no-replay provenance instead of treating it as a rejection.
+    const safeToReplay = providerResponse.headers?.get?.("x-tokenproxy-replay-safe") !== "false";
+    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay }, rid), saverMeta);
   }
 
   const sharedCtx = {

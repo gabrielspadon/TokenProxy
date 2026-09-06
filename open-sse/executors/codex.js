@@ -10,24 +10,18 @@ import { ROLE, RESPONSES_ITEM } from "../translator/schema/index.js";
 import { fetchImageAsBase64 } from "../translator/concerns/image.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
-import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
+import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { normalizeCodexServiceTier } from "../config/codexFastMode.js";
 
-// SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
-const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
+// Classify explicit SSE error envelopes. Accepted responses never permit replay.
+const CODEX_SSE_TRANSIENT_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
 const CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS = ["selected model is at capacity", "model_at_capacity"];
 const CODEX_SSE_CONTEXT_OVERFLOW_PATTERNS = [
   "exceeds the context window",
   "maximum context length",
   "context_length_exceeded",
-];
-const CODEX_SSE_USER_OUTPUT_PATTERNS = [
-  "event: response.output_text.delta",
-  "event: response.function_call_arguments.delta",
-  '"type":"response.output_text.delta"',
-  '"type":"response.function_call_arguments.delta"',
 ];
 const CODEX_SSE_PEEK_BYTES = 256 * 1024;
 const CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
@@ -268,86 +262,36 @@ function normalizeReasoningEffort(model, value) {
   return value;
 }
 
-function findNestedMessage(value, depth = 0) {
-  if (!value || depth > 6 || typeof value === "string") return null;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findNestedMessage(item, depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof value !== "object") return null;
-  if (typeof value.message === "string" && value.message.trim()) return value.message;
-  if (typeof value.error?.message === "string" && value.error.message.trim()) return value.error.message;
-  if (typeof value.response?.error?.message === "string" && value.response.error.message.trim()) return value.response.error.message;
-  for (const child of Object.values(value)) {
-    const found = findNestedMessage(child, depth + 1);
-    if (found) return found;
-  }
-  return null;
-}
-
-function extractSseErrorMessage(text, fallback) {
-  const exact = text?.match(/Selected model is at capacity\. Please try a different model\./i)?.[0];
-  if (exact) return exact;
-
-  for (const line of String(text || "").split(/\r?\n/)) {
-    if (!line.startsWith("data:")) continue;
-    const data = line.slice(5).trim();
-    if (!data || data === "[DONE]") continue;
-    try {
-      const message = findNestedMessage(JSON.parse(data));
-      if (message) return message;
-    } catch {
-      // Ignore non-JSON SSE data lines.
-    }
-  }
-
-  return fallback || CODEX_MODEL_CAPACITY_MESSAGE;
-}
-
-function findSseContextOverflow(text) {
+function classifySseEvent(block) {
   const failureTypes = new Set(["error", "response.failed", "failed"]);
   let eventType = null;
-  let dataLines = [];
-
-  const inspectBlock = () => {
-    if (dataLines.length === 0) return null;
-    let payload;
-    try {
-      payload = JSON.parse(dataLines.join("\n"));
-    } catch {
-      return null;
-    }
-
-    const payloadType = String(payload?.type || payload?.response?.status || "").toLowerCase();
-    if (!failureTypes.has(eventType) && !failureTypes.has(payloadType)) return null;
-
-    const error = payload?.response?.error || payload?.error;
-    const message = typeof error?.message === "string" ? error.message.trim() : "";
-    const code = typeof error?.code === "string" ? error.code.toLowerCase() : "";
-    const matched = code
-      ? (code === "context_length_exceeded" ? code : null)
-      : CODEX_SSE_CONTEXT_OVERFLOW_PATTERNS.find(pattern => message.toLowerCase().includes(pattern));
-    return matched ? { matched, message: message || matched } : null;
-  };
-
-  for (const rawLine of String(text || "").split("\n")) {
-    const line = rawLine.trimEnd();
-    if (!line) {
-      const match = inspectBlock();
-      if (match) return match;
-      eventType = null;
-      dataLines = [];
-    } else if (line.startsWith("event:")) {
+  const dataLines = [];
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
       eventType = line.slice(6).trim().toLowerCase();
     } else if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trimStart());
+      dataLines.push(line.slice(5).replace(/^ /, ""));
     }
   }
-
-  return inspectBlock();
+  let payload;
+  try { payload = JSON.parse(dataLines.join("\n")); } catch { return null; }
+  const payloadType = String(payload?.type || payload?.response?.status || "").toLowerCase();
+  // Stop before any later error can replace output already generated. Inspect
+  // event types, never model-controlled words inside content or tool arguments.
+  const isOutput = (type) => /^response\.(?:output_|function_call|reasoning|completed|incomplete)/.test(type || "");
+  if (isOutput(eventType) || isOutput(payloadType)) return { outputSeen: true };
+  if (!failureTypes.has(eventType) && !failureTypes.has(payloadType)) return null;
+  const error = payload?.response?.error || payload?.error || payload;
+  const message = typeof error?.message === "string" ? error.message.trim() : "";
+  const code = typeof error?.code === "string" ? error.code.toLowerCase() : "";
+  const matches = (patterns) => code
+    ? patterns.find((pattern) => pattern === code)
+    : patterns.find((pattern) => message.toLowerCase().includes(pattern));
+  const context = matches(CODEX_SSE_CONTEXT_OVERFLOW_PATTERNS);
+  const capacity = matches(CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS);
+  const transient = matches(CODEX_SSE_TRANSIENT_PATTERNS);
+  const matched = context || capacity || transient;
+  return matched ? { matched, message: message || matched, contextOverflow: !!context, accountFallback: !!capacity } : null;
 }
 
 function codexSseErrorResponse(status, message, code = null) {
@@ -359,7 +303,7 @@ function codexSseErrorResponse(status, message, code = null) {
     }
   }), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" },
   });
 }
 
@@ -464,11 +408,7 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
-    // Retry loop for SSE-level overloaded errors (200 OK body contains event: error)
-    // Reuses 503 retry config — same semantic: upstream temporarily unavailable
-    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    const { attempts, delayMs } = resolveRetryEntry(retryConfig[503]);
-    let attempt = 0;
+    // Only an explicit ciphertext HTTP400 can authorize this body-repair retry.
     let tierLogged = false;
     let ciphertextRetried = false;
     while (true) {
@@ -478,8 +418,7 @@ export class CodexExecutor extends BaseExecutor {
         args.log?.info?.("TIER", `CODEX | ${args.model} | TIER:${effectiveTier}`);
         tierLogged = true;
       }
-      // One-shot, and deliberately outside the SSE `attempt` budget: this is a
-      // body repair, not a transient upstream, so a second identical 400 means
+      // One-shot body repair. A second identical 400 means
       // the ciphertext was never the cause and the error belongs to the client.
       // clone() is guarded the way base.js guards it — unit tests script
       // minimal response doubles that do not implement it.
@@ -522,19 +461,12 @@ export class CodexExecutor extends BaseExecutor {
         return result;
       }
       if (peek.accountFallback) {
-        args.log?.warn?.("RETRY", `CODEX | SSE account fallback "${peek.message}"`);
+        args.log?.warn?.("CODEX", "Accepted SSE response reported model capacity; replay disabled");
         result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || CODEX_MODEL_CAPACITY_MESSAGE);
         return result;
       }
-      if (attempt >= attempts) {
-        args.log?.warn?.("RETRY", `CODEX | SSE overloaded "${peek.matched}" — retries exhausted (${attempt}/${attempts})`);
-        result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || peek.matched);
-        return result;
-      }
-      attempt++;
-      args.log?.debug?.("RETRY", `CODEX | SSE "${peek.matched}" retry ${attempt}/${attempts} after ${delayMs / 1000}s`);
-      dbg("CODEX", `SSE overloaded "${peek.matched}" → retry ${attempt}/${attempts} in ${delayMs}ms`);
-      await new Promise(r => setTimeout(r, delayMs));
+      result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || peek.matched);
+      return result;
     }
   }
 
@@ -547,30 +479,35 @@ export class CodexExecutor extends BaseExecutor {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     const chunks = [];
-    let text = "";
+    let pending = "";
+    let bytesRead = 0;
     let matched = null;
     let matchedMessage = null;
     let accountFallback = false;
     let contextOverflow = false;
     try {
-      while (text.length < CODEX_SSE_PEEK_BYTES) {
+      while (bytesRead < CODEX_SSE_PEEK_BYTES) {
         const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        text += decoder.decode(value, { stream: true });
-        const lowerText = text.toLowerCase();
-        const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(pattern => lowerText.includes(pattern));
-        if (accountHit) { matched = accountHit; accountFallback = true; break; }
-        const contextHit = findSseContextOverflow(text);
-        if (contextHit) {
-          matched = contextHit.matched;
-          matchedMessage = contextHit.message;
-          contextOverflow = true;
-          break;
+        if (done) {
+          pending += decoder.decode();
+        } else {
+          chunks.push(value);
+          const remaining = CODEX_SSE_PEEK_BYTES - bytesRead;
+          const inspected = value.subarray(0, remaining);
+          pending += decoder.decode(inspected, { stream: true });
+          bytesRead += inspected.byteLength;
         }
-        const retryHit = CODEX_SSE_RETRY_PATTERNS.find(pattern => lowerText.includes(pattern));
-        if (retryHit) { matched = retryHit; break; }
-        if (CODEX_SSE_USER_OUTPUT_PATTERNS.some(pattern => lowerText.includes(pattern))) break;
+        const blocks = pending.split(/\r?\n\r?\n/);
+        pending = done ? "" : blocks.pop();
+        let verdict = null;
+        for (const block of blocks) {
+          verdict = classifySseEvent(block);
+          if (verdict) break;
+        }
+        if (verdict?.matched) {
+          ({ matched, message: matchedMessage, accountFallback, contextOverflow } = verdict);
+        }
+        if (done || verdict) break;
       }
     } catch (e) {
       dbg("CODEX", `peek read error: ${e.message}`);
@@ -581,7 +518,7 @@ export class CodexExecutor extends BaseExecutor {
       try { reader.releaseLock(); } catch { /* noop */ }
       return {
         matched,
-        message: matchedMessage || extractSseErrorMessage(text, matched),
+        message: matchedMessage || matched,
         accountFallback,
         contextOverflow,
         replacementBody: null,

@@ -4,7 +4,7 @@
  * items, stored-id stripping, tool filtering, tool_choice pruning, model
  * suffix stripping, allowlist filter), parseError's usage_limit_reached
  * parsing, refreshCredentials/prefetchImages guards, the SSE peek's
- * account-fallback and retry-exhausted verdicts, the reassembled
+ * structured error verdicts without replay, the reassembled
  * replacement stream, and the ciphertext-400 paths that must NOT retry.
  *
  * All upstream traffic is stubbed by spying on BaseExecutor.prototype;
@@ -35,7 +35,7 @@ function stubUpstream(makeResponse) {
     .mockImplementation(async () => ({ response: makeResponse(), transformedBody: {} }));
 }
 
-// Executor with a tight SSE retry budget so retry-exhaustion tests run in ms.
+// A configured retry budget must never authorize replay of accepted SSE.
 function fastRetryExecutor() {
   const executor = new CodexExecutor();
   executor.config = { ...executor.config, retry: { 503: { attempts: 1, delayMs: 1 } } };
@@ -300,28 +300,78 @@ describe('execute SSE verdicts', () => {
   });
 
   it('converts an SSE account-capacity error into a 503 with the extracted message', async () => {
-    stubUpstream(() =>
+    const spy = stubUpstream(() =>
       sseResponse(
         'event: error\ndata: {"type":"error","error":{"message":"Selected model is at capacity. Please try a different model."}}\n\n'
       )
     );
     const { response } = await new CodexExecutor().execute(baseArgs());
+    expect(spy).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(HTTP_STATUS.SERVICE_UNAVAILABLE);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     const parsed = await response.json();
     expect(parsed.error.message).toMatch(/at capacity/);
   });
 
-  it('retries an SSE overloaded error then returns 503 when the budget is spent', async () => {
+  it('does not regenerate after an accepted structured SSE overloaded error', async () => {
     const spy = stubUpstream(() =>
       sseResponse(
-        'data: [DONE]\ndata: not-json\ndata: {"wrapped":[{"response":{"error":{"message":"server_is_overloaded"}}}]}\n\n'
+        'event: error\ndata: {"type":"error","error":{"message":"server_is_overloaded"}}\n\n'
       )
     );
     const { response } = await fastRetryExecutor().execute(baseArgs());
-    expect(spy).toHaveBeenCalledTimes(2); // initial + 1 retry
+    expect(spy).toHaveBeenCalledTimes(1);
     expect(response.status).toBe(HTTP_STATUS.SERVICE_UNAVAILABLE);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
     const parsed = await response.json();
     expect(parsed.error.message).toBe('server_is_overloaded');
+  });
+
+  it.each(['server_is_overloaded', 'service_unavailable_error', 'Selected model is at capacity', 'model_at_capacity'])(
+    'preserves ordinary output containing %s byte for byte without regeneration', async (delta) => {
+      const sse = `event: response.output_text.delta\ndata: ${JSON.stringify({ type: 'response.output_text.delta', delta })}\n\n`;
+      const spy = stubUpstream(() => sseResponse(sse));
+      const { response } = await fastRetryExecutor().execute(baseArgs());
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(sse);
+    }
+  );
+
+  it('retains partial output before a later error in the same chunk', async () => {
+    const sse = 'event: response.output_text.delta\ndata: {"delta":"already generated"}\n\nevent: error\ndata: {"error":{"message":"server_is_overloaded"}}\n\n';
+    const spy = stubUpstream(() => sseResponse(sse));
+    const { response } = await fastRetryExecutor().execute(baseArgs());
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(sse);
+  });
+
+  it.each([
+    'data: server_is_overloaded\n\n',
+    'event: error\ndata: {broken server_is_overloaded\n\n',
+    'event: response.output_text.delta\ndata: {"delta":"\\uD83D\\uDE00 9007199254740993"}\n\n',
+    'data: {"wrapped":[{"response":{"error":{"message":"server_is_overloaded"}}}]}\n\n',
+  ])('passes malformed or untyped content through without fabrication', async (sse) => {
+    const spy = stubUpstream(() => sseResponse(sse));
+    const { response } = await fastRetryExecutor().execute(baseArgs());
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(sse);
+  });
+
+  it('parses an error split into single-byte CRLF frames without replay', async () => {
+    const sse = 'event: response.failed\r\ndata: {"response":{"error":{"code":"service_unavailable_error","message":"Unavailable 🔬"}}}\r\n\r\n';
+    const bytes = new TextEncoder().encode(sse);
+    const spy = stubUpstream(() => new Response(new ReadableStream({ start(controller) {
+      for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+      controller.close();
+    } }), { status: 200 }));
+    const { response } = await fastRetryExecutor().execute(baseArgs());
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect((await response.json()).error.message).toBe('Unavailable 🔬');
   });
 
   it('returns the 400 untouched when the error body cannot be read', async () => {
