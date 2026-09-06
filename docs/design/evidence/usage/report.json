@@ -1,7 +1,7 @@
 {
  "slice": "usage",
- "base": "http://127.0.0.1:20143",
- "at": "2026-09-06T10:05:38.343Z",
+ "base": "http://localhost:20144",
+ "at": "2026-09-06T12:43:28.506Z",
  "checks": [
   {
    "name": "login",
@@ -401,177 +401,177 @@
   {
    "name": "strings catalogue",
    "ok": true,
-   "detail": "docs/design/strings.json has 1204 strings"
+   "detail": "docs/design/strings.json has 1239 strings"
   },
   {
    "name": "literals ar.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals bn.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals cs.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals da.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals de.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals el.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals es.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals fa.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals fi.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals fr.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals he.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals hi.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals hu.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals id.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals it.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals ja.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals km.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals ko.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals nl.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals no.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals pl.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals pt-BR.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals pt-PT.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals ro.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals ru.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals sv.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals th.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals tl.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals tr.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals uk.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals ur.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals vi.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals zh-CN.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals zh-TW.json",
    "ok": true,
-   "detail": "1204 covered"
+   "detail": "1239 covered"
   },
   {
    "name": "literals file-count",
