@@ -1,7 +1,7 @@
 // Covers two chatCore.js internals the handler suites drive past without
 // exercising: the per-session cache-epoch tracker (trackCacheEpoch, reached by
-// passing a sid) and isolateCompressibleItems' non-messages branches, which
-// deep-copy `input` and `conversationState` so an account-fallback retry never
+// passing a sid) and request isolation's non-messages branches, which
+// copy `input` and `conversationState` so an account-fallback retry never
 // re-compresses a body it already compressed (#3566).
 //
 // The executor is mocked, so no upstream is contacted; proxyFetch is mocked too
@@ -299,10 +299,9 @@ describe('progressive tool disclosure', () => {
   });
 });
 
-describe('compressible-item isolation', () => {
-  // isolateCompressibleItems runs only when a compressing stage will, which is
-  // what rtkEnabled turns on here. Its job is to leave the CALLER's arrays
-  // untouched, because an account-fallback retry re-enters with the same body.
+describe('request-body isolation', () => {
+  // Every attempt owns its JSON containers before translation or compression,
+  // because account fallback can re-enter with the same caller body.
   it("does not hand the caller's own message objects to the executor", async () => {
     const body = {
       model: 'openai/gpt-4o',
@@ -332,9 +331,8 @@ describe('compressible-item isolation', () => {
   });
 
   it('isolates conversationState and survives a non-cloneable member', async () => {
-    // A function is not structured-cloneable. The isolation swallows the
-    // DataCloneError and leaves that collection shared rather than failing the
-    // request, which is the documented fallback.
+    // Functions remain opaque handles, while their surrounding JSON containers
+    // are private to the attempt.
     const body = {
       model: 'openai/gpt-4o',
       stream: false,

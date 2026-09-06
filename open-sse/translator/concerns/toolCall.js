@@ -1,4 +1,5 @@
 // Tool call helper functions for translator
+import { TOOL_TYPE } from "../schema/toolTypes.js";
 
 // Anthropic tool_use.id must match: ^[a-zA-Z0-9_-]+$
 const TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -378,7 +379,7 @@ export function repairOrphanToolResults(body) {
 // survive and 400 again.
 export function defaultClaudeToolType(tools) {
   if (!Array.isArray(tools)) return tools;
-  return tools.map((tool) => (tool?.type ? tool : { ...tool, type: "custom" }));
+  return tools.map((tool) => (tool?.type ? tool : { ...tool, type: TOOL_TYPE.CUSTOM }));
 }
 
 // Accumulate one tool call's `arguments` across streamed chunks.

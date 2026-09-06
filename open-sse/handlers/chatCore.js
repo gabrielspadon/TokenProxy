@@ -106,30 +106,22 @@ import { isConnectTimeoutError } from "../utils/responseHeaderTimeout.js";
 import { applyCodexFastMode } from "../config/codexFastMode.js";
 import { projectClientModelStatus } from "../config/modelErrorClassifier.js";
 
-// Give the compressor its own copy of the items it rewrites in place, so a
-// retry on another account starts from the caller's original text rather than
-// from the previous attempt's output. Only the compressible collections are
-// copied, never the whole body: the body carries streams and abort signals that
-// structuredClone would reject, and the rest of it is not touched by the
-// compressor anyway. Falls back to leaving the body alone, which is the
-// pre-existing behaviour, if the clone is refused.
-function isolateCompressibleItems(body) {
-  if (!body) return;
-  for (const key of ["messages", "input"]) {
-    if (!Array.isArray(body[key])) continue;
-    try {
-      body[key] = structuredClone(body[key]);
-    } catch {
-      // A non-cloneable item means this collection stays shared. Compression is
-      // idempotent-ish rather than exact, so a shared array is a worse result,
-      // not a broken one.
-    }
+// Own every JSON container before translation or shaping mutates it. Direct
+// engine callers can also attach opaque signals/streams/functions; retain
+// those handles without sharing their surrounding mutable request records.
+function isolateRequestBody(value, copies = new WeakMap()) {
+  if (!value || typeof value !== "object") return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
+  if (copies.has(value)) return copies.get(value);
+  const copy = Array.isArray(value) ? new Array(value.length) : Object.create(prototype);
+  copies.set(value, copy);
+  for (const [key, item] of Object.entries(value)) {
+    Object.defineProperty(copy, key, {
+      value: isolateRequestBody(item, copies), enumerable: true, writable: true, configurable: true,
+    });
   }
-  if (body.conversationState) {
-    try {
-      body.conversationState = structuredClone(body.conversationState);
-    } catch { /* as above */ }
-  }
+  return copy;
 }
 
 /**
@@ -364,6 +356,7 @@ export async function handleChatCore({
   toolDisclosure,
   codexFastMode,
 }) {
+  body = isolateRequestBody(body);
   const credentials = rawCredentials
     ? {
         ...rawCredentials,
@@ -914,17 +907,8 @@ export async function handleChatCore({
   }
   measureSaverStage("thinking", thinkingWillRun);
 
-  // RTK: compress tool_result content.
-  //
-  // compressMessages rewrites message content IN PLACE, and on the passthrough
-  // path translatedBody is a shallow spread of the caller's body, so the array
-  // and the message objects inside it are the caller's. Account fallback calls
-  // this handler again with that same body, which meant attempt two compressed
-  // the already-compressed text and each further attempt compressed it again
-  // (#3566). Isolate the messages first, and only when the stage will actually
-  // run, so a request with the saver off pays nothing.
+  // RTK rewrites only this attempt's privately owned request containers.
   const rtkWillRun = tokenSaverEnabled && rtkEnabled;
-  if (rtkWillRun) isolateCompressibleItems(translatedBody);
   const rtkStats = compressMessages(
     translatedBody,
     rtkWillRun,
@@ -955,18 +939,6 @@ export async function handleChatCore({
   let privacyRan = false;
   if (privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming)) {
     privacyRan = true;
-    // Same in-place hazard RTK has (#3566): on passthrough these are the
-    // caller's own objects, and an account-fallback retry would hand a fresh
-    // filter a body that is already aliased, leaving it with an empty mapping
-    // and nothing to restore.
-    if (!rtkWillRun) isolateCompressibleItems(translatedBody);
-    if (translatedBody.system && typeof translatedBody.system === "object") {
-      try {
-        translatedBody.system = structuredClone(translatedBody.system);
-      } catch {
-        /* shared is a worse result, not a broken one */
-      }
-    }
     privacyFilter = redactOutbound(translatedBody, privacyTerms);
     if (privacyFilter) {
       log?.debug?.("PRIVACY", `pseudonymised ${privacyFilter.size} value(s)`);
