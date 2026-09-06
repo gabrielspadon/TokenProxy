@@ -67,6 +67,12 @@ function terminalAttemptResponse(response, cooldownMs = 0) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function rejectedAttemptResponse(response) {
+  const headers = new Headers(response.headers);
+  headers.set("x-tokenproxy-replay-safe", "true");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 async function createAntigravityVerificationHooks(connectionId) {
   const { createAntigravityVerificationHooks: createHooks } = await import("@/lib/antigravityVerification");
   return createHooks(connectionId);
@@ -745,7 +751,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
+    return rejectedAttemptResponse(errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format"));
   }
 
   const { provider, model } = modelInfo;
@@ -873,9 +879,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // to reach. Say so instead of silently serving someone else.
       if (requestedConnectionId && credentials && credentials.allRateLimited !== true
           && credentials.connectionId !== requestedConnectionId) {
-        return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Pinned connection unavailable", {
+        return rejectedAttemptResponse(errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Pinned connection unavailable", {
           failurePhase: "provider",
-        });
+        }));
       }
 
       // All accounts unavailable
@@ -894,16 +900,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             "CHAT",
             `[${provider}/${model}] ${errorMsg} [${status}] (${credentials.retryAfterHuman})`,
           );
-          return unavailableResponse(
+          return rejectedAttemptResponse(unavailableResponse(
             status,
             `[${provider}/${model}] ${errorMsg}`,
             credentials.retryAfter,
             credentials.retryAfterHuman,
-          );
+          ));
         }
         if (excludeConnectionIds.size === 0) {
           log.warn("AUTH", `No active credentials for provider: ${provider}`);
-          return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
+          return rejectedAttemptResponse(errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`));
         }
         log.warn("CHAT", "No more accounts available", { provider });
         const exhaustedStatus = lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE;
@@ -912,10 +918,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         // §4 floor fills the absence so the caller is never handed a retryable
         // status with no delay hint at all — and isRetryableStatus keeps it off a
         // 401 or 402, where the correct advice is to stop rather than to wait.
-        return errorResponse(exhaustedStatus, lastError || "All accounts unavailable", {
+        return rejectedAttemptResponse(errorResponse(exhaustedStatus, lastError || "All accounts unavailable", {
           retryAfter: { ms: RETRY_AFTER_FLOOR_MS },
           failurePhase: "provider",
-        });
+        }));
       }
 
       // Account selection shown in the unified "▶" line (acc:...)
@@ -976,6 +982,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         rtkEnabled: comboTokenSaver.rtkEnabled,
         rtkAllowLossy: chatSettings.rtkAllowLossy === true,
         schemaDistillEnabled: comboTokenSaver.schemaDistillEnabled,
+        schemaAllowLossy: chatSettings.schemaAllowLossy === true,
         thinkingStripEnabled: comboTokenSaver.thinkingStripEnabled,
         queryAwareCompressionEnabled: comboTokenSaver.queryAwareCompressionEnabled,
         pairDropEnabled: comboTokenSaver.pairDropEnabled,
@@ -1182,7 +1189,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // body may still be unread. Same handoff as the peeked path; a body-less
       // response releases immediately inside the helper.
       leaseHandedOff = true;
-      return releaseAccountLeaseOnResponse(result.response, accountLease);
+      return releaseAccountLeaseOnResponse(rejectedAttemptResponse(result.response), accountLease);
     } finally {
       if (!leaseHandedOff) releaseAccountLease(accountLease);
     }

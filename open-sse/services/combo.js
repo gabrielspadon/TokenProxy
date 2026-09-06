@@ -772,6 +772,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // A caller abort is terminal, not a model result. Preserve its exact
       // response so outer abort handling cannot mistake it for a served combo.
       if (result.status === 499) return result;
+      if (result.headers.get("x-tokenproxy-replay-safe") !== "true") {
+        return withComboTrackingHeaders(result, modelStr);
+      }
 
       // Extract error info from response
       let errorText = result.statusText || "";
