@@ -10,6 +10,7 @@ import { validateKeyUsageQuery, readKeyUsage } from "./keyUsageQueries.mjs";
 import { validateQuotaWorkbenchQuery, readQuotaWorkbench } from "./quotaWorkbenchQueries.mjs";
 import { validateOperationEventsQuery, readOperationEvents } from "./operationEventsQueries.mjs";
 import { validateSessionPinTimelineQuery, readSessionPinTimeline } from "./sessionPinTimelineQueries.mjs";
+import { validateNotificationEvidenceQuery, readNotificationEvidence } from "./notificationRuleQueries.mjs";
 
 // The message boundary accepts named projections only, never SQL or a DB path.
 parentPort?.on("message", async ({ id, query }) => {
@@ -21,6 +22,7 @@ parentPort?.on("message", async ({ id, query }) => {
       : query?.operation === "key-usage" ? validateKeyUsageQuery(query)
       : query?.operation === "operation-events" ? validateOperationEventsQuery(query)
       : query?.operation === "session-pin-timeline" ? validateSessionPinTimelineQuery(query)
+      : query?.operation === "notification-evidence" ? validateNotificationEvidenceQuery(query)
       : query?.operation === "activity" ? validateActivityQuery(query)
       : query?.operation === "events" ? validateContextEventQuery(query)
       : query?.operation?.startsWith("quota-history") ? validateQuotaHistoryQuery(query) : validateAnalyticsQuery(query);
@@ -35,6 +37,7 @@ parentPort?.on("message", async ({ id, query }) => {
       : validated.operation === "key-usage" ? readKeyUsage(db)
       : validated.operation === "operation-events" ? readOperationEvents(db, validated)
       : validated.operation === "session-pin-timeline" ? readSessionPinTimeline(db, validated)
+      : validated.operation === "notification-evidence" ? readNotificationEvidence(db, validated)
       : validated.operation === "quota-history" ? readQuotaHistory(db, validated)
       : validated.operation === "quota-history-summary" ? readQuotaHistorySummary(db)
       : validated.operation === "activity" ? readActivityAnalytics(db, validated)
