@@ -100,11 +100,13 @@ const TOTALS = `COUNT(*) AS records,COALESCE(SUM(prompt),0) AS inputTokens,
   COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0) AS recordedPending,
   COALESCE(SUM(invalidTokens),0) AS invalidTokenRows,COALESCE(SUM(inconsistentCache),0) AS inconsistentCacheRows,
   COALESCE(SUM(missingTokenDetail),0) AS missingTokenDetailRows,
+  COALESCE(SUM(CASE WHEN strftime('%s',timestamp) IS NULL THEN 1 ELSE 0 END),0) AS invalidTimestampRows,
   SUM(recordedCost) AS recordedCostUsd,COUNT(recordedCost) AS costSamples,
   COALESCE(SUM(CASE WHEN recordedCost=0 THEN 1 ELSE 0 END),0) AS zeroCostRows,
   AVG(latencyMs) AS averageLatencyMs,MIN(latencyMs) AS minimumLatencyMs,MAX(latencyMs) AS maximumLatencyMs,
   COUNT(latencyMs) AS latencySamples,AVG(ttftMs) AS averageTtftMs,COUNT(ttftMs) AS ttftSamples,
-  MIN(timestamp) AS firstSeenAt,MAX(timestamp) AS lastSeenAt`;
+  MIN(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS firstSeenAt,
+  MAX(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS lastSeenAt`;
 
 function enrich(row) {
   return { ...row, cacheReadFraction: row.inputTokens > 0 ? row.cacheReadTokens / row.inputTokens : null,

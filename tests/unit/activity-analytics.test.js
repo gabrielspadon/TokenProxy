@@ -87,6 +87,12 @@ describe('analytical workspace read contract', () => {
     expect(result.series.points.reduce((n,p)=>n+p.records,0)).toBe(4);
     expect(result.series.points.every(p=>Number.isFinite(Date.parse(p.bucketStart)))).toBe(true);
   });
+  it('reports malformed timestamps and keeps other observations chartable', () => {
+    native.prepare('UPDATE requestStats SET timestamp=? WHERE id=?').run('invalid-date','r1');
+    const result=read();
+    expect(result.summary).toMatchObject({records:4,invalidTimestampRows:1});
+    expect(result.series.points.reduce((n,p)=>n+p.records,0)).toBe(3);
+  });
   it('marks limited dimension results instead of presenting top100 as the whole population', () => {
     const stmt = native.prepare('INSERT INTO requestStats(id,timestamp,provider,promptTokens,completionTokens,cachedTokens,cacheCreationTokens) VALUES(?,?,?,?,?,?,?)');
     for(let i=0;i<105;i++)stmt.run(`many-${i}`,'2026-09-06T10:00:00.000Z',`provider-${i}`,1,0,0,0);

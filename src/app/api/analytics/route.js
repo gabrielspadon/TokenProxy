@@ -13,7 +13,8 @@ export async function GET(request) {
   if (denied) return denied;
   try {
     const params = new URL(request.url).searchParams;
-    const input = { operation: 'activity' };
+    const input = Object.create(null);
+    input.operation = 'activity';
     for (const [key,value] of params) {
       if (Object.hasOwn(input,key)) throw new ActivityQueryError('Duplicate or reserved analytics parameter.');
       input[key] = value;

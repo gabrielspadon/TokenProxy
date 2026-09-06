@@ -34,7 +34,7 @@ describe('operator analytics boundary and actual worker',()=>{
     }
   });
   it('validates unknown, duplicate and reserved parameters before querying',async()=>{
-    for(const query of ['sql=SELECT','operation=overview','view=activity&view=economics','pageSize=1000','groupBy=apiKey','provider=%00']){
+    for(const query of ['sql=SELECT','operation=overview','view=activity&view=economics','pageSize=1000','groupBy=apiKey','provider=%00','__proto__=unknown']){
       expect((await GET(request(`/api/analytics?${query}`,{operator:true}))).status).toBe(400);
     }
   });
