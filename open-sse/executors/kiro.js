@@ -193,6 +193,7 @@ function inspectSSEChunk(chunk, state) {
  * Uses AWS CodeWhisperer streaming API with AWS EventStream binary format
  */
 export class KiroExecutor extends BaseExecutor {
+  get supportsBudgetDispatch() { return true; }
   constructor() {
     super("kiro", PROVIDERS.kiro);
   }

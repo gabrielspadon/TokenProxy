@@ -1,3 +1,4 @@
+import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import {
   HTTP_STATUS,
   RETRY_CONFIG,
@@ -55,6 +56,7 @@ function parseDurationToMs(durationStr) {
 }
 
 export class BaseExecutor {
+  get supportsBudgetDispatch() { return this.execute === BaseExecutor.prototype.execute; }
   constructor(provider, config) {
     this.provider = provider;
     this.config = config;
@@ -243,6 +245,7 @@ export class BaseExecutor {
     proxyOptions = null, sourceFormat, targetFormat,
     connectTimeout = null,
     beforeDispatch,
+    afterDispatch,
   }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
@@ -323,6 +326,7 @@ export class BaseExecutor {
           },
           proxyOptions,
         );
+        await notifyDispatchResponse(afterDispatch, response);
         deadline.clear();
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";

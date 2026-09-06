@@ -312,6 +312,7 @@ function codexSseErrorResponse(status, message, code = null) {
  * Automatically injects default instructions if missing
  */
 export class CodexExecutor extends BaseExecutor {
+  get supportsBudgetDispatch() { return true; }
   constructor() {
     super("codex", PROVIDERS.codex);
   }
