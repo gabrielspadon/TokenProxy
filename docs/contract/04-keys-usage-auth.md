@@ -124,9 +124,9 @@ Both are wired to the same process-wide `statsEmitter` (`src/lib/db/repos/usageR
 `getActiveRequests()` shape (`src/lib/db/repos/usageRepo.js:469-548`), confirmed field-by-field:
 ```
 {
-  activeRequests: [ { model, provider?, accountName, ... } ],  // one entry per in-flight (connectionId, modelKey) pair with count>0; model is parsed from "model (provider)" key pattern
+  activeRequests: [ { model, provider?, account, count } ],  // one entry per in-flight (connectionId, modelKey) pair with count>0; model/provider parsed from the "model (provider)" key pattern (usageRepo.js:477-483)
   recentRequests: [ <buildRecentRequestRow(e)> ],
-  errorProvider: <shape not fully re-read in this pass — reread usageRepo.js ~500-548>,
+  errorProvider: string,  // usageRepo.js:502: lastErrorProvider.provider (lowercased) when the last recorded error was under 10000ms ago, else the empty string "" — never null, never absent
   activeSessions: [ <getActiveSessions() row>, ... ],
 }
 ```
@@ -148,7 +148,9 @@ Both are wired to the same process-wide `statsEmitter` (`src/lib/db/repos/usageR
 ```
 sorted descending by `startedAt`.
 
-**This SSE payload documentation is incomplete** for `errorProvider` and the outer `update`/`pending` event envelope's exact key layout — both need one more targeted read of `usageRepo.js` lines ~500-548 and `stream/route.js` lines ~20-145 before a frontend is coded against them as certain. Flagging rather than guessing per task instructions.
+`errorProvider` and the outer `update`/`pending` envelope key layout are both confirmed. `errorProvider` (`usageRepo.js:502`, mirrored at `usageRepo.js:791` inside `getUsageStatsInRange`'s zero-row default object) is a plain string, the lowercased provider name of the most recent failed request if that failure happened within the last 10000ms, otherwise the empty string `""`. It is set only on a failed, non-started attempt (`usageRepo.js:323-325`, `if (!started && error && provider)`) and is process-global (`global._lastErrorProvider`), not scoped to a connection, model or period.
+
+The outer envelope is one flat object in every case, never a `{type, data}` wrapper. Both the quick frame (`stream/route.js:82-98`) and the pending frame (`stream/route.js:112-129`) spread `state.cachedStats` (the previous full `getUsageStats()` result) and then overwrite exactly four keys, `activeRequests`, `activeSessions`, `recentRequests` (re-scoped to the stream's `period` via `scopeRecentToPeriod`), and `errorProvider`, all four sourced from one fresh `getActiveRequests()` call (`usageRepo.js:469-505`). The full-recalc frame (`stream/route.js:100-105`) is the bare `getUsageStats(period)` object with no merge at all, and that object already carries its own `activeRequests`/`activeSessions`/`recentRequests`/`errorProvider` quartet at the same top level (`usageRepo.js:787-791`), so all three frame kinds share one flat top-level key set with no envelope field distinguishing them from each other on the wire.
 
 ### GET /api/usage/stats
 `src/app/api/usage/stats/route.js:1-33`
@@ -397,10 +399,9 @@ There is no `/api/auth/change-password`. Password change is a field on `PATCH /a
 
 ## Known gaps in this pass (explicitly unread or under-confirmed, do not code against these blind)
 
-Resolved since first draft: SSE `update`/`pending` payload shape, session JWT lifetime (24h, confirmed), login 429 body (`retryAfter`/`resetHint`, confirmed), `/api/auth/status` full field set (confirmed both branches), `LOCAL_ONLY_PATHS` membership of `/api/auth/reset-password` (confirmed at `dashboardGuard.js:118`) and its exact 403 refusal body.
+Resolved since first draft: SSE `update`/`pending` payload shape, including `errorProvider`'s exact type and 10000ms freshness window and the outer envelope's flat key layout (`usageRepo.js:469-505,787-791`, `stream/route.js:82-129`); session JWT lifetime (24h, confirmed); login 429 body (`retryAfter`/`resetHint`, confirmed); `/api/auth/status` full field set (confirmed both branches); `LOCAL_ONLY_PATHS` membership of `/api/auth/reset-password` (confirmed at `dashboardGuard.js:118`) and its exact 403 refusal body.
 
 Still open:
-- `errorProvider`'s shape inside `getActiveRequests()` (`usageRepo.js` ~500-548).
 - `getUsageStats`/`getUsageStatsInRange`'s full top-level key list beyond `range`, `byEndpoint`.
 - `getStatsItems()` — not read at all.
 - `getStatsFilters()`'s exact serialized shape (Map→JSON).
