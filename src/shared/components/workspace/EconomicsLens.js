@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Pagination, SegmentedControl, Select, Tooltip } from '@mantine/core';
+import { ECONOMICS_GROUPS } from '@/lib/db/analytics/economicsDimensions.mjs';
+import { EconomicsEvidence, EconomicsCoverage } from './EconomicsEvidence';
+import { Button, Checkbox, Group, Pagination, Select, Tooltip } from '@mantine/core';
 import {
   columnPinningFeature, columnSizingFeature, createSortedRowModel, rowSelectionFeature,
   rowSortingFeature, sortFn_text, tableFeatures, useTable,
@@ -120,7 +122,7 @@ function QualityNotice({ row, record = false }) {
   ) : null;
 }
 
-function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onInspect }) {
+function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onInspect, sorting, onSortingChange, onPageChange }) {
   const groups = data.groups || EMPTY;
   const summary = data.summary;
   const maximums = useMemo(() => Object.fromEntries(TOKEN_COLUMNS.map(({ id }) => [id, Math.max(0, ...groups.map((group) => group[id] || 0))])), [groups]);
@@ -132,10 +134,10 @@ function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onIn
     },
     {
       id: 'identity', accessorFn: (group) => groupName(group, groupBy, accounts), size: 218,
-      header: groupBy === 'model' ? 'Model / provider' : groupBy === 'account' ? 'Account / provider' : 'Provider', sortFn: 'text',
-      cell: ({ row }) => <span className={styles.identity}><ProviderMark provider={row.original.provider} size="small" />
+      header: ECONOMICS_GROUPS.find(group=>group.value===groupBy)?.label || 'Identity', enableSorting:false,
+      cell: ({ row }) => <span className={styles.identity}>{row.original.provider && <ProviderMark provider={row.original.provider} size="small" />}
         <span><strong>{groupBy === 'provider' ? providerIdentity(row.original.provider).name : groupName(row.original, groupBy, accounts)}</strong>
-          <small>{groupBy === 'provider' ? 'Recorded completion ledger' : providerIdentity(row.original.provider).name}</small></span>
+          <small>{groupBy === 'provider' ? 'Recorded completion ledger' : row.original.provider ? providerIdentity(row.original.provider).name : groupBy==='client-project' ? 'Client-reported, installation scoped' : 'Exact recorded identity'}</small></span>
       </span>,
     },
     { accessorKey: 'records', header: 'Records', size: 86, meta: { numeric: true }, cell: ({ getValue }) => formatCount(getValue()) },
@@ -147,15 +149,19 @@ function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onIn
     })),
     {
       id: 'recordedCostUsd', accessorFn: (group) => group.recordedCostUsd ?? undefined,
-      header: () => <span className={styles.columnLabel}>Estimate<small>USD / share of scope</small></span>,
+      header: () => <span className={styles.columnLabel}>Recorded cost<small>USD / share of scope</small></span>,
       sortUndefined: 'last', size: 154, meta: { numeric: true },
       cell: ({ row }) => <span className={styles.estimate}><strong>{formatEstimate(row.original.recordedCostUsd)}</strong>
         <small>{formatPercent(costShare(row.original, summary))}</small></span>,
     },
+    {id:'averageLatencyMs',accessorKey:'averageLatencyMs',header:()=> <span className={styles.columnLabel}>Mean latency<small>Exact linked ms / samples</small></span>,size:155,meta:{numeric:true},cell:({row})=><span className={styles.estimate}><strong>{formatCount(row.original.averageLatencyMs)}</strong><small>{formatCount(row.original.latencySamples)} samples</small></span>},
+    {id:'pairedCost',header:()=> <span className={styles.columnLabel}>Cost + latency<small>USD / paired sample</small></span>,size:145,enableSorting:false,meta:{numeric:true},cell:({row})=><span className={styles.estimate}><strong>{formatEstimate(row.original.costLatencySamples>0 ? row.original.pairedCostUsd/row.original.costLatencySamples : null)}</strong><small>{formatCount(row.original.costLatencySamples)} same-row pairs</small></span>},
   ], [accounts, groupBy, maximums, summary]);
   const table = useTable({
     features, data: groups, columns, getRowId: (group) => groupKey(group, groupBy),
     initialState: { sorting: [{ id: 'recordedCostUsd', desc: true }], columnPinning: { start: ['compare', 'identity'], end: [] } },
+    manualSorting:Boolean(onSortingChange),...(sorting ? {state:{sorting:[sorting]}} : {}),
+    ...(onSortingChange ? {onSortingChange:(updater)=>{const next=typeof updater==='function'?updater([sorting]):updater;if(next[0])onSortingChange(next[0]);}} : {}),
     enableSortingRemoval: false,
   });
   const compared = table.getSelectedRowModel().rows.map((row) => row.original);
@@ -166,7 +172,7 @@ function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onIn
   return (
     <>
       <div className={styles.bookTools}>
-        <span>{formatCount(groups.length)} {groupBy === 'account' ? 'accounts' : `${groupBy}s`}<span className={styles.separator}>/</span>{formatCount(summary.records)} records</span>
+        <span>{formatCount(groups.length)} of {formatCount(data.groupPagination?.totalItems ?? groups.length)} cohorts<span className={styles.separator}>/</span>{formatCount(summary.records)} records</span>
         <Tooltip label="Identity columns remain visible when scrolling token columns."><Button size="compact-xs" variant="subtle" color="gray"
           onClick={() => table.setColumnPinning(table.getIsSomeColumnsPinned('start') ? { start: [], end: [] } : { start: ['compare', 'identity'], end: [] })}>
           {table.getIsSomeColumnsPinned('start') ? 'Unpin identity' : 'Pin identity'}</Button></Tooltip>
@@ -176,8 +182,9 @@ function GroupBook({ data, groupBy, accounts, selectedGroup, onGroupSelect, onIn
         rowLabel={(group) => `Inspect ${groupName(group, groupBy, accounts)} on ${group.provider || 'unspecified provider'}`} />
       <div className={styles.tableNote}>
         <span>Token rails compare each column independently. Select rows to compare recorded quantities.</span>
-        {data.groupsTruncated ? <strong>Showing the 100 cohorts with most records. Shares use the complete scope.</strong> : null}
+        {data.groupsTruncated ? <strong>Cohort sorting precedes pagination. Shares use the complete scope.</strong> : null}
       </div>
+      {data.groupPagination?.totalPages>1 && <div className={styles.pagination}><span>Cohort page {data.groupPagination.page} of {data.groupPagination.totalPages}</span><Pagination size="sm" total={data.groupPagination.totalPages} value={data.groupPagination.page} onChange={onPageChange} disabled={!onPageChange} getItemProps={page=>({'aria-label':`Economics cohort page ${page}`})}/></div>}
       {compared.length > 0 ? <CohortComparison groups={compared} groupBy={groupBy} accounts={accounts} onClear={() => table.resetRowSelection(true)} /> : null}
     </>
   );
@@ -246,7 +253,7 @@ function RequestLedger({ data, loading, error, selectedGroup, groupBy, accounts,
   return (
     <section className={styles.ledger} aria-label="Contributing request ledger" aria-busy={loading}>
       <div className={styles.sectionHeader}>
-        <div><h3>Contributing records</h3><p>{selectedGroup ? `${groupName(selectedGroup, groupBy, accounts)} on ${selectedGroup.provider}` : 'Complete selected scope'}</p></div>
+        <div><h3>Contributing records</h3><p>{selectedGroup ? `${groupName(selectedGroup, groupBy, accounts)}${selectedGroup.provider ? ` on ${selectedGroup.provider}` : ''}` : 'Complete selected scope'}</p></div>
         <div className={styles.ledgerControls}>
           {selectedGroup ? <Button variant="subtle" size="compact-xs" onClick={onClear}>Show full scope</Button> : null}
           {onStatusChange ? <Select size="xs" w={165} styles={{ input: { fontSize: 13 } }} aria-label="Request ledger status" value={status} onChange={onStatusChange}
@@ -270,10 +277,11 @@ function RequestLedger({ data, loading, error, selectedGroup, groupBy, accounts,
   );
 }
 
-export function EconomicsDetail({ selection, accounts = EMPTY }) {
+export function EconomicsDetail({ selection, accounts = EMPTY, onDrilldown, onContext }) {
   const record = selection?.kind === 'economics-record';
   const row = record ? selection.record : selection?.kind === 'economics-group' ? selection.group : null;
   if (!row) return <p className={styles.detailHint}>Select a cohort or request to inspect its recorded quantities and coverage.</p>;
+  if (record) return <EconomicsEvidence row={row} onDrilldown={onDrilldown} onContext={onContext}/>;
   return (
     <div className={styles.detail}>
       <div className={styles.detailIdentity}><ProviderMark provider={row.provider} label />
@@ -281,7 +289,6 @@ export function EconomicsDetail({ selection, accounts = EMPTY }) {
         <p>{record ? recordTime(row.timestamp, true) : `${formatCount(row.records)} records in the selected scope`}</p>
         {record ? <dl className={styles.recordFacts}><div><dt>Record ID</dt><dd>{row.id}</dd></div><div><dt>Account ID</dt><dd>{row.connectionId || 'Unassigned'}</dd></div><div><dt>Status</dt><dd>{row.status === 'pending' ? 'Recorded pending' : row.status || 'Unknown'}</dd></div></dl> : null}
         {!record && selection.groupBy === 'account' ? <dl className={styles.recordFacts}><div><dt>Account ID</dt><dd>{row.connectionId || 'Unassigned'}</dd></div></dl> : null}
-        {record ? <p className={styles.detailNote}>No verified context-session identity is recorded in this ledger. Context attempts are not linked by timestamp.</p> : null}
         {!record && !groupFilters(row, selection.groupBy) ? <p className={styles.detailNote}>This cohort has an unspecified identity. The current filter API cannot isolate its request records.</p> : null}
       </div>
       <div><dl className={styles.facts}>
@@ -289,13 +296,15 @@ export function EconomicsDetail({ selection, accounts = EMPTY }) {
       </dl>
       <p className={styles.detailNote}>Input is cache inclusive. Uncached input is derived from input minus cache reads and writes, clamped at zero.</p></div>
       <div><dl className={styles.facts}>
-        <div className={styles.costFact}><dt>Recorded estimate<small>Model-rate application estimate</small></dt><dd>{formatEstimate(row.recordedCostUsd)}<small>USD</small></dd></div>
+        <div className={styles.costFact}><dt>Chosen ledger amount<small>Read the contributing cost sources</small></dt><dd>{formatEstimate(row.recordedCostUsd)}<small>USD</small></dd></div>
+        <div><dt>Application estimates</dt><dd>{formatEstimate(row.estimatedCostUsd)}<small>{formatCount(row.estimatedCostSamples)} samples</small></dd></div>
+        <div><dt>Upstream USD reports</dt><dd>{formatEstimate(row.reportedCostUsd)}<small>{formatCount(row.reportedCostSamples)} samples</small></dd></div>
         {!record ? <><div><dt>Cost samples / all records</dt><dd>{formatCount(row.costSamples)} / {formatCount(row.records)}</dd></div>
           <div><dt>Zero-cost records</dt><dd>{formatCount(row.zeroCostRows)}</dd></div>
           <div><dt>Estimate / cost sample</dt><dd>{formatEstimate(averageEstimate(row))}<small>USD</small></dd></div></> : null}
       </dl>
       <QualityNotice row={row} record={record} />
-      <p className={styles.detailNote}>Recorded estimates are not subscription payments or invoices. Historical price basis is unavailable; zero does not establish free usage.</p>
+      <p className={styles.detailNote}>Estimates and upstream USD reports are separate, never added together. Neither establishes subscription payments or confirmed invoice charges. Historical zero remains ambiguous.</p>
       </div>
     </div>
   );
@@ -306,29 +315,30 @@ export default function EconomicsLens({
   ledgerData, ledgerLoading = false, ledgerError, selectedGroup, onGroupSelect,
   onPageChange, onInspect, accounts = EMPTY, ledgerSorting = DEFAULT_SORTING, onLedgerSortingChange,
   ledgerStatus = 'all', onLedgerStatusChange,
-  onTimeRangeChange,
+  onTimeRangeChange, groupSorting,onGroupSortingChange,onGroupPageChange,costSource='all',onCostSourceChange,attemptKind='all',onAttemptKindChange,
 }) {
   const summary = data?.summary;
   return (
     <section className={styles.lens} aria-label="Token economics" aria-busy={loading}>
       <div className={styles.heading}>
         <div><h2>Recorded token economics</h2><p>Completion quantities and the application’s model-rate estimates</p></div>
-        <SegmentedControl size="sm" value={groupBy} onChange={onGroupByChange} disabled={!onGroupByChange || loading}
-          transitionDuration={0} aria-label="Group economics by" data={[
-            { value: 'provider', label: 'Provider' }, { value: 'model', label: 'Model' }, { value: 'account', label: 'Account' },
-          ]} />
+        <Group gap="xs" wrap="wrap"><Select size="sm" w={210} value={groupBy} onChange={onGroupByChange} disabled={!onGroupByChange || loading} allowDeselect={false} aria-label="Group economics by" data={ECONOMICS_GROUPS.map(({value,label})=>({value,label}))}/>
+          {onCostSourceChange && <Select size="sm" w={180} aria-label="Cost evidence source" allowDeselect={false} value={costSource} onChange={onCostSourceChange} data={[{value:'all',label:'All cost sources'},{value:'application-estimate',label:'Application estimates'},{value:'provider-reported',label:'Upstream USD reports'},{value:'unknown',label:'Unknown cost source'}]}/>}
+          {onAttemptKindChange && <Select size="sm" w={175} aria-label="Physical attempt kind" allowDeselect={false} value={attemptKind} onChange={onAttemptKindChange} data={[{value:'all',label:'All attempt coverage'},{value:'initial',label:'Initial physical attempts'},{value:'additional',label:'Additional physical attempts'},{value:'unknown',label:'Unknown attempt coverage'}]}/>}
+        </Group>
       </div>
-      <div className={styles.provenance}>Estimates in USD, not paid spend or invoices. Historic zero costs and missing cache detail remain ambiguous.</div>
+      <div className={styles.provenance}>USD estimates and upstream reports are distinct from paid spend or invoices. Historical zero costs and missing identity/cache detail remain unknown.</div>
       {error ? <div role="alert" className={styles.empty}>Economics could not be loaded. Refresh the workspace to retry.</div>
         : loading || !summary ? <div role="status" className={styles.empty}>Loading recorded economics…</div>
         : <>
-          <div className={styles.scopeTotal}><span>Selected scope</span><strong>{formatEstimate(summary.recordedCostUsd)} <small>estimated USD</small></strong>
+          <div className={styles.scopeTotal}><span>Selected scope</span><strong>{formatEstimate(summary.recordedCostUsd)} <small>recorded USD</small></strong>
             <span>{formatCount(summary.costSamples)} cost samples / {formatCount(summary.records)} records</span>
             <span>{formatCount(summary.zeroCostRows)} zero-cost records</span></div>
           <QualityNotice row={summary} />
+          <EconomicsCoverage summary={summary}/>
           <EconomicsTrend data={data} onTimeRangeChange={onTimeRangeChange} />
           {summary.records ? <GroupBook key={groupBy} data={data} groupBy={groupBy} accounts={accounts} selectedGroup={selectedGroup}
-            onGroupSelect={onGroupSelect} onInspect={onInspect} />
+            onGroupSelect={onGroupSelect} onInspect={onInspect} sorting={groupSorting} onSortingChange={onGroupSortingChange} onPageChange={onGroupPageChange}/>
             : <div className={styles.empty}>No economics records match this scope. Expand the period or clear a filter.</div>}
           <RequestLedger data={ledgerData ?? (selectedGroup ? null : data)} loading={ledgerLoading} error={ledgerError}
             selectedGroup={selectedGroup} groupBy={groupBy} accounts={accounts} onClear={() => onGroupSelect?.(null)}

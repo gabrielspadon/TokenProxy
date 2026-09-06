@@ -1,3 +1,4 @@
+import { economicsGroupKey, economicsGroupFilters } from '@/lib/db/analytics/economicsDimensions.mjs';
 const integer = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 });
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
@@ -19,11 +20,16 @@ export const formatPercent = (value) => Number.isFinite(value)
   : 'Unknown';
 
 export function groupKey(group, groupBy) {
-  return JSON.stringify([groupBy, group.provider ?? null,
-    groupBy === 'model' ? group.model ?? null : groupBy === 'account' ? group.connectionId ?? null : null]);
+  return economicsGroupKey(group,groupBy);
 }
 
 export function groupName(group, groupBy, accounts = []) {
+  if (groupBy==='session') return group.contextSessionId || group.sessionId ? `Session ${group.contextSessionId || group.sessionId}` : 'Session unavailable';
+  const referenceFields={'logical-request':'logicalRequestId','client-project':'projectRef',client:'clientRef',task:'taskRef'};
+  if(referenceFields[groupBy]) {
+    const value=group[referenceFields[groupBy]];
+    return value ? `${groupBy==='logical-request'?'Request':groupBy==='client-project'?'Project reference':groupBy==='client'?'Client':'Task'} ${value.startsWith('ctx1_')?value.slice(5,17):value.slice(0,12)}` : `${groupBy==='client-project'?'Project reference':groupBy==='logical-request'?'Logical request':groupBy==='client'?'Client':'Task'} unavailable`;
+  }
   if (groupBy === 'model') return group.model || 'Unspecified model';
   if (groupBy === 'account') {
     const account = accounts.find((item) => (item.id ?? item.connectionId) === group.connectionId);
@@ -34,10 +40,7 @@ export function groupName(group, groupBy, accounts = []) {
 }
 
 export function groupFilters(group, groupBy) {
-  if (!group?.provider) return null;
-  if (groupBy === 'model') return group.model ? { provider: group.provider, model: group.model } : null;
-  if (groupBy === 'account') return group.connectionId ? { provider: group.provider, connectionId: group.connectionId } : null;
-  return { provider: group.provider };
+  return economicsGroupFilters(group,groupBy);
 }
 
 export function averageEstimate(group) {
