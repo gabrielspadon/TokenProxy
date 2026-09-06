@@ -1,6 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { makeKv } from "../helpers/kvStore.js";
+import { readRoutingConfig, recordConfigMutation } from "../helpers/configHistory.js";
 
 const aliasKv = makeKv("modelAliases");
 const customKv = makeKv("customModels");
@@ -12,11 +13,21 @@ export async function getModelAliases() {
 }
 
 export async function setModelAlias(alias, model) {
-  await aliasKv.set(alias, model);
+  const db = await getAdapter();
+  db.transaction(() => {
+    const before = readRoutingConfig(db);
+    db.run("INSERT INTO kv(scope, key, value) VALUES(?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value", ["modelAliases", alias, stringifyJson(model)]);
+    recordConfigMutation(db, before, "repo.aliases.set");
+  });
 }
 
 export async function deleteModelAlias(alias) {
-  await aliasKv.remove(alias);
+  const db = await getAdapter();
+  db.transaction(() => {
+    const before = readRoutingConfig(db);
+    db.run("DELETE FROM kv WHERE scope = ? AND key = ?", ["modelAliases", alias]);
+    recordConfigMutation(db, before, "repo.aliases.delete");
+  });
 }
 
 // customModels: key=`${providerAlias}|${id}|${type}`, value=full model object

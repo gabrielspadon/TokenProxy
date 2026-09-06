@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { dirname } from "node:path";
 import initSqlJs from "sql.js";
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
@@ -22,18 +23,32 @@ export async function createSqlJsAdapter(filePath) {
   let saveTimer = null;
   const SAVE_DEBOUNCE_MS = 100;
 
-  function persist() {
+  function persist({ syncDirectory = false } = {}) {
     const data = Buffer.from(db.export());
     const tmp = filePath + ".tmp";
-    const fd = fs.openSync(tmp, "w");
+    const fd = fs.openSync(tmp, "w", 0o600);
     try {
+      fs.fchmodSync(fd, 0o600);
       fs.writeFileSync(fd, data);
       fs.fsyncSync(fd);
     } finally {
       fs.closeSync(fd);
     }
     fs.renameSync(tmp, filePath); // atomic on POSIX; no torn file on crash
+    if (syncDirectory && process.platform !== "win32") {
+      const directory = fs.openSync(dirname(filePath), "r");
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+    }
     dirty = false;
+  }
+
+  // Explicit publication needs an observable persistence failure. Ordinary
+  // callers retain the debounced path; this barrier also syncs the renamed
+  // directory entry on POSIX. Windows supports the file fsync only here.
+  function flush() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    if (dirty) persist({ syncDirectory: true });
   }
 
   function scheduleSave() {
@@ -124,13 +139,13 @@ export async function createSqlJsAdapter(filePath) {
     db.close();
   }
 
-  const flush = () => {
+  const flushOnShutdown = () => {
     if (dirty)
       try {
         persist();
       } catch {}
   };
-  registerShutdownFlusher(flush, 100);
+  registerShutdownFlusher(flushOnShutdown, 100);
 
-  return { driver: "sql.js", run, get, all, exec, transaction, close, raw: db };
+  return { driver: "sql.js", run, get, all, exec, transaction, flush, close, raw: db };
 }

@@ -5,6 +5,8 @@ import {
   isValidConnectTimeoutMs,
 } from "../../../../open-sse/config/connectTimeout.js";
 
+import { CONFIG_SETTINGS_KEYS, readRoutingConfig, recordConfigMutation } from "../helpers/configHistory.js";
+
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL =
   process.env.HEADROOM_URL || "http://localhost:8787";
@@ -229,9 +231,11 @@ export async function getSettings() {
 
 // Atomic read-merge-write inside transaction (prevents losing concurrent updates)
 export async function updateSettings(updates) {
+  const tracked = CONFIG_SETTINGS_KEYS.some(key => Object.hasOwn(updates, key));
   const db = await getAdapter();
   let next;
   db.transaction(function () {
+    const before = tracked ? readRoutingConfig(db) : null;
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
     // Nested config objects arrive as partial PATCHes from the dashboard;
@@ -266,6 +270,7 @@ export async function updateSettings(updates) {
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)],
     );
+    if (tracked) recordConfigMutation(db, before, "repo.settings.update");
   });
   return mergeWithDefaults(next);
 }
