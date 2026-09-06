@@ -9,7 +9,8 @@ import { Notice } from '@/shared/components/Notice';
 import { QuotaWindow } from '@/shared/components/QuotaWindow';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
-import { fmtNum, fmtRelative, fmtTime } from '@/shared/format';
+import { fmtNum, fmtRelative } from '@/shared/format';
+import { recordTime } from '@/shared/components/workspace/economics';
 import { TONE, WORDS as STATUS } from '@/shared/status';
 import { Icon } from '@/shared/components/Icon';
 import SessionPins from '@/shared/components/SessionPins';
@@ -95,7 +96,7 @@ function Receipt({ r, names, now }) {
   return (
     <div className="row sessions-row">
       <div className="who">
-        <Button variant="subtle" size="compact-sm" onClick={()=>setSelectedRecord({kind:'routing-switch',id:r.receiptId,model:r.model,connectionId:r.newConnectionId,fromConnectionId:r.oldConnectionId,...(Number.isFinite(Date.parse(r.timestamp))?{timestamp:new Date(r.timestamp).toISOString()}:{})})} aria-label={`Select routing receipt ${r.receiptId}`}>{fmtTime(r.timestamp)}</Button>
+        <Button variant="subtle" size="compact-sm" onClick={()=>setSelectedRecord({kind:'routing-switch',id:r.receiptId,model:r.model,connectionId:r.newConnectionId,fromConnectionId:r.oldConnectionId,...(Number.isFinite(Date.parse(r.timestamp))?{timestamp:new Date(r.timestamp).toISOString()}:{})})} aria-label={`Select routing receipt ${r.receiptId}`}>{recordTime(r.timestamp)}</Button>
         <span className="sub" data-i18n-skip>
           {fmtRelative(r.timestamp, now)}
         </span>
@@ -428,7 +429,7 @@ export default function SessionsPage() {
                 <summary className="sessions-ledger">
                   <span className="sessions-caret" aria-hidden="true" />
                   <span className="who">
-                    <span className="id" data-i18n-skip>{fmtTime(r.timestamp)}</span>
+                    <span className="id" data-i18n-skip>{recordTime(r.timestamp)}</span>
                     <span className="sub" data-i18n-skip>{fmtRelative(r.timestamp, now)}</span>
                   </span>
                   <span className="status" data-tone={TRIGGER_TONE[r.trigger]}>
