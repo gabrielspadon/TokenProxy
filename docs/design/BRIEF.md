@@ -1,5 +1,9 @@
 # TokenProxy operator surface, designed from zero
 
+Historical brief, superseded on 2026-09-06 by [the Graphite workspace](./GRAPHITE.md).
+The implementation below is preserved as design history. Its instructions and
+screenshots do not describe the current UI or establish its release gates.
+
 You are the design lead and the sole implementer of TokenProxy's operator
 surface. The gateway underneath you is finished and running. Nothing above
 it exists. You are not restyling, migrating, or reconciling anything: the

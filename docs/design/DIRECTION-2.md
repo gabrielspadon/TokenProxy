@@ -1,5 +1,9 @@
 # Direction 2 — from editorial surface to operator dashboard
 
+Historical direction, superseded on 2026-09-06 by [the Graphite workspace](./GRAPHITE.md).
+The paper/Fira palette and tile-led layout below are no longer binding.
+Existing files under `docs/design/evidence/` record earlier passes, not current verification.
+
 The first build reads as an editorial document: prose-led, quiet, almost no
 chrome. The operator asked for a dashboard: telemetry where required, control
 panels, quick actions, icons, richer interaction, motion when it answers an

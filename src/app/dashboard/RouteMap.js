@@ -12,6 +12,12 @@ import { fmtNum } from '@/shared/format';
 import { TONE, WORDS } from '@/shared/status';
 
 const RANK = { bad: 3, warn: 2, ok: 1 };
+function inspectOnKeyboard(event) {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    event.currentTarget.click();
+  }
+}
 
 // One lane per provider the gateway knows about today: every connected
 // provider, every provider with a request in today's rollup, every provider
@@ -129,20 +135,20 @@ export function RouteMap({
     s.account &&
     s.account === c.displayName &&
     conns.filter((x) => x.provider === c.provider && x.displayName === c.displayName).length === 1;
-  const accounts = conns
-    .slice(0, 6)
-    .map((c) => ({
-      ...c,
-      id: c.connectionId,
-      tone: TONE[c.status] || 'warn',
-      word: c.isDraining ? 'Draining' : WORDS[c.status] || c.status,
-      active: active.filter((s) => matches(s, c)).length,
-    }));
+  const accounts = conns.slice(0, 6).map((c) => ({
+    ...c,
+    id: c.connectionId,
+    tone: TONE[c.status] || 'warn',
+    word: c.isDraining ? 'Draining' : WORDS[c.status] || c.status,
+    active: active.filter((s) => matches(s, c)).length,
+  }));
   const height = accounts.length ? Math.max(320, accounts.length * 64) : 210;
   const nodes = [
     ...requests.map((s, i) => ({
       id: `request-${i}`,
       ariaLabel: `Inspect request ${i + 1}, ${s.model || 'model unknown'}, ${s.account || 'account unknown'}`,
+      ariaRole: 'button',
+      domAttributes: { onKeyDown: inspectOnKeyboard },
       type: 'router',
       width: 210,
       height: 74,
@@ -162,6 +168,8 @@ export function RouteMap({
     ...accounts.map((c, i) => ({
       id: c.id,
       ariaLabel: `Inspect ${c.displayName || c.provider}, ${c.word || 'health unknown'}`,
+      ariaRole: 'button',
+      domAttributes: { onKeyDown: inspectOnKeyboard },
       type: 'router',
       width: 260,
       height: 50,
@@ -251,7 +259,10 @@ export function RouteMap({
               nodesConnectable={false}
               edgesFocusable={false}
               deleteKeyCode={null}
-              ariaLabelConfig={{'node.a11yDescription.default':'Press Enter or Space to inspect the observed request or account.'}}
+              ariaLabelConfig={{
+                'node.a11yDescription.default':
+                  'Press Enter or Space to inspect the observed request or account.',
+              }}
               zoomOnScroll={false}
               panOnDrag={false}
               preventScrolling={false}

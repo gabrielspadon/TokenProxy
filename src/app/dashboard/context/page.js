@@ -18,7 +18,7 @@ import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
 import { ProviderMark } from '@/shared/components/ProviderMark';
 import { refusal } from '@/shared/refusal';
-import { fmtNum, fmtPct, fmtTime, fmtDuration } from '@/shared/format';
+import { fmtNum, fmtPct, fmtTime, fmtLatency } from '@/shared/format';
 import './styles.css';
 const short = (n) =>
   n == null ? '—' : fmtNum(n, { notation: 'compact', maximumFractionDigits: 1 });
@@ -567,8 +567,8 @@ export default function ContextPage() {
                     />
                     <Stat
                       label="Response time"
-                      value={selected.latencyMs == null ? '—' : fmtDuration(selected.latencyMs)}
-                      note={`First token ${selected.ttftMs == null ? 'unknown' : fmtDuration(selected.ttftMs)}`}
+                      value={selected.latencyMs == null ? '—' : fmtLatency(selected.latencyMs)}
+                      note={`First token ${selected.ttftMs == null ? 'unknown' : fmtLatency(selected.ttftMs)}`}
                     />
                     <Stat
                       label="Provider output"

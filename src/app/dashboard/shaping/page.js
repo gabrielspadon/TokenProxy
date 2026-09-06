@@ -74,7 +74,7 @@ const GROUPS = [
   { title: 'History', stages: ['mem', 'pairs', 'reorder'] },
   { title: 'Tool traffic', stages: ['rtk', 'tools', 'schema'] },
   { title: 'Compression', stages: ['pxpipe', 'qac'] },
-  { title: 'Prompt injection', stages: ['inject', 'midinject', 'thinking'] },
+  { title: 'Prompt instructions', stages: ['inject', 'midinject', 'thinking'] },
   { title: 'Safeguards', stages: ['privacy', 'headroom'] },
 ];
 const THRESHOLDS = [
@@ -256,7 +256,9 @@ export default function ShapingPage() {
                                 <span
                                   className="risk-chip"
                                   data-risk={
-                                    layerRisk(l, s).startsWith('Semantic') ? 'safe' : 'changing'
+                                    /^(Semantic|Preserving|No content)/.test(layerRisk(l, s))
+                                      ? 'safe'
+                                      : 'changing'
                                   }
                                 >
                                   {layerRisk(l, s)}

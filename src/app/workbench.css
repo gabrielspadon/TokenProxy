@@ -1565,3 +1565,21 @@ body section[aria-labelledby='h-layers'] > p {
     font-size: 12px;
   }
 }
+.rows:empty {
+  display: none;
+}
+.content > .screen > .screen-head > div:first-child {
+  margin-inline-end: auto;
+}
+.tool-card-facts {
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+.tool-card-facts > code {
+  flex-basis: 100%;
+  font-size: 11px;
+}
+.tool-card-facts > span {
+  white-space: nowrap;
+  font-size: 11px;
+}

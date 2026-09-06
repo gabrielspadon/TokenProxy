@@ -36,6 +36,11 @@ export function fmtDuration(ms) {
   return `${fmtUnit(d, "day")} ${fmtUnit(h % 24, "hour")}`;
 }
 
+export function fmtLatency(ms) {
+  if (ms < 1000) return `${fmtNum(ms, { maximumFractionDigits: 1 })} ms`;
+  return `${fmtNum(ms / 1000, { maximumFractionDigits: 2 })} s`;
+}
+
 export function fmtTime(iso) {
   return new Intl.DateTimeFormat(lang(), { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(iso));
 }

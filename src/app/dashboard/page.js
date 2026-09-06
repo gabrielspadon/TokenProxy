@@ -11,7 +11,7 @@ import { ProviderMark } from '@/shared/components/ProviderMark';
 import { TrafficChart } from '@/shared/components/TrafficChart';
 import { Icon } from '@/shared/components/Icon';
 import { refusal } from '@/shared/refusal';
-import { fmtDuration, fmtNum, fmtPct, fmtRelative, fmtUsd } from '@/shared/format';
+import { fmtDuration, fmtLatency, fmtNum, fmtPct, fmtRelative, fmtUsd } from '@/shared/format';
 import { TONE, WORDS } from '@/shared/status';
 import { RouteMap } from './RouteMap';
 import { AccountInspector } from './AccountInspector';
@@ -136,7 +136,7 @@ export default function NowPage() {
         />
         <Kpi
           label="Response latency · p95"
-          value={m.latencyP95?.value == null ? '—' : fmtDuration(m.latencyP95.value)}
+          value={m.latencyP95?.value == null ? '—' : fmtLatency(m.latencyP95.value)}
           foot="Slowest 5% boundary · last hour"
           icon="i-now"
         />
