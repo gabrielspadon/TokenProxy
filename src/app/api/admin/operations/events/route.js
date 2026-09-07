@@ -13,8 +13,19 @@ export async function GET(request) {
   const params = new URL(request.url).searchParams;
   try {
     parseOperationEventsQuery(params);
-  } catch {
-    return adminError(400, 'invalid_query', 'Select a valid operation history range.');
+  } catch (invalid) {
+    // The parser separates an unknown or duplicated parameter from a malformed
+    // range, and the caller can only act on the difference: telling someone who
+    // mistyped a parameter to fix their dates sends them to the wrong control.
+    // The reason is named without echoing the caller's input back.
+    const unknownParameter = /Unknown or duplicate/.test(invalid?.message || '');
+    return adminError(
+      400,
+      'invalid_query',
+      unknownParameter
+        ? 'That operation history filter is not supported, or was given twice.'
+        : 'Select a valid operation history range.'
+    );
   }
   try {
     return adminJson(await getOperationEvents(params, { signal: request.signal }));
