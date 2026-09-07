@@ -12,8 +12,8 @@ export function Ruler({ horizonMs, marks = [], now, showScale = false }) {
       ))}
       {showScale ? (
         <>
-          <span className="scale now" data-i18n-skip>{fmtTime(new Date(now).toISOString())}</span>
-          <span className="scale end" style={{ insetInlineStart: "100%" }} data-i18n-skip>{fmtRelative(new Date(now + horizonMs).toISOString(), now)}</span>
+          <span className="scale now">{fmtTime(new Date(now).toISOString())}</span>
+          <span className="scale end" style={{ insetInlineStart: "100%" }}>{fmtRelative(new Date(now + horizonMs).toISOString(), now)}</span>
         </>
       ) : null}
     </div>

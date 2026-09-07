@@ -14,7 +14,7 @@
 // formatted with the reader's own grouping and decimal marks (zh-CN sees
 // "US$0.20", not an ambiguous "$0.20").
 
-// Locales this fork ships (src/i18n/config.js) whose currency is unambiguous.
+// Currency conventions for callers that explicitly supply a formatting locale.
 // Anything absent — en, es, ar, bn, ur, where the tag names a language spoken
 // across several currency zones — stays in USD rather than guessing a country.
 const LOCALE_CURRENCY = {
@@ -38,7 +38,7 @@ export function currencyForLocale(locale) {
  * @param {number} usd       amount in USD (null/NaN is treated as zero, which is
  *                           what every call site already did with `n || 0`)
  * @param {object} [options]
- * @param {string} [options.locale="en"]  BCP-47 tag, e.g. the `locale` cookie
+ * @param {string} [options.locale="en"]  Explicit BCP-47 formatting tag
  * @param {number} [options.decimals=2]   fraction digits, both min and max, so a
  *                                        per-call cost can keep 4 the way the
  *                                        chart does today
@@ -63,7 +63,7 @@ export function formatCost(usd, { locale = "en", decimals = 2, rate = null } = {
   try {
     return new Intl.NumberFormat(locale, opts).format(amount);
   } catch {
-    // An unusable locale tag is a bad cookie, not a reason to show nothing.
+    // An unusable formatting tag falls back to English number conventions.
     return new Intl.NumberFormat("en", opts).format(amount);
   }
 }

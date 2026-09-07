@@ -425,3 +425,8 @@
 .gateCell > span + span {
   color: var(--ink);
 }
+.capacityViews { max-width: 100%; }
+@media (max-width: 760px) {
+  .capacityViews { width: 100%; }
+  .capacityViews :global(.mantine-SegmentedControl-label) { font-size: 13px; padding: 6px 7px; }
+}

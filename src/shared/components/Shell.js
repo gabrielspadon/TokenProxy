@@ -23,7 +23,6 @@ import {
 import { useHotkeys, useMediaQuery } from '@mantine/hooks';
 import { NAV, NAV_GROUPS } from '@/shared/nav';
 import { useAuthStatus } from '@/store/authStatus';
-import { LocaleSelect } from './LocaleSelect';
 import { Icon } from './Icon';
 import { WorkspaceProvider, useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { ObservationControls } from '@/shared/workspace/ObservationControls';
@@ -72,7 +71,7 @@ export function SnapshotNotice() {
         <span className={styles.snapshotDot} />
         <span className={styles.snapshotIdentity}>
           <span>{synthetic ? 'Synthetic fixture' : 'Snapshot'}</span>
-          {snapshot.capturedAt && <time dateTime={snapshot.capturedAt} dir="ltr" data-i18n-skip>{captured} UTC</time>}
+          {snapshot.capturedAt && <time dateTime={snapshot.capturedAt} dir="ltr">{captured} UTC</time>}
         </span>
         <span className={styles.isolation}>Isolated</span>
       </span>
@@ -136,7 +135,7 @@ function WorkspaceShell({ children }) {
             size="sm"
             aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           />
-          <Link href="/dashboard" className={styles.wordmark} data-i18n-skip>
+          <Link href="/dashboard" className={styles.wordmark}>
             TokenProxy<span className={styles.wordmarkPoint}>.</span>
           </Link>
           <Text className={styles.workspaceLabel}>AI gateway</Text>
@@ -153,12 +152,12 @@ function WorkspaceShell({ children }) {
               <Icon name="i-search" />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Workspace account and language">
+          <Tooltip label="Workspace preferences">
             <ActionIcon
               variant="subtle"
               color="gray"
               size="lg"
-              aria-label="Workspace account and language"
+              aria-label="Workspace preferences"
               className={styles.desktopPreferences}
               onClick={() => setPreferencesOpen(true)}
             >
@@ -178,7 +177,7 @@ function WorkspaceShell({ children }) {
             setPreferencesOpen(true);
           }}
         >
-          Workspace account and language
+          Workspace preferences
         </Button>
         <div className={styles.navIntro}>
           <div>
@@ -301,7 +300,6 @@ function WorkspaceShell({ children }) {
                 ? 'Sign-in is turned off'
                 : 'Operator account'}
           </Text>
-          <LocaleSelect />
           <div>
             <Text id="appearance-label" fw={500} mb={8}>Appearance</Text>
             <SegmentedControl fullWidth aria-labelledby="appearance-label" value={colorScheme} onChange={setColorScheme}

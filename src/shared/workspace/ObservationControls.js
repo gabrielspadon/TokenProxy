@@ -25,7 +25,7 @@ export function ObservationControls() {
         <Text size="sm">Each source keeps its own observation age. Resuming re-reads current state; events that were not retained during a pause cannot be recovered. Dashboard refresh does not request provider authentication or inference.</Text>
         {snapshot && <Alert color="gray" title="Fixed isolated snapshot">Live updates are unavailable for this captured dataset. Permitted local changes can be verified with an explicit refresh.</Alert>}
         {next==='live' && (scope.start || scope.end) && <Alert color="indigo" title="Return to current evidence">Following live clears the fixed UTC range and includes newly retained records. Provider, account, model and selected evidence remain unchanged.</Alert>}
-        {observations.pausedAt && <Text size="sm">Background reads paused at <time dir="ltr" data-i18n-skip dateTime={observations.pausedAt}>{observations.pausedAt}</time>.</Text>}
+        {observations.pausedAt && <Text size="sm">Background reads paused at <time dir="ltr" dateTime={observations.pausedAt}>{observations.pausedAt}</time>.</Text>}
         <Button onClick={apply}>Apply observation behavior</Button>
       </Stack>
     </Modal>

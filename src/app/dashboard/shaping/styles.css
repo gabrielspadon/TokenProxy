@@ -1,4 +1,56 @@
 @layer components {
+  .savings-status-strip { display: grid; grid-template-columns: minmax(140px, .7fr) minmax(140px, .7fr) minmax(240px, 2fr); gap: 24px; padding: 20px 24px; background: var(--raised); border: 1px solid var(--rule); border-radius: 12px; }
+  .savings-status-strip > div { display: grid; gap: 4px; align-content: start; }
+  .savings-status-strip strong { font-size: 30px; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .savings-status-strip span { color: var(--slate); font-size: 13px; }
+  .savings-status-strip .link-button { justify-self: start; }
+  .savings-status-strip .savings-status-context { border-inline-start: 1px solid var(--rule); padding-inline-start: 24px; gap: 9px; }
+  .savings-status-context strong { font-size: 15px; }
+  .savings-toolbar { display: grid; grid-template-columns: minmax(160px, 2fr) minmax(130px, 1fr) minmax(130px, 1fr) auto; gap: 12px; align-items: end; margin-block: 24px; }
+  .savings-categories { display: grid; gap: 28px; }
+  .savings-category > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-block-end: 12px; }
+  .savings-category h2, .savings-evidence-head h2 { margin: 0; font-size: 18px; font-weight: 650; }
+  .savings-category header p { margin: 4px 0 0; color: var(--slate); font-size: 13px; }
+  .savings-category-count { color: var(--slate); white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .savings-category-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 8px; }
+  .savings-control-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .savings-control-cards[hidden] { display: none; }
+  .savings-control-card { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--rule); border-radius: 10px; padding: 16px; background: var(--paper); }
+  .savings-control-card[data-state="On"] { border-block-start: 3px solid var(--signal); padding-block-start: 14px; }
+  .savings-control-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+  .savings-control-title h3 { margin: 0; font-size: 14px; font-weight: 650; line-height: 1.45; }
+  .savings-control-card > p { color: var(--slate); margin-block: 8px 14px; font-size: 13px; line-height: 1.5; flex: 1; }
+  .savings-control-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+  .savings-control-footer > span { color: var(--slate); font-size: 12px; }
+  .savings-control-details { margin-block-start: 10px; border-block-start: 1px solid var(--rule); padding-block-start: 8px; font-size: 12px; }
+  .savings-control-details summary { cursor: pointer; color: var(--signal); min-height: 24px; display: list-item; }
+  .savings-control-details p { color: var(--slate); line-height: 1.5; }
+  .savings-evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-block: 28px 12px; }
+  .savings-byte-evidence { border: 1px solid var(--rule); border-radius: 12px; padding: 20px; }
+  .savings-byte-evidence[hidden] { display: none; }
+  .savings-evidence-tools { display: grid; grid-template-columns: minmax(0, 1fr) 180px; align-items: end; gap: 24px; }
+  .savings-evidence-tools p { max-width: 70ch; color: var(--slate); font-size: 13px; margin: 0; }
+  .savings-byte-legend { display: flex; justify-content: center; gap: 28px; color: var(--slate); font-size: 12px; margin-block: 20px 8px; }
+  .savings-byte-row { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(100px, 2fr) minmax(100px, .8fr); align-items: center; gap: 16px; padding-block: 12px; border-block-end: 1px solid var(--rule); font-size: 13px; }
+  .savings-byte-row > span:last-child { text-align: end; }
+  .savings-byte-row small { display: block; color: var(--slate); font-size: 11px; margin-block-start: 4px; }
+  .savings-byte-track { position: relative; height: 24px; background: var(--raised); border-radius: 4px; }
+  .savings-byte-track::after { content: ''; position: absolute; inset-inline-start: 50%; inset-block: 0; border-inline-start: 1px solid var(--slate); }
+  .savings-byte-track > span { position: absolute; inset-inline-end: 50%; inset-block: 5px; background: var(--signal); border-radius: 3px 0 0 3px; transition: width 180ms ease; }
+  .savings-byte-track > span[data-growth] { inset-inline-start: 50%; inset-inline-end: auto; background: var(--amber, #996000); border-radius: 0 3px 3px 0; }
+  @media (max-width: 1100px) { .savings-control-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 720px) {
+    .savings-status-strip { grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+    .savings-status-strip .savings-status-context { grid-column: 1 / -1; border-inline-start: 0; border-block-start: 1px solid var(--rule); padding-inline-start: 0; padding-block-start: 12px; }
+    .savings-toolbar { grid-template-columns: 1fr 1fr; margin-block: 16px; }
+    .savings-control-cards { grid-template-columns: 1fr; }
+    .savings-evidence-tools { grid-template-columns: 1fr; gap: 12px; }
+    .savings-byte-evidence { padding: 12px; }
+    .savings-byte-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .savings-byte-track { grid-row: 2; grid-column: 1 / -1; }
+    .savings-byte-legend { gap: 12px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .savings-byte-track > span { transition: none; } }
   .shaping-workspace-grid { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr); gap: 24px; margin-block: 20px; }
   .shaping-editor { border-inline-start: 1px solid var(--rule); padding-inline-start: 24px; }
   .shaping-editor label:not(.shaping-consent) { display: grid; gap: 6px; }
@@ -245,3 +297,5 @@
   .shaping-plan-receipt { overflow-wrap: anywhere; }
   @media (max-width: 768px) { .shaping-plan-fields { grid-template-columns: minmax(0,1fr); } .shaping-plan-overrides { padding: 16px; } }
 }
+.shaping-header-observations { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.shaping-header-observations > span { display: inline-flex; align-items: center; gap: 8px; }

@@ -39,7 +39,7 @@ function Endpoint({ label, value, note }) {
   return (
     <div className="keys-endpoint">
       <span className="label">{label}</span>
-      <code className="keys-secret" data-i18n-skip>
+      <code className="keys-secret">
         {value}
       </code>
       {note ? <span className="caption">{note}</span> : null}

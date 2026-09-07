@@ -53,7 +53,7 @@ Owners run the relevant tests from tests/package.json with npm --prefix tests te
 
 ## Task 5. Integrated visual and behavioral acceptance
 
-Run repository lint, build and applicable mocked suites after integration. Exercise actual user actions through backend effect, persistence, reload, refreshed evidence and failure handling. Inspect desktop 1440x1000 and 1920x1080, additional 1280x800, 768, 390 and 320 widths, keyboard, reduced motion, zoom/text spacing, supported dark mode and locale/RTL behavior.
+Run repository lint, build and applicable mocked suites after integration. Exercise actual user actions through backend effect, persistence, reload, refreshed evidence and failure handling. Inspect desktop 1440x1000 and 1920x1080, additional 1280x800, 768, 390 and 320 widths, keyboard, reduced motion, zoom/text spacing, supported dark mode and preserved Unicode account names. The product interface is English only; legacy locale cookies must not change language or direction.
 
 Inspect real images at screen, region and control scale. Keep live selection stationary. Render timestamps, provenance and selected records explicitly. Repair one consequential defect at a time and recheck affected shared neighbors. Preserve the best verified candidate. Run fresh review rounds using the documented agent-review prerequisites, recording any unavailable workflow separately rather than counting it as clean.
 

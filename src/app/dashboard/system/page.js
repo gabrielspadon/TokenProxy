@@ -217,7 +217,7 @@ export default function SystemPage() {
           {health.data ? (
             <div className="measure">
               <span className="label">Uptime</span>
-              <span className="value" data-i18n-skip>
+              <span className="value">
                 {fmtDuration(health.data.uptimeSeconds * 1000)}
               </span>
             </div>
@@ -225,7 +225,7 @@ export default function SystemPage() {
           {detail.data ? (
             <div className="measure">
               <span className="label">Checks</span>
-              <span className="value" data-i18n-skip>
+              <span className="value">
                 {fmtNum(conns.length + 1)}
               </span>
             </div>
@@ -239,7 +239,7 @@ export default function SystemPage() {
           {db && db.latencyMs !== null && db.latencyMs !== undefined ? (
             <div className="measure">
               <span className="label">Database latency</span>
-              <span className="value" data-i18n-skip>
+              <span className="value">
                 {fmtUnit(db.latencyMs, 'millisecond')}
               </span>
             </div>
@@ -276,7 +276,7 @@ export default function SystemPage() {
                 <span className="status" data-tone="ok">
                   Up
                 </span>{' '}
-                <span data-i18n-skip>{fmtDuration(health.data.uptimeSeconds * 1000)}</span>
+                <span>{fmtDuration(health.data.uptimeSeconds * 1000)}</span>
               </>
             ) : health.loading ? (
               <span className="skeleton">Reading</span>
@@ -289,7 +289,7 @@ export default function SystemPage() {
           <dt>Reading taken</dt>
           <dd>
             {health.data?.generatedAt ? (
-              <span data-i18n-skip>{fmtTime(health.data.generatedAt)}</span>
+              <span>{fmtTime(health.data.generatedAt)}</span>
             ) : (
               <span className="unreported">Not reported</span>
             )}
@@ -298,13 +298,13 @@ export default function SystemPage() {
           <dd>
             {v?.currentVersion ? (
               <>
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {v.currentVersion}
                 </span>
                 {v.buildSha ? (
                   <>
                     {' '}
-                    <span className="id" data-i18n-skip>
+                    <span className="id">
                       {v.buildSha}
                     </span>
                   </>
@@ -319,7 +319,7 @@ export default function SystemPage() {
           <dt>Published version</dt>
           <dd>
             {v?.latestVersion ? (
-              <span className="id" data-i18n-skip>
+              <span className="id">
                 {v.latestVersion}
               </span>
             ) : v ? (
@@ -406,20 +406,20 @@ export default function SystemPage() {
                 <span className="name">Database</span>
                 <span className="sub">
                   {db?.driver ? (
-                    <span className="id" data-i18n-skip>
+                    <span className="id">
                       {db.driver}
                     </span>
                   ) : null}
                   {db && db.latencyMs !== null && db.latencyMs !== undefined ? (
                     <>
                       {' '}
-                      <span data-i18n-skip>{fmtUnit(db.latencyMs, 'millisecond')}</span>
+                      <span>{fmtUnit(db.latencyMs, 'millisecond')}</span>
                     </>
                   ) : null}
                   {db?.error ? (
                     <>
                       {' '}
-                      <span data-i18n-skip>{db.error}</span>
+                      <span>{db.error}</span>
                     </>
                   ) : null}
                 </span>
@@ -439,16 +439,16 @@ export default function SystemPage() {
                     className="name"
                     href={`/dashboard/connections/${c.connectionId}`}
                     prefetch={false}
-                    data-i18n-skip
+
                   >
                     {c.displayName || c.provider}
                   </Link>
                   <span className="sub">
-                    <span data-i18n-skip>{c.provider}</span>
+                    <span>{c.provider}</span>
                     {c.lastError ? (
                       <>
                         {' '}
-                        <span data-i18n-skip>{c.lastError}</span>
+                        <span>{c.lastError}</span>
                       </>
                     ) : null}
                   </span>
@@ -546,7 +546,7 @@ export default function SystemPage() {
         {notes.state === 'ready' ? (
           <details>
             <summary>Release notes</summary>
-            <pre className="system-notes" data-i18n-skip>
+            <pre className="system-notes">
               {notes.text}
             </pre>
           </details>
@@ -706,13 +706,13 @@ export default function SystemPage() {
       >
         <dl className="facts">
           <dt>Running</dt>
-          <dd className="id" data-i18n-skip>
+          <dd className="id">
             {v?.currentVersion || '?'}
           </dd>
           <dt>Published</dt>
           <dd>
             {v?.latestVersion ? (
-              <span className="id" data-i18n-skip>
+              <span className="id">
                 {v.latestVersion}
               </span>
             ) : (

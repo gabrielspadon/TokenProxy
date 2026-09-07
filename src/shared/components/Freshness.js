@@ -38,9 +38,9 @@ export function Freshness({ status, lastDataAt }) {
   return (
     <span className="fresh" data-state={displayedStatus} role="status">
       {LABEL[displayedStatus] || displayedStatus}
-      {displayedStatus === 'stale' && when ? <span data-i18n-skip>{fmtTime(when)}</span> : null}
+      {displayedStatus === 'stale' && when ? <span>{fmtTime(when)}</span> : null}
       {['live','summary','paused','historical'].includes(displayedStatus) && when && now - lastDataAt >= 5000 ? (
-        <span data-i18n-skip>{fmtRelative(when, now)}</span>
+        <span>{fmtRelative(when, now)}</span>
       ) : null}
     </span>
   );

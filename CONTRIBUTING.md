@@ -244,10 +244,10 @@ under `docs/` are the canonical text, and translated copies are deliberately not
 kept: they drift within a release or two, and a confidently stale translation is
 worse for a reader than an accurate English page.
 
-This says nothing about the product. The dashboard's own multi-language support
-is a shipped feature and stays: its catalogues live in `public/i18n/literals/`
-and its runtime in `src/i18n/`. Adding or correcting a UI translation there is
-welcome.
+The product interface is also English only, with a left-to-right document.
+User-entered content, provider responses, speech languages and protocol
+translation retain their original values. Currency formatting uses `Intl`
+independently of the interface language.
 
 ## Code of conduct and security
 
@@ -255,4 +255,3 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Do not report a vulnerability in a public issue. The private disclosure route is
 in [SECURITY.md](SECURITY.md).
-

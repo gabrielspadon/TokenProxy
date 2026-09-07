@@ -1,6 +1,6 @@
 "use client";
 import { useState } from 'react';
-import { Checkbox } from '@mantine/core';
+import { Checkbox, Tabs } from '@mantine/core';
 import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
@@ -13,7 +13,8 @@ import { ShapingWorkbench } from './Workbench';
 import { PlanOverrides } from './PlanOverrides';
 import { RuntimeSettings } from './RuntimeSettings';
 import { ControlInventory, SignedBytes } from './ControlInventory';
-import { CONTROLS, THRESHOLDS, controlScope, configuredState, stageEvidence, thresholdPatch } from './controlCatalog';
+import { TokenSavings } from './TokenSavings';
+import { CONTROLS, THRESHOLDS, controlScope, stageEvidence, thresholdPatch } from './controlCatalog';
 import './styles.css';
 
 const SERVICE = {
@@ -70,7 +71,7 @@ function ServiceDetails({ onAction, health }) {
     <p>PXPIPE runs inside the gateway process. Reading status does not install, load or test the module.</p>
     {status.error ? <Notice {...refusal(status.status, status.error)} /> : null}
     <dl className="shaping-service-facts">
-      <div><dt>Installed</dt><dd>{!status.data ? 'Not reported' : status.data.installing ? 'Installing' : status.data.installed ? 'Installed' : 'Not installed'}{status.data?.version ? <code data-i18n-skip>{status.data.version}</code> : null}</dd></div>
+      <div><dt>Installed</dt><dd>{!status.data ? 'Not reported' : status.data.installing ? 'Installing' : status.data.installed ? 'Installed' : 'Not installed'}{status.data?.version ? <code>{status.data.version}</code> : null}</dd></div>
       <div><dt>Loaded</dt><dd>{!status.data ? 'Not reported' : status.data.running ? 'Loaded' : 'Not loaded'}</dd></div>
       <div><dt>Policy</dt><dd>{!status.data ? 'Not reported' : status.data.enabled ? 'Allowed' : 'Switched off'}</dd></div>
       <div><dt>Local self-test</dt><dd>{health ? health.healthy ? 'Passing' : 'Failing' : 'Not run in this view'}</dd></div>
@@ -78,7 +79,7 @@ function ServiceDetails({ onAction, health }) {
       <div><dt>Package manager</dt><dd>{!status.data ? 'Not reported' : status.data.npmAvailable ? 'Available' : 'Not found'}</dd></div>
     </dl>
     <div className="actions">{Object.keys(SERVICE).map(id => <button key={id} type="button" className={id === 'install' ? 'button danger' : 'button quiet'} onClick={() => onAction({ ...SERVICE[id], url: `/api/pxpipe/${id}` })}>{SERVICE[id].verb}</button>)}<button type="button" className="button quiet" onClick={() => onAction({ title: 'Run the local compression check', verb: 'Run local check', changes: 'Loads the installed PXPIPE module and transforms synthetic local input. This can change the loaded state. It does not call a model provider.', undo: 'Stop the module here if it should remain unloaded.', url: '/api/pxpipe/health', health: true, done: 'Local check finished.' })}>Run local check</button></div>
-    {health?.checks?.length ? <ul className="shaping-observations">{health.checks.map(check => <li key={check.id}><span>{check.label}</span><span>{check.ok ? 'Passing' : 'Failing'}</span>{check.detail ? <span data-i18n-skip>{check.detail}</span> : null}</li>)}</ul> : null}
+    {health?.checks?.length ? <ul className="shaping-observations">{health.checks.map(check => <li key={check.id}><span>{check.label}</span><span>{check.ok ? 'Passing' : 'Failing'}</span>{check.detail ? <span>{check.detail}</span> : null}</li>)}</ul> : null}
     {health && !health.healthy ? <Notice tone="warn" title="The local self-test did not pass." detail={health.error} /> : null}
     <p className="shaping-caption">A retained installation-log endpoint is not available in this gateway.</p>
   </section>;
@@ -100,10 +101,10 @@ function RecordedEvidence({ stats, period, onPeriod }) {
     <div className="shaping-table-scroll"><table className="shaping-evidence-table"><thead><tr><th>Stage</th><th>Recorded delta</th><th>Applied records</th><th>Byte coverage</th></tr></thead><tbody>{stages.map(stage => {
       const evidence = stageEvidence(stageMap, stage);
       const name = CONTROLS.find(control => control.stage === stage)?.name;
-      return <tr key={stage}><th>{name}<code data-i18n-skip>{stage}</code></th><td>{!evidence.measured ? <span className="unreported">{evidence.measuredRecords === 0 ? 'Not measured' : 'Not reported'}</span> : <SignedBytes value={evidence.delta} />}</td><td>{numeric(evidence.applied)}</td><td>{evidence.measuredRecords === null ? 'Unknown' : <><bdi dir="ltr" data-i18n-skip>{numeric(evidence.measuredRecords)} / {numeric(evidence.records)}</bdi> records</>}</td></tr>;
+      return <tr key={stage}><th>{name}<code>{stage}</code></th><td>{!evidence.measured ? <span className="unreported">{evidence.measuredRecords === 0 ? 'Not measured' : 'Not reported'}</span> : <SignedBytes value={evidence.delta} />}</td><td>{numeric(evidence.applied)}</td><td>{evidence.measuredRecords === null ? 'Unknown' : <><bdi dir="ltr">{numeric(evidence.measuredRecords)} / {numeric(evidence.records)}</bdi> records</>}</td></tr>;
     })}</tbody></table></div>
     <details className="shaping-technical"><summary>Separate units and reporting limits</summary><dl className="shaping-service-facts"><div><dt>Tool result characters removed</dt><dd>{numeric(window?.charsReduced)}</dd></div><div><dt>Headroom reported token reduction</dt><dd>{numeric(window?.proxyTokensSaved)}</dd></div><div><dt>PXPIPE estimated token reduction</dt><dd>{numeric(window?.estTokensSaved)}</dd></div><div><dt>Recorded transform duration, mean</dt><dd>{Number.isFinite(window?.avgMs) ? fmtUnit(window.avgMs, 'millisecond') : 'Not reported'}</dd></div><div><dt>Errors</dt><dd>Not reported</dd></div></dl><p>Errors can bypass the event sink, so zero errors would not establish successful execution. Character counts, reported tokens, token estimates and serialized bytes describe different quantities.</p></details>
-    <details className="shaping-technical"><summary>Compression estimates by day</summary><p>PXPIPE only, from its retained daily records. Estimates do not establish billed token or cost reductions.</p>{timeline.length ? <div className="shaping-table-scroll"><table className="shaping-evidence-table"><thead><tr><th>UTC date</th><th>Estimated token reduction</th><th>Compressed / recorded</th></tr></thead><tbody>{timeline.map(day => <tr key={day.date}><th data-i18n-skip>{day.date}</th><td>{numeric(day.tokensSavedEst)}</td><td>{numeric(day.compressed)} / {numeric(day.requests)}</td></tr>)}</tbody></table></div> : <p>No compressed request is recorded in the returned daily history.</p>}</details>
+    <details className="shaping-technical"><summary>Compression estimates by day</summary><p>PXPIPE only, from its retained daily records. Estimates do not establish billed token or cost reductions.</p>{timeline.length ? <div className="shaping-table-scroll"><table className="shaping-evidence-table"><thead><tr><th>UTC date</th><th>Estimated token reduction</th><th>Compressed / recorded</th></tr></thead><tbody>{timeline.map(day => <tr key={day.date}><th>{day.date}</th><td>{numeric(day.tokensSavedEst)}</td><td>{numeric(day.compressed)} / {numeric(day.requests)}</td></tr>)}</tbody></table></div> : <p>No compressed request is recorded in the returned daily history.</p>}</details>
     <details className="shaping-technical"><summary>Recent compression attempts</summary>{stats.data?.pxpipe?.recent?.length ? <ul className="shaping-observations">{stats.data.pxpipe.recent.slice(0, 20).map((row, index) => <li key={`${row.ts}-${index}`}><span>{fmtRelative(new Date(row.ts).toISOString())}</span><span>{row.applied ? 'Applied' : 'Bypassed'}{row.reason ? ` (${REASONS[row.reason] || row.reason})` : ''}</span><span>{numeric(row.tokensSavedEst)} estimated tokens</span><span>{numeric(row.durationMs)} ms</span><span>{numeric(row.imageCount)} images</span></li>)}</ul> : <p>No recent compression attempt is available in this sample.</p>}</details>
     <details className="shaping-technical"><summary>Tool disclosure records</summary>{disclosure.error ? <Notice {...refusal(disclosure.status, disclosure.error)} /> : null}{turns.length ? <div className="shaping-table-scroll"><table className="shaping-evidence-table"><thead><tr><th>Observed</th><th>Disclosed / original tools</th><th>Held back</th></tr></thead><tbody>{turns.slice(0, 20).map((turn, index) => <tr key={`${turn.ts}-${index}`}><th>{fmtRelative(new Date(turn.ts).toISOString())}</th><td>{numeric(turn.after)} / {numeric(turn.before)}</td><td>{numeric(turn.stripped)}</td></tr>)}</tbody></table></div> : <p>No disclosure record is available in this sample.</p>}</details>
   </section>;
@@ -115,6 +116,8 @@ export default function ShapingPage() {
   const [controlConsent, setControlConsent] = useState(false);
   const stats = usePoll('/api/token-saver/stats?timelineDays=30&recentLimit=100', 15000);
   const [depth, setDepth] = useState('Controls');
+  const [view, setView] = useState('overview');
+  const [selectedControl, setSelectedControl] = useState(null);
   const [opened, setOpened] = useState(['Controls']);
   const [period, setPeriod] = useState('all');
   const [pending, setPendingState] = useState(null);
@@ -130,12 +133,10 @@ export default function ShapingPage() {
     setPendingState(action?.body ? { ...action, expectedCurrent: controls.data?.currentHash, before: controls.data?.settings } : action);
   }
   const stageMap = stats.data?.windows?.all?.stages || {};
-  const enabled = s ? CONTROLS.filter(control => s[control.key] === true).length : null;
-  const known = s ? CONTROLS.filter(control => configuredState(s, control) !== 'Unknown').length : 0;
-  const recorded = Object.keys(stageMap).length;
   const chains = Object.entries(s?.comboStrategies || {}).filter(([, value]) => value && Object.hasOwn(value, 'tokenSaver')).map(([name, value]) => ({ name, value: value.tokenSaver }));
   const patch = thresholdPatch(draft);
   function navigate(next) { setDepth(next); setOpened(previous => previous.includes(next) ? previous : [...previous, next]); }
+  function advanced(next, key) { if (key) setSelectedControl(previous => ({ key, revision: (previous?.revision || 0) + 1 })); navigate(next); setView('advanced'); }
   function close() { if (!busy) { setPending(null); setFailed(null); } }
   function toggle(control, on) {
     setFailed(null); setControlConsent(false);
@@ -166,20 +167,26 @@ export default function ShapingPage() {
     return fields.length ? <details className="shaping-technical"><summary>Edit this stage’s thresholds</summary><div className="shaping-form">{fields.map(field => <label key={field.key} className="field"><span>{field.name}</span><input className="input" type="number" inputMode="numeric" min={field.min} max={field.max} step="1" value={draft[field.key] ?? s?.[field.key] ?? ''} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value }))} /><span className="shaping-caption">{field.unit}</span></label>)}</div></details> : null;
   }
   return <div className="shaping-page">
-    <header className="shaping-page-head"><div><h1>Optimization</h1><p>Control what changes before a request reaches its provider.</p></div><Freshness status={pollFresh(settings)} lastDataAt={settings.goodAt} /></header>
-    <div className="shaping-summary" aria-label="Optimization summary"><div><span>Configured on</span><strong>{enabled === null ? 'Unknown' : <bdi dir="ltr" data-i18n-skip>{fmtNum(enabled)} / {fmtNum(known)}</bdi>}</strong><span>Global controls, before plan overrides</span></div><div><span>Stages with records</span><strong>{stats.data ? fmtNum(recorded) : 'Unknown'}</strong><span>Retained history, coverage can be partial</span></div><div className="shaping-summary-note"><strong>Configuration is not execution</strong><span>Inspect request evidence to establish applicability, execution and measured change.</span><Link href="/dashboard/context">Open Context</Link></div></div>
+    <header className="shaping-page-head"><div><h1>Token savings</h1><p>Manage tool output, history and compression before requests reach the model.</p></div><div className="shaping-header-observations"><span><span className="shaping-caption">Settings</span><Freshness status={pollFresh(controls)} lastDataAt={controls.goodAt} /></span><span><span className="shaping-caption">Measurements</span><Freshness status={pollFresh(stats)} lastDataAt={stats.goodAt} /></span></div></header>
     {settings.error ? <Notice {...refusal(settings.status, settings.error)} /> : null}
     {controls.error ? <Notice {...refusal(controls.status, controls.error)} /> : null}
+    {stats.error ? <Notice {...refusal(stats.status, stats.error)} /> : null}
     {notice ? <div role="status"><Notice {...notice} /></div> : null}
-    <nav className="shaping-depths" aria-label="Optimization views">{DEPTHS.map(item => <button type="button" key={item} aria-current={depth === item ? 'page' : undefined} onClick={() => navigate(item)}>{item}</button>)}</nav>
+    <Tabs value={view} onChange={setView} keepMounted>
+    <Tabs.List aria-label="Token savings views"><Tabs.Tab value="overview">Overview</Tabs.Tab><Tabs.Tab value="advanced">Advanced</Tabs.Tab></Tabs.List>
+    <Tabs.Panel value="overview" pt="md"><TokenSavings settings={s} stageMap={stats.data?.windows?.[period]?.stages || {}} period={period} onPeriod={setPeriod} onToggle={toggle} onAdvanced={advanced} loading={controls.loading || stats.loading} unavailable={!!stats.error} busy={busy || !!pending} onRefresh={() => { settings.refresh(); controls.refresh(); stats.refresh(); }} /></Tabs.Panel>
+    <Tabs.Panel value="advanced" pt="md">
+    <nav className="shaping-depths" aria-label="Advanced savings views">{DEPTHS.map(item => <button type="button" key={item} aria-current={depth === item ? 'page' : undefined} onClick={() => navigate(item)}>{item}</button>)}</nav>
     <div hidden={depth !== 'Controls'}>
-      {!s && settings.loading ? <p className="shaping-empty">Reading global settings.</p> : <ControlInventory settings={s} stageMap={stageMap} recent={stats.data?.recent || []} onToggle={toggle} renderThresholds={renderThresholds} onInvestigate={() => navigate('Profiles and comparison')} />}
-      <details className="shaping-technical shaping-scope"><summary>Routing precedence and context-window policy</summary><p>Global settings are the baseline. The outermost routing-plan declaration wins; unspecified supported flags inherit global values. A plan can disable its 15 supported override flags; an explicit per-stage value wins over that plan gate. Privacy, disclosure, memory controls, content-change permissions and adaptive cache lifetime remain global.</p>{chains.length ? <ul className="shaping-observations">{chains.map(chain => <li key={chain.name}><code data-i18n-skip>{chain.name}</code><code data-i18n-skip>{JSON.stringify(chain.value)}</code></li>)}</ul> : <p>No routing-plan shaping override is configured.</p>}<p>Context-window overrides and cascade routing have separate settings and are outside shaping profiles.</p><div className="shaping-next"><Link href="/dashboard/models">Open model and plan settings</Link><Link href="/dashboard/model-context">Edit context-window overrides</Link></div></details>
+      {!s && controls.loading ? <p className="shaping-empty">Reading global settings.</p> : <ControlInventory key={selectedControl?.revision || 'inventory'} initialSelection={selectedControl?.key} settings={s} stageMap={stageMap} recent={stats.data?.recent || []} onToggle={toggle} renderThresholds={renderThresholds} onInvestigate={() => navigate('Profiles and comparison')} />}
+      <details className="shaping-technical shaping-scope"><summary>Routing precedence and context-window policy</summary><p>Global settings are the baseline. The outermost routing-plan declaration wins; unspecified supported flags inherit global values. A plan can disable its 15 supported override flags; an explicit per-stage value wins over that plan gate. Privacy, disclosure, memory controls, content-change permissions and adaptive cache lifetime remain global.</p>{chains.length ? <ul className="shaping-observations">{chains.map(chain => <li key={chain.name}><code>{chain.name}</code><code>{JSON.stringify(chain.value)}</code></li>)}</ul> : <p>No routing-plan shaping override is configured.</p>}<p>Context-window overrides and cascade routing have separate settings and are outside shaping profiles.</p><div className="shaping-next"><Link href="/dashboard/models">Open model and plan settings</Link><Link href="/dashboard/model-context">Edit context-window overrides</Link></div></details>
     </div>
     {opened.includes('Recorded evidence') ? <div hidden={depth !== 'Recorded evidence'}><RecordedEvidence stats={stats} period={period} onPeriod={setPeriod} /></div> : null}
     {opened.includes('Plan overrides') ? <div hidden={depth !== 'Plan overrides'}><PlanOverrides globalSettings={controls.data?.settings} onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /></div> : null}
     {opened.includes('Profiles and comparison') ? <div hidden={depth !== 'Profiles and comparison'}><ShapingWorkbench onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /></div> : null}
     {opened.includes('Service') ? <div hidden={depth !== 'Service'}><RuntimeSettings /><ServiceDetails key={serviceRevision} onAction={action => { setFailed(null); setPending(action); }} health={health} /></div> : null}
+    </Tabs.Panel>
+    </Tabs>
     {Object.keys(draft).length ? <div className="shaping-draft-bar"><span>{fmtNum(Object.keys(draft).length)} unsaved threshold changes</span>{!patch ? <span>Enter whole numbers within each field’s limits.</span> : null}<button type="button" className="button" disabled={!patch} onClick={() => { setFailed(null); setControlConsent(false); setPending({ title: 'Save threshold changes', verb: 'Save thresholds', changes: 'New requests use these global thresholds. In-flight requests retain their settings.', undo: 'Restore the previous numbers here.', body: patch, thresholds: true, done: 'Thresholds saved and verified after refresh.' }); }}>Review threshold changes</button><button type="button" className="button quiet" onClick={() => setDraft({})}>Discard</button></div> : null}
     <Confirm open={!!pending} title={pending?.title} verb={pending?.verb} requires="A signed-in operator session on the gateway host." changes={pending?.changes} undo={pending?.undo} irreversible={pending?.irreversible} busy={busy} refusal={failed} onConfirm={run} onClose={close}>{pending?.body ? <Checkbox mt="md" mb="md" checked={controlConsent} onChange={event => setControlConsent(event.currentTarget.checked)} label="I have reviewed this change and consent to the enabled content-changing transformations. Existing saved controls remain in effect." /> : null}{pending?.layer ? <p>{pending.layer}</p> : null}{pending?.thresholds ? <dl className="shaping-control-facts">{Object.entries(pending.body).map(([key, value]) => <div key={key}><dt>{THRESHOLDS.find(field => field.key === key)?.name}</dt><dd>{numeric(s?.[key])} → {fmtNum(value)} {THRESHOLDS.find(field => field.key === key)?.unit}</dd></div>)}</dl> : null}</Confirm>
   </div>;

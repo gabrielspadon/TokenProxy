@@ -123,7 +123,7 @@ export default function ToolsPage() {
                           className="link-button"
                           aria-pressed={p.id === selectedId}
                           onClick={() => setSelectedId(p.id)}
-                          data-i18n-skip
+
                         >
                           {p.name}
                         </button>

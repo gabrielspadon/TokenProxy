@@ -142,12 +142,6 @@
 .rail-foot .caption {
   font-size: var(--type-dense);
 }
-.rail-foot .locale-select {
-  max-width: 100%;
-}
-.rail-foot select {
-  width: 100%;
-}
 .strap {
   background: var(--raised);
   color: var(--slate);

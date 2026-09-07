@@ -4,12 +4,12 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 
-const fixture = vi.hoisted(() => ({ validation: null, calls: [], refresh: vi.fn(), providerSpecificData: {}, pools: [] }));
+const fixture = vi.hoisted(() => ({ validation: null, calls: [], refresh: vi.fn(), providerSpecificData: {}, pools: [], quotaPauseThresholds: {}, lastQuotaSnapshot: null }));
 vi.mock('react', async original => ({ ...await original(), use: () => ({ id: 'c-1' }) }));
 vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({
   loading: false, goodAt: 1, refresh: fixture.refresh,
   data: url === '/api/providers/c-1'
-    ? { connection: { id: 'c-1', provider: 'openai', authType: 'apikey', name: 'Fixture account', isActive: true, maxConcurrent: 3, providerSpecificData: fixture.providerSpecificData } }
+    ? { connection: { id: 'c-1', provider: 'openai', authType: 'apikey', name: 'Fixture account', isActive: true, maxConcurrent: 3, providerSpecificData: fixture.providerSpecificData, quotaPauseThresholds: fixture.quotaPauseThresholds, lastQuotaSnapshot: fixture.lastQuotaSnapshot } }
     : url === '/api/admin/qualification/c-1'
       ? { status: 'healthy', validation: fixture.validation, generation: { ok: true, model: 'old-default' } }
       : url === '/api/settings' ? { providerStrategies: { openai: { maxConcurrent: 9, unrelated: 'preserve' } } }
@@ -25,6 +25,8 @@ beforeEach(async () => {
   fixture.calls = [];
   fixture.providerSpecificData = {};
   fixture.pools = [];
+  fixture.quotaPauseThresholds = {};
+  fixture.lastQuotaSnapshot = null;
   fixture.validation = { ok: true, kind: 'provider-validation', model: null, latencyMs: 22,
     checkedAt: '2026-09-06T12:00:00.000Z', generationVerified: false, upstreamContact: 'not-recorded' };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,4 +76,41 @@ it('renders a selected pool ahead of a retained direct marker and restores direc
   fixture.providerSpecificData = { connectionProxyMode: 'direct' };
   await mount();
   expect(fact('Proxy pool')).toContain('Explicit direct');
+});
+
+it('edits the union of exact snapshot keys and saved thresholds without losing configured-only windows', async () => {
+  fixture.lastQuotaSnapshot = { windows: [{ key: 'session (5h)' }, { key: 'session (5h)' }] };
+  fixture.quotaPauseThresholds = { 'session (5h)': 10, 'weekly (7d)': 20 };
+  await mount();
+  await act(async () => [...container.querySelectorAll('button')].find(e => e.textContent.trim().endsWith('Pause thresholds')).click());
+  const dialog = container.querySelector('dialog[open]');
+  expect([...dialog.querySelectorAll('label.field > span')].map(e => e.textContent)).toEqual(['session (5h)', 'weekly (7d)']);
+  expect(dialog.textContent).toContain('at or below');
+  expect(dialog.textContent).toContain('Set 0 or leave empty');
+  expect(dialog.textContent).not.toContain('default policy');
+  const inputs = dialog.querySelectorAll('input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inputs[0], '0');
+    inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => [...dialog.querySelectorAll('button')].find(e => e.textContent.trim() === 'Save').click());
+  expect(fixture.calls).toEqual([{ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 0, 'weekly (7d)': 20 } } }]);
+});
+
+it('shows unknown quota windows without fabricating a 5h input and keeps priority editable', async () => {
+  await mount();
+  await act(async () => [...container.querySelectorAll('button')].find(e => e.textContent.trim().endsWith('Pause thresholds')).click());
+  let dialog = container.querySelector('dialog[open]');
+  expect(dialog.querySelectorAll('input')).toHaveLength(0);
+  expect(dialog.textContent).toContain('No exact quota windows have been observed or configured');
+  await act(async () => [...dialog.querySelectorAll('button')].find(e => e.textContent.trim() === 'Cancel').click());
+  await act(async () => [...container.querySelectorAll('button')].find(e => e.textContent.trim().endsWith('Priority')).click());
+  dialog = container.querySelector('dialog[open]');
+  const input = dialog.querySelector('input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '4');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => [...dialog.querySelectorAll('button')].find(e => e.textContent.trim() === 'Save').click());
+  expect(fixture.calls).toEqual([{ url: '/api/providers/c-1', method: 'PUT', body: { priority: 4 } }]);
 });

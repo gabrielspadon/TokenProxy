@@ -42,6 +42,7 @@ import { useResource } from '@/shared/workspace/useResource';
 import shared from '@/shared/workspace/workspace.module.css';
 import styles from './capacity.module.css';
 import { CapacityControls } from './CapacityControls';
+import { AccountControlPanel } from './AccountControlPanel';
 import { AccountPolicyEvidence } from './AccountPolicyEvidence';
 import { DRAIN_ENDPOINT, capacityAttemptSelection, localCapacityState, retainAccountOrder } from './capacityControlsModel';
 
@@ -553,6 +554,7 @@ function ModelSupport({ accounts, onSelect }) {
   );
 }
 export default function CapacityPage() {
+  const router = useRouter();
   const workspace = useWorkspace();
   const drains = useResource(DRAIN_ENDPOINT, { onSnapshot: workspace.observeSnapshot });
   const refreshAccounts = () => { drains.refresh(); workspace.health.refresh(); };
@@ -569,7 +571,7 @@ export default function CapacityPage() {
   } = workspace;
   const activity=workspace.inventoryActivity || workspace.activity;
   const activityPagination=activity.data?.groupPagination || workspace.activity.data?.groupPagination;
-  const [view, setView] = useState('accounts'),
+  const [view, setView] = useState('control'),
     [query, setQuery] = useState(''),
     [stateFilter, setStateFilter] = useState(null),
     [comparing, setComparing] = useState(false);
@@ -631,6 +633,10 @@ export default function CapacityPage() {
     (group) => !accounts.some((account) => account.connectionId === group.connectionId)
   );
   const select = (id, windowScope = null) => {
+    if (!rows.some(row => row.connectionId === id)) {
+      router.push(`/dashboard/connections/${encodeURIComponent(id)}`);
+      return;
+    }
     setSelectedScope(windowScope);
     setSelectedAccountId(id,windowScope);
     setComparing(false);
@@ -745,21 +751,23 @@ export default function CapacityPage() {
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>Capacity</h1>
-          <p>Compare account constraints, quota windows and where work can go.</p>
+          <p>Manage accounts, compare quota and keep work moving.</p>
         </div>
         <SegmentedControl
+          className={styles.capacityViews}
           aria-label="Capacity view"
           value={view}
           onChange={setView}
           size="sm"
           data={[
-            { value: 'accounts', label: 'Accounts' },
+            { value: 'control', label: 'Control panel' },
+            { value: 'accounts', label: 'Activity & analysis' },
             { value: 'support', label: 'Model support' },
           ]}
         />
       </div>
-      <ScopeBar />
-      <ActivityBand />
+      <ScopeBar analysisActions={view !== 'control'} />
+      {view === 'accounts' && <ActivityBand />}
       <div className={`${styles.book} ${shared.lensContent}`}>
         <SelectionDock
           open={Boolean(selected) || comparing}
@@ -793,7 +801,10 @@ export default function CapacityPage() {
           }
           height="100%"
         >
-          <div className={styles.bookBody}>
+          {view === 'control' ? <AccountControlPanel
+            rows={rows} scope={scope} selectedAccountId={selectedAccountId}
+            onSelect={select} onChanged={refreshAccounts} anchor={snapshot?.isolated ? anchor : undefined}
+          /> : <div className={styles.bookBody}>
             <div className={styles.bookToolbar}>
               <div className={styles.bookTitle}>
                 <h2>{view === 'accounts' ? 'Configured accounts' : 'Local model support'}</h2>
@@ -949,7 +960,7 @@ export default function CapacityPage() {
                 Cache write
               </span>
             </div>
-          </div>
+          </div>}
         </SelectionDock>
       </div>
     </div>

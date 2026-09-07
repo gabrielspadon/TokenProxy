@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Notice } from "@/shared/components/Notice";
-import { LocaleSelect } from "@/shared/components/LocaleSelect";
 import { useSearch } from "@/shared/hooks/useSearch";
 import { refusal } from "@/shared/refusal";
 import { fmtUnit } from "@/shared/format";
@@ -85,7 +84,7 @@ export default function LoginPage() {
   return (
     <main className="login">
       <div className="login-card">
-        <span className="brand" data-i18n-skip><Brand /></span>
+        <span className="brand"><Brand /></span>
         <h1>Sign in</h1>
         <p className="caption">Your models, connections, and context. Sign in to the gateway control room.</p>
         {startError ? <Notice tone="bad" title={startError.title} detail={startError.detail} /> : null}
@@ -101,16 +100,15 @@ export default function LoginPage() {
         {result ? (
           <Notice tone={result.tone} title={result.title} next={result.next} detail={result.detail}>
             {result.attempts !== undefined && result.attempts !== null ? (
-              <dl className="facts"><dt>Attempts left before lockout</dt><dd data-i18n-skip>{result.attempts}</dd></dl>
+              <dl className="facts"><dt>Attempts left before lockout</dt><dd>{result.attempts}</dd></dl>
             ) : null}
             {result.retryAfter ? (
-              <dl className="facts"><dt>Try again in</dt><dd data-i18n-skip>{fmtUnit(left, "second")}</dd></dl>
+              <dl className="facts"><dt>Try again in</dt><dd>{fmtUnit(left, "second")}</dd></dl>
             ) : null}
           </Notice>
         ) : null}
-        {showSaml ? <a className="button quiet" href="/api/auth/saml/start">{auth?.samlLoginLabel ? <span data-i18n-skip>{auth.samlLoginLabel}</span> : "Sign in with SAML"}</a> : null}
-        {showOidc ? <a className="button quiet" href="/api/auth/oidc/start">{auth?.oidcLoginLabel ? <span data-i18n-skip>{auth.oidcLoginLabel}</span> : "Sign in with OIDC"}</a> : null}
-        <LocaleSelect />
+        {showSaml ? <a className="button quiet" href="/api/auth/saml/start">{auth?.samlLoginLabel ? <span>{auth.samlLoginLabel}</span> : "Sign in with SAML"}</a> : null}
+        {showOidc ? <a className="button quiet" href="/api/auth/oidc/start">{auth?.oidcLoginLabel ? <span>{auth.oidcLoginLabel}</span> : "Sign in with OIDC"}</a> : null}
       </div>
     </main>
   );

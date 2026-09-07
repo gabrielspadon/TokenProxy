@@ -218,10 +218,11 @@ test('workspace preferences preserve native keyboard focus and project text is e
   page,
 }) => {
   await page.goto('/dashboard/context');
-  const open = page.getByRole('button', { name: 'Workspace account and language' });
+  const open = page.getByRole('button', { name: 'Workspace preferences' });
   await open.click();
-  const dialog = page.getByRole('dialog', { name: 'Workspace account and language' });
-  await expect(dialog.getByRole('combobox')).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'Workspace preferences' });
+  await expect(dialog.getByRole('combobox')).toHaveCount(0);
+  await expect(dialog.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Sign out' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(open).toBeFocused();

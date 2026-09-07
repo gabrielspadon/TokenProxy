@@ -29,25 +29,25 @@ export function Strap() {
         <Freshness status={stream.status} lastDataAt={receivedAt} />
       </span>
       <span className="cell">
-        <span className="fig" data-i18n-skip>
+        <span className="fig">
           {perMin === null ? '—' : fmtNum(perMin, { maximumFractionDigits: perMin < 10 ? 1 : 0 })}
         </span>{' '}
         <span>req/min</span>
       </span>
       <span className="cell">
-        <span className="fig" data-i18n-skip>
+        <span className="fig">
           {usage ? fmtNum(active) : '—'}
         </span>{' '}
         <span>Sessions</span>
       </span>
       <span className="cell">
-        <span className="fig" data-i18n-skip>
+        <span className="fig">
           {conns === null ? '—' : fmtNum(conns)}
         </span>{' '}
         <span>Connections</span>
       </span>
       <span className="cell">
-        <span className="fig" data-tone={errors ? 'warn' : undefined} data-i18n-skip>
+        <span className="fig" data-tone={errors ? 'warn' : undefined}>
           {errors === null ? '—' : fmtPct(errors)}
         </span>{' '}
         <span>Errors</span>

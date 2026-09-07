@@ -21,15 +21,15 @@ export function AccountPaths({ connections, pools }) {
     <h2 id="network-paths-title">Account paths</h2>
     <p className="caption">Stored account → proxy pool → provider policy. Opening this comparison does not test a route or change eligibility.</p>
     <SelectionDock open={Boolean(selected)} title={selected?.name || selected?.id || 'Account path'} subtitle={selected?.id} mark={selected ? <ProviderMark provider={selected.provider} /> : null} onClose={() => select(null)} height="min(620px, calc(100dvh - 240px))" closedMaxHeight="420px" detail={selected ? <div aria-label="Network path inspector" className="network-path-inspector">
-      <dl className="facts"><dt>Provider</dt><dd><bdi data-i18n-skip>{selected.provider}</bdi></dd><dt>Account path</dt><dd><bdi data-i18n-skip>{path.label}</bdi></dd><dt>Failure policy</dt><dd>{path.policy}</dd><dt>Reachability</dt><dd>Not established by this configuration read.</dd><dt>Upstream model access</dt><dd>Unknown until supported evidence is recorded.</dd></dl>
+      <dl className="facts"><dt>Provider</dt><dd><bdi>{selected.provider}</bdi></dd><dt>Account path</dt><dd><bdi>{path.label}</bdi></dd><dt>Failure policy</dt><dd>{path.policy}</dd><dt>Reachability</dt><dd>Not established by this configuration read.</dd><dt>Upstream model access</dt><dd>Unknown until supported evidence is recorded.</dd></dl>
       <Link href={`/dashboard/connections/${encodeURIComponent(selected.id)}`} prefetch={false}>Inspect account and change binding</Link>
     </div> : null}>
       <div className="network-path-list">
         {connections.map(connection => {
           const policy = accountPath(connection, pools);
           return <button type="button" className="network-path-row" key={connection.id} aria-pressed={selectedId === connection.id} onClick={() => select(connection.id)}>
-            <span className="connection-name" data-i18n-skip><ProviderMark provider={connection.provider} />{connection.name || connection.id}</span>
-            <span data-i18n-skip>{policy.label}</span><span>{connection.isActive === false ? 'Account disabled' : 'Account enabled'}</span>
+            <span className="connection-name"><ProviderMark provider={connection.provider} />{connection.name || connection.id}</span>
+            <span>{policy.label}</span><span>{connection.isActive === false ? 'Account disabled' : 'Account enabled'}</span>
           </button>;
         })}
         {!connections.length ? <p className="empty">No credentialed accounts are configured. Provider strategies below also cover virtual accounts without credentials.</p> : null}

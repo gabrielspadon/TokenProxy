@@ -120,16 +120,6 @@ body {
   font-variant-numeric: tabular-nums;
   accent-color: var(--signal);
 }
-html:lang(ar), html:lang(fa), html:lang(ur) { --sans: 'Manrope', 'Noto Sans Arabic', 'Geeza Pro', Tahoma, sans-serif; }
-html:lang(he) { --sans: 'Manrope', 'Noto Sans Hebrew', 'Arial Hebrew', Arial, sans-serif; }
-html:lang(zh-CN) { --sans: 'Manrope', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
-html:lang(zh-TW) { --sans: 'Manrope', 'Noto Sans CJK TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
-html:lang(ja) { --sans: 'Manrope', 'Noto Sans CJK JP', 'Hiragino Sans', 'Yu Gothic', sans-serif; }
-html:lang(ko) { --sans: 'Manrope', 'Noto Sans CJK KR', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; }
-html:lang(hi) { --sans: 'Manrope', 'Noto Sans Devanagari', 'Kohinoor Devanagari', sans-serif; }
-html:lang(bn) { --sans: 'Manrope', 'Noto Sans Bengali', 'Bangla Sangam MN', sans-serif; }
-html:lang(th) { --sans: 'Manrope', 'Noto Sans Thai', 'Thonburi', sans-serif; }
-html:lang(km) { --sans: 'Manrope', 'Noto Sans Khmer', 'Khmer Sangam MN', sans-serif; }
 h1 { font-size: var(--type-title); font-weight: 600; line-height: 1.2; letter-spacing: -.035em; overflow-wrap: anywhere; }
 h2 { font-size: var(--type-section); font-weight: 600; line-height: 1.4; }
 h3 { font-size: var(--type-ui); font-weight: 600; line-height: var(--line-ui); }

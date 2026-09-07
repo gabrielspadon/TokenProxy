@@ -1,0 +1,60 @@
+.panel { min-width: 0; }
+.heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 16px; }
+.heading h2 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+.toolbar { display: grid; grid-template-columns: minmax(150px, 2fr) minmax(130px, 1fr) auto auto; gap: 12px; align-items: center; margin-block: 16px; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.card { min-width: 0; border: 1px solid var(--rule); border-radius: 12px; padding: 18px; background: var(--raised); }
+.card[data-selected] { border-color: var(--signal); box-shadow: 0 0 0 1px var(--signal); }
+.cardHeader { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.cardHeader :global(.mantine-Badge-root) { flex-shrink: 0; min-width: max-content; }
+.statusStrip { flex-wrap: nowrap; overflow-x: auto; padding-block: 2px; }
+.statusStrip > button { flex-shrink: 0; }
+.identity { display: flex; align-items: center; gap: 10px; text-align: left; min-width: 0; background: none; border: 0; color: var(--ink); cursor: pointer; padding: 0; }
+.identity > span:last-child { display: grid; gap: 3px; min-width: 0; }
+.identity strong { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; line-height: 1.35; }
+.identity small { color: var(--slate); font-size: 13px; }
+.windows { display: grid; gap: 16px; }
+.window { min-width: 0; }
+.windowHeading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.windowHeading button { color: var(--ink); background: none; border: 0; padding: 0; text-align: left; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; min-height: 24px; }
+.windowHeading strong { color: var(--signal); font-size: 15px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.windowHeading strong[data-low] { color: var(--mantine-color-orange-8); }
+.meter { position: relative; height: 9px; border-radius: 4px; background: var(--rule); }
+.meter[data-unknown] { background: repeating-linear-gradient(135deg, var(--rule), var(--rule) 4px, transparent 4px, transparent 8px); }
+.fill { display: block; height: 100%; border-radius: 4px; background: var(--signal); transition: width 180ms ease; }
+.fill[data-low] { background: var(--mantine-color-orange-7); }
+.window[data-retained] .fill { background: var(--slate); }
+.window[data-retained] .windowHeading strong { color: var(--slate); }
+.threshold { position: absolute; top: -3px; width: 2px; height: 15px; background: var(--ink); transform: translateX(-1px); }
+.windowMeta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--slate); margin-top: 8px; }
+.observation { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 3px 10px; color: var(--slate); font-size: 13px; margin-top: 5px; }
+.cardFooter { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid var(--rule); padding-top: 12px; margin-top: 16px; }
+.cardFooter > span { font-size: 13px; color: var(--slate); }
+.emptyWindow { min-height: 70px; display: grid; align-content: center; color: var(--slate); font-size: 13px; line-height: 1.5; }
+.empty { border: 1px dashed var(--rule); border-radius: 12px; padding: 24px; }
+.empty h3 { font-size: 16px; margin: 0 0 8px; }
+.preference { margin-top: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--rule); }
+.limitFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
+.modalNotice { margin-top: 16px; }
+.compare { display: grid; gap: 12px; }
+.compare .card { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 3fr); gap: 18px; }
+.compare .windows { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.compare .cardFooter { grid-column: 1 / -1; margin-top: 0; }
+.panel[data-density='compact'] .card { padding: 12px; }
+.panel[data-density='compact'] .windows { gap: 10px; }
+.panel[data-density='compact'] .observation { gap: 2px 8px; margin-top: 3px; }
+@media (min-width: 1550px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1050px) { .toolbar { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px) {
+  .heading { align-items: start; gap: 10px; margin-bottom: 10px; }
+  .heading > div:first-child { min-width: 0; }
+  .panelRefresh { display: none; }
+  .cards { grid-template-columns: 1fr; gap: 12px; }
+  .card { padding: 14px; }
+  .toolbar { gap: 8px; margin-block: 12px; }
+  .toolbar > * { min-width: 0; }
+  .compare .card { grid-template-columns: 1fr; gap: 8px; }
+  .compare .windows, .limitFields { grid-template-columns: 1fr; }
+  .windowHeading strong { font-size: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .fill { transition: none; } }

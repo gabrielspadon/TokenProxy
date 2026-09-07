@@ -102,18 +102,18 @@ export function AccessProfiles({ poll, onKeysChanged }) {
       <div className="profile-workspace">
         <div className="profile-list" aria-label="Access profile inventory">
           {profiles.map(profile => <button type="button" key={profile.id} className="profile-row" aria-pressed={selectedId === profile.id} onClick={() => setSelectedId(profile.id)}>
-            <span data-i18n-skip>{profile.name}</span><span className="caption"><bdi>v{profile.version}</bdi> · {fmtNum(profile.keyCount)} keys · {profile.maxCostUsd === null ? 'No cost ceiling' : `${fmtUsd(profile.maxCostUsd)} lifetime ceiling`}</span>
+            <span>{profile.name}</span><span className="caption"><bdi>v{profile.version}</bdi> · {fmtNum(profile.keyCount)} keys · {profile.maxCostUsd === null ? 'No cost ceiling' : `${fmtUsd(profile.maxCostUsd)} lifetime ceiling`}</span>
           </button>)}
           {!profiles.length ? <p className="empty">No access profiles are defined. Create a reusable policy, then adopt it on each chosen key.</p> : null}
         </div>
         <aside className="profile-inspector" aria-label="Access profile inspector">
           {selected ? <>
-            <h3 data-i18n-skip>{selected.name}</h3>
+            <h3>{selected.name}</h3>
             <dl className="facts">
               <dt>Version</dt><dd><bdi>{selected.version}</bdi></dd>
               <dt>Adopting keys</dt><dd><bdi>{fmtNum(selected.keyCount)}</bdi></dd>
               {FIELDS.map(([field, label, unit]) => <Fragment key={field}><dt>{label}</dt><dd>{selected[field] == null ? 'No requirement' : <bdi>{fmtNum(selected[field])} {unit}</bdi>}</dd></Fragment>)}
-              <dt>Allowed models</dt><dd data-i18n-skip>{selected.allowedModels?.join(', ') || 'Every model'}</dd>
+              <dt>Allowed models</dt><dd>{selected.allowedModels?.join(', ') || 'Every model'}</dd>
               <dt>Budget policy</dt><dd>{selected.budgetPolicy === 'strict' ? 'Verified bounds' : 'Reserve remaining allowance'}</dd>
               <dt>Last saved</dt><dd><bdi>{selected.updatedAt}</bdi></dd>
             </dl>

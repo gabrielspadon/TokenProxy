@@ -329,7 +329,7 @@ export default function TranslationPage() {
             value={clientBodyText}
             onChange={(e) => { bodyRevision.current++; setClientBodyText(e.target.value); setD1(null); setD2(null); setD3(null); }}
             spellCheck={false}
-            data-i18n-skip
+
           />
         </label>
         <div className="toolbar">
@@ -352,7 +352,7 @@ export default function TranslationPage() {
             <Input
               value={provider}
               onChange={(e) => { bodyRevision.current++; setProvider(e.target.value); setD3(null); }}
-              data-i18n-skip
+
             />
           </label>
           <label className="field">
@@ -360,7 +360,7 @@ export default function TranslationPage() {
             <Input
               value={model}
               onChange={(e) => { bodyRevision.current++; setModel(e.target.value); setD3(null); }}
-              data-i18n-skip
+
             />
           </label>
           <div className="actions">
@@ -375,13 +375,13 @@ export default function TranslationPage() {
         {d1?.data ? (
           <dl className="facts">
             <dt>Provider</dt>
-            <dd data-i18n-skip>{d1.data.provider}</dd>
+            <dd>{d1.data.provider}</dd>
             <dt>Model</dt>
-            <dd data-i18n-skip>{d1.data.model}</dd>
+            <dd>{d1.data.model}</dd>
             <dt>Detected source format</dt>
-            <dd data-i18n-skip>{d1.data.sourceFormat}</dd>
+            <dd>{d1.data.sourceFormat}</dd>
             <dt>Target format</dt>
-            <dd data-i18n-skip>{d1.data.targetFormat}</dd>
+            <dd>{d1.data.targetFormat}</dd>
             <dt>Direct bridge or neutral pivot</dt>
             <dd>
               {d1.data.route ? `${d1.data.route.mode} · ${d1.data.route.supported ? 'registered conversion available' : 'conversion unavailable'}` : <span className="unreported">Not reported</span>}
@@ -394,7 +394,7 @@ export default function TranslationPage() {
         {d2?.error ? <Notice {...d2.error} /> : null}
         {d2?.data ? (
           <>
-            <pre className="translation-code" tabIndex={0} data-i18n-skip>
+            <pre className="translation-code" tabIndex={0}>
               {JSON.stringify(d2.data, null, 2)}
             </pre>
             <div className="actions">
@@ -418,11 +418,11 @@ export default function TranslationPage() {
             </p>
             <dl className="facts">
               <dt>URL</dt>
-              <dd className="id" data-i18n-skip>
+              <dd className="id">
                 {d3.data.url}
               </dd>
             </dl>
-            <pre className="translation-code" tabIndex={0} data-i18n-skip>
+            <pre className="translation-code" tabIndex={0}>
               {JSON.stringify(d3.data.body, null, 2)}
             </pre>
             <div className="actions">
@@ -452,7 +452,7 @@ export default function TranslationPage() {
             value={sendBodyText}
             onChange={(e) => setSendBodyText(e.target.value)}
             spellCheck={false}
-            data-i18n-skip
+
           />
         </label>
         <div className="actions">
@@ -487,7 +487,7 @@ export default function TranslationPage() {
             <p className="caption">
               What the provider actually returned, before anything translates it back:
             </p>
-            <pre className="translation-code" tabIndex={0} data-i18n-skip>
+            <pre className="translation-code" tabIndex={0}>
               {sendResult.body.raw}
             </pre>
             <div className="actions">
@@ -524,7 +524,7 @@ export default function TranslationPage() {
               value={snapshotText}
               onChange={(e) => setSnapshotText(e.target.value)}
               spellCheck={false}
-              data-i18n-skip
+
             />
           </label>
           <p className="caption">
@@ -538,7 +538,7 @@ export default function TranslationPage() {
           <div className="rows">
             {SNAPSHOT_NAMES.map((name) => (
               <div key={name} className="row translation-snapshot-row">
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {name}
                 </span>
                 <Button type="button" variant="default" onClick={() => loadSnapshot(name)}>
@@ -570,8 +570,8 @@ export default function TranslationPage() {
           <div className="panel-head">
             <h3>Live console</h3>
             <span className="caption">
-              <span data-i18n-skip>{fmtNum(shown.length)}</span> <span>of</span>{' '}
-              <span data-i18n-skip>{fmtNum(logs.length)}</span> <span>lines shown</span>
+              <span>{fmtNum(shown.length)}</span> <span>of</span>{' '}
+              <span>{fmtNum(logs.length)}</span> <span>lines shown</span>
             </span>
           </div>
           <div className="verb-row">
@@ -598,7 +598,7 @@ export default function TranslationPage() {
             ) : (
               <p className="caption">
                 {lastCheck.changed ? 'New lines arrived.' : 'Nothing new since last look.'} Revision{' '}
-                <span data-i18n-skip>{fmtNum(lastCheck.revision)}</span>
+                <span>{fmtNum(lastCheck.revision)}</span>
               </p>
             )
           ) : null}
@@ -625,7 +625,7 @@ export default function TranslationPage() {
               aria-live={paused ? undefined : 'polite'}
             >
               {shown.map((line, i) => (
-                <li key={i} data-i18n-skip>
+                <li key={i}>
                   {redact(line)}
                 </li>
               ))}

@@ -174,11 +174,10 @@ async function assertIsolatedLtr(locator, text) {
         positions.push({ left: rectangle.left, top: rectangle.top });
       }
     }
-    return { direction: getComputedStyle(element).direction, isolation: getComputedStyle(element).unicodeBidi, protected: element.closest('[data-i18n-skip]') !== null, positions };
+    return { direction: getComputedStyle(element).direction, isolation: getComputedStyle(element).unicodeBidi, positions };
   });
   expect(result.direction).toBe('ltr');
   expect(result.isolation).toBe('isolate');
-  expect(result.protected).toBe(true);
   expect(result.positions.length).toBeGreaterThan(1);
   for (let index = 1; index < result.positions.length; index++) {
     if (Math.abs(result.positions[index].top - result.positions[index - 1].top) < 1) {
@@ -192,8 +191,7 @@ test('RTL isolates exact model keys, wildcard keys and token values without chan
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/dashboard/model-context');
   await expect(page.getByRole('heading', { name: 'Context windows', exact: true })).toBeVisible();
-  // Same deterministic RTL switch as shaping-review.spec.mjs. Fixture labels
-  // remain English so this exercises bidi behavior independently of catalogs.
+  // Exercise identifier isolation under an externally changed document direction.
   await page.evaluate(() => { document.documentElement.dir = 'rtl'; });
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   const known = page.locator('tbody tr').filter({ hasText: 'Astra fixture' });
@@ -203,7 +201,6 @@ test('RTL isolates exact model keys, wildcard keys and token values without chan
   await assertIsolatedLtr(known.locator('td').nth(2).locator('.model-context-key'), 'codex/gpt-6-astra');
   const unknown = page.locator('tbody tr').filter({ hasText: 'Unknown window fixture' }).locator('td').first();
   await expect(unknown).toHaveText('Unknown');
-  expect(await unknown.evaluate(element => element.closest('[data-i18n-skip]') !== null)).toBe(false);
   await expect(unknown.locator('bdi')).toHaveCount(0);
 
   await selectAstra(page);

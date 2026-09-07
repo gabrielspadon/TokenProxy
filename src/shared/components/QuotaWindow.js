@@ -19,11 +19,11 @@ export function QuotaWindow({ provider, name, window: w, horizonMs, now }) {
   return (
     <div className="row window">
       <div className="who">
-        <span className="name" data-i18n-skip>
+        <span className="name">
           {name || provider}
         </span>
         <span className="sub">
-          <span data-i18n-skip>{w.scope}</span>
+          <span>{w.scope}</span>
         </span>
       </div>
       <div>
@@ -33,7 +33,7 @@ export function QuotaWindow({ provider, name, window: w, horizonMs, now }) {
         <div className="band-meta">
           {known ? (
             <span>
-              <span data-i18n-skip>
+              <span>
                 {fmtNum(w.remaining)} / {fmtNum(w.limit)}
               </span>{' '}
               remaining
@@ -54,7 +54,7 @@ export function QuotaWindow({ provider, name, window: w, horizonMs, now }) {
         <div className="band-meta">
           {reset ? (
             <span>
-              Resets <span data-i18n-skip>{fmtRelative(reset, now)}</span>
+              Resets <span>{fmtRelative(reset, now)}</span>
             </span>
           ) : (
             <span>Reset time is not known</span>
@@ -63,7 +63,7 @@ export function QuotaWindow({ provider, name, window: w, horizonMs, now }) {
             <span>Never observed</span>
           ) : (
             <span>
-              Seen <span data-i18n-skip>{fmtRelative(w.observedAt, now)}</span>
+              Seen <span>{fmtRelative(w.observedAt, now)}</span>
             </span>
           )}
         </div>

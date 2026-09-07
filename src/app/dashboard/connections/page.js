@@ -308,7 +308,7 @@ export default function ConnectionsPage() {
           <ul className="bullets">
             {health.degradedProviders.map((d) => (
               <li key={d.provider}>
-                <span data-i18n-skip>{d.provider}</span>: <span data-i18n-skip>{fmtNum(d.degradedConnections)}</span> degraded, likely {d.likelyCauses.map((c) => CAUSE_WORD[c] || c).join(", ")}
+                <span>{d.provider}</span>: <span>{fmtNum(d.degradedConnections)}</span> degraded, likely {d.likelyCauses.map((c) => CAUSE_WORD[c] || c).join(", ")}
               </li>
             ))}
           </ul>
@@ -342,7 +342,7 @@ export default function ConnectionsPage() {
       {selected && !rows.some(row => row.id === selected.id) ? <p className="caption">The selected account is outside the displayed filters. Its evidence remains open.</p> : null}
 
       <SelectionDock open={!!selected} title={selected?.name || selected?.id} subtitle={selected?.provider} mark={selected ? <ProviderMark provider={selected.provider} /> : null} onClose={() => setSelectedId(null)} height="min(660px, calc(100dvh - 280px))" closedMaxHeight="min(660px, calc(100dvh - 280px))" detail={selected ? <div className="connections-inspector">
-        <dl className="facts"><dt>Account ID</dt><dd><bdi data-i18n-skip>{selected.id}</bdi></dd><dt>Authentication</dt><dd>{AUTH[selected.authType] || selected.authType || 'Unknown'}</dd><dt>Qualification status</dt><dd>{WORDS[selectedQualification?.status] || selectedQualification?.status || 'Unknown'}<p className="caption">Qualification combines recorded validation with drain, active state and cooldown. It does not establish model eligibility.</p></dd><dt>Local participation</dt><dd>{selected.isActive === false ? 'Disabled' : byDrain.get(selected.id)?.isDraining ? 'Draining; no new work' : 'Enabled; model, quota and capacity restrictions still apply'}</dd><dt>Upstream model entitlement</dt><dd>Unknown. A stored account or health result does not establish model access.</dd><dt>Network path</dt><dd>{pools.data ? <><bdi data-i18n-skip>{selectedPath.label}</bdi>. {selectedPath.policy}</> : 'Pool inventory unavailable; path not verified.'}</dd></dl>
+        <dl className="facts"><dt>Account ID</dt><dd><bdi>{selected.id}</bdi></dd><dt>Authentication</dt><dd>{AUTH[selected.authType] || selected.authType || 'Unknown'}</dd><dt>Qualification status</dt><dd>{WORDS[selectedQualification?.status] || selectedQualification?.status || 'Unknown'}<p className="caption">Qualification combines recorded validation with drain, active state and cooldown. It does not establish model eligibility.</p></dd><dt>Local participation</dt><dd>{selected.isActive === false ? 'Disabled' : byDrain.get(selected.id)?.isDraining ? 'Draining; no new work' : 'Enabled; model, quota and capacity restrictions still apply'}</dd><dt>Upstream model entitlement</dt><dd>Unknown. A stored account or health result does not establish model access.</dd><dt>Network path</dt><dd>{pools.data ? <><bdi>{selectedPath.label}</bdi>. {selectedPath.policy}</> : 'Pool inventory unavailable; path not verified.'}</dd></dl>
         <Link href={`/dashboard/connections/${encodeURIComponent(selected.id)}`} prefetch={false}>Investigate account controls and evidence</Link>
         <h3>Investigate this account</h3>
         <p className="caption">Open the account’s recorded activity with the retained time range and model. Current configuration and historical activity remain separate.</p>
@@ -361,8 +361,8 @@ export default function ConnectionsPage() {
             <div className="who">
               <ProviderMark provider={r.provider}/>
               <div className="connection-copy">
-                <Link prefetch={false} href={`/dashboard/connections/${r.id}`} className="name" data-i18n-skip>{r.name}</Link>
-                <span className="sub"><span data-i18n-skip>{r.provider}</span> · {AUTH[r.authType] || r.authType} · priority <span data-i18n-skip>{fmtNum(r.priority ?? 0)}</span></span>
+                <Link prefetch={false} href={`/dashboard/connections/${r.id}`} className="name">{r.name}</Link>
+                <span className="sub"><span>{r.provider}</span> · {AUTH[r.authType] || r.authType} · priority <span>{fmtNum(r.priority ?? 0)}</span></span>
               </div>
             </div>
             <div className="connection-standing">
@@ -371,8 +371,8 @@ export default function ConnectionsPage() {
               {!r.isActive ? <span className="caption">Disabled</span> : null}
             </div>
             <div>
-              {r.lastQualifiedAt ? <span data-i18n-skip>{fmtRelative(r.lastQualifiedAt, now)}</span> : <span className="unreported">Not recorded</span>}
-              {r.lastError ? <p className="caption" data-i18n-skip>{r.lastError}</p> : null}
+              {r.lastQualifiedAt ? <span>{fmtRelative(r.lastQualifiedAt, now)}</span> : <span className="unreported">Not recorded</span>}
+              {r.lastError ? <p className="caption">{r.lastError}</p> : null}
             </div>
             <button type="button" className="button quiet" aria-label={`Inspect account ${r.name}`} aria-pressed={selectedId === r.id} onClick={() => setSelectedId(r.id)}>Inspect account</button>
           </div>
@@ -387,18 +387,18 @@ export default function ConnectionsPage() {
         {activation.error ? <Notice {...refusal(activation.status, activation.error)} /> : null}
         {active ? (
           <dl className="facts">
-            <dt>Recorded active release</dt><dd data-i18n-skip>{active.releaseId}</dd>
-            <dt>Version</dt><dd data-i18n-skip>{active.version}</dd>
-            <dt>Recorded at</dt><dd>{active.activatedAt ? <span data-i18n-skip>{fmtTime(active.activatedAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
-            <dt>Rolls back to</dt><dd>{active.previousReleaseId ? <span data-i18n-skip>{active.previousReleaseId}</span> : <span>Nothing on file</span>}</dd>
+            <dt>Recorded active release</dt><dd>{active.releaseId}</dd>
+            <dt>Version</dt><dd>{active.version}</dd>
+            <dt>Recorded at</dt><dd>{active.activatedAt ? <span>{fmtTime(active.activatedAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
+            <dt>Rolls back to</dt><dd>{active.previousReleaseId ? <span>{active.previousReleaseId}</span> : <span>Nothing on file</span>}</dd>
           </dl>
         ) : activation.data ? <p className="empty">No active release is recorded.</p> : null}
         <div className="rows">
           {history.filter((h) => h.releaseId !== active?.releaseId).map((h) => (
             <div className="row" key={h.releaseId}>
               <div className="who">
-                <span className="name" data-i18n-skip>{h.releaseId}</span>
-                <span className="sub" data-i18n-skip>{h.version}</span>
+                <span className="name">{h.releaseId}</span>
+                <span className="sub">{h.version}</span>
               </div>
               <span className="status" data-tone={RELEASE_TONE[h.status] || "warn"}>{RELEASE_WORD[h.status] || h.status}</span>
               <div className="actions">
@@ -432,7 +432,7 @@ export default function ConnectionsPage() {
         onConfirm={runAdd} onClose={closeAdd}>
         {grant?.connection ? (
           <Notice tone="ok" title="The account is stored.">
-            {grant.connection.email ? <p className="caption" data-i18n-skip>{grant.connection.email}</p> : null}
+            {grant.connection.email ? <p className="caption">{grant.connection.email}</p> : null}
           </Notice>
         ) : (
           <div className="connections-form">
@@ -440,7 +440,7 @@ export default function ConnectionsPage() {
               <span>Provider</span>
               <select className="select" disabled={busy} value={form.providerId} onChange={(e) => pickProvider(e.target.value)}>
                 <option value="">Pick one</option>
-                {entries.map((p) => <option key={p.id} value={p.id} data-i18n-skip>{p.name || p.id}</option>)}
+                {entries.map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}
               </select>
             </label>
             {entry && modes.length > 1 ? (
@@ -486,7 +486,7 @@ export default function ConnectionsPage() {
             ) : null}
             {grant?.device ? (
               <Notice tone="info" title="Enter this code with the provider.">
-                <p><code data-i18n-skip>{grant.device.userCode}</code> at <a href={grant.device.verificationUri} target="_blank" rel="noreferrer" data-i18n-skip>{grant.device.verificationUri}</a></p>
+                <p><code>{grant.device.userCode}</code> at <a href={grant.device.verificationUri} target="_blank" rel="noreferrer">{grant.device.verificationUri}</a></p>
               </Notice>
             ) : null}
             {grant?.step ? <p className="caption">{grant.step}</p> : null}
@@ -503,7 +503,7 @@ export default function ConnectionsPage() {
           : "Updates the recorded release pointer to the selected history entry. This does not restore software or change request routing."}
         undo="Record another known release. The history of this change remains."
         onConfirm={runRelease} onClose={() => setReleaseAct(null)}>
-        {releaseAct?.kind === "activate" ? <p className="caption" data-i18n-skip>{releaseAct.release.releaseId}</p> : null}
+        {releaseAct?.kind === "activate" ? <p className="caption">{releaseAct.release.releaseId}</p> : null}
         {releaseAct?.kind === 'rollback' ? <label className="field"><span>Release record</span><select className="select" value={releaseAct.toReleaseId || ''} onChange={event => setReleaseAct(value => ({ ...value, toReleaseId: event.target.value }))}><option value="">Previous recorded release</option>{history.filter(item => item.releaseId !== active?.releaseId).map(item => <option key={item.releaseId} value={item.releaseId}>{item.version || item.releaseId}</option>)}</select></label> : null}
       </Confirm>
     </div>

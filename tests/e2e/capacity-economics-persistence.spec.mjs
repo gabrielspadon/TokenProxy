@@ -24,6 +24,7 @@ test('Capacity saves a reviewed account drain and restores it through the actual
   expect(initial?.isDraining).toBe(false);
   try {
     header(await page.goto(`/dashboard?${fixed}`));
+    await page.getByRole('radio', { name: 'Activity & analysis', exact: true }).check();
     const row = page.getByRole('table',{name:'Configured account capacity'}).locator('tbody tr').filter({has:page.getByRole('button',{name:'Synthetic research account',exact:true})});
     await row.getByRole('button',{name:'Synthetic research account',exact:true}).click();
     await expect(page.getByRole('region',{name:'Account policy evidence'})).toBeVisible();

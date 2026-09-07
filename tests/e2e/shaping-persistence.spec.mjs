@@ -38,6 +38,7 @@ function confirmed(result) {
 async function openWorkbench(page) {
   const response = await page.goto('/dashboard/shaping');
   assertSynthetic(response);
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Profiles and comparison', exact: true }).click();
   const workbench = page.locator('.shaping-workbench');
   await expect(workbench.getByRole('heading', { name: 'Profiles and offline experiments', exact: true })).toBeVisible();

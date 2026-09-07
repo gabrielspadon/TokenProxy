@@ -23,7 +23,7 @@ function Profile({ record, profiles }) {
       <dt>Access profile</dt>
       <dd>
         {named ? (
-          <span data-i18n-skip>{named}</span>
+          <span>{named}</span>
         ) : (
           <span>A profile this key names is no longer defined.</span>
         )}
@@ -31,13 +31,13 @@ function Profile({ record, profiles }) {
           <>
             {' '}
             <span>Adopted at version</span>{' '}
-            <span data-i18n-skip>{fmtNum(compliance.adoptedVersion)}</span>
+            <span>{fmtNum(compliance.adoptedVersion)}</span>
           </>
         ) : null}
         {compliance.adoptedVersion !== null && compliance.currentVersion !== null ? (
           <>
             {' '}
-            <span>of</span> <span data-i18n-skip>{fmtNum(compliance.currentVersion)}</span>
+            <span>of</span> <span>{fmtNum(compliance.currentVersion)}</span>
           </>
         ) : null}
         .
@@ -51,7 +51,7 @@ function Profile({ record, profiles }) {
         ) : compliance.drifted ? (
           <span>
             This key was changed away from the version it adopted:{' '}
-            <span data-i18n-skip>{compliance.driftedFields.join(', ')}</span>.
+            <span>{compliance.driftedFields.join(', ')}</span>.
           </span>
         ) : (
           <span>This key matches the version it adopted.</span>
@@ -83,21 +83,21 @@ function Rotation({ record, now }) {
       <p className="caption">
         {superseded ? (
           <>
-            Rotated <span data-i18n-skip>{fmtRelative(rotation.rotatedAt, now)}</span>.
+            Rotated <span>{fmtRelative(rotation.rotatedAt, now)}</span>.
           </>
         ) : (
           <>
             This key replaced an earlier one{' '}
-            <span data-i18n-skip>{fmtRelative(rotation.rotatedAt, now)}</span>. The recorded overlap deadline was{' '}
+            <span>{fmtRelative(rotation.rotatedAt, now)}</span>. The recorded overlap deadline was{' '}
             {rotation.overlapEndsAt ? (
               <>
                 {/* The deadline traffic stops is a moment, not a relative
                     phrase: "until in 48 hr." is unreadable and cannot be
                     acted on. Absolute first, relative as the aside. */}
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {recordTime(rotation.overlapEndsAt, true)}
                 </span>{' '}
-                (<span data-i18n-skip>{fmtRelative(rotation.overlapEndsAt, now)}</span>)
+                (<span>{fmtRelative(rotation.overlapEndsAt, now)}</span>)
               </>
             ) : (
               <>its own expiry</>
@@ -108,11 +108,11 @@ function Rotation({ record, now }) {
       </p>
       <dl className="facts">
         <dt>{superseded ? 'Successor' : 'Replaced'}</dt>
-        <dd className="id" data-i18n-skip>
+        <dd className="id">
           {rotation.counterpartKeyId}
         </dd>
         <dt>Overlap chosen</dt>
-        <dd data-i18n-skip>{fmtNum(rotation.overlapHours)}h</dd>
+        <dd>{fmtNum(rotation.overlapHours)}h</dd>
       </dl>
     </>
   );
@@ -134,16 +134,16 @@ function Attribution({ record, now }) {
           <span className="caption">Unknown. No attributed request is retained for this key.</span>
         ) : attribution.attribution === 'unattributed' ? (
           <span>
-            Not reported by the client. <span data-i18n-skip>{fmtNum(attribution.requests)}</span>{' '}
+            Not reported by the client. <span>{fmtNum(attribution.requests)}</span>{' '}
             retained requests named no client.
           </span>
         ) : (
           <>
-            <span data-i18n-skip>{attribution.clientTool}</span>
+            <span>{attribution.clientTool}</span>
             {attribution.lastSeenAt ? (
               <>
                 {' '}
-                <span data-i18n-skip>{fmtRelative(attribution.lastSeenAt, now)}</span>
+                <span>{fmtRelative(attribution.lastSeenAt, now)}</span>
               </>
             ) : null}
           </>
@@ -152,7 +152,7 @@ function Attribution({ record, now }) {
       {attribution ? (
         <>
           <dt>Distinct clients seen</dt>
-          <dd data-i18n-skip>{fmtNum(attribution.distinctClients)}</dd>
+          <dd>{fmtNum(attribution.distinctClients)}</dd>
         </>
       ) : null}
     </dl>

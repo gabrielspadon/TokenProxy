@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { decryptSecretJson, encryptSecretJson } from "../helpers/secretCol.js";
+import { captureAccountControls } from "../../../shared/utils/accountControls.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -389,17 +390,23 @@ export async function createProviderConnection(data) {
 }
 
 // Critical: OAuth refresh token race — atomic merge inside transaction
-export async function updateProviderConnection(id, data) {
+export async function updateProviderConnection(id, data, { expectedControls } = {}) {
   const db = await getAdapter();
   let result;
   db.transaction(() => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
+    if (expectedControls !== undefined
+        && JSON.stringify(captureAccountControls(existing)) !== JSON.stringify(captureAccountControls(expectedControls))) {
+      throw Object.assign(new Error("Account controls changed; reload before saving"), { code: "CONTROL_CONFLICT" });
+    }
     const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
-    result = merged;
+    result = data.priority !== undefined
+      ? rowToConn(db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]))
+      : merged;
   });
   return result;
 }

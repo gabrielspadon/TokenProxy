@@ -82,6 +82,7 @@ test('legacy profile defaults appear in editing and promotion without rewriting 
     return route.fulfill(json(404, { error: 'Unknown synthetic shaping read' }));
   });
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Profiles and comparison', exact: true }).click();
   const workbench = page.locator('.shaping-workbench');
   const oldRow = workbench.locator('.shaping-library .shaping-profile-row').filter({ has: page.getByText(storedOld.name, { exact: true }) });
@@ -151,6 +152,7 @@ async function serviceAction(page, verb, action) {
 const selfTestState = page => page.locator('.shaping-service-facts > div').filter({ has: page.getByText('Local self-test', { exact: true }) }).locator('dd');
 async function passingHealth(page, calls) {
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Service', exact: true }).click();
   await expect(selfTestState(page)).toHaveText('Not run in this view');
   expect(calls).toEqual([]);
@@ -208,7 +210,8 @@ test('RTL and reduced motion preserve arithmetic reading order', async ({ page }
   await baseFixtures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/dashboard/shaping');
-  await expect(page.getByRole('heading', { name: 'Optimization', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Token savings', exact: true })).toBeVisible();
   await page.evaluate(() => { document.documentElement.dir = 'rtl'; });
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);

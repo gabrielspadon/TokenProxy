@@ -9,10 +9,10 @@ export function Measure({ label, measure, render, big = false }) {
       {missing ? (
         <>
           <span className="value unreported">Not reported</span>
-          {m?.unavailable ? <details className="why"><summary>Why</summary><p data-i18n-skip>{m.unavailable}</p></details> : null}
+          {m?.unavailable ? <details className="why"><summary>Why</summary><p>{m.unavailable}</p></details> : null}
         </>
       ) : (
-        <span className="value" data-i18n-skip>{render(m.value)}</span>
+        <span className="value">{render(m.value)}</span>
       )}
     </div>
   );

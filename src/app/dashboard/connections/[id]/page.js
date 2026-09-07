@@ -38,7 +38,7 @@ const COPY = {
   enable: { title: "Enable this connection", verb: "Enable", requires: "An operator session.", changes: "The account rejoins the fallback order and can receive traffic.", undo: "Disable it again." },
   disable: { title: "Disable this connection", verb: "Disable", requires: "An operator session.", changes: "The account leaves the fallback order. In-flight requests finish.", undo: "Enable it again." },
   priority: { title: "Change the priority", verb: "Save", requires: "An operator session.", changes: "The account moves in the fallback order the next time a request routes.", undo: "Set the old value back." },
-  thresholds: { title: "Set the quota pause thresholds", verb: "Save", requires: "An operator session.", changes: "The gateway pauses new work on this account when a window's remaining percentage falls below the threshold.", undo: "Clear an account override to restore its default policy." },
+  thresholds: { title: "Set the quota pause thresholds", verb: "Save", requires: "An operator session.", changes: "The gateway pauses new work on this account when an exact quota window has a known remaining percentage at or below its positive threshold.", undo: "Set a threshold to 0 or clear it to turn off pausing for that window." },
   pool: { title: "Bind a proxy pool", verb: "Save", requires: "An operator session, and an active pool.", changes: "Every upstream call from this account goes through the pool. Whether that is strict comes from the pool itself.", undo: "Bind no pool." },
   endpoint: { title: "Override the endpoint", verb: "Save", requires: "An operator session, and an absolute http or https URL.", changes: "Calls go to the new base URL in the chosen API shape instead of the provider default.", undo: "Clear the override." },
   concurrent: { title: "Set the provider's concurrency ceiling", verb: "Save", requires: "An operator session.", changes: "Every connection of this provider shares this additional outer ceiling. Independent account limits still apply.", undo: "Clear the provider ceiling to remove the outer limit. Account limits remain in effect." },
@@ -83,6 +83,10 @@ export default function ConnectionPage({ params }) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState(null);
   const [field, setField] = useState({});
+  const thresholdWindows = [...new Set([
+    ...(c?.lastQuotaSnapshot?.windows || []).map((window) => window.key),
+    ...Object.keys(c?.quotaPauseThresholds || {}),
+  ])].filter((key) => typeof key === "string" && key.length > 0);
   const [probe, setProbe] = useState(null);
   const validation = probe || d?.validation;
   const [grantStep, setGrantStep] = useState(null);
@@ -172,8 +176,8 @@ export default function ConnectionPage({ params }) {
       <header className="screen-head">
         <div>
           <p className="caption"><Link prefetch={false} href="/dashboard/connections">Connections</Link></p>
-          <h1 className="connection-name" data-i18n-skip>{c ? <><ProviderMark provider={c.provider} />{c.name || c.displayName || c.email || c.provider}</> : "…"}</h1>
-          {c ? <p className="caption"><span data-i18n-skip>{c.provider}</span> · {AUTH[c.authType] || c.authType}</p> : null}
+          <h1 className="connection-name">{c ? <><ProviderMark provider={c.provider} />{c.name || c.displayName || c.email || c.provider}</> : "…"}</h1>
+          {c ? <p className="caption"><span>{c.provider}</span> · {AUTH[c.authType] || c.authType}</p> : null}
         </div>
         <div className="actions">
           <Freshness status={pollFresh(qual)} lastDataAt={qual.goodAt} />
@@ -190,17 +194,17 @@ export default function ConnectionPage({ params }) {
         <>
           <section>
             <dl className="facts">
-              <dt>Signed in as</dt><dd>{c.email ? <span data-i18n-skip>{c.email}</span> : <span className="unreported">Not recorded</span>}</dd>
-              <dt>Priority</dt><dd data-i18n-skip>{fmtNum(c.priority ?? 0)}</dd>
+              <dt>Signed in as</dt><dd>{c.email ? <span>{c.email}</span> : <span className="unreported">Not recorded</span>}</dd>
+              <dt>Priority</dt><dd>{fmtNum(c.priority ?? 0)}</dd>
               <dt>Enabled</dt><dd>{c.isActive === false ? "No" : "Yes"}</dd>
-              <dt>Created</dt><dd>{c.createdAt ? <span data-i18n-skip>{fmtTime(c.createdAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
-              <dt>Updated</dt><dd>{c.updatedAt ? <span data-i18n-skip>{fmtTime(c.updatedAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
-              <dt>Rate limited until</dt><dd>{c.rateLimitedUntil && !isEpoch(c.rateLimitedUntil) ? <span data-i18n-skip>{fmtTime(c.rateLimitedUntil)}</span> : <span>Not rate limited</span>}</dd>
-              <dt>Default model</dt><dd>{c.defaultModel ? <span data-i18n-skip>{c.defaultModel}</span> : <span>Provider default</span>}</dd>
-              <dt>Endpoint</dt><dd>{psd.baseUrl ? <span data-i18n-skip>{psd.baseUrl} ({psd.apiType || "chat"})</span> : <span>Provider default</span>}</dd>
-              <dt>Proxy pool</dt><dd><bdi data-i18n-skip>{networkPath.label}</bdi></dd>
-              <dt>Provider ceiling</dt><dd>{resolveProviderCeiling(settings.data, c.provider) !== null ? <span data-i18n-skip>{fmtNum(resolveProviderCeiling(settings.data, c.provider))}</span> : <span>No outer limit configured</span>}</dd>
-              <dt>Account ceiling</dt><dd>{resolveAccountCapacity(c) === 0 ? <span>Explicitly unlimited</span> : <span data-i18n-skip>{fmtNum(resolveAccountCapacity(c))}{c.maxConcurrent == null ? " (default)" : ""}</span>}</dd>
+              <dt>Created</dt><dd>{c.createdAt ? <span>{fmtTime(c.createdAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
+              <dt>Updated</dt><dd>{c.updatedAt ? <span>{fmtTime(c.updatedAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
+              <dt>Rate limited until</dt><dd>{c.rateLimitedUntil && !isEpoch(c.rateLimitedUntil) ? <span>{fmtTime(c.rateLimitedUntil)}</span> : <span>Not rate limited</span>}</dd>
+              <dt>Default model</dt><dd>{c.defaultModel ? <span>{c.defaultModel}</span> : <span>Provider default</span>}</dd>
+              <dt>Endpoint</dt><dd>{psd.baseUrl ? <span>{psd.baseUrl} ({psd.apiType || "chat"})</span> : <span>Provider default</span>}</dd>
+              <dt>Proxy pool</dt><dd><bdi>{networkPath.label}</bdi></dd>
+              <dt>Provider ceiling</dt><dd>{resolveProviderCeiling(settings.data, c.provider) !== null ? <span>{fmtNum(resolveProviderCeiling(settings.data, c.provider))}</span> : <span>No outer limit configured</span>}</dd>
+              <dt>Account ceiling</dt><dd>{resolveAccountCapacity(c) === 0 ? <span>Explicitly unlimited</span> : <span>{fmtNum(resolveAccountCapacity(c))}{c.maxConcurrent == null ? " (default)" : ""}</span>}</dd>
             </dl>
             <p className="caption">{networkPath.policy} Pool binding stores its strictness on the account; pool edits update bound snapshots atomically.</p>
           </section>
@@ -224,9 +228,9 @@ export default function ConnectionPage({ params }) {
                 <dt>Verdict</dt><dd>{validation?.ok === true ? "Check passed" : validation?.ok === false ? "Check failed" : "Not established"}</dd>
                 <dt>Generation</dt><dd className="unreported">Not verified by this check</dd>
                 <dt>Model</dt><dd className="unreported">Not recorded</dd>
-                <dt>Check duration</dt><dd>{typeof validation?.latencyMs === "number" ? <span data-i18n-skip>{fmtDuration(validation.latencyMs)}</span> : <span className="unreported">Not recorded</span>}</dd>
-                <dt>Error</dt><dd>{validation?.error ? <span data-i18n-skip>{validation.error}</span> : <span className="unreported">Not recorded</span>}</dd>
-                <dt>Observed</dt><dd>{validation?.checkedAt ? <span data-i18n-skip>{fmtRelative(validation.checkedAt, now)}</span> : <span className="unreported">Not recorded</span>}</dd>
+                <dt>Check duration</dt><dd>{typeof validation?.latencyMs === "number" ? <span>{fmtDuration(validation.latencyMs)}</span> : <span className="unreported">Not recorded</span>}</dd>
+                <dt>Error</dt><dd>{validation?.error ? <span>{validation.error}</span> : <span className="unreported">Not recorded</span>}</dd>
+                <dt>Observed</dt><dd>{validation?.checkedAt ? <span>{fmtRelative(validation.checkedAt, now)}</span> : <span className="unreported">Not recorded</span>}</dd>
               </dl>
             ) : !qual.error ? <p className="empty">No validation on record.</p> : null}
             <p className="caption">Provider checks differ. A local credential check, upstream authentication and a successful model request are separate evidence.</p>
@@ -269,7 +273,7 @@ export default function ConnectionPage({ params }) {
               </div>
             </details>
             {drainState?.isDraining ? (
-              <p className="caption">Draining since <span data-i18n-skip>{drainState.requestedAt ? fmtTime(drainState.requestedAt) : "—"}</span>, <span data-i18n-skip>{fmtNum(drainState.activeStreams)}</span> observed pending requests. Process counters can expire or lag; they do not establish whether a response is still streaming.</p>
+              <p className="caption">Draining since <span>{drainState.requestedAt ? fmtTime(drainState.requestedAt) : "—"}</span>, <span>{fmtNum(drainState.activeStreams)}</span> observed pending requests. Process counters can expire or lag; they do not establish whether a response is still streaming.</p>
             ) : null}
           </section>
         </>
@@ -284,14 +288,15 @@ export default function ConnectionPage({ params }) {
         ) : null}
         {action === "thresholds" ? (
           <div className="connections-form">
-            {(d?.quota?.length ? d.quota.map((w) => w.scope) : Object.keys(field).length ? Object.keys(field) : ["5h"]).map((scope) => (
+            {thresholdWindows.map((scope) => (
               <label className="field" key={scope}>
-                <span data-i18n-skip>{scope}</span>
+                <span>{scope}</span>
                 <input className="input" type="number" min="0" max="100" placeholder="No pause"
                   value={field[scope] ?? ""} onChange={(e) => setField((f) => ({ ...f, [scope]: e.target.value }))} />
               </label>
             ))}
-            <p className="caption">Pause when the window has less than this percentage remaining. For example, 10 pauses below 10% remaining, after more than 90% has been used. Empty removes this account override.</p>
+            {!thresholdWindows.length && <p className="empty">No exact quota windows have been observed or configured for this account. Threshold inputs will appear when a quota snapshot identifies its windows.</p>}
+            <p className="caption">A positive threshold pauses at or below this percentage remaining. For example, 10 pauses at 10% remaining or less, after at least 90% has been used. Set 0 or leave empty to turn off pausing for that exact window. Unlimited windows and unknown remaining percentages do not trigger a pause.</p>
           </div>
         ) : null}
         {action === "pool" ? (
@@ -300,7 +305,7 @@ export default function ConnectionPage({ params }) {
               <option value="">Explicit direct connection</option>
               <option value="__clear__">Clear pool; restore the retained account/global path</option>
               <option value="__legacy__">Custom proxy for this account</option>
-              {poolList.filter((p) => p.isActive !== false).map((p) => <option key={p.id} value={p.id} data-i18n-skip>{p.name}</option>)}
+              {poolList.filter((p) => p.isActive !== false).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </label>
           <p className="caption">Clearing a pool preserves any existing explicit direct or custom proxy policy. A selected pool takes precedence over those retained settings.</p>
@@ -338,7 +343,7 @@ export default function ConnectionPage({ params }) {
             {grantStep ? <p className="caption">{grantStep}</p> : null}
           </div>
         ) : null}
-        {action === "del" && c ? <p className="caption" data-i18n-skip>{c.name || c.email || c.provider}</p> : null}
+        {action === "del" && c ? <p className="caption">{c.name || c.email || c.provider}</p> : null}
       </Confirm>
     </div>
   );

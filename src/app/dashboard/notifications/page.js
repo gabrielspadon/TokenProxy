@@ -263,13 +263,13 @@ export default function NotificationsPage() {
         <div className="measures">
           <div className="measure">
             <span className="label">Destinations</span>
-            <span className="value" data-i18n-skip>
+            <span className="value">
               {fmtNum(endpoints.length)}
             </span>
           </div>
           <div className="measure">
             <span className="label">Deliveries</span>
-            <span className="value" data-i18n-skip>
+            <span className="value">
               {fmtNum(deliveries.length)}
             </span>
           </div>
@@ -292,7 +292,7 @@ export default function NotificationsPage() {
                 </span>
               </dd>
               <dt>Destinations</dt>
-              <dd data-i18n-skip>{fmtNum(endpoints.length)}</dd>
+              <dd>{fmtNum(endpoints.length)}</dd>
             </dl>
             <div className="panel">
               <h3>Controls</h3>
@@ -366,7 +366,7 @@ export default function NotificationsPage() {
             {endpoints.map((e) => (
               <div key={e.id} className="row notifications-dest">
                 <span className="who">
-                  <span className="name" data-i18n-skip>
+                  <span className="name">
                     {maskUrl(e.url)}
                   </span>
                   <span className="sub">
@@ -530,19 +530,19 @@ export default function NotificationsPage() {
             {deliveries.map((d, i) => (
               <div key={`${d.at}-${i}`} className="row notifications-log">
                 <span className="who">
-                  <span className="name" data-i18n-skip>
+                  <span className="name">
                     {named(d.endpointId)}
                   </span>
-                  <span className="sub" data-i18n-skip>
+                  <span className="sub">
                     {fmtRelative(d.at)}
                   </span>
                 </span>
-                <span>{EVENTS[d.event] || <span data-i18n-skip>{d.event}</span>}</span>
+                <span>{EVENTS[d.event] || <span>{d.event}</span>}</span>
                 <span className="who">
                   <span className="status" data-tone={d.ok ? 'ok' : 'bad'}>
                     {d.ok ? 'Delivered' : 'Not delivered'}
                   </span>
-                  <span className="sub" data-i18n-skip>
+                  <span className="sub">
                     {[
                       d.status ? `HTTP ${d.status}` : null,
                       d.attempts ? `${fmtNum(d.attempts)}x` : null,
