@@ -8,6 +8,7 @@ import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative } from '@/shared/format';
+import { NotificationRules } from '@/shared/workspace/NotificationRules';
 import './styles.css';
 
 // §18. Three events exist and all three are derived from state the routing
@@ -539,6 +540,14 @@ export default function NotificationsPage() {
           empties it. A test send is not recorded here; its result appears beside the button that
           sent it.
         </p>
+      </section>
+
+      {/* Rules are durable and evidence-backed, unlike the in-process delivery
+          log above: they persist in the database and alert on retained
+          measurements rather than on a webhook round trip. */}
+      <section aria-labelledby="h-rules">
+        <h2 id="h-rules">Rules</h2>
+        <NotificationRules />
       </section>
 
       <Confirm

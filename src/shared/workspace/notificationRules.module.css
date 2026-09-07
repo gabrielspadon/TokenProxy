@@ -1,0 +1,202 @@
+/* Follows quotaHistoryWorkbench.module.css: white surfaces, mono identifiers,
+   dimmed unknowns, tabular numerals so figures align down a column. */
+.surface {
+  color: #24324a;
+  min-width: 0;
+  --mantine-color-dimmed: #596981;
+}
+.surface h3 {
+  font-size: 17px;
+  font-weight: 500;
+  margin: 0 0 5px;
+}
+.surface h4 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.note {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #596981;
+  max-width: 80ch;
+  margin: 4px 0 10px;
+}
+.sentence {
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 9px 12px;
+  border-inline-start: 3px solid #a4b1cd;
+  background: #f3f6fb;
+  max-width: 90ch;
+  margin: 10px 0;
+}
+.empty {
+  color: #596981;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 14px 0;
+}
+.mono {
+  font-family: var(--mono);
+}
+
+.table {
+  font-size: 12px;
+  margin-top: 12px;
+}
+.table th {
+  font-size: 12px;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #596981;
+}
+.table td {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.table code {
+  font-family: var(--mono);
+  font-size: 11px;
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+.table tr[data-selected] {
+  background: #edf1fd;
+  box-shadow: inset 3px 0 #455bca;
+}
+/* A value the evidence did not carry is dimmed, never drawn as a number. */
+.table td[data-unknown],
+.facts dd[data-unknown] {
+  color: #8794aa;
+}
+
+.action {
+  font-size: inherit;
+  text-decoration: underline;
+  text-decoration-color: #bac6dd;
+  text-underline-offset: 3px;
+}
+.action:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: 3px;
+}
+.action:disabled {
+  color: #8794aa;
+  text-decoration: none;
+}
+
+.state {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.state[data-state='firing'] {
+  color: #a5391f;
+}
+.state[data-state='snoozed'] {
+  color: #7a6320;
+}
+.state[data-state='acknowledged'] {
+  color: #596981;
+}
+.table tr[data-state='firing'] {
+  box-shadow: inset 3px 0 #c0532f;
+}
+
+.editor {
+  border: 1px solid #dce2ec;
+  background: #fbfcfe;
+  padding: 16px 18px;
+  margin: 14px 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail {
+  margin-top: 22px;
+  border-top: 1px solid #dce2ec;
+  padding-top: 18px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  column-gap: 20px;
+  row-gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 12px 0 14px;
+}
+.facts dt {
+  color: #596981;
+}
+.facts dd {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.dryRun {
+  margin-top: 20px;
+  border-top: 1px solid #dce2ec;
+  padding-top: 16px;
+}
+.firings {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.firings summary {
+  cursor: pointer;
+}
+.firings ul {
+  padding-inline-start: 18px;
+  line-height: 1.7;
+}
+.firings code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.alerts {
+  margin-top: 24px;
+  border-top: 1px solid #dce2ec;
+  padding-top: 18px;
+}
+
+.unavailable {
+  margin-top: 24px;
+  border-top: 1px solid #dce2ec;
+  padding-top: 18px;
+}
+.unavailable dl {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  max-width: 90ch;
+}
+.unavailable dt {
+  font-weight: 600;
+  margin-top: 10px;
+}
+.unavailable dd {
+  margin: 3px 0 0;
+  color: #596981;
+}
+.requires {
+  display: block;
+  margin-top: 4px;
+  color: #8794aa;
+}
+
+@media (max-width: 720px) {
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
