@@ -12,6 +12,7 @@ import { ContextInspector } from './ContextInspector';
 import { ContextClientEvents } from '@/shared/workspace/ContextEvidence';
 import { ContextTracks } from './ContextTracks';
 import { ContextTable } from './ContextTable';
+import { HistoryRetention } from './HistoryRetention';
 import { IDENTITY, IDENTITY_NOTE, contextUrl, finite, quantity, signedBytes, utc } from './contextModel';
 import styles from './context.module.css';
 
@@ -159,7 +160,7 @@ function ContextScope({ workspace, baseline, setBaseline }) {
         </SelectionDock>}</div>
       </ReadState>}
       {data?.summary?.sessions > 0 && !sessions.length && !selectedSessionId && <Pager pagination={data?.pagination} onPage={changePage} label="Sessions" />}
-      <footer className={styles.footer}><span>{quantity(data?.retentionDays)} days retained · {recordingStart === 'Unknown' ? 'recording start unknown' : `recording began ${recordingStart} UTC`}</span><span>{dataTimestamp === 'Unknown' ? 'Data timestamp unknown' : `${data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · ${dataTimestamp} UTC`}</span></footer>
+      <footer className={styles.footer}><span>{data?.retentionDays === null ? 'History preserved' : finite(data?.retentionDays) ? `${quantity(data.retentionDays)} days retained` : 'Retention policy unknown'} · {recordingStart === 'Unknown' ? 'recording start unknown' : `recording began ${recordingStart} UTC`}</span><HistoryRetention onSaved={refresh} /><span>{dataTimestamp === 'Unknown' ? 'Data timestamp unknown' : `${data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · ${dataTimestamp} UTC`}</span></footer>
     </div>
   </div>;
 }

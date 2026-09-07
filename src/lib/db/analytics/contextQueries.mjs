@@ -11,7 +11,7 @@ export function validateAnalyticsQuery(query) {
     || Object.entries(query.filter).some(([key, value]) => !FILTER_KEYS.has(key) || !["string", "number"].includes(typeof value))) throw new ContextQueryError("Invalid analytics filter");
   const filter = parseContextFilter(new URLSearchParams(query.filter));
   if (query.operation === "session") return { operation: "session", sessionId: validId(query.sessionId), filter };
-  if (!Number.isInteger(query.retainedDays) || query.retainedDays < 1 || query.retainedDays > 365) throw new ContextQueryError("Invalid retention");
+  if (query.retainedDays !== null && (!Number.isInteger(query.retainedDays) || query.retainedDays < 1 || query.retainedDays > 365)) throw new ContextQueryError("Invalid retention");
   return { operation: "overview", filter, retainedDays: query.retainedDays };
 }
 
@@ -98,7 +98,7 @@ function dimensions(db, filter) {
     GROUP BY r.provider,r.model,r.connectionId ORDER BY attempts DESC LIMIT 100`, filter.args).map((r) => ({ ...r,
     cacheHitRate: r.cacheEligibleInputTokens > 0 ? r.cacheEligibleReadTokens / r.cacheEligibleInputTokens : null }));
 }
-export function readContextOverview(db, f = {}, retainedDays = 45) {
+export function readContextOverview(db, f = {}, retainedDays = null) {
   const filter = whereFor(f);
   const totals = summary(db, filter);
   const coverageFilter = whereFor(f, null, false);

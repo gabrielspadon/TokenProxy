@@ -19,7 +19,7 @@ function normalizedEvent(body, keyId, key, now, days) {
   let occurredAt;
   try { occurredAt = parseContextFilter(new URLSearchParams({ from: body.occurredAt })).from; }
   catch { throw new ContextEvidenceError("occurredAt must be a valid timestamp with a timezone"); }
-  if (Date.parse(occurredAt) > now + 300000 || Date.parse(occurredAt) < now - days * 86400000) throw new ContextEvidenceError("Event timestamp is outside the retained observation window");
+  if (Date.parse(occurredAt) > now + 300000 || (days !== null && Date.parse(occurredAt) < now - days * 86400000)) throw new ContextEvidenceError("Event timestamp is outside the retained observation window");
   const clientId = rawContextId(body.clientId, true);
   const result = { clientKeyId: keyId, clientEventId: body.eventId.toLowerCase(), occurredAt, type: body.type, source: "client-reported" };
   for (const [field, input] of Object.entries(fields)) result[field] = contextRef(key, keyId, clientId, field, rawContextId(body[input]));
@@ -74,7 +74,7 @@ export async function ingestContextEvent(apiKey, body, { now = Date.now() } = {}
     const keys = Object.keys(row);
     db.run(`INSERT INTO contextClientEvents(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, Object.values(row));
     // Event-only installations still enforce the same bounded retention policy.
-    db.run("DELETE FROM contextClientEvents WHERE occurredAt<?", [new Date(now - days * 86400000).toISOString()]);
+    if (days !== null) db.run("DELETE FROM contextClientEvents WHERE occurredAt<?", [new Date(now - days * 86400000).toISOString()]);
     return { event: publicContextEvent(row), duplicate: false };
   });
 }

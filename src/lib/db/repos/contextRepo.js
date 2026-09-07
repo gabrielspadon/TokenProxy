@@ -115,9 +115,11 @@ export async function updateContextSession(id, body) {
   return db.run(`UPDATE contextSessions SET projectLabel=? WHERE id=?`, [label?.trim() || null, validId(id)]).changes > 0;
 }
 export function retentionDays(settings) {
+  if (settings?.statsRetentionMode !== "window") return null;
   return Math.min(365, Math.max(1, Number(settings?.statsRetentionDays) || 45));
 }
 export function cleanupContext(db, now, days) {
+  if (days === null) return;
   const cutoff = new Date(now - days * DAY_MS).toISOString();
   db.transaction(() => {
     db.run(`DELETE FROM requestStats WHERE timestamp < ?`, [cutoff]);

@@ -5,8 +5,8 @@ import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
 // Full-history statistics source. One row per request (id is the requestDetail
 // id, shared across the streaming start/complete upsert), written
 // unconditionally from saveRequestDetail — independent of the observability
-// ring-buffer toggle. Retained statsRetentionDays (default 45), cleaned on a
-// cadence from saveRequestStats.
+// ring-buffer toggle. History is preserved unless statsRetentionMode explicitly
+// selects a window, cleaned on a cadence from saveRequestStats.
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const HOUR_MS = 3600000;
