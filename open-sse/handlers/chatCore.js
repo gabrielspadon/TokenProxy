@@ -80,6 +80,7 @@ import {
   placeholderEpochSummarizer,
 } from "../utils/epochCompact.js";
 import { pruneExpiredToolResults } from "../utils/dietPrune.js";
+import { compressBlobs, resolveLinguaEndpoint } from "../utils/linguaCompress.js";
 import { reorderByRelevance } from "../utils/embedReorder.js";
 import {
   injectBoundaryNote,
@@ -389,6 +390,7 @@ export async function handleChatCore({
   epochMicroEnabled,
   epochAutoEnabled,
   dietEnabled,
+  linguaEnabled,
   privacyEnabled,
   privacyTerms,
   headroomEnabled,
@@ -865,6 +867,7 @@ export async function handleChatCore({
           epochMicroEnabled ||
           epochAutoEnabled ||
           dietEnabled ||
+          linguaEnabled ||
           headroomEnabled ||
           cavemanEnabled ||
           ponytailEnabled ||
@@ -1324,7 +1327,7 @@ export async function handleChatCore({
   // for the later stages.
   const epochStageWanted =
     tokenSaverEnabled &&
-    (epochMicroEnabled || epochAutoEnabled || dietEnabled) &&
+    (epochMicroEnabled || epochAutoEnabled || dietEnabled || linguaEnabled) &&
     claudePrefixTarget &&
     !!prefixMessages();
   let epochCutIndex = 0;
@@ -1357,6 +1360,38 @@ export async function handleChatCore({
     }
   }
   measureSaverStage("diet", dietApplied);
+
+  // LLMLingua-2 selective compression: large natural-language-ish user/
+  // tool_result blobs below the epoch cut are compressed in place by a
+  // loopback-only sidecar (env TOKENPROXY_LINGUA_ENDPOINT, read at request
+  // time). The content classifier skips JSON/code-fence/diff-hunk/keyword-
+  // heavy blobs; system messages and the latest assistant turn are never
+  // candidates. Fail-closed: any backend failure reports applied:false and
+  // leaves the body byte-identical, with the reason in the debug log only.
+  // Default off (linguaEnabled).
+  const linguaWillRun = epochStageWanted && linguaEnabled;
+  let linguaApplied = false;
+  let linguaSkip = null;
+  if (linguaWillRun && epochCutIndex > 0) {
+    const res = await compressBlobs(translatedBody, {
+      epochCutIndex,
+      endpoint: resolveLinguaEndpoint(),
+      signal: callerSignal,
+      log,
+    });
+    linguaSkip = res.skip ?? null;
+    if (res.applied) {
+      translatedBody.messages = res.messages;
+      linguaApplied = true;
+      prefixRewritten = true;
+      notePath(rid, "XFORM.lingua");
+      pushPrefixNote({
+        kind: "lingua",
+        text: `compressed ${res.compressedBlocks} blob(s) (~${res.savedChars} chars)`,
+      });
+    }
+  }
+  measureSaverStage("lingua", linguaApplied);
 
   const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
   let epochMicroApplied = false;
@@ -1731,6 +1766,7 @@ export async function handleChatCore({
       "qac",
       "pairs",
       "diet",
+      "lingua",
       "reorder",
       "midinject",
       "epochMicro",
@@ -1778,6 +1814,17 @@ export async function handleChatCore({
         ce: saverFields.ce,
       };
       if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      onTokenSaverEvent?.(row);
+    }
+    if (linguaWillRun && !linguaApplied) {
+      const row = {
+        saver: "lingua",
+        rid,
+        applied: false,
+        ce: saverFields.ce,
+      };
+      if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      else if (linguaSkip === "no_backend") row.reason = "no_backend";
       onTokenSaverEvent?.(row);
     }
     if (epochMicroWillRun && !epochMicroApplied) {

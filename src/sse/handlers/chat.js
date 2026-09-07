@@ -997,6 +997,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         epochMicroEnabled: comboTokenSaver.epochMicroEnabled,
         epochAutoEnabled: comboTokenSaver.epochAutoEnabled,
         dietEnabled: comboTokenSaver.dietEnabled,
+        linguaEnabled: comboTokenSaver.linguaEnabled,
         privacyEnabled: !!chatSettings.privacyFilterEnabled,
         privacyTerms: chatSettings.privacyFilterTerms || [],
         headroomEnabled: comboTokenSaver.headroomEnabled,

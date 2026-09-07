@@ -103,6 +103,11 @@ const DEFAULT_SETTINGS = {
   // stubs old, unreferenced tool_result payloads below the cache-epoch cut.
   // Off by default.
   dietEnabled: false,
+  // LLMLingua-2 selective compression (open-sse/utils/linguaCompress.js):
+  // compresses large natural-language user/tool_result blobs below the
+  // cache-epoch cut via a loopback-only sidecar (env
+  // TOKENPROXY_LINGUA_ENDPOINT). Off by default.
+  linguaEnabled: false,
   // Privacy filter (#2728): pseudonymise emails and the terms below in the
   // outbound body, restored before the client sees the answer. Off by
   // default — it walks every request, so it costs nothing until asked for.

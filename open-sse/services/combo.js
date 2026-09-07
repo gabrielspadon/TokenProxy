@@ -456,6 +456,7 @@ const COMBO_TOKEN_SAVER_KEYS = Object.freeze({
   epochMicro: "epochMicroEnabled",
   epochAuto: "epochAutoEnabled",
   diet: "dietEnabled",
+  lingua: "linguaEnabled",
 });
 
 // Read the override off the bag settings already keeps per combo
@@ -501,7 +502,8 @@ function findComboTokenSaverOverride(comboChain, settings) {
  *     caveman?: boolean, ponytail?: boolean, pxpipe?: boolean,
  *     schema?: boolean, thinking?: boolean, qac?: boolean,
  *     pairs?: boolean, reorder?: boolean, midinject?: boolean,
- *     epochMicro?: boolean, epochAuto?: boolean, diet?: boolean }
+ *     epochMicro?: boolean, epochAuto?: boolean, diet?: boolean,
+ *     lingua?: boolean }
  *
  * `enabled` is the same kind of master gate chatCore's own tokenSaverEnabled is:
  * false forces every saver off for this combo, true (the default) leaves the
@@ -513,7 +515,7 @@ function findComboTokenSaverOverride(comboChain, settings) {
  *
  * @param {Set<string>|string[]|string|null} comboChain - combo names, outermost first
  * @param {Object} settings - the global settings object
- * @returns {{rtkEnabled: boolean, schemaDistillEnabled: boolean, headroomEnabled: boolean, cavemanEnabled: boolean, ponytailEnabled: boolean, pxpipeEnabled: boolean, epochMicroEnabled: boolean, epochAutoEnabled: boolean, dietEnabled: boolean}}
+ * @returns {{rtkEnabled: boolean, schemaDistillEnabled: boolean, headroomEnabled: boolean, cavemanEnabled: boolean, ponytailEnabled: boolean, pxpipeEnabled: boolean, epochMicroEnabled: boolean, epochAutoEnabled: boolean, dietEnabled: boolean, linguaEnabled: boolean}}
  */
 export function resolveComboTokenSaver(comboChain, settings) {
   const flags = Object.values(COMBO_TOKEN_SAVER_KEYS);

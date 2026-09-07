@@ -23,6 +23,7 @@ const GLOBAL = {
   epochMicroEnabled: false,
   epochAutoEnabled: false,
   dietEnabled: false,
+  linguaEnabled: false,
 };
 
 const ALL_OFF = {
@@ -40,6 +41,7 @@ const ALL_OFF = {
   epochMicroEnabled: false,
   epochAutoEnabled: false,
   dietEnabled: false,
+  linguaEnabled: false,
 };
 
 function settings(comboStrategies) {
