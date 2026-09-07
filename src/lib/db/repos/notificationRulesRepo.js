@@ -407,8 +407,18 @@ export async function dryRunRule(input, { start, end, signal, asOf } = {}) {
  * Live evaluation of every enabled rule. Read-only against the analytics
  * snapshot; the only writes are alert rows. Cooldown carries across runs
  * through the most recent firing already recorded for that rule and scope.
+ *
+ * `notBefore` (ISO instant, optional) is the RESTART SEEDING boundary. The
+ * retained population this reads spans 30 days by default, so a rule whose
+ * condition breached and cleared last week would otherwise have that historical
+ * firing recorded as a fresh open alert the first time a new process evaluates.
+ * Passing the process's own start instant suppresses any firing dated before it,
+ * which is the rule-shaped form of the watcher's silent first sighting
+ * (src/lib/notifications/watcher.js:38). Absent, nothing is suppressed, so the
+ * dry run and every existing caller are unchanged.
  */
-export async function evaluateEnabledRules({ start, end, signal, asOf } = {}) {
+export async function evaluateEnabledRules({ start, end, signal, asOf, notBefore } = {}) {
+  const notBeforeAt = notBefore ? Date.parse(notBefore) : NaN;
   const db = await getAdapter();
   const rules = db
     .all(`SELECT * FROM notificationRules WHERE enabled = 1 ORDER BY createdAt ASC`)
@@ -438,6 +448,10 @@ export async function evaluateEnabledRules({ start, end, signal, asOf } = {}) {
       });
       const latest = firings.at(-1);
       if (!latest) continue;
+      // A firing that predates the boundary already happened; it is history, not
+      // an incident this process observed starting. An ongoing breach still
+      // alerts, dated to the first evidence that lands after the boundary.
+      if (Number.isFinite(notBeforeAt) && Date.parse(latest.firedAt) < notBeforeAt) continue;
       const snoozedUntil = previous?.snoozedUntil ? Date.parse(previous.snoozedUntil) : null;
       if (Number.isFinite(snoozedUntil) && Date.parse(latest.firedAt) < snoozedUntil) continue;
       const event = await recordFiring(rule, latest, group.scopeKey);
