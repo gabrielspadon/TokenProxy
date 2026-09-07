@@ -166,9 +166,11 @@ describe("cost ledger pipeline", () => {
     expect(row.outputTokens).toBe(50);
     expect(row.baselineUsd).toBeCloseTo(row.actualUsd, 12);
     expect(row.savedUsd).toBe(0);
+    expect(row.saverSavedUsd).toBe(0);
+    expect(row.cacheSavedUsd).toBe(0);
   });
 
-  it("savers on: baseline exceeds actual, savedUsd is positive", async () => {
+  it("savers on: baseline exceeds actual, savedUsd is positive and lands in the saver component", async () => {
     const res = await handleChatCore(baseArgs({ requestId: "c0ffee51", rtkEnabled: true }));
     expect(res.success).toBe(true);
     const row = await readLedgerRow("c0ffee51");
@@ -179,6 +181,9 @@ describe("cost ledger pipeline", () => {
     expect(row.inputTokens).toBeLessThan(500);
     expect(row.baselineUsd).toBeGreaterThan(row.actualUsd);
     expect(row.savedUsd).toBeGreaterThan(0);
+    // No cache tokens reported: the whole saving is saver work.
+    expect(row.saverSavedUsd).toBeCloseTo(row.savedUsd, 12);
+    expect(row.cacheSavedUsd).toBe(0);
   });
 
   it("estimated usage (provider omitted it) writes no ledger row", async () => {

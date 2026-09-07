@@ -26,7 +26,8 @@ import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
 // their version history, and the alerts they produced. 17 = access profiles
 // and deliberate key rotation. 18 = union of the 16/17 lines of work.
 // 19 = counterfactual dollar-cost ledger (costLedger).
-export const SCHEMA_VERSION = 19;
+// 20 = cost-ledger saver/cache attribution split (saverSavedUsd, cacheSavedUsd).
+export const SCHEMA_VERSION = 20;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;

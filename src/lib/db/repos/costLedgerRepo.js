@@ -56,6 +56,12 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
     usage: canonical,
     multipliers: cacheMultiplierFor(provider),
   }).totalUsd;
+  // Attribution split of savedUsd: the saver component prices the ACTUAL usage
+  // as if fully uncached and subtracts it from the baseline, so only the
+  // pre-saver body shrink moves it; the cache component is what the provider
+  // discount took off that actual usage. saver + cache = savedUsd exactly.
+  const actualUncachedUsd =
+    canonical.prompt_tokens * (inputRate / 1e6) + outputTokens * (outputRate / 1e6);
 
   return {
     id: rid,
@@ -66,6 +72,8 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
     baselineUsd,
     actualUsd,
     savedUsd: baselineUsd - actualUsd,
+    saverSavedUsd: baselineUsd - actualUncachedUsd,
+    cacheSavedUsd: actualUncachedUsd - actualUsd,
     inputTokens: canonical.prompt_tokens,
     cacheReadTokens: canonical.cached_tokens,
     cacheWriteTokens: canonical.cache_creation_input_tokens,
@@ -80,14 +88,18 @@ export async function recordCostLedger(entry) {
     if (!entry || typeof entry.id !== "string" || !entry.id) return false;
     const db = await getAdapter();
     db.run(
-      `INSERT INTO costLedger(id, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+      `INSERT INTO costLedger(id, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, saverSavedUsd, cacheSavedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET ts=excluded.ts, sid=excluded.sid, provider=excluded.provider,
          model=excluded.model, baselineUsd=excluded.baselineUsd, actualUsd=excluded.actualUsd,
-         savedUsd=excluded.savedUsd, inputTokens=excluded.inputTokens, cacheReadTokens=excluded.cacheReadTokens,
+         savedUsd=excluded.savedUsd, saverSavedUsd=excluded.saverSavedUsd, cacheSavedUsd=excluded.cacheSavedUsd,
+         inputTokens=excluded.inputTokens, cacheReadTokens=excluded.cacheReadTokens,
          cacheWriteTokens=excluded.cacheWriteTokens, outputTokens=excluded.outputTokens`,
       [entry.id, entry.ts, entry.sid, entry.provider, entry.model, entry.baselineUsd, entry.actualUsd,
-        entry.savedUsd, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.outputTokens],
+        // A caller omitting the split columns stores 0/0, the same "unknown
+        // decomposition" marker pre-split rows carry.
+        entry.savedUsd, entry.saverSavedUsd ?? 0, entry.cacheSavedUsd ?? 0, entry.inputTokens,
+        entry.cacheReadTokens, entry.cacheWriteTokens, entry.outputTokens],
     );
     return true;
   } catch {
@@ -107,18 +119,24 @@ export async function recordCostLedgerForRequest(args) {
   }
 }
 
-// Session rollup for the MCP context_status entry: dollars saved by the savers
-// over the last 24h for one sid. Null (not 0) when the read itself failed, so
-// a broken DB never reports a fake "saved nothing".
+// Session rollup for the MCP context_status entry, decomposed by attribution:
+// saverSavedUsd is what the savers cut over the window (baseline minus the
+// actual usage priced fully uncached), cacheSavedUsd is the provider cache
+// discount on top of that. Null (not 0) when the read itself failed, so a
+// broken DB never reports a fake "saved nothing".
 export async function sumSavedUsdSince(sid, sinceIso) {
   try {
     if (typeof sid !== "string" || !sid || typeof sinceIso !== "string" || !sinceIso) return null;
     const db = await getAdapter();
     const row = db.get(
-      `SELECT COALESCE(SUM(savedUsd), 0) AS total FROM costLedger WHERE sid = ? AND ts >= ?`,
+      `SELECT COALESCE(SUM(saverSavedUsd), 0) AS saver, COALESCE(SUM(cacheSavedUsd), 0) AS cache
+       FROM costLedger WHERE sid = ? AND ts >= ?`,
       [sid, sinceIso],
     );
-    return row && Number.isFinite(Number(row.total)) ? Number(row.total) : null;
+    const saverSavedUsd = Number(row?.saver);
+    const cacheSavedUsd = Number(row?.cache);
+    if (!row || !Number.isFinite(saverSavedUsd) || !Number.isFinite(cacheSavedUsd)) return null;
+    return { saverSavedUsd, cacheSavedUsd };
   } catch {
     return null;
   }
