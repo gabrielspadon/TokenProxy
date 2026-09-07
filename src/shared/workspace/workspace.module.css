@@ -551,6 +551,10 @@
   .wordmark { width: auto; padding: 0; background: transparent; color: var(--ink); }
   .wordmarkPoint { color: var(--signal); }
 }
+@media (max-width: 360px) {
+  .headerContent { padding-inline: 8px; gap: 6px; }
+  .wordmark { font-size: 1.125rem; }
+}
 @media (max-width: 48em) {
   .lensTitle h1 { font-size: 1.75rem; }
   .lensTitle p { display: block; }

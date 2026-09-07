@@ -1,5 +1,5 @@
 import { test, expect } from 'playwright/test';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { authenticateRedesign, installRedesignBrowser } from './redesign-fixtures/browser.mjs';
 import { captureAccountControls } from '../../src/shared/utils/accountControls.js';
@@ -217,6 +217,8 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
     expect(safety.outboundFailures).toEqual([]);
   } finally {
     report.outboundFailures = safety.outboundFailures;
-    await testInfo.attach('account-control-panel-receipt', { body: Buffer.from(JSON.stringify(report, null, 2)), contentType: 'application/json' });
+    const receiptPath = testInfo.outputPath('account-control-panel-receipt.json');
+    await writeFile(receiptPath, JSON.stringify(report, null, 2));
+    await testInfo.attach('account-control-panel-receipt', { path: receiptPath, contentType: 'application/json' });
   }
 });

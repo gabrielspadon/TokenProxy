@@ -430,3 +430,14 @@
   .capacityViews { width: 100%; }
   .capacityViews :global(.mantine-SegmentedControl-label) { font-size: 13px; padding: 6px 7px; }
 }
+@media (max-width: 360px) {
+  .capacityViews :global(.mantine-SegmentedControl-control) { flex: 1; min-width: 0; }
+  .capacityViews :global(.mantine-SegmentedControl-label) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    padding-inline: 6px;
+    white-space: normal;
+  }
+}

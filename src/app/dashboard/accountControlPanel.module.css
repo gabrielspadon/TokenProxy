@@ -18,11 +18,11 @@
 .windowHeading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .windowHeading button { color: var(--ink); background: none; border: 0; padding: 0; text-align: left; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; min-height: 24px; }
 .windowHeading strong { color: var(--signal); font-size: 15px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.windowHeading strong[data-low] { color: var(--mantine-color-orange-8); }
+.windowHeading strong[data-low] { color: var(--ember); }
 .meter { position: relative; height: 9px; border-radius: 4px; background: var(--rule); }
 .meter[data-unknown] { background: repeating-linear-gradient(135deg, var(--rule), var(--rule) 4px, transparent 4px, transparent 8px); }
 .fill { display: block; height: 100%; border-radius: 4px; background: var(--signal); transition: width 180ms ease; }
-.fill[data-low] { background: var(--mantine-color-orange-7); }
+.fill[data-low] { background: var(--ember); }
 .window[data-retained] .fill { background: var(--slate); }
 .window[data-retained] .windowHeading strong { color: var(--slate); }
 .threshold { position: absolute; top: -3px; width: 2px; height: 15px; background: var(--ink); transform: translateX(-1px); }
