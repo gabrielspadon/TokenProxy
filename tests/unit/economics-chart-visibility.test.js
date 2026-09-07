@@ -32,4 +32,14 @@ it('keeps isolated observations visible after twenty rows while preserving unkno
   expect(series.data[0][1]).toBe(0);
   expect(series.data[1][1]).toBeNull();
   expect(chart.props.option.title[0].text).toBe('Recorded amount · USD');
+  const formatUsdTick = chart.props.option.yAxis[0].axisLabel.formatter;
+  expect([0, 0.005, 0.01, 0.015].map(formatUsdTick)).toEqual(['$0', '$0.005', '$0.01', '$0.015']);
+  expect([0.000005, 0.00001, 0.00002].map(formatUsdTick)).toEqual(['$5E-6', '$1E-5', '$2E-5']);
+  expect([1000, 1500, 1000000].map(formatUsdTick)).toEqual(['$1K', '$1.5K', '$1M']);
+  expect([-0.005, -0.00001].map(formatUsdTick)).toEqual(['$-0.005', '$-1E-5']);
+  const tooltip = chart.props.option.tooltip.formatter;
+  expect(tooltip([{ seriesIndex: 0, data: series.data[0], value: series.data[0] }])).toContain('$0.00 USD (1/1 samples)');
+  expect(tooltip([{ seriesIndex: 0, data: series.data[1], value: series.data[1] }])).toBe('No recorded observations in this interval');
+  const tinyPoint = [start, 0.000005, { bucketStartMs: start, costSamples: 1, records: 1 }];
+  expect(tooltip([{ seriesIndex: 0, data: tinyPoint, value: tinyPoint }])).toContain('<$0.0001 USD (1/1 samples)');
 });

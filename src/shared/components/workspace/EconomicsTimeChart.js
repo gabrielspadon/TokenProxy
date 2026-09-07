@@ -14,6 +14,8 @@ import { formatCount, formatEstimate, formatTokens } from './economics';
 import styles from './EconomicsLens.module.css';
 
 const utc = (value) => new Date(value).toISOString().slice(0, 16).replace('T', ' ');
+const usdTick = new Intl.NumberFormat('en-US', { notation: 'compact', maximumSignificantDigits: 3 });
+const tinyUsdTick = new Intl.NumberFormat('en-US', { notation: 'scientific', maximumSignificantDigits: 3 });
 export function EconomicsTrend({ data, onTimeRangeChange }) {
   const {colorScheme}=useMantineColorScheme();
   const chart = useRef(null);
@@ -78,7 +80,8 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
         splitNumber: 2,
         axisLabel: {
           fontSize: 13,
-          formatter: gridIndex ? formatTokens : (value) => `$${formatTokens(value)}`,
+          formatter: gridIndex ? formatTokens : (value) =>
+            `$${(value !== 0 && Math.abs(value) < 0.0001 ? tinyUsdTick : usdTick).format(value)}`,
         },
         splitLine: { lineStyle: { color: theme.rule } },
       })),
