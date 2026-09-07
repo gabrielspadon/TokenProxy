@@ -46,6 +46,9 @@ const SAMPLE_ENTRY = {
   ctxTokens: 51234,
   saveBytes: -3200,
   ceBytes: 8192,
+  dollarsSaved: 0.0123,
+  epochHitRate: 0.5,
+  volatileKeys: ["metadata"],
   compactHint: true,
   updatedAt: "2026-09-04T12:00:00.000Z",
 };
@@ -132,6 +135,9 @@ describe("POST /api/v1/mcp JSON-RPC", () => {
       ctxTokensActual: null,
       saveBytes: -3200,
       ceBytes: 8192,
+      dollarsSaved: 0.0123,
+      epochHitRate: 0.5,
+      volatileKeys: ["metadata"],
       compactHint: true,
       updatedAt: "2026-09-04T12:00:00.000Z",
     });
