@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { ROLE } from "../../open-sse/translator/schema/index.js";
 import { CONTEXT_ROLES } from "../../open-sse/config/contextEvidence.js";
@@ -78,5 +79,21 @@ describe("content-free structural evidence", () => {
       expect(result.bodyBytes).toBe(Buffer.byteLength(serialized));
       expect(normalizeContextStructure(result).messageBytes).toBe(size(body.messages));
     } finally { stringify.mockRestore(); }
+  });
+  // The body and history-prefix digests are streamed through a fixed 65536-char
+  // scratch buffer. A slice boundary landing between a surrogate pair, or a lone
+  // surrogate landing on one, would change the bytes hashed without changing any
+  // count, so pin the digests against whole-string encoding across the boundary.
+  it("streams multi-chunk bodies to the same digest as whole-string encoding", () => {
+    const filler = "a".repeat(65530);
+    for (const piece of ["a", "é", "日", "🧭", "\ud800", "\udfff"]) {
+      const body = { messages: [{ role: "user", content: filler + piece + "🧭".repeat(40000) }] };
+      const serialized = JSON.stringify(body);
+      const result = measureContextStructure(body, "physical-dispatch", key, { serialized });
+      expect(result.bodyBytes).toBe(Buffer.byteLength(serialized, "utf8"));
+      expect(result.fingerprints.body).toBe(
+        createHmac("sha256", key).update("context-v1:body\0").update(Buffer.from(serialized, "utf8")).digest("hex"));
+      expect(result.historyPrefixBytes).toBe(Buffer.byteLength('{"instructions":{},"tools":{},"history":{"messages":[]}}', "utf8"));
+    }
   });
 });
