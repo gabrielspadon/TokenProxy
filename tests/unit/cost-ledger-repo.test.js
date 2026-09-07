@@ -75,6 +75,26 @@ describe("computeCostLedgerEntry", () => {
     expect(entry).toBeNull();
   });
 
+  it("skips a provider-reported zero-zero usage as unmeasurable", async () => {
+    const entry = await computeCostLedgerEntry({
+      rid: "rid00006",
+      provider: "openai",
+      model: "gpt-4o",
+      preSaverSerialized: "x".repeat(4000),
+      usage: { prompt_tokens: 0, completion_tokens: 0 },
+    });
+    expect(entry).toBeNull();
+    // Zero on one side only is still a measurement.
+    const half = await computeCostLedgerEntry({
+      rid: "rid00007",
+      provider: "openai",
+      model: "gpt-4o",
+      preSaverSerialized: "x".repeat(4000),
+      usage: { prompt_tokens: 500, completion_tokens: 0 },
+    });
+    expect(half).not.toBeNull();
+  });
+
   it("skips missing rid/model/body/usage", async () => {
     const base = {
       rid: "rid00004", provider: "openai", model: "gpt-4o",

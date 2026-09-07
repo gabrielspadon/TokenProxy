@@ -37,6 +37,10 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
   if (usage.estimated === true) return null; // only provider-reported usage is "actual"
   const canonical = canonicalizeUsage(usage);
   if (!canonical) return null;
+  // Reported zeros in both directions are not a measurement, they are an
+  // absent one: costed against a priced baseline the row would claim the whole
+  // prompt as savings. Same skip as the estimated-usage path.
+  if (canonical.prompt_tokens === 0 && canonical.completion_tokens === 0) return null;
   const baselineTokens = estimateBaselineTokens(preSaverSerialized);
   if (baselineTokens === null) return null;
   // Operator overrides merge over the built-in catalog in pricingRepo.
