@@ -295,11 +295,18 @@ describe("required proxy unavailable caller boundaries", () => {
     expect(mocks.resolveCursorModels).not.toHaveBeenCalled();
   });
 
-  it("model context rejects an unavailable Cursor selection before static entries mask it", async () => {
+  it("model context serves local inventory without touching an unavailable Cursor proxy", async () => {
     useUnavailableCursorConnection();
     const { GET } = await import("@/app/api/model-context/route.js");
 
-    await expectRequiredProxyUnavailable(await GET());
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      inventory: { source: "local", dynamicCatalogs: false },
+    });
+    expect(mocks.resolveConnectionProxyConfig).not.toHaveBeenCalled();
+    expect(mocks.resolveCursorModels).not.toHaveBeenCalled();
   });
 
   it("Cursor v1 catalog keeps an available strict route instead of falling back", async () => {

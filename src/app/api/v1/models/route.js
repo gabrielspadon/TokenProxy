@@ -284,13 +284,14 @@ function withContextWindow(entry) {
 /**
  * Build OpenAI-format models list filtered by service kinds.
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
- * @param {{thinkingVariants?: boolean}} [options] - thinkingVariants adds the
+ * @param {{thinkingVariants?: boolean, localOnly?: boolean}} [options] - thinkingVariants adds the
  *   "model(level)" reasoning spellings. Off by default: this is the catalogue
  *   the auto-router, the combo suggester and the dashboard picker all read, and
  *   none of them may see six spellings of one model. Only the public /v1/models
- *   listing turns it on.
+ *   listing turns it on. localOnly uses only persisted and static catalogues,
+ *   so operator inventory reads never resolve provider or proxy-sidecar models.
  */
-export async function buildModelsList(kindFilter, { thinkingVariants = false } = {}) {
+export async function buildModelsList(kindFilter, { thinkingVariants = false, localOnly = false } = {}) {
   let connections = [];
   // The static-catalogue dump below is a fail-open for an unreadable connection
   // store, and it was gated on `connections.length === 0`, which is also what a
@@ -301,7 +302,7 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false } =
   try {
     connections = await getProviderConnections();
     connections = connections.filter(c => c.isActive !== false);
-    await assertCursorModelRoutesAvailable(connections);
+    if (!localOnly) await assertCursorModelRoutesAvailable(connections);
   } catch (e) {
     if (isRequiredProxyUnavailableError(e)) throw e;
     connectionsUnavailable = true;
@@ -516,11 +517,12 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false } =
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       const enabled = enabledModelsByProvider.get(providerId);
       const wantsLive = Boolean(
-        conn
+        !localOnly
+        && conn
         && LIVE_MODEL_RESOLVERS[providerId]
         && !(Array.isArray(enabled) && enabled.length > 0),
       );
-      const cursorProxy = providerId === "cursor"
+      const cursorProxy = !localOnly && providerId === "cursor"
         ? resolveCursorModelProxyOptions(conn)
         : null;
       if (!cursorProxy && !wantsLive) continue;
@@ -567,7 +569,15 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false } =
       let liveModelKindById = new Map();
       let liveCapabilitiesById = new Map();
 
-      let rawModelIds = isCompatibleProvider
+      let rawModelIds = localOnly && hasExplicitEnabledModels
+        ? Array.from(
+            new Set(
+              enabledModels.filter(
+                (modelId) => typeof modelId === "string" && modelId.trim() !== "",
+              ),
+            ),
+          )
+        : isCompatibleProvider
         ? []
         : hasExplicitEnabledModels
         ? Array.from(

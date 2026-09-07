@@ -301,6 +301,42 @@ export async function updateSettings(updates) {
   return mergeWithDefaults(next);
 }
 
+// Model-context edits operate on independent override keys. Reading that map in
+// a route and then replacing it through updateSettings loses a sibling when two
+// requests overlap, even though each whole-settings write is transactional.
+// Keep the ordinary updateSettings replacement contract unchanged and perform
+// these per-key mutations against the current row inside one adapter transaction.
+export async function mutateContextWindowOverrides({ set = [], deleteKeys = [] }) {
+  const db = await getAdapter();
+  let result;
+  db.transaction(() => {
+    const row = db.get(`SELECT data FROM settings WHERE id = 1`);
+    const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
+    // Override keys are model literals and can coincide with Object.prototype
+    // names. A null-prototype target retains every supplied key as data.
+    const overrides = Object.assign(Object.create(null), current.contextWindowOverrides || {});
+    let nSet = 0;
+    let nDel = 0;
+
+    for (const { key, contextWindow } of set) {
+      overrides[key] = contextWindow;
+      nSet++;
+    }
+    for (const key of deleteKeys) {
+      if (Object.hasOwn(overrides, key)) nDel++;
+      delete overrides[key];
+    }
+
+    const next = { ...current, contextWindowOverrides: overrides };
+    db.run(
+      `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+      [stringifyJson(next)],
+    );
+    result = { overrides, nSet, nDel };
+  });
+  return result;
+}
+
 export async function updateProviderStrategy(providerId, values) {
   const dangerousKeys = new Set(["__proto__", "prototype", "constructor"]);
   if (dangerousKeys.has(providerId) || Object.keys(values).some((key) => dangerousKeys.has(key))) {

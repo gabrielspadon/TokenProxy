@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSettings, updateSettings } from "@/lib/db/repos/settingsRepo.js";
+import { getSettings, mutateContextWindowOverrides } from "@/lib/db/repos/settingsRepo.js";
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { getProviderNodes } from "@/lib/db/repos/nodesRepo.js";
 import {
@@ -9,7 +9,7 @@ import {
 } from "open-sse/providers/capabilities.js";
 import { AI_MODELS } from "@/shared/constants/models.js";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
-import { assertCursorModelRoutesAvailable, buildModelsList } from "@/app/api/v1/models/route.js";
+import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { isRequiredProxyUnavailableError } from "@/lib/network/connectionProxy";
 import REGISTRY from "open-sse/providers/registry/index.js";
 
@@ -20,7 +20,7 @@ const HEADERS = { "Cache-Control": "no-store" };
 
 function sanitizeContextWindow(value) {
   const n = Number(value);
-  if (!Number.isInteger(n) || n <= 0) return null;
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
   return n;
 }
 
@@ -70,7 +70,6 @@ export async function GET() {
     // key by registry id (e.g. "antigravity") while AI_MODELS keys by alias
     // (e.g. "ag"), so resolve the alias back to the registry id before matching.
     const connections = await getProviderConnections();
-    await assertCursorModelRoutesAvailable(connections);
 
     // Custom compatible connections key by their providerNodes id
     // ("anthropic-compatible-<uuid>"), while model rows key by the node's
@@ -111,7 +110,7 @@ export async function GET() {
     let v1ByAlias = new Map();
     const v1Entries = [];
     try {
-      const v1Models = await buildModelsList(["llm"]);
+      const v1Models = await buildModelsList(["llm"], { localOnly: true });
       for (const m of v1Models) {
         const id = m?.id;
         if (typeof id !== "string") continue;
@@ -194,7 +193,12 @@ export async function GET() {
     const models = [...merged.values()];
 
     return NextResponse.json(
-      { overrides, activeProviders: [...activeProviderIds], models },
+      {
+        overrides,
+        activeProviders: [...activeProviderIds],
+        models,
+        inventory: { source: "local", dynamicCatalogs: false },
+      },
       { headers: HEADERS }
     );
   } catch (error) {
@@ -221,9 +225,9 @@ export async function PUT(request) {
       return NextResponse.json({ error: "contextWindow must be a positive integer" }, { status: 400 });
     }
 
-    const settings = await getSettings();
-    const overrides = { ...(settings.contextWindowOverrides || {}), [key.trim()]: window };
-    await updateSettings({ contextWindowOverrides: overrides });
+    const { overrides } = await mutateContextWindowOverrides({
+      set: [{ key: key.trim(), contextWindow: window }],
+    });
     await reloadOverrides();
     return NextResponse.json({ success: true, overrides });
   } catch (error) {
@@ -236,15 +240,12 @@ export async function PUT(request) {
 export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const key = searchParams.get("key");
+    const key = searchParams.get("key")?.trim();
     if (!key) {
       return NextResponse.json({ error: "key required" }, { status: 400 });
     }
 
-    const settings = await getSettings();
-    const overrides = { ...(settings.contextWindowOverrides || {}) };
-    delete overrides[key];
-    await updateSettings({ contextWindowOverrides: overrides });
+    const { overrides } = await mutateContextWindowOverrides({ deleteKeys: [key] });
     await reloadOverrides();
     return NextResponse.json({ success: true, overrides });
   } catch (error) {
@@ -263,24 +264,23 @@ export async function POST(request) {
       return NextResponse.json({ error: "set[] or deleteKeys[] required" }, { status: 400 });
     }
 
-    const settings = await getSettings();
-    const overrides = { ...(settings.contextWindowOverrides || {}) };
-    let nSet = 0;
-    let nDel = 0;
+    const validSet = [];
+    const validDeleteKeys = [];
     for (const item of Array.isArray(set) ? set : []) {
       const key = typeof item?.key === "string" ? item.key.trim() : "";
       const window = sanitizeContextWindow(item?.contextWindow);
       if (!key || window === null) continue;
-      overrides[key] = window;
-      nSet++;
+      validSet.push({ key, contextWindow: window });
     }
     for (const k of Array.isArray(deleteKeys) ? deleteKeys : []) {
       if (typeof k !== "string" || !k) continue;
-      if (k in overrides) nDel++;
-      delete overrides[k];
+      validDeleteKeys.push(k);
     }
 
-    await updateSettings({ contextWindowOverrides: overrides });
+    const { overrides, nSet, nDel } = await mutateContextWindowOverrides({
+      set: validSet,
+      deleteKeys: validDeleteKeys,
+    });
     await reloadOverrides();
     return NextResponse.json({ success: true, nSet, nDel, overrides });
   } catch (error) {

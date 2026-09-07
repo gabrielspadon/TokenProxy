@@ -1,0 +1,54 @@
+.model-context-page { color: #18283f; font-family: var(--sans); font-size: 14px; min-width: 0; }
+.model-context-page { display: flex; flex-direction: column; height: calc(100dvh - 108px); }
+.model-context-page > :not(.model-context-dock) { flex-shrink: 0; }
+.model-context-dock { flex: 1; min-height: 380px; }
+.model-context-page h1 { font-size: 26px; margin: 6px 0; font-weight: 600; }
+.model-context-page p { margin: 8px 0; line-height: 1.55; }
+.model-context-page code, .model-context-page td:nth-child(2), .model-context-page td:nth-child(3) { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.model-context-page code { overflow-wrap: anywhere; }
+.model-context-page .model-context-key, .model-context-page .model-context-number, .model-context-page [data-context-key-scope], .model-context-page [data-context-token-input] { direction: ltr; unicode-bidi: isolate; }
+.model-context-heading, .model-context-tools, .model-context-buttons, .model-context-pagination { display: flex; align-items: center; gap: 16px; justify-content: space-between; }
+.model-context-heading { align-items: flex-start; }
+.model-context-heading a { color: #4654a6; font-size: 13px; }
+.model-context-tools { margin: 16px 0; align-items: end; justify-content: flex-start; }
+.model-context-tools > span { margin-inline-start: auto; }
+.model-context-tools > :first-child { flex: 1; max-width: 540px; }
+.model-context-tools > span { font-size: 13px; color: #58667c; }
+.model-context-caution { color: #516077; background: #eef2f7; padding: 10px 14px; border-inline-start: 3px solid #899ac2; font-size: 13px; }
+.model-context-inventory { height: 100%; min-height: 0; display: flex; flex-direction: column; background: #fff; border: 1px solid #dce2ec; }
+.model-context-table-scroll { flex: 1; min-height: 0; overflow: auto; }
+.model-context-table-scroll > p { padding: 16px; }
+.model-context-page table { width: 100%; border-collapse: collapse; text-align: start; }
+.model-context-page caption { text-align: start; padding: 10px 14px; font-size: 13px; color: #55657c; background: #f7f9fc; }
+.model-context-page thead { position: sticky; top: 0; z-index: 1; background: #f1f4f8; }
+.model-context-page th, .model-context-page td { padding: 10px 14px; border-bottom: 1px solid #e3e8f0; font-size: 13px; text-align: start; }
+.model-context-page tbody th { font-weight: 500; }
+.model-context-page tbody th button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: start; border: 0; background: none; color: inherit; cursor: pointer; font: inherit; padding: 0; }
+.model-context-page tbody th code, .model-context-page small { display: block; font-size: 13px; font-weight: 400; color: #596980; margin-top: 3px; }
+.model-context-page td:nth-child(2), .model-context-page td:nth-child(3) { text-align: end; white-space: nowrap; }
+.model-context-page th:nth-child(2), .model-context-page th:nth-child(3) { text-align: end; }
+.model-context-page tr[data-selected] { background: #edf0ff; box-shadow: inset 3px 0 #5968ca; }
+.model-context-page tbody tr:hover { background: #f0f3fb; }
+.model-context-page button:focus-visible, .model-context-page summary:focus-visible { outline: 2px solid #5869cd; outline-offset: 3px; }
+.model-context-pagination { padding: 10px 14px; border-top: 1px solid #dce2ec; font-size: 13px; }
+.model-context-inspector { padding: 14px 18px; }
+.model-context-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.model-context-facts dl { margin: 0 0 12px; }
+.model-context-facts dt { font-size: 13px; color: #5b6a80; }
+.model-context-facts dd { margin: 4px 0 0; font-size: 14px; }
+.model-context-edit { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr); align-items: start; gap: 16px; }
+.model-context-buttons { justify-content: flex-start; flex-wrap: wrap; grid-column: 1 / -1; }
+.model-context-page details { font-size: 13px; margin-top: 14px; }
+.model-context-page summary { cursor: pointer; color: #394b8d; }
+.model-context-page li { margin: 6px 0; }
+.model-context-page .mantine-InputWrapper-label, .model-context-page .mantine-InputWrapper-description, .model-context-page .mantine-InputWrapper-error, .model-context-page .mantine-Input-input, .model-context-page .mantine-Button-label { font-size: 13px; }
+@media (max-width: 760px) {
+  .model-context-page { height: auto; }
+  .model-context-dock { flex: none; height: 760px; }
+  .model-context-heading, .model-context-tools { align-items: stretch; flex-direction: column; }
+  .model-context-tools > :first-child { max-width: none; }
+  .model-context-tools > span { margin-inline-start: 0; }
+  .model-context-facts, .model-context-edit { grid-template-columns: 1fr; }
+  .model-context-page table { min-width: 720px; }
+  .model-context-pagination { flex-wrap: wrap; }
+}
