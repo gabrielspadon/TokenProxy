@@ -18,8 +18,8 @@ import { execFileSync } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = resolve(HERE, "../open-sse/utils/contextStructure.js");
-const N = 500;
-const REPS = 15;
+const N = Number(process.env.BENCH_N || 500);
+const REPS = Number(process.env.BENCH_REPS || 15);
 
 const chunk = "Representative tool result content 0123456789 with unicode 日本語 🧭. ";
 const big = chunk.repeat(6000); // ~430KB
@@ -128,7 +128,10 @@ async function child(cuts) {
 
 // Per-call series plus GC attribution, for the recurring-p95-spike question.
 async function profile() {
-  const fn = await variant("a", []);
+  // BENCH_PROFILE=before profiles the pre-streaming shape, so the spike period
+  // and the GC pause budget are comparable across the change.
+  const cuts = process.env.BENCH_PROFILE === "before" ? WHOLE.split(",") : [];
+  const fn = await variant(cuts.length ? "profile_before" : "a", cuts);
   const gc = [];
   new PerformanceObserver((list) => { for (const e of list.getEntries()) gc.push({ at: e.startTime, dur: e.duration, kind: e.detail?.kind }); })
     .observe({ entryTypes: ["gc"] });
