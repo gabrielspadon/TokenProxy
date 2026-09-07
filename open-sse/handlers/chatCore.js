@@ -711,11 +711,21 @@ export async function handleChatCore({
   let toolsStageDelta = null;
   let toolsStripped = false;
   const toolsBeforeBytes = Buffer.byteLength(JSON.stringify(translatedBody));
+  // Serializing the whole body twice to bracket this block cost a second full
+  // pass over every request, including the overwhelmingly common one where
+  // nothing in the block fires. Every mutation between the two measurements
+  // sets this flag, so the closing measurement runs only when the bytes can
+  // actually have moved; otherwise it reuses the opening number, which is then
+  // exact rather than an estimate. `toolsStripped` cannot stand in: a
+  // disclosure pass that strips nothing still replaces the array and can
+  // reorder it, and the TTS branch below changes messages as well as tools.
+  let toolsBodyMutated = false;
   if (Array.isArray(translatedBody.tools)) {
     const { tools: deduped, stripped } = dedupeTools(translatedBody.tools, { clientTool, model });
     if (stripped.length > 0) {
       toolsStripped = true;
       translatedBody.tools = deduped;
+      toolsBodyMutated = true;
       log?.debug?.(
         "TOOLDEDUP",
         `stripped ${stripped.length}: ${stripped.slice(0, 3).join(", ")}${stripped.length > 3 ? "..." : ""}`,
@@ -747,6 +757,7 @@ export async function handleChatCore({
             `filter: ${translatedBody.tools.length}→${filtered.length} tools`,
           );
           translatedBody.tools = filtered;
+          toolsBodyMutated = true;
         }
       }
 
@@ -768,6 +779,7 @@ export async function handleChatCore({
             `bm25: ${stats.before}→${stats.after} tools (-${stats.stripped})`,
           );
           translatedBody.tools = disclosed;
+          toolsBodyMutated = true;
         }
       }
     }
@@ -792,6 +804,7 @@ export async function handleChatCore({
       (msg) => msg.role !== "tool",
     );
     delete translatedBody.tools;
+    toolsBodyMutated = true;
   }
 
   // Token-saver byte ledger: whole-body per-stage deltas with serialization
@@ -817,7 +830,7 @@ export async function handleChatCore({
           ponytailEnabled ||
           memorySettings)),
   );
-  const toolsAfterBytes = Buffer.byteLength(JSON.stringify(translatedBody));
+  const toolsAfterBytes = toolsBodyMutated ? Buffer.byteLength(JSON.stringify(translatedBody)) : toolsBeforeBytes;
   toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true };
   const saverStages = [];
   const contextStages = [{ stage: "tools", ...toolsStageDelta }];
