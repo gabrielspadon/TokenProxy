@@ -43,9 +43,9 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
   }),
 }));
 
-vi.mock("../../open-sse/utils/stream.js", () => ({
+vi.mock("../../open-sse/utils/stream.js", async (orig) => ({
+  ...(await orig()),
   COLORS: { red: "", reset: "" },
-  createPassthroughStreamWithLogger: vi.fn(() => new TransformStream()),
 }));
 
 // Same mutation contract as real RTK: shrink any long string content.
@@ -239,6 +239,44 @@ describe("cost ledger pipeline", () => {
     expect(entry).not.toBeNull();
     expect(entry.dollarsSaved).toBeGreaterThan(0);
     expect(entry.dollarsSaved).toBeCloseTo(row.saverSavedUsd, 12);
+  });
+
+  it("streaming path: usage with cache fields lands one ledger row with the saver/cache split", async () => {
+    const sse =
+      'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n' +
+      'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":200,"prompt_tokens_details":{"cached_tokens":400}}}\n\n' +
+      "data: [DONE]\n\n";
+    mocks.executeMock.mockImplementation(async () => ({
+      response: new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      url: "https://api.openai.com/v1/chat/completions",
+      headers: {},
+      transformedBody: null,
+    }));
+    const res = await handleChatCore(baseArgs({
+      requestId: "c0ffee71",
+      sid: "cafe9998",
+      rtkEnabled: false,
+      body: {
+        model: "openai/gpt-4o",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      },
+      modelInfo: { provider: "openai", model: "gpt-4o" },
+    }));
+    expect(res.success).toBe(true);
+    await res.response.text(); // drain: onStreamComplete fires at flush
+    const row = await readLedgerRow("c0ffee71");
+    expect(row).not.toBeNull();
+    expect(row.inputTokens).toBe(1000);
+    expect(row.cacheReadTokens).toBe(400);
+    expect(row.cacheWriteTokens).toBe(0);
+    expect(row.outputTokens).toBe(200);
+    // gpt-4o rates per 1M: input 2.5, cached 1.25, output 10.0.
+    const actualUncachedUsd = (1000 * 2.5 + 200 * 10.0) / 1e6;
+    const actualUsd = (600 * 2.5 + 400 * 1.25 + 200 * 10.0) / 1e6;
+    expect(row.cacheSavedUsd).toBeCloseTo(actualUncachedUsd - actualUsd, 12);
+    expect(row.saverSavedUsd).toBeCloseTo(row.baselineUsd - actualUncachedUsd, 12);
+    expect(row.savedUsd).toBeCloseTo(row.saverSavedUsd + row.cacheSavedUsd, 12);
   });
 
   it("ledger failure never blocks usage persistence", async () => {
