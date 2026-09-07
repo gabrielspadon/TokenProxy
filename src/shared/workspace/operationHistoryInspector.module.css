@@ -1,0 +1,271 @@
+/* Workspace language: white surface on the cool gray canvas, restrained indigo
+   for selection only, mono and right-aligned tabular numerals for identifiers
+   and measured values, dimmed words for unknowns. No gradients, no stat cards.
+
+   Every grid track that can hold a bounded inspector uses minmax(0, …). A bare
+   1fr resolves to the content's min-content width, which is what put a 550px
+   table inside a 390px viewport once already. */
+.inspector {
+  margin-top: 20px;
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid #dce2ec;
+  border-radius: 6px;
+  color: #24324a;
+  min-width: 0;
+  --mantine-color-dimmed: #596981;
+}
+.inspector h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.inspector h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.inspector h5 {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 12px 0 3px;
+}
+.head {
+  min-width: 0;
+  flex: 1 1 260px;
+}
+.note {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #596981;
+  max-width: 80ch;
+  margin: 0;
+}
+.filter {
+  width: 190px;
+}
+/* Mantine's input reset clears the outline the global :focus-visible rule
+   supplies, so this control was keyboard-reachable with no visible focus at
+   all while the page's own native selects kept their ring. Measured at 1440px:
+   focused and blurred computed styles were byte-identical before this rule. */
+.filter input:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: 1px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(240px, 1fr);
+  gap: 22px;
+  align-items: start;
+  margin-top: 14px;
+}
+.tableColumn {
+  min-width: 0;
+}
+.table {
+  font-size: 12px;
+}
+.table th {
+  font-size: 12px;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #596981;
+}
+.table td {
+  white-space: nowrap;
+  vertical-align: top;
+}
+/* Occurrence and capture time are measured values: mono, tabular, right-aligned. */
+.table th:nth-child(4),
+.table th:nth-child(5),
+.table td.time {
+  text-align: end;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+/* A start with no terminal receipt is marked structurally, not only by colour:
+   the dashed leading rule survives greyscale and colour-vision deficiency. */
+.table tr[data-kind='unresolved'] {
+  box-shadow: inset 3px 0 #98a6c2;
+  background: #f7f8fb;
+}
+.table tr[data-kind='unresolved'] td {
+  border-block-end-style: dashed;
+}
+.table tr[data-selected] {
+  background: #edf1fd;
+  box-shadow: inset 3px 0 #455bca;
+}
+.rowButton {
+  font-size: inherit;
+  text-decoration: underline;
+  text-decoration-color: #bac6dd;
+  text-underline-offset: 3px;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.rowButton:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: 3px;
+}
+.rowButton code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.state {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: normal;
+  display: inline-block;
+  min-width: 0;
+}
+.state[data-tone='ok'] {
+  color: #146c58;
+}
+.state[data-tone='bad'] {
+  color: #9c2a35;
+}
+.state[data-tone='warn'] {
+  color: #8a5410;
+}
+/* Neither success nor failure. It reads as unfinished, not as a verdict. */
+.state[data-tone='open'] {
+  color: #4a5875;
+  font-style: italic;
+}
+.code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #4a5875;
+}
+.unknown {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: #6a7891;
+}
+.measure {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.unresolvedBanner {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-inline-start: 3px solid #98a6c2;
+  background: #f3f6fb;
+  max-width: 90ch;
+}
+.selected {
+  border-inline-start: 1px solid #dce2ec;
+  padding-inline-start: 20px;
+  min-width: 0;
+}
+.selected p {
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 4px 0 0;
+}
+.selected .state {
+  margin-top: 2px;
+}
+.operationId {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #596981;
+  overflow-wrap: anywhere;
+  margin: 4px 0 8px;
+}
+.facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 7px;
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 6px 0 0;
+}
+.facts dt {
+  color: #596981;
+}
+.facts dd {
+  margin: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.hint {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #596981;
+  border-inline-start: 1px solid #dce2ec;
+  padding-inline-start: 20px;
+  margin: 0;
+}
+.empty {
+  color: #596981;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 14px 0;
+  max-width: 80ch;
+}
+.limits {
+  margin-top: 16px;
+  border-top: 1px solid #dce2ec;
+  padding-top: 12px;
+  font-size: 12px;
+}
+.limits summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.limits summary:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: 3px;
+}
+.limits ul {
+  padding-inline-start: 18px;
+  margin: 8px 0 0;
+  line-height: 1.6;
+  color: #596981;
+  max-width: 90ch;
+}
+.limits li {
+  list-style: disc;
+  margin-bottom: 5px;
+}
+
+@media (max-width: 1000px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .selected,
+  .hint {
+    border-inline-start: 0;
+    border-top: 1px solid #dce2ec;
+    padding-inline-start: 0;
+    padding-top: 14px;
+  }
+}
+@media (max-width: 560px) {
+  .inspector {
+    padding: 14px 12px;
+  }
+  .filter {
+    width: 100%;
+  }
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 2px;
+  }
+  .facts dd {
+    text-align: start;
+    margin-bottom: 7px;
+  }
+}

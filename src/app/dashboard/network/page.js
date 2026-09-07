@@ -8,6 +8,8 @@ import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { poolTestVerdict } from '@/shared/poolTestVerdict';
+import { OperationHistoryInspector } from '@/shared/workspace/OperationHistoryInspector';
+import { ProbeConsequence } from './ProbeConsequence';
 import { fmtNum } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
 import './styles.css';
@@ -65,6 +67,9 @@ export default function NetworkPage() {
   const [outbound, setOutbound] = useState(null); // draft while editing, else null
   const [strategyProvider, setStrategyProvider] = useState('');
   const [strategyPoolId, setStrategyPoolId] = useState('');
+  // Which pool's retained probe history is open. One at a time: the inspector
+  // pages a bounded query, so opening every row at once would fan out reads.
+  const [historyPoolId, setHistoryPoolId] = useState(null);
 
   const nodeRows = nodes.data?.nodes || [];
   const poolRows = pools.data?.proxyPools || [];
@@ -490,6 +495,20 @@ export default function NetworkPage() {
           A named outbound path a connection or a provider strategy can be bound to instead of
           routing directly.
         </p>
+        {/* Said once for the whole table rather than repeated per row, where
+            the sentence inflated the row's auto track and crushed the pool
+            name column. The column holds the pool's own mutable field, which
+            every probe overwrites: a cancelled, conflicted or unresolved probe
+            never reaches it at all. */}
+        <p>
+          The latest-applied column is the pool&apos;s own current state, overwritten by each
+          probe. A probe that was cancelled, that conflicted with a configuration change, or that
+          never finished leaves no mark there. Open a pool&apos;s probe history to see those.
+        </p>
+        {/* The consequence sits above the controls it describes and is named by
+            every Test button below through aria-describedby, so it is reachable
+            from the control by keyboard and by screen reader alike. */}
+        <ProbeConsequence id="probe-consequence" />
         {pools.error && !pools.data ? <Notice {...refusal(pools.status, pools.error)} /> : null}
         {pools.loading && !pools.data ? <p className="skeleton">Reading</p> : null}
         {pools.data && poolRows.length === 0 ? (
@@ -503,11 +522,12 @@ export default function NetworkPage() {
             <div className="row head network-pool-row">
               <span>Pool</span>
               <span>Bound</span>
-              <span>Test</span>
+              <span>Latest applied</span>
               <span />
             </div>
             {poolRows.map((p) => (
-              <div className="row network-pool-row" key={p.id}>
+              <Fragment key={p.id}>
+              <div className="row network-pool-row">
                 <span className="who">
                   <span className="name" data-i18n-skip>
                     {p.name}
@@ -547,9 +567,22 @@ export default function NetworkPage() {
                   {testResult?.id === p.id ? <Notice {...testResult} /> : null}
                 </span>
                 <div className="actions">
-                  <button type="button" className="button quiet" onClick={() => testPool(p)}>
+                  <button
+                    type="button"
+                    className="button quiet"
+                    aria-describedby="probe-consequence"
+                    onClick={() => testPool(p)}
+                  >
                     <Icon name="i-test" />
                     Test
+                  </button>
+                  <button
+                    type="button"
+                    className="button quiet"
+                    aria-expanded={historyPoolId === p.id}
+                    onClick={() => setHistoryPoolId((open) => (open === p.id ? null : p.id))}
+                  >
+                    {historyPoolId === p.id ? 'Hide probe history' : 'Probe history'}
                   </button>
                   <button
                     type="button"
@@ -567,6 +600,10 @@ export default function NetworkPage() {
                   </button>
                 </div>
               </div>
+              {historyPoolId === p.id ? (
+                <OperationHistoryInspector key={p.id} subjectId={p.id} label={p.name} />
+              ) : null}
+              </Fragment>
             ))}
           </div>
         ) : null}
