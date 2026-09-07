@@ -15,11 +15,36 @@
   .network-onoff .value { font-size: var(--t-19); font-family: var(--sans); overflow-wrap: anywhere; }
   .network-check { display: flex; gap: 8px; align-items: flex-start; }
   .network-check input { accent-color: var(--signal); margin-top: 3px; }
+
+  /* The probe's consequence, stated beside the control rather than in a
+     tooltip. Left rule and paper wash, no card and no gradient. */
+  .network-consequence {
+    margin-block: 12px 16px;
+    padding: 12px 14px;
+    border-inline-start: 3px solid var(--ember);
+    background: var(--paper);
+    border-radius: var(--radius);
+    max-width: 90ch;
+  }
+  .network-consequence-title { font-weight: 500; margin-block-end: 8px; }
+  /* minmax(0, …) on both tracks: a bare 1fr resolves to min-content and pushes
+     the long scope sentence past the viewport at 390px. */
+  .network-consequence .facts {
+    display: grid;
+    grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
+    gap: 7px 16px;
+    margin: 0;
+    max-width: none;
+  }
+  .network-consequence dt { color: var(--slate); }
+  .network-consequence dd { margin: 0; min-width: 0; }
 }
 
 @layer states {
   @media (max-width: 767px) {
     .network-node-row,
     .network-pool-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .network-consequence .facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    .network-consequence dd { margin-block-end: 8px; }
   }
 }
