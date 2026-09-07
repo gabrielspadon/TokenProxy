@@ -95,7 +95,7 @@ it('reports unsupported stages and refuses unreviewed promotion', async () => {
 });
 it('keeps canonical gateway order and deterministic body hashes with honest signed bytes', async () => {
   const source = readFileSync(new URL('../../open-sse/handlers/chatCore.js', import.meta.url), 'utf8');
-  const measured = [...source.matchAll(/measureSaverStage\(\s*"([a-z]+)"/g)].map(match => match[1]);
+  const measured = [...source.matchAll(/measureSaverStage\(\s*"([a-zA-Z]+)"/g)].map(match => match[1]);
   expect(STAGE_ORDER.slice(1)).toEqual(measured.filter(name => !['anchor', 'final'].includes(name)));
   const settings = { ...(await call()).body.settings, cavemanEnabled: true, rtkEnabled: true, thinkingStripEnabled: true };
   const a = await evaluateSettings(settings, 'context-integrity-v1'), b = await evaluateSettings(settings, 'context-integrity-v1');

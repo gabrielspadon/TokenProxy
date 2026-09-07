@@ -7,7 +7,23 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   executeMock: vi.fn(),
+  ledgerFail: { current: false },
+  saveUsageCalls: [],
 }));
+
+// The ledger must never take usage persistence down with it: flip
+// ledgerFail.current to make every ledger attempt reject, and assert the
+// requestStats completion row still lands.
+vi.mock("../../src/lib/db/repos/costLedgerRepo.js", async (orig) => {
+  const actual = await orig();
+  return {
+    ...actual,
+    recordCostLedgerForRequest: (...args) =>
+      mocks.ledgerFail.current
+        ? Promise.reject(new Error("ledger down"))
+        : actual.recordCostLedgerForRequest(...args),
+  };
+});
 
 vi.mock("../../open-sse/executors/index.js", () => ({
   getExecutor: () => ({ noAuth: true, execute: mocks.executeMock }),
@@ -64,6 +80,13 @@ vi.mock("@/lib/usageDb.js", async () => {
     trackPendingRequest: vi.fn(),
     appendRequestLog: vi.fn(async () => {}),
     saveRequestDetail: vi.fn(async () => {}),
+    // Spied passthrough: proves usage persistence runs even when the ledger
+    // rejects. (The pending-row handoff is mocked away in this file, so the
+    // observable unit is the saveRequestUsage call itself.)
+    saveRequestUsage: (...args) => {
+      mocks.saveUsageCalls.push(args[0]);
+      return actual.saveRequestUsage(...args);
+    },
   };
 });
 
@@ -178,5 +201,21 @@ describe("cost ledger pipeline", () => {
     const db = await getAdapter();
     await new Promise((r) => setTimeout(r, 200));
     expect(db.get(`SELECT * FROM costLedger WHERE id = ?`, ["c0ffee52"])).toBeUndefined();
+  });
+
+  it("ledger failure never blocks usage persistence", async () => {
+    mocks.ledgerFail.current = true;
+    try {
+      const res = await handleChatCore(baseArgs({ requestId: "c0ffee60", rtkEnabled: false }));
+      expect(res.success).toBe(true);
+      // Usage persistence ran: saveRequestUsage was invoked with the real
+      // provider-reported tokens even though the ledger attempt rejected.
+      expect(mocks.saveUsageCalls.length).toBeGreaterThan(0);
+      const usage = mocks.saveUsageCalls.find((u) => u?.tokens?.prompt_tokens > 0);
+      expect(usage).toBeTruthy();
+      expect(usage.tokens.completion_tokens).toBe(50);
+    } finally {
+      mocks.ledgerFail.current = false;
+    }
   });
 });

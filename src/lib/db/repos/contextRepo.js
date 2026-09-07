@@ -7,7 +7,7 @@ import { getSettings } from "./settingsRepo.js";
 import { normalizeContextIdentity, saveContextStructures } from "./contextEvidenceRepo.js";
 
 const DAY_MS = 86400000;
-const STAGE_NAMES = new Set(["tools", "schema", "thinking", "rtk", "privacy", "inject", "pxpipe", "mem", "headroom", "qac", "pairs", "reorder", "midinject", "final"]);
+const STAGE_NAMES = new Set(["tools", "schema", "thinking", "rtk", "privacy", "inject", "pxpipe", "mem", "headroom", "qac", "pairs", "reorder", "midinject", "diet", "epochMicro", "epochAuto", "final"]);
 const CONTROL_NAMES = new Set(["contextStructure", "rtk", "rtkAllowLossy", "schema", "schemaAllowLossy", "thinking", "privacy", "caveman", "ponytail", "pxpipe", "pxpipeAllowLossy", "memory", "headroom", "headroomAllowLossy", "qac", "pairs", "reorder", "midinject", "clientOptOut"]);
 const TERMINAL = new Set(["success", "error", "cancelled", "aborted"]);
 const number = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
