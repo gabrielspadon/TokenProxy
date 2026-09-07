@@ -13,9 +13,15 @@ function scopeFromParams(params) {
   const patch = {};
   for (const key of SCOPE_KEYS) if (params.get(key)) patch[key] = params.get(key);
   const comparisonIds = (params.get('compare') || '').split(',').filter(Boolean);
-  if (!Object.keys(patch).length && !comparisonIds.length) return null;
+  const rawSelection = params.get('selected');
+  if (!Object.keys(patch).length && !comparisonIds.length && !rawSelection) return null;
   try {
-    return { scope: validateScope({ ...INITIAL_SCOPE, ...patch }), comparisonIds };
+    // The banner promises the selection is retained, so a reload has to keep
+    // it too. validateSelection is the same untrusted-input path a saved
+    // investigation takes, so a hand-edited link cannot inject a record.
+    let selection = null;
+    if (rawSelection) selection = validateSelection(JSON.parse(rawSelection));
+    return { scope: validateScope({ ...INITIAL_SCOPE, ...patch }), comparisonIds, selection };
   } catch {
     return null; // A malformed shared link falls back to the default scope.
   }
@@ -42,7 +48,7 @@ export function WorkspaceProvider({ children }) {
     || new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search));
   const [scope, setScopeValue] = useState(() => restoredFromUrl?.scope || INITIAL_SCOPE);
   const [snapshot, setSnapshot] = useState(null);
-  const [selectedRecord, setSelectedRecordValue] = useState(null);
+  const [selectedRecord, setSelectedRecordValue] = useState(() => restoredFromUrl?.selection || null);
   const [comparisonIds, setComparisonIds] = useState(() => restoredFromUrl?.comparisonIds || []);
   const [contextView,setContextValue] = useState(INITIAL_CONTEXT);
   const [economicsView,setEconomicsValue] = useState(INITIAL_ECONOMICS);
@@ -77,11 +83,13 @@ export function WorkspaceProvider({ children }) {
     for (const key of SCOPE_KEYS)
       if (scope[key] && scope[key] !== INITIAL_SCOPE[key]) params.set(key, scope[key]); else params.delete(key);
     if (comparisonIds.length) params.set('compare', comparisonIds.join(',')); else params.delete('compare');
+    if (selectedRecord) params.set('selected', JSON.stringify(selectedRecord));
+    else params.delete('selected');
     const query = params.toString();
     const next = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
     if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`)
       window.history.replaceState(window.history.state, '', next);
-  }, [scope, comparisonIds, pathname]);
+  }, [scope, comparisonIds, selectedRecord, pathname]);
   const refresh = () => {
     health.refresh();
     quota.refresh();

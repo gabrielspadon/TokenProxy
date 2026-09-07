@@ -62,3 +62,22 @@ it('clears scope params back to defaults and survives a malformed shared link',a
   await render();
   expect(current.scope).toEqual(INITIAL_SCOPE);
 });
+
+it('restores the selected record from the URL, so the retained banner survives a reload',async()=>{
+  await render();
+  await act(async()=>current.setSelectedRecord({kind:'account',id:'conn-7',provider:'claude'}));
+  // The writeback effect puts the selection in the query string.
+  expect(new URLSearchParams(window.location.search).get('selected')).toContain('conn-7');
+  // A reload is a fresh provider reading that same location.
+  act(()=>root.unmount());container.remove();
+  container=document.createElement('div');document.body.append(container);root=createRoot(container);
+  await render();
+  expect(current.selectedRecord.id).toBe('conn-7');
+  expect(current.selectedRecord.kind).toBe('account');
+});
+
+it('ignores a hand-edited selection param rather than trusting it',async()=>{
+  window.history.replaceState(null,'','/?selected=' + encodeURIComponent('{"kind":"not-a-kind","id":"x"}'));
+  await render();
+  expect(current.selectedRecord).toBeNull();
+});
