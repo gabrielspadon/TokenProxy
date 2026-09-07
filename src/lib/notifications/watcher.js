@@ -20,8 +20,14 @@
 // otherwise. Evaluation is throttled to MIN_INTERVAL_MS so a busy gateway
 // pays one connection scan per interval, not one per request.
 //
-// Everything here is fail-open: evaluate() swallows its own errors and emit()
-// is fire-and-forget, so a broken webhook cannot reach a routed request.
+//   notification rules
+//     ← the operator's own rules, evaluated by evaluateEnabledRules()
+//       (notificationRulesRepo.js:411) through the bounded analytics worker it
+//       already uses. Same trigger, its own interval; see MIN_RULE_INTERVAL_MS.
+//
+// Everything here is fail-open: evaluate() and evaluateRules() swallow their own
+// errors and emit() is fire-and-forget, so a broken webhook cannot reach a
+// routed request.
 
 import { getProviderConnections, isConnectionDegraded } from "@/lib/db/repos/connectionsRepo.js";
 import { getTrafficWindow } from "@/lib/db/repos/requestStatsRepo.js";
@@ -29,6 +35,25 @@ import { statsEmitter } from "@/lib/db/repos/usageRepo.js";
 import { emit, getNotificationsConfig } from "./webhooks.js";
 
 const MIN_INTERVAL_MS = 30000;
+
+// Rule evaluation gets its own, longer interval because it is not the same
+// weight as the connection scan above. The connection scan is two in-process
+// SQLite reads. One rule scan is one query PER ENABLED RULE, each dispatched to
+// the bounded analytics worker (client.js:8, QUERY_TIMEOUT_MS 15000) over the
+// retained population, capped at NOTIFICATION_EVIDENCE_MAX_ROWS = 20000 rows,
+// plus one last-firing read per scope group. A ten-rule install therefore pays
+// ten sequential worker round trips per scan, and the worker is the same one the
+// quota workbench and the operation ledger queue against (MAX_QUEUED = 8).
+//
+// 300s is chosen against what it buys rather than against what it costs: no rule
+// can re-fire faster than MIN_COOLDOWN_SECONDS = 60 (notificationRulesRepo.js:30),
+// and durationSeconds is the operator's own tolerance for how long a condition
+// must hold, measured in minutes in practice. So the interval adds at most five
+// minutes of detection latency on top of a delay the operator already chose,
+// and in exchange a busy gateway pays one scan per five minutes instead of one
+// per traffic tick. Raise it if a large rule set makes the worker contended;
+// lowering it below the cooldown floor buys nothing.
+const MIN_RULE_INTERVAL_MS = 300000;
 
 // Survive Next.js hot reload — one watcher and one state snapshot per process.
 const g = (global.__notificationWatcher ??= {
@@ -40,6 +65,12 @@ const g = (global.__notificationWatcher ??= {
   // already-broken account does not replay it as a fresh incident.
   degraded: new Map(),
   errorRateFiring: false,
+  lastRuleRunAt: 0,
+  ruleRunning: false,
+  // The rules' equivalent of that silent first sighting. Captured at module
+  // load, which is process start, and handed to the evaluator as its notBefore
+  // boundary. See evaluateRules() for exactly what a restart does.
+  startedAt: new Date().toISOString(),
 });
 
 function describe(conn) {
@@ -120,26 +151,94 @@ export async function evaluate(deps = {}) {
   }
 }
 
-async function onStatsUpdate() {
-  const now = Date.now();
-  if (g.running || now - g.lastRunAt < MIN_INTERVAL_MS) return;
-  g.running = true;
-  g.lastRunAt = now;
+/**
+ * One rule scan. Delegates wholly to evaluateEnabledRules(), which owns
+ * durationSeconds, cooldownSeconds and the partial unique index that keeps two
+ * racing evaluators to one alert row; none of that is restated here.
+ *
+ * ON RESTART: the evaluator reads a retained population that reaches back 30
+ * days, so it is asked to suppress any firing dated before this process started
+ * (state.startedAt). A breach that began and ended while the gateway was down is
+ * therefore never replayed as a fresh alert, while a breach still producing
+ * evidence now does alert, dated at that new evidence and carrying its true
+ * breachStartedAt from before the restart. The cost of the boundary is the
+ * mirror image of the connection watcher's: a condition that stopped generating
+ * evidence before the restart, a quota window that went quiet for instance,
+ * stays silent until one more observation lands for it.
+ *
+ * The evaluator is reached by dynamic import so this module's own import graph
+ * stays what it was. watcher.js is loaded at boot and from request-adjacent
+ * routes, and a static edge here would pull the analytics worker client into
+ * both.
+ *
+ * Never throws, and never writes anything but an alert row: no route, account or
+ * profile is touched by a firing.
+ */
+export async function evaluateRules(deps = {}) {
+  const { state = g, rules: run, notBefore = state.startedAt } = deps;
   try {
-    await evaluate();
-  } finally {
-    g.running = false;
+    const evaluator =
+      run ??
+      (await import("@/lib/db/repos/notificationRulesRepo.js")).evaluateEnabledRules;
+    // No start/end: the evaluator's default window is the retained population,
+    // and narrowing it would cut the history a long durationSeconds needs to
+    // establish a sustain. notBefore, not a shorter window, is what stops replay.
+    return await evaluator({ notBefore });
+  } catch (err) {
+    console.warn("[Notifications] rule evaluation failed:", err?.message || err);
+    return {
+      skipped: "error",
+      error: err?.message || String(err),
+      evaluated: 0,
+      fired: 0,
+      events: [],
+    };
   }
+}
+
+/**
+ * The single statsEmitter handler. Two scans, two independent throttles, one
+ * subscription — statsEmitter is a process-wide singleton capped at 50
+ * listeners and /api/usage/stream takes two per connected dashboard, so a second
+ * listener here would spend a slot for nothing.
+ *
+ * Each throttle stamps its clock BEFORE the run and clears its in-flight flag in
+ * a finally, and neither scan throws, so a failing scan cannot wedge the other
+ * or stop later scans of its own kind. The scans are not awaited against each
+ * other: a rule scan that sits on the analytics worker for a while must not
+ * delay the connection scan, which is the fast one.
+ */
+export async function onStatsUpdate(deps = {}) {
+  const { state = g, now = Date.now() } = deps;
+  const pending = [];
+  if (!state.running && now - state.lastRunAt >= MIN_INTERVAL_MS) {
+    state.running = true;
+    state.lastRunAt = now;
+    pending.push(
+      evaluate({ ...deps, state, now }).finally(() => {
+        state.running = false;
+      }),
+    );
+  }
+  if (!state.ruleRunning && now - state.lastRuleRunAt >= MIN_RULE_INTERVAL_MS) {
+    state.ruleRunning = true;
+    state.lastRuleRunAt = now;
+    pending.push(
+      evaluateRules({ ...deps, state }).finally(() => {
+        state.ruleRunning = false;
+      }),
+    );
+  }
+  await Promise.all(pending);
 }
 
 /**
  * Idempotent. Safe to call from any request handler; the subscription is
  * process-wide and installed at most once.
  *
- * NOT wired at boot: src/instrumentation.js is the process's only boot hook and
- * belongs to another lane. Until one line there imports this module, the
- * watcher arms on the first /api/notifications request instead, which means a
- * headless restart stays silent until something touches that route.
+ * Wired at boot from src/instrumentation.js:44, so a headless gateway arms both
+ * scans without anyone opening the dashboard. The /api/notifications calls stay
+ * as a fallback for a bare entrypoint that never runs the instrumentation hook.
  */
 export function ensureWatcher() {
   if (g.subscribed) return false;
