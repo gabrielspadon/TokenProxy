@@ -27,9 +27,12 @@ afterEach(() => {
 });
 
 describe('schema 16: notification rules', () => {
-  it('SCHEMA_VERSION is 16, leaving 15 reserved for project identity/budgets', async () => {
+  it('registers its tables at or after 16, leaving 15 reserved for project identity/budgets', async () => {
     const { SCHEMA_VERSION, TABLES } = await import('@/lib/db/schema.js');
-    expect(SCHEMA_VERSION).toBe(16);
+    // Pinning the exact number makes any later additive bump on a sibling
+    // branch report as a notification-rules regression. The contract this
+    // test owns is that the tables exist and 15 stays unconsumed.
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(16);
     expect(TABLES.notificationRules).toBeDefined();
     expect(TABLES.notificationRuleVersions).toBeDefined();
     expect(TABLES.notificationRuleEvents).toBeDefined();
@@ -39,6 +42,7 @@ describe('schema 16: notification rules', () => {
   });
 
   it('upgrading a version-14 database takes a backup before creating the tables', async () => {
+    const { SCHEMA_VERSION } = await import('@/lib/db/schema.js');
     const { getAdapter } = await import('@/lib/db/driver.js');
     const db = await getAdapter();
     db.run(
@@ -58,7 +62,9 @@ describe('schema 16: notification rules', () => {
     const db2 = await boot2();
 
     const backupsDir = path.join(tempDir, 'db', 'backups');
-    const backups = fs.readdirSync(backupsDir).filter((name) => name.startsWith('schema-14-to-16'));
+    const backups = fs
+      .readdirSync(backupsDir)
+      .filter((name) => name.startsWith(`schema-14-to-${SCHEMA_VERSION}`));
     expect(backups).toHaveLength(1);
     expect(fs.existsSync(path.join(backupsDir, backups[0], 'data.sqlite'))).toBe(true);
 
@@ -75,7 +81,9 @@ describe('schema 16: notification rules', () => {
     expect(JSON.parse(db2.get(`SELECT data FROM settings WHERE id=1`).data)).toEqual({
       keep: 'me',
     });
-    expect(db2.get(`SELECT value FROM _meta WHERE key='backupSchemaVersion'`).value).toBe('16');
+    expect(db2.get(`SELECT value FROM _meta WHERE key='backupSchemaVersion'`).value).toBe(
+      String(SCHEMA_VERSION)
+    );
   });
 
   it('creates the constraint that prevents duplicate concurrent firings', async () => {
