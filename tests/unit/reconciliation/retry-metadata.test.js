@@ -290,7 +290,7 @@ describe('G4 — a local admission refusal tells the truth about itself', () => 
     const usageDb = await import('@/lib/usageDb.js');
     const spy = vi
       .spyOn(usageDb, 'getActiveRequests')
-      .mockResolvedValue([{ provider: 'codex', model: 'gpt-5.6-sol', count: 1 }]);
+      .mockResolvedValue({ activeRequests: [{ provider: 'codex', model: 'gpt-5.6-sol', count: 1 }] });
 
     const response = await handleChat(request());
 

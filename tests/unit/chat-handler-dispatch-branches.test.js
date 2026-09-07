@@ -55,7 +55,7 @@ const refreshMocks = vi.hoisted(() => ({
   checkAndRefreshToken: vi.fn(async (_p, c) => ({ ...c })),
   updateProviderCredentials: vi.fn(async () => {}),
 }));
-const usageMocks = vi.hoisted(() => ({ getActiveRequests: vi.fn(async () => []) }));
+const usageMocks = vi.hoisted(() => ({ getActiveRequests: vi.fn(async () => ({ activeRequests: [] })) }));
 const logMocks = vi.hoisted(() => ({
   debug: vi.fn(),
   info: vi.fn(),
@@ -372,10 +372,10 @@ describe('providerConcurrencyOverflow', () => {
   });
 
   it('refuses at the cap with the live count in the message', async () => {
-    usageMocks.getActiveRequests.mockResolvedValue([
+    usageMocks.getActiveRequests.mockResolvedValue({ activeRequests: [
       { provider: 'p', count: 2 },
       { provider: 'q', count: 9 },
-    ]);
+    ] });
     const msg = await providerConcurrencyOverflow('p', {
       providerStrategies: { p: { maxConcurrent: 2 } },
     });
