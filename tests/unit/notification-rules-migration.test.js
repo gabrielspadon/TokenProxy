@@ -27,9 +27,15 @@ afterEach(() => {
 });
 
 describe('schema 16: notification rules', () => {
-  it('SCHEMA_VERSION is 16, leaving 15 reserved for project identity/budgets', async () => {
+  // This suite owns the notification-rules contract, not the current schema
+  // number. Asserting an exact SCHEMA_VERSION here made every later additive
+  // bump look like a notification-rules regression, so the assertion is on
+  // what schema 16 actually landed: the tables exist, and the version is at
+  // or past the one that introduced them.
+  it('notification rules are present from schema 16 onwards, with 15 reserved', async () => {
     const { SCHEMA_VERSION, TABLES } = await import('@/lib/db/schema.js');
-    expect(SCHEMA_VERSION).toBe(16);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(16);
+    expect(SCHEMA_VERSION).not.toBe(15);
     expect(TABLES.notificationRules).toBeDefined();
     expect(TABLES.notificationRuleVersions).toBeDefined();
     expect(TABLES.notificationRuleEvents).toBeDefined();
@@ -58,7 +64,12 @@ describe('schema 16: notification rules', () => {
     const db2 = await boot2();
 
     const backupsDir = path.join(tempDir, 'db', 'backups');
-    const backups = fs.readdirSync(backupsDir).filter((name) => name.startsWith('schema-14-to-16'));
+    // The backup is named for the span it crosses, so its upper bound is the
+    // CURRENT schema version rather than 16 forever.
+    const { SCHEMA_VERSION } = await import('@/lib/db/schema.js');
+    const backups = fs
+      .readdirSync(backupsDir)
+      .filter((name) => name.startsWith(`schema-14-to-${SCHEMA_VERSION}`));
     expect(backups).toHaveLength(1);
     expect(fs.existsSync(path.join(backupsDir, backups[0], 'data.sqlite'))).toBe(true);
 
@@ -75,7 +86,10 @@ describe('schema 16: notification rules', () => {
     expect(JSON.parse(db2.get(`SELECT data FROM settings WHERE id=1`).data)).toEqual({
       keep: 'me',
     });
-    expect(db2.get(`SELECT value FROM _meta WHERE key='backupSchemaVersion'`).value).toBe('16');
+    // The backup advances to the CURRENT schema version, not 16 forever.
+    expect(db2.get(`SELECT value FROM _meta WHERE key='backupSchemaVersion'`).value).toBe(
+      String(SCHEMA_VERSION)
+    );
   });
 
   it('creates the constraint that prevents duplicate concurrent firings', async () => {
