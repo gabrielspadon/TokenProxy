@@ -62,9 +62,10 @@ export function SnapshotNotice() {
     >
       <span className={styles.snapshot}>
         <span className={styles.snapshotDot} />
-        {synthetic
-          ? 'Synthetic fixture'
-          : `Snapshot ${captured}${snapshot.capturedAt ? ' UTC' : ''}`}
+        <span className={styles.snapshotIdentity}>
+          <span>{synthetic ? 'Synthetic fixture' : 'Snapshot'}</span>
+          {snapshot.capturedAt && <time dateTime={snapshot.capturedAt} dir="ltr" data-i18n-skip>{captured} UTC</time>}
+        </span>
         <span className={styles.isolation}>Isolated</span>
       </span>
     </Tooltip>
@@ -217,9 +218,9 @@ function WorkspaceShell({ children }) {
         </div>
       </AppShell.Navbar>
       <AppShell.Main className={styles.main}>
-        <main id="main" tabIndex={-1} className={isCapacity ? styles.lensMain : styles.legacyMain}>
+        <div id="main" tabIndex={-1} className={isCapacity ? styles.lensMain : styles.legacyMain}>
           {children}
-        </main>
+        </div>
       </AppShell.Main>
       <Modal
         opened={searchOpen}
@@ -282,7 +283,9 @@ function WorkspaceShell({ children }) {
           )}
           {snapshot && (
             <Text size="sm" c="dimmed">
-              Operational changes are disabled in this private snapshot.
+              {snapshot.kind === 'synthetic-fixture'
+                ? 'Only fixture-scoped changes are available in this isolated runtime.'
+                : 'Operational changes are disabled in this private snapshot.'}
             </Text>
           )}
         </Stack>
