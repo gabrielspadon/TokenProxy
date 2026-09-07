@@ -488,11 +488,13 @@ export function countCacheAnchors(body) {
 export function anchorClaudeCache(body, { ttl } = {}) {
   if (!body || typeof body !== "object") return body;
   // ttl selects the breakpoint lifetime policy (context-tuning suite, task
-  // 6): "1h" upgrades every ephemeral anchor on the final body for sessions
-  // whose measured inter-request gaps outlive the 5m breakpoint; anything
-  // else is the legacy policy byte for byte. Positions never move — ttl is a
-  // lifetime property, not part of the cache key — so upgrading a kept client
-  // anchor is prefix-stable. A client-stated "1h" is never downgraded.
+  // 6): "1h" upgrades gateway-stamped ephemeral anchors on the final body for
+  // sessions whose measured inter-request gaps outlive the 5m breakpoint;
+  // anything else is the legacy policy byte for byte. Positions never move —
+  // ttl is a lifetime property, not part of the cache key — so upgrading an
+  // anchor is prefix-stable. A client-EXPLICIT ttl ("5m" or "1h") is the
+  // client's ask: never lifted, never downgraded. Only anchors with no ttl at
+  // ingress follow the gateway policy.
   const upgradeTo1h = ttl === "1h";
   const tailControl = upgradeTo1h ? CACHE_CONTROL_1H : CACHE_CONTROL_5M;
   // Valid client breakpoints are kept verbatim (per-request cache-prefix
@@ -545,11 +547,22 @@ export function anchorClaudeCache(body, { ttl } = {}) {
   }
 
   if (upgradeTo1h) {
-    // Kept plans (client- or translator-stamped) carry 5m tail anchors; lift
-    // every ephemeral breakpoint to the 1h lifetime without moving it.
+    // Kept plans may carry client-stamped anchors. Only an anchor whose ttl
+    // was absent at ingress is the gateway's to lift (a bare ephemeral anchor
+    // asks for caching but makes no lifetime choice); an explicit client ttl
+    // ("5m" or "1h") is the client's ask and survives verbatim. Gateway-added
+    // anchors already carry the 1h control, so the lift is a no-op on them.
+    const clientExplicit = new Set();
+    if (keep) {
+      for (const block of keep) {
+        if (block?.cache_control?.ttl !== undefined) clientExplicit.add(block);
+      }
+    }
     const lift = (block) => {
       const cc = block?.cache_control;
-      if (cc?.type === "ephemeral" && cc.ttl !== "1h") block.cache_control = { ...CACHE_CONTROL_1H };
+      if (cc?.type !== "ephemeral" || cc.ttl === "1h") return;
+      if (clientExplicit.has(block)) return;
+      block.cache_control = { ...CACHE_CONTROL_1H };
     };
     if (Array.isArray(body.system)) body.system.forEach(lift);
     if (Array.isArray(body.tools)) body.tools.forEach(lift);

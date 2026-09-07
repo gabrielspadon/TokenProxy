@@ -178,6 +178,26 @@ describe('anchorClaudeCache {ttl} seam', () => {
     expect(out.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
     expect(countCacheAnchors(out)).toBe(countCacheAnchors(anchorClaudeCache(mk())));
   });
+
+  it('ttl "1h" preserves a client-explicit ttl anchor verbatim', () => {
+    const body = mk();
+    // The client stamped the last assistant turn with an explicit 5m choice.
+    body.messages[1].content[0].cache_control = { type: 'ephemeral', ttl: '5m' };
+    const out = anchorClaudeCache(body, { ttl: '1h' });
+    // Not lifted: the client's lifetime ask wins over the gateway policy.
+    expect(out.messages[1].content[0].cache_control).toEqual({ type: 'ephemeral', ttl: '5m' });
+    // Gateway-stamped anchors still follow the policy.
+    expect(out.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    expect(countCacheAnchors(out)).toBe(2);
+  });
+
+  it('ttl "1h" lifts a client anchor that carried no ttl of its own', () => {
+    const body = mk();
+    // Bare ephemeral: the client asked for caching but made no lifetime choice.
+    body.messages[1].content[0].cache_control = { type: 'ephemeral' };
+    const out = anchorClaudeCache(body, { ttl: '1h' });
+    expect(out.messages[1].content[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+  });
 });
 
 // ---------------------------------------------------------------------------
