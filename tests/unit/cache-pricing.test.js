@@ -16,9 +16,13 @@ describe("cacheMultiplierFor", () => {
     expect(CACHE_MULTIPLIERS.anthropic.write1h).toBe(2.0);
   });
 
-  it("openai and gemini have provider defaults", () => {
-    expect(cacheMultiplierFor("openai")).toEqual({ read: 0.5, write: 1.25 });
-    expect(cacheMultiplierFor("gemini")).toEqual({ read: 0.25, write: 1.0 });
+  it("openai and gemini carry no fallback discount: unstated cache rates degrade to plain pricing", () => {
+    // Their discounts are per-model on the rate card; a model without them
+    // must not inherit one, or savings would be overstated.
+    expect(cacheMultiplierFor("openai")).toEqual({ read: 1.0, write: 1.0 });
+    expect(cacheMultiplierFor("gemini")).toEqual({ read: 1.0, write: 1.0 });
+    expect(CACHE_MULTIPLIERS.openai).toBeUndefined();
+    expect(CACHE_MULTIPLIERS.gemini).toBeUndefined();
   });
 
   it("unknown providers degrade to plain pricing (1.0/1.0)", () => {
