@@ -18,8 +18,8 @@ import { execFileSync } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = resolve(HERE, "../open-sse/utils/contextStructure.js");
-const N = 500;
-const REPS = 15;
+const N = Number(process.env.BENCH_N || 500);
+const REPS = Number(process.env.BENCH_REPS || 15);
 
 const chunk = "Representative tool result content 0123456789 with unicode 日本語 🧭. ";
 const big = chunk.repeat(6000); // ~430KB
@@ -41,13 +41,19 @@ const key = Buffer.alloc(32, 7);
 // Replace the HMAC construction while leaving every byte-accounting call intact.
 const STUB = `const __stubDigest = "0".repeat(64);\nconst __stubHash = { update() { return __stubHash; }, digest: () => __stubDigest };\n`;
 const CUTS = {
-  body: [/createHmac\("sha256", key\)\.update\("context-v1:body[\s\S]*?\.digest\("hex"\)/, "__stubDigest"],
+  body: [/const bodyHash = createHmac\("sha256", key\)\.update\("context-v1:body[^;]*;/, "const bodyHash = __stubHash;"],
   prefix: [/const prefix = createHmac\("sha256", key\)\.update\("context-v1:history-prefix[^;]*\);/, "const prefix = __stubHash;"],
-  // Byte-identical rewrite: drops the whole-body Buffer copy, keeping both
-  // HMACs and every emitted field exactly as version 1 defines them.
-  noalloc: [/const encodedBuffer = Buffer\.from\(encoded, "utf8"\);\s*\n\s*const bodyBytes = encodedBuffer\.length;/, 'const bodyBytes = Buffer.byteLength(encoded, "utf8");'],
-  noallocBody: [/\.update\("context-v1:body\\0"\)\.update\(encodedBuffer\)/, '.update("context-v1:body\\0").update(encoded, "utf8")'],
+  // The pre-streaming shape, for the before/after comparison: one whole-body
+  // Buffer copy feeding the count and the digest, and a second UTF-8 walk per
+  // prefix fragment for its byte length. Same digests, more transient bytes.
+  wholebuf: [/const bodyHash = createHmac\("sha256", key\)\.update\("context-v1:body\\0"\);\s*\n\s*const bodyBytes = updateUtf8\(bodyHash, encoded, CONTEXT_CAPTURE_LIMITS\.bytes\);/,
+    'const __encodedBuffer = Buffer.from(encoded, "utf8");\n  const bodyHash = createHmac("sha256", key).update("context-v1:body\\0").update(__encodedBuffer);\n  const bodyBytes = __encodedBuffer.length;'],
+  wholetext: [/const text = \(part\) => \{ prefixBytes \+= updateUtf8\(prefix, part\); \};/,
+    'const text = (part) => { prefix.update(part, "utf8"); prefixBytes += Buffer.byteLength(part, "utf8"); };'],
+  wholefrag: [/prefixBytes \+= updateUtf8\(prefix, parts\[position\]\.encoded\);/,
+    'prefix.update(parts[position].encoded, "utf8"); prefixBytes += parts[position].bytes;'],
 };
+const WHOLE = "wholebuf,wholetext,wholefrag";
 
 const tmp = mkdtempSync(join(tmpdir(), "bench-ctx-"));
 async function variant(name, cuts) {
@@ -83,35 +89,49 @@ async function attribution() {
     ["(b) body HMAC stubbed", "body"],
     ["(c) history-prefix HMAC stubbed", "prefix"],
     ["(d) both stubbed", "body,prefix"],
-    // Not an HMAC scope change: same digests, one fewer 1.3 MB copy. Included
-    // to show what is reachable without touching the version-1 contract.
-    ["(e) byte-identical, no body copy", "noalloc,noallocBody"],
+    // The pre-streaming source, reconstructed. Digests are identical, so the
+    // delta against (a) is the whole cost of the transient megabyte encodings.
+    ["(e) pre-streaming whole-buffer", WHOLE],
   ];
   console.log(`bodyBytes: ${Buffer.byteLength(serialized)}  calls=${N}  reps=${REPS}  (min of per-rep means, isolated processes)`);
   const results = [];
   for (const [label, cuts] of specs) {
     const out = execFileSync(process.execPath, [fileURLToPath(import.meta.url)],
       { env: { ...process.env, BENCH_VARIANT: cuts }, encoding: "utf8" }).trim();
-    results.push([label, Number(out)]);
+    results.push([label, JSON.parse(out)]);
   }
-  const base = results[0][1];
-  for (const [label, ms] of results) {
-    const share = label.startsWith("(a)") ? "" : `  attributable=${(((base - ms) / base) * 100).toFixed(1)}%`;
-    console.log(`${label.padEnd(34)} per-call=${ms.toFixed(3)}ms${share}`);
+  const base = results[0][1].ms;
+  for (const [label, r] of results) {
+    const share = label.startsWith("(a)") ? "" : ` attributable=${(((base - r.ms) / base) * 100).toFixed(1)}%`;
+    console.log(`${label.padEnd(34)} per-call=${r.ms.toFixed(3)}ms gc=${String(r.gc).padStart(3)} major=${String(r.major).padStart(3)} pause=${String(r.pause).padStart(6)}ms majorPause=${String(r.majorPause).padStart(6)}ms${share}`);
   }
 }
 
 async function child(cuts) {
   const fn = await variant(cuts.replace(/,/g, "_"), cuts === "none" ? [] : cuts.split(","));
   for (let i = 0; i < 30; i++) fn(body, "physical-dispatch", key, { serialized });
-  const reps = [];
-  for (let r = 0; r < REPS; r++) reps.push(time(fn, N) / N);
-  console.log(Math.min(...reps).toFixed(4));
+  // GC over ONE rep of N calls, so the pause counts of two variants describe
+  // the same workload. Timing still reports min-of-reps.
+  const gc = [];
+  const observer = new PerformanceObserver((list) => { for (const e of list.getEntries()) gc.push({ dur: e.duration, kind: e.detail?.kind }); });
+  observer.observe({ entryTypes: ["gc"] });
+  const first = time(fn, N) / N;
+  await new Promise((r) => setTimeout(r, 80));
+  observer.disconnect();
+  const reps = [first];
+  for (let r = 1; r < REPS; r++) reps.push(time(fn, N) / N);
+  // kind 8 is major (mark-sweep-compact); it is the one that owns the p95 spike.
+  const major = gc.filter((g) => g.kind === 8);
+  console.log(JSON.stringify({ ms: Number(Math.min(...reps).toFixed(4)), gc: gc.length, major: major.length,
+    pause: Number(gc.reduce((a, g) => a + g.dur, 0).toFixed(1)), majorPause: Number(major.reduce((a, g) => a + g.dur, 0).toFixed(1)) }));
 }
 
 // Per-call series plus GC attribution, for the recurring-p95-spike question.
 async function profile() {
-  const fn = await variant("a", []);
+  // BENCH_PROFILE=before profiles the pre-streaming shape, so the spike period
+  // and the GC pause budget are comparable across the change.
+  const cuts = process.env.BENCH_PROFILE === "before" ? WHOLE.split(",") : [];
+  const fn = await variant(cuts.length ? "profile_before" : "a", cuts);
   const gc = [];
   new PerformanceObserver((list) => { for (const e of list.getEntries()) gc.push({ at: e.startTime, dur: e.duration, kind: e.detail?.kind }); })
     .observe({ entryTypes: ["gc"] });

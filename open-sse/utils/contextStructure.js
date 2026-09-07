@@ -10,6 +10,35 @@ import { ContextStructureError } from "../../src/lib/db/analytics/contextStructu
 export { normalizeContextStructure } from "../../src/lib/db/analytics/contextStructure.mjs";
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const fingerprint = (key, label, encoded) => createHmac("sha256", key).update(`context-v1:${label}\0`).update(encoded, "utf8").digest("hex");
+
+// Feeding a megabyte string straight to `hash.update(text, "utf8")` makes V8
+// materialize its whole UTF-8 encoding as one transient buffer, and that single
+// allocation is what drives the major-GC pause this measurement used to pay
+// once per call. Encode through a shared scratch instead, in bounded slices.
+// UTF-8 never needs more than three bytes per UTF-16 code unit (a surrogate
+// pair is two units and four bytes, a lone surrogate becomes a three-byte
+// replacement), so a slice of CHUNK_CHARS always fits. Slices never split a
+// surrogate pair, so the concatenated slice encodings are byte-for-byte the
+// encoding of the whole string and every digest is unchanged.
+const CHUNK_CHARS = 65536;
+const scratch = Buffer.allocUnsafe(CHUNK_CHARS * 3);
+// Returns the UTF-8 byte length fed in. Stops early once `limit` is passed,
+// because the only caller that sets one throws on that result and discards the
+// digest rather than encoding a body it has already rejected.
+function updateUtf8(hash, text, limit = Infinity) {
+  let bytes = 0;
+  for (let index = 0; index < text.length; ) {
+    let end = index + CHUNK_CHARS;
+    if (end >= text.length) end = text.length;
+    else if ((text.charCodeAt(end - 1) & 0xfc00) === 0xd800) end -= 1;
+    const written = scratch.write(index === 0 && end === text.length ? text : text.slice(index, end), 0, "utf8");
+    hash.update(scratch.subarray(0, written));
+    bytes += written;
+    if (bytes > limit) return bytes;
+    index = end;
+  }
+  return bytes;
+}
 // Reuse exact JSON fragments within this one synchronous observation. Nothing
 // survives the call, and the composed bytes match the version-1 JSON contract.
 function fragments() {
@@ -33,9 +62,10 @@ export function measureContextStructure(body, boundary, key, { serialized } = {}
   // Internal callers may supply the exact JSON they already prepared for wire
   // serialization. Never accept this option from a client-supplied field.
   const encoded = typeof serialized === "string" ? serialized : JSON.stringify(body);
-  // Encode once; the same buffer serves the byte count and the body HMAC below.
-  const encodedBuffer = Buffer.from(encoded, "utf8");
-  const bodyBytes = encodedBuffer.length;
+  // Encode once, streaming: this single pass produces the byte count and the
+  // body digest together, so neither the count nor the HMAC re-walks the string.
+  const bodyHash = createHmac("sha256", key).update("context-v1:body\0");
+  const bodyBytes = updateUtf8(bodyHash, encoded, CONTEXT_CAPTURE_LIMITS.bytes);
   if (bodyBytes > CONTEXT_CAPTURE_LIMITS.bytes) throw new ContextStructureError("Structural measurement exceeds capture limits");
   const result = {
     version: 1, boundary, bodyBytes, messageBytes: 0, messageContainerBytes: 0,
@@ -108,7 +138,7 @@ export function measureContextStructure(body, boundary, key, { serialized } = {}
   // string, and the digest and byte count match the materialized form exactly.
   const prefix = createHmac("sha256", key).update("context-v1:history-prefix\0");
   let prefixBytes = 0;
-  const text = (part) => { prefix.update(part, "utf8"); prefixBytes += Buffer.byteLength(part, "utf8"); };
+  const text = (part) => { prefixBytes += updateUtf8(prefix, part); };
   const buffer = (part) => { prefix.update(part); prefixBytes += part.length; };
   text('{"instructions":'); buffer(instructionBuffer);
   text(',"tools":'); buffer(toolBuffer);
@@ -118,14 +148,14 @@ export function measureContextStructure(body, boundary, key, { serialized } = {}
     text(`${index ? "," : ""}${JSON.stringify(field)}:[`);
     for (let position = 0; position < parts.length; position++) {
       if (position) text(",");
-      prefix.update(parts[position].encoded, "utf8"); prefixBytes += parts[position].bytes;
+      prefixBytes += updateUtf8(prefix, parts[position].encoded);
     }
     text("]");
   }
   text("}}");
   result.historyPrefixBytes = prefixBytes;
   result.fingerprints = {
-    body: createHmac("sha256", key).update("context-v1:body\0").update(encodedBuffer).digest("hex"),
+    body: bodyHash.digest("hex"),
     instructions: fingerprint(key, "instructions", instructionBuffer), tools: fingerprint(key, "tools", toolBuffer), historyPrefix: prefix.digest("hex"),
   };
   return result;
