@@ -156,7 +156,7 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
         <span>
           {onTimeRangeChange && (
             <Button
-              size="compact-xs"
+              size="compact-sm"
               variant="subtle"
               onClick={() =>
                 chart.current?.dispatchAction({
@@ -170,7 +170,7 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
             </Button>
           )}
           <Button
-            size="compact-xs"
+            size="compact-sm"
             variant="subtle"
             onClick={() => setShowData((value) => !value)}
             aria-expanded={showData}

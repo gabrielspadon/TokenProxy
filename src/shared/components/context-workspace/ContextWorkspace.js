@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Alert, Badge, Button, Group, Loader, Select, TextInput, UnstyledButton } from '@mantine/core';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
@@ -16,6 +16,16 @@ import { IDENTITY, IDENTITY_NOTE, contextUrl, finite, quantity, signedBytes, utc
 import styles from './context.module.css';
 
 const EMPTY = [];
+const AttemptSelection = createContext(null);
+function AttemptCell({ row }) {
+  const { turnId, selectTurn } = useContext(AttemptSelection);
+  const turn = row.original;
+  return <UnstyledButton className={styles.attemptButton} aria-label={`Inspect attempt ${turn.id}`}
+    aria-pressed={String(turn.id) === String(turnId)} onClick={() => selectTurn(turn.id)}>
+    <strong title={`${utc(turn.timestamp)} UTC`}>{utc(turn.timestamp).slice(5)}</strong>
+    <small title={String(turn.id)}>#{String(turn.id).slice(0,14)}{String(turn.id).length > 14 ? '…' : ''} · try {turn.attempt ?? 'Unknown'}</small>
+  </UnstyledButton>;
+}
 function ReadState({ resource, children, empty }) {
   if (resource.loading && !resource.data) return <div className={styles.readState} role="status"><Loader size="sm" />Reading recorded context…</div>;
   if (!resource.data && resource.error) return <div className={styles.readState}><Alert color="red" title="Context unavailable">{resource.error}</Alert><Button variant="default" onClick={resource.refresh}>Try again</Button></div>;
@@ -110,12 +120,13 @@ function ContextScope({ workspace, baseline, setBaseline }) {
   const changePage = (next) => { setPage(next); };
   const filterByProject = (value) => { setProjectLabel(value); changePage(1); };
   const columns = useMemo(() => [
-    { id: 'request', header: 'Attempt · UTC', cell: ({ row }) => <UnstyledButton className={styles.attemptButton} aria-label={`Inspect attempt ${row.original.id}`} aria-pressed={String(row.original.id) === String(turnId)} onClick={() => { setSessionId(selectedSessionId); setTurnId(row.original.id); }}><strong title={`${utc(row.original.timestamp)} UTC`}>{utc(row.original.timestamp).slice(5)}</strong><small title={String(row.original.id)}>#{String(row.original.id).slice(0,14)}{String(row.original.id).length > 14 ? '…' : ''} · try {row.original.attempt ?? 'Unknown'}</small></UnstyledButton> },
+    { id: 'request', header: 'Attempt · UTC', cell: AttemptCell },
     { id: 'route', header: 'Selected provider / model', cell: ({ row }) => <div className={styles.routeCell}><span>{row.original.provider || 'Unknown'}</span><small title={row.original.model}>{row.original.model || 'Unknown model'}</small>{row.original.requestedModel !== row.original.model && <small title={row.original.requestedModel}>Requested · {row.original.requestedModel || 'Unknown'}</small>}</div> },
     { id: 'state', header: 'Recorded state', cell: ({ row }) => <span className={styles.status} data-state={row.original.status}>{row.original.status === 'pending' ? 'Incomplete' : row.original.status || 'Unknown'}<small>{row.original.usageSource === 'provider' ? 'Provider usage' : row.original.usageSource === 'estimated' ? 'Estimated usage' : 'Usage missing'}</small></span> },
     ...[['contextEstimate', 'Context est.'], ['providerInputTokens', 'Input'], ['cacheReadTokens', 'Cache read'], ['cacheWriteTokens', 'Cache write'], ['providerOutputTokens', 'Output']].map(([key, header]) => ({ id: key, header, cell: ({ row }) => <span className={styles.numeric} title={quantity(row.original[key])}>{quantity(row.original[key], true)}</span> })),
     { id: 'bytes', header: 'Body change', cell: ({ row }) => <span className={styles.numeric} data-expansion={row.original.savedBytes < 0 || undefined}>{signedBytes(finite(row.original.savedBytes) ? -row.original.savedBytes : null)}</span> },
-  ], [selectedSessionId, setSessionId, setTurnId, turnId]);
+  ], []);
+  const attemptSelection = { turnId, selectTurn: (id) => { setSessionId(selectedSessionId); setTurnId(id); } };
   const refreshOverview = () => { if (selectedSessionId) setSessionId(selectedSessionId); overview.refresh(); };
   const refresh = () => { refreshOverview(); detail.refresh(); exact.refresh(); };
   const focusInterval = (next) => { if (selectedSessionId) setSessionId(selectedSessionId); setScope(next); };
@@ -140,7 +151,7 @@ function ContextScope({ workspace, baseline, setBaseline }) {
               {turnId !== null && !pageTurn && <p className={styles.emptyInline}>{exact.error ? `Exact attempt #${turnId} ${selectedTurn ? 'refresh failed; the inspector retains the last successful read.' : 'is unavailable.'} ${exact.error}` : exact.loading ? `Reading exact attempt #${turnId}…` : selectedTurn ? `Attempt #${turnId} is inspected by its exact identity outside this page or scope. The cohort and time filters are preserved.` : `Exact attempt #${turnId} is not retained. No neighboring attempt is substituted.`}</p>}
               <ContextTracks trend={detail.data.trend} scope={scope} onScope={focusInterval} />
               <div className={styles.ledgerHead}><h3>Attempt ledger</h3><span>Chronological · token quantities except body change</span></div>
-              {turns.length ? <ContextTable rows={turns} columns={columns} selectedId={turnId} label="Session request attempts" minWidth={1000} /> : <p className={styles.emptyInline}>No attempts on this page match the selected scope.</p>}
+              {turns.length ? <AttemptSelection.Provider value={attemptSelection}><ContextTable rows={turns} columns={columns} selectedId={turnId} label="Session request attempts" minWidth={1000} /></AttemptSelection.Provider> : <p className={styles.emptyInline}>No attempts on this page match the selected scope.</p>}
               <Pager pagination={detail.data.pagination} onPage={(next) => setTurnPage(next)} label="Attempts" />
               <p className={styles.footnote}>Provider input is cache-inclusive. Cache read and write are reported separately, never added to it. Incomplete means a retained pending receipt, not a confirmed active generation.</p>
             </>}</ReadState></div>

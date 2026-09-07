@@ -31,7 +31,19 @@ export function SelectionDock({
     if (!host || !detailTarget) return;
     host.appendChild(detailTarget);
     const retained = detailFocus.current;
+    let restoreAutofocus;
     if (retained?.element.isConnected) {
+      if (!wide) {
+        // Mantine's delayed focus trap must choose the retained field too.
+        const marks = [...detailTarget.querySelectorAll('[data-autofocus]')];
+        const values = marks.map(element => element.getAttribute('data-autofocus'));
+        marks.forEach(element => element.removeAttribute('data-autofocus'));
+        retained.element.setAttribute('data-autofocus', '');
+        restoreAutofocus = () => {
+          retained.element.removeAttribute('data-autofocus');
+          marks.forEach((element, index) => element.setAttribute('data-autofocus', values[index]));
+        };
+      }
       retained.element.focus({ preventScroll: true });
       if (typeof retained.start === 'number') retained.element.setSelectionRange(retained.start, retained.end);
     }
@@ -40,8 +52,9 @@ export function SelectionDock({
       if (detailTarget.contains(element)) {
         detailFocus.current = { element, start: element.selectionStart, end: element.selectionEnd };
       }
+      restoreAutofocus?.();
     };
-  }, [detailTarget]);
+  }, [detailTarget, wide]);
   const origin = useRef(null);
   const previousOpen = useRef(false);
   useEffect(() => {

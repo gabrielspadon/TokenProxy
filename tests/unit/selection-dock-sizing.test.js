@@ -95,7 +95,7 @@ it('retains comparison state, unsaved details and the focused caret across both 
   }
   function Draft() {
     const [value, setValue] = useState('Original policy');
-    return <><button onClick={() => setValue('Unsaved operator policy')}>Edit draft</button>
+    return <><button data-autofocus="original" onClick={() => setValue('Unsaved operator policy')}>Edit draft</button>
       <input aria-label="Policy draft" value={value} readOnly /></>;
   }
   await act(async () => root.render(<MantineProvider env="test"><SelectionDock open title="Account"
@@ -114,11 +114,18 @@ it('retains comparison state, unsaved details and the focused caret across both 
       observer.callback([{ contentRect: { width, height: 620 } }]);
       await new Promise(resolve => requestAnimationFrame(resolve));
     });
+    // The Drawer schedules initial focus after its portal host has mounted.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
     expect(document.querySelector('[aria-label="Policy draft"]')).toBe(draft);
     expect(draft.value).toBe('Unsaved operator policy');
     expect(comparison.isConnected).toBe(true);
     expect(comparison.getAttribute('aria-pressed')).toBe('true');
     expect(document.activeElement).toBe(draft);
     expect([draft.selectionStart, draft.selectionEnd]).toEqual([3, 9]);
+    if (width === 900) expect(draft.hasAttribute('data-autofocus')).toBe(true);
+    else {
+      expect(draft.hasAttribute('data-autofocus')).toBe(false);
+      expect([...document.querySelectorAll('button')].find(button => button.textContent === 'Edit draft').getAttribute('data-autofocus')).toBe('original');
+    }
   }
 });

@@ -76,6 +76,18 @@ describe('Context projection contracts', () => {
 });
 
 describe('Context workspace', () => {
+  it('keeps the selected attempt trigger mounted and restores its focus after inspection', async () => {
+    await render();
+    const trigger = container.querySelector('[aria-label="Inspect attempt 101"]');
+    trigger.focus();
+    await act(async () => trigger.click()); await flush();
+    expect(trigger.isConnected).toBe(true);
+    expect(container.querySelector('[aria-label="Inspect attempt 101"]')).toBe(trigger);
+    expect(trigger.getAttribute('aria-pressed')).toBe('true');
+    await click('[aria-label="Close selection details"]');
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute('aria-pressed')).toBe('false');
+  });
   it('leaves the identity unselected until an operator chooses a session', async () => {
     state.workspace.initialSessionId=null;
     await render();
