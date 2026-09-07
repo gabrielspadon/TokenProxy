@@ -38,14 +38,17 @@ it('retains disabled byte stages and final size without serializing those stages
   expect(body.messages[0].content).toBe(text);
 });
 
-// The closing tools measurement is skipped when nothing in the block mutated
-// the body, which is what removes one whole-body serialization from the common
-// path. That is only sound while EVERY mutation between the two measurements
+// The closing tools byte delta is skipped when nothing in the block mutated
+// the body (the serialize itself is unconditional: the cost ledger needs the
+// same preSaverSerialized baseline either way). A fabricated non-zero delta
+// is only sound to skip while EVERY mutation between the two measurements
 // sets the flag, and a new saver added mid-block would not fail any behavioural
 // test. Walk the source region and require the flag after each mutation.
 it('flags every body mutation between the two tools measurements', () => {
   const src = readFileSync(new URL('../../open-sse/handlers/chatCore.js', import.meta.url), 'utf8');
-  expect(src).toMatch(/toolsBodyMutated \? Buffer\.byteLength\(JSON\.stringify\(translatedBody\)\) : toolsBeforeBytes/);
+  // preSaverSerialized is the cost ledger's counterfactual baseline, so the
+  // serialize is unconditional; toolsBodyMutated still gates the byte delta.
+  expect(src).toMatch(/toolsBodyMutated \? Buffer\.byteLength\(preSaverSerialized\) : toolsBeforeBytes/);
   const region = src.slice(src.indexOf('const toolsBeforeBytes'), src.indexOf('const toolsAfterBytes'));
   const token = /translatedBody(\.[a-zA-Z_]+)? *=(?!=)|delete translatedBody\.[a-zA-Z_]+|toolsBodyMutated = true;/g;
   let pending = [];
