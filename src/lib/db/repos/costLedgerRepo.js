@@ -18,8 +18,8 @@ import { getPricingForModel } from "./pricingRepo.js";
 const CHARS_PER_TOKEN = 4;
 
 // Serialized string length / 4, rounded up; null when there is nothing to
-// tokenize. String length (UTF-16 code units) matches estimateRequestTokens
-// and the token-saver events sink convention.
+// tokenize. String length (UTF-16 code units) matches estimateInputTokens
+// (open-sse/utils/usageTracking.js) and the token-saver events sink convention.
 export function estimateBaselineTokens(serialized) {
   if (typeof serialized !== "string" || serialized.length === 0) return null;
   return Math.ceil(serialized.length / CHARS_PER_TOKEN);
