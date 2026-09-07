@@ -112,6 +112,11 @@ const DEFAULT_SETTINGS = {
   // cache-epoch cut via a loopback-only sidecar (env
   // TOKENPROXY_LINGUA_ENDPOINT). Off by default.
   linguaEnabled: false,
+  // Adaptive cache breakpoint TTL (open-sse/utils/prefixStability.js):
+  // sessions whose recent inter-request gaps outlive the 5m breakpoint (>= 3
+  // gap samples, p90 > 20 min) get the 1h conversation-tail anchor. Off by
+  // default; "5m" is byte-identical to the legacy anchoring policy.
+  adaptiveCacheTtlEnabled: false,
   // Privacy filter (#2728): pseudonymise emails and the terms below in the
   // outbound body, restored before the client sees the answer. Off by
   // default — it walks every request, so it costs nothing until asked for.

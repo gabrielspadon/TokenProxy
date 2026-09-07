@@ -81,6 +81,12 @@ import {
 } from "../utils/epochCompact.js";
 import { pruneExpiredToolResults } from "../utils/dietPrune.js";
 import { compressBlobs, resolveLinguaEndpoint } from "../utils/linguaCompress.js";
+import {
+  chooseCacheTtl,
+  recordEpochRate,
+  topLevelKeySpans,
+  volatileFieldReport,
+} from "../utils/prefixStability.js";
 import { reorderByRelevance } from "../utils/embedReorder.js";
 import {
   injectBoundaryNote,
@@ -353,6 +359,58 @@ function trackCacheEpoch(sid, serialized) {
   return out;
 }
 
+// Prefix-stabilization telemetry per contextScope (context-tuning suite, task
+// 6): the rolling epoch hit-rate samples, the recent inter-request gaps the
+// adaptive TTL rule reads, and the previous body's top-level key sketch for
+// volatile-field detection. Same bounded-Map + 30-min TTL discipline as
+// ceBodies above; the sketch stores digests and lengths, never body bytes.
+const prefixTelemetry = new Map();
+const TELEMETRY_GAP_WINDOW = 8;
+
+// Read-only peek for the anchor step: no entry is created for a request that
+// may still bail before the final serializer records it.
+function peekPrefixTelemetry(scope) {
+  const entry = scope ? prefixTelemetry.get(scope) : null;
+  if (!entry || Date.now() - entry.at > CE_TTL_MS) return null;
+  return entry;
+}
+
+// One update per final pre-dispatch body, beside the trackCacheEpoch call:
+// record the inter-request gap and the epoch sample, diff the top-level key
+// sketch against the previous body's, and return the fields the
+// context-status write carries ({ epochHitRate, volatileKeys }, each
+// undefined when nothing was measured). Telemetry only — request bytes are
+// never touched here.
+function updatePrefixTelemetry(scope, serialized, tracked) {
+  const now = Date.now();
+  let entry = prefixTelemetry.get(scope);
+  if (!entry || now - entry.at > CE_TTL_MS) {
+    entry = { rates: [], gaps: [], lastAt: 0, sketch: null };
+  }
+  if (entry.lastAt > 0) {
+    entry.gaps.push(now - entry.lastAt);
+    if (entry.gaps.length > TELEMETRY_GAP_WINDOW) entry.gaps.shift();
+  }
+  entry.lastAt = now;
+  entry.at = now;
+  let epochHitRate;
+  if (tracked && tracked.prevBytes > 0) {
+    epochHitRate = recordEpochRate(entry.rates, tracked.ce / tracked.prevBytes);
+  } else {
+    epochHitRate = recordEpochRate(entry.rates, NaN);
+  }
+  let volatileKeys;
+  const sketch = topLevelKeySpans(serialized);
+  if (sketch) {
+    if (entry.sketch) {
+      volatileKeys = volatileFieldReport([entry.sketch, sketch]).volatileKeys;
+    }
+    entry.sketch = sketch;
+  }
+  boundedSet(prefixTelemetry, scope, entry);
+  return { epochHitRate, volatileKeys };
+}
+
 export async function handleChatCore({
   requestId,
   contextTelemetry: contextIdentity = {},
@@ -391,6 +449,7 @@ export async function handleChatCore({
   epochAutoEnabled,
   dietEnabled,
   linguaEnabled,
+  adaptiveCacheTtlEnabled,
   privacyEnabled,
   privacyTerms,
   headroomEnabled,
@@ -1553,7 +1612,21 @@ export async function handleChatCore({
       translatedBody.tools = defaultClaudeToolType(translatedBody.tools);
     }
     const anchorsBefore = countCacheAnchors(body);
-    anchorClaudeCache(translatedBody);
+    // Adaptive breakpoint TTL (context-tuning suite, task 6): with the knob
+    // on, a session whose recent inter-request gaps outlive the 5m breakpoint
+    // (>= 3 gap samples, p90 > 20 min) gets the 1h lifetime on its ephemeral
+    // anchors (positions never move). "5m" is the legacy policy byte for
+    // byte, and flag-off keeps the historical single-argument call.
+    if (adaptiveCacheTtlEnabled) {
+      const tele = peekPrefixTelemetry(contextScope);
+      const cacheTtl = chooseCacheTtl(tele?.gaps);
+      anchorClaudeCache(translatedBody, { ttl: cacheTtl });
+      if (cacheTtl === "1h") {
+        log?.debug?.("CACHE", `adaptive ttl 1h | gaps=${tele?.gaps.length}`);
+      }
+    } else {
+      anchorClaudeCache(translatedBody);
+    }
     // Path codes (doc §2 XFORM rows): client multi-anchor plan survived
     // translation vs the re-anchor fallback.
     const anchorsAfter = countCacheAnchors(translatedBody);
@@ -1570,6 +1643,7 @@ export async function handleChatCore({
   let finalBodyBytes = null;
   let finalSerialized = null;
   let compactHint = false;
+  let prefixFields = null;
   if (saverPrev || sid) {
     finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
@@ -1584,6 +1658,7 @@ export async function handleChatCore({
           compactHint = true;
         }
       }
+      prefixFields = updatePrefixTelemetry(contextScope, finalSerialized, tracked);
     }
   }
   // HEADERS finding: model-self-sizing response headers, all derived from the
@@ -1651,6 +1726,11 @@ export async function handleChatCore({
         saveBytes: saverMeta.saveBytes,
         ceBytes: saverMeta.ce,
         compactHint: saverMeta.compactHint,
+        // Undefined means "not measured this request" and must stay absent so
+        // the merge keeps the session's last measured value; an empty
+        // volatileKeys list IS measured and clears the previous one.
+        ...(prefixFields?.epochHitRate !== undefined ? { epochHitRate: prefixFields.epochHitRate } : {}),
+        ...(prefixFields?.volatileKeys !== undefined ? { volatileKeys: prefixFields.volatileKeys } : {}),
       });
     } catch (err) {
       log?.debug?.("CTXSTATUS", `write failed: ${String(err?.message || err).slice(0, 60)}`);

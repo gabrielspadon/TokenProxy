@@ -1061,6 +1061,10 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         epochAutoEnabled: comboTokenSaver.epochAutoEnabled,
         dietEnabled: comboTokenSaver.dietEnabled,
         linguaEnabled: comboTokenSaver.linguaEnabled,
+        // Global, not combo-wired: the knob reads per-SESSION cadence state,
+        // and a combo member switch mid-session flipping the TTL policy would
+        // churn the very prefix it exists to protect.
+        adaptiveCacheTtlEnabled: chatSettings.adaptiveCacheTtlEnabled === true,
         privacyEnabled: !!chatSettings.privacyFilterEnabled,
         privacyTerms: chatSettings.privacyFilterTerms || [],
         headroomEnabled: comboTokenSaver.headroomEnabled,

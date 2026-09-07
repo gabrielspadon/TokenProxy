@@ -66,6 +66,29 @@ function sanitize(entry) {
   if (saveBytes !== undefined) out.saveBytes = saveBytes;
   const dollarsSaved = clampReal(entry.dollarsSaved);
   if (dollarsSaved !== undefined) out.dollarsSaved = dollarsSaved;
+  // epochHitRate: rolling mean of ce/prevBytes over the session's last 20
+  // tracked requests, a unit-interval ratio — anything outside [0, 1] is
+  // corrupt and dropped.
+  const epochHitRate = clampReal(entry.epochHitRate);
+  if (epochHitRate !== undefined && epochHitRate >= 0 && epochHitRate <= 1) {
+    out.epochHitRate = epochHitRate;
+  }
+  // volatileKeys: the top early top-level JSON keys whose value changed
+  // between consecutive requests. Structural key names only — bounded count
+  // and length, no control characters or quotes. An empty list is a
+  // measurement ("nothing volatile") and clears the field.
+  if (Array.isArray(entry.volatileKeys)) {
+    const keys = entry.volatileKeys
+      .filter(
+        (k) =>
+          typeof k === "string" &&
+          k.length > 0 &&
+          k.length <= 64 &&
+          !/[\x00-\x1f"\\]/.test(k),
+      )
+      .slice(0, 3);
+    if (keys.length) out.volatileKeys = keys;
+  }
   if (entry.compactHint === true) out.compactHint = true;
   const updatedAt = typeof entry.updatedAt === "string" ? entry.updatedAt : "";
   // ISO-shaped AND parseable, else the field is dropped: a free-text or
