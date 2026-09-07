@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // Counterfactual dollar ledger end-to-end through handleChatCore with a
 // mocked executor (no network). The executor sizes its reported prompt_tokens
@@ -92,6 +95,8 @@ vi.mock("@/lib/usageDb.js", async () => {
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 const { getAdapter } = await import("@/lib/db/driver.js");
+const { readContextStatus, __setContextStatusDirForTest } =
+  await import("../../open-sse/handlers/chatCore/contextStatusStore.js");
 
 // Report usage for the body actually received: prompt = dispatched chars / 4.
 function makeSizedExecutorRes(args) {
@@ -148,12 +153,20 @@ async function readLedgerRow(rid) {
 }
 
 describe("cost ledger pipeline", () => {
+  let storeDir;
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.executeMock.mockImplementation(async (args) => makeSizedExecutorRes(args));
     globalThis.fetch = vi.fn(async () => {
       throw new Error("unexpected fetch");
     });
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "cost-ledger-ctx-"));
+    __setContextStatusDirForTest(storeDir);
+  });
+
+  afterEach(() => {
+    __setContextStatusDirForTest(null);
+    fs.rmSync(storeDir, { recursive: true, force: true });
   });
 
   it("savers off: baseline equals actual, savedUsd is zero", async () => {
@@ -206,6 +219,26 @@ describe("cost ledger pipeline", () => {
     const db = await getAdapter();
     await new Promise((r) => setTimeout(r, 200));
     expect(db.get(`SELECT * FROM costLedger WHERE id = ?`, ["c0ffee52"])).toBeUndefined();
+  });
+
+  it("the current request's saver dollars land on its own context-status entry (no one-request lag)", async () => {
+    const res = await handleChatCore(baseArgs({ requestId: "c0ffee61", sid: "cafe9999", rtkEnabled: true }));
+    expect(res.success).toBe(true);
+    const row = await readLedgerRow("c0ffee61");
+    expect(row).not.toBeNull();
+    expect(row.saverSavedUsd).toBeGreaterThan(0);
+    // The onReqSummary listener chains this request's own ledger write ahead
+    // of the rollup read, so the entry's dollarsSaved already includes the
+    // request that just completed — not only the previous ones.
+    let entry = null;
+    for (let i = 0; i < 50; i++) {
+      entry = await readContextStatus("cafe9999");
+      if (entry && typeof entry.dollarsSaved === "number") break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(entry).not.toBeNull();
+    expect(entry.dollarsSaved).toBeGreaterThan(0);
+    expect(entry.dollarsSaved).toBeCloseTo(row.saverSavedUsd, 12);
   });
 
   it("ledger failure never blocks usage persistence", async () => {

@@ -109,14 +109,36 @@ export async function recordCostLedger(entry) {
 
 // Compute + persist in one call. Returns the row when written, null when
 // skipped or the write failed — the caller never needs the distinction.
-export async function recordCostLedgerForRequest(args) {
-  try {
-    const entry = await computeCostLedgerEntry(args);
-    if (!entry) return null;
-    return (await recordCostLedger(entry)) ? entry : null;
-  } catch {
-    return null;
+// In-flight writes are tracked by rid: the onReqSummary listener in chatCore
+// reads the session rollup the moment a request completes, while saveUsageStats
+// fires this write async — without a handle on it the rollup lagged one
+// request behind its own savings.
+const pendingWrites = new Map();
+
+export function recordCostLedgerForRequest(args) {
+  const rid = typeof args?.rid === "string" && args.rid ? args.rid : null;
+  const write = (async () => {
+    try {
+      const entry = await computeCostLedgerEntry(args);
+      if (!entry) return null;
+      return (await recordCostLedger(entry)) ? entry : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (rid) {
+    pendingWrites.set(rid, write);
+    write.then(() => {
+      if (pendingWrites.get(rid) === write) pendingWrites.delete(rid);
+    });
   }
+  return write;
+}
+
+// The pending write for one rid (never rejects — the write swallows its own
+// errors), or an already-resolved null when none is in flight.
+export function waitForLedgerWrite(rid) {
+  return pendingWrites.get(rid) || Promise.resolve(null);
 }
 
 // Session rollup for the MCP context_status entry, decomposed by attribution:

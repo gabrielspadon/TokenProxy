@@ -57,7 +57,7 @@ import {
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { withSaverHeaders } from "./chatCore/saverHeaders.js";
 import { writeContextStatus } from "./chatCore/contextStatusStore.js";
-import { sumSavedUsdSince } from "../../src/lib/db/repos/costLedgerRepo.js";
+import { sumSavedUsdSince, waitForLedgerWrite } from "../../src/lib/db/repos/costLedgerRepo.js";
 import { clientRequestedStreaming as requestedStreaming } from "./chatCore/streamMode.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import {
@@ -268,9 +268,12 @@ onReqSummary((verdict, fields) => {
     // Async fire-and-forget; the sum resolves after the rid-stamped write
     // above, and the store's writeQueue serializes in invocation order, so
     // this merges over that row without a rid (it carries no completion field
-    // and cannot trip the rid guard).
+    // and cannot trip the rid guard). waitForLedgerWrite chains THIS request's
+    // async ledger write ahead of the read, or the rollup would lag one
+    // request behind its own savings.
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    sumSavedUsdSince(entry.sid, since)
+    waitForLedgerWrite(rid)
+      .then(() => sumSavedUsdSince(entry.sid, since))
       .then((rollup) => {
         if (rollup && Number.isFinite(rollup.saverSavedUsd)) {
           writeContextStatus(entry.sid, { dollarsSaved: rollup.saverSavedUsd });
