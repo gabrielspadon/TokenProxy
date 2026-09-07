@@ -28,7 +28,8 @@ export function estimateBaselineTokens(serialized) {
 /**
  * Build one ledger row from the counterfactual inputs, or null when a row
  * cannot be computed truthfully: no rid, no model, no pre-saver body, no
- * provider-reported usage (estimated usage is not actual), or no rate card.
+ * provider-reported usage (estimated usage is not actual), provider-reported
+ * usage with zero input AND zero output (unmeasurable), or no rate card.
  */
 export async function computeCostLedgerEntry({ rid, sid, provider, model, preSaverSerialized, usage, now } = {}) {
   if (typeof rid !== "string" || !rid) return null;
