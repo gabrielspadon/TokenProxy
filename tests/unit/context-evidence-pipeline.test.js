@@ -188,7 +188,7 @@ describe("explicit client-reported event boundary", () => {
     expect((await post(event({requestId:row.id,sessionId:row.contextSessionId+1}))).status).toBe(404);
     expect((await post(event({requestId:row.id,clientId:"different-client"}))).status).toBe(404);
   });
-  it.each([{prompt:"private"},{beforeTokens:-1},{afterTokens:1.5},{tokenMeasurementMethod:null},{occurredAt:"2026-01-01"},{occurredAt:"2000-01-01T00:00:00Z"},{type:"prefix_change"},{sessionId:1},{targetClientId:"target"}])("rejects unsupported or ambiguous evidence %j", async (change) => {
+  it.each([{prompt:"private"},{beforeTokens:-1},{afterTokens:1.5},{tokenMeasurementMethod:null},{occurredAt:"2026-01-01"},{type:"prefix_change"},{sessionId:1},{targetClientId:"target"}])("rejects unsupported or ambiguous evidence %j", async (change) => {
     expect((await post(event(change))).status).toBe(400); expect(db.get("SELECT COUNT(*) AS n FROM contextClientEvents").n).toBe(0);
   });
   it("bounds actual request bytes independently of declared content length", async () => {

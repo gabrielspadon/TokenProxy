@@ -94,9 +94,22 @@ function getUsageApiKeyIdentitySalt(db) {
   }
 }
 
-function getApiKeyAggregate(apiKey, model, provider, apiKeyMap, salt) {
+function legacyKeyUnavailable(meta) {
+  const provenance = parseJson(meta, {})?.legacyImport;
+  return provenance?.contract === "nine-router-history-v1" && provenance?.apiKeyIdentity === "unavailable";
+}
+
+function getApiKeyAggregate(apiKey, model, provider, apiKeyMap, salt, legacyUnavailable = false) {
   const rawModel = model || "";
   const rawProvider = provider || "unknown";
+  if (legacyUnavailable && apiKey == null) {
+    return {
+      aggregateKey: `legacy-unavailable|${rawModel}|${rawProvider}`,
+      apiKeyKey: "legacy-unavailable",
+      apiKeyMasked: null,
+      keyName: "Legacy key unavailable",
+    };
+  }
   if (!apiKey || typeof apiKey !== "string") {
     return {
       aggregateKey: `local-no-key|${rawModel}|${rawProvider}`,
@@ -971,7 +984,7 @@ export async function getUsageStatsInRange(period = "all", range = null) {
         const provider = ak.provider || "";
         const providerDisplayName = providerNodeNameMap[provider] || provider;
         const apiKeyVal = ak.apiKey;
-        const identity = getApiKeyAggregate(apiKeyVal, rawModel, provider, apiKeyMap, apiKeyIdentitySalt);
+        const identity = getApiKeyAggregate(apiKeyVal, rawModel, provider, apiKeyMap, apiKeyIdentitySalt, ak.legacyKeyUnavailable === true);
         if (!stats.byApiKey[identity.aggregateKey]) {
           stats.byApiKey[identity.aggregateKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cacheCreationTokens: 0, cost: 0, rawModel, provider: providerDisplayName, apiKeyMasked: identity.apiKeyMasked, keyName: identity.keyName, apiKeyKey: identity.apiKeyKey, lastUsed: dateKey };
         }
@@ -1007,11 +1020,11 @@ export async function getUsageStatsInRange(period = "all", range = null) {
     const overlayCutoff = maxDays ? Date.now() - maxDays * 86400000 : 0;
     const histRows = win
       ? db.all(
-        `SELECT timestamp, provider, model, connectionId, apiKey, endpoint FROM usageHistory WHERE timestamp >= ? AND timestamp <= ?`,
+        `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, meta FROM usageHistory WHERE timestamp >= ? AND timestamp <= ?`,
         [win.startIso, win.endIso]
       )
       : db.all(
-        `SELECT timestamp, provider, model, connectionId, apiKey, endpoint FROM usageHistory WHERE timestamp >= ?`,
+        `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, meta FROM usageHistory WHERE timestamp >= ?`,
         [new Date(overlayCutoff).toISOString()]
       );
     for (const e of histRows) {
@@ -1025,7 +1038,7 @@ export async function getUsageStatsInRange(period = "all", range = null) {
         if (stats.byAccount[accountKey] && new Date(ts) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = ts;
       }
 
-      const identity = getApiKeyAggregate(e.apiKey, e.model, e.provider, apiKeyMap, apiKeyIdentitySalt);
+      const identity = getApiKeyAggregate(e.apiKey, e.model, e.provider, apiKeyMap, apiKeyIdentitySalt, legacyKeyUnavailable(e.meta));
       if (stats.byApiKey[identity.aggregateKey] && new Date(ts) > new Date(stats.byApiKey[identity.aggregateKey].lastUsed)) stats.byApiKey[identity.aggregateKey].lastUsed = ts;
 
       const endpoint = e.endpoint || "Unknown";
@@ -1043,7 +1056,7 @@ export async function getUsageStatsInRange(period = "all", range = null) {
       cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
     }
     const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens, meta FROM usageHistory WHERE timestamp >= ?`,
       [cutoff]
     );
 
@@ -1099,7 +1112,7 @@ export async function getUsageStatsInRange(period = "all", range = null) {
         if (new Date(r.timestamp) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = r.timestamp;
       }
 
-      const identity = getApiKeyAggregate(r.apiKey, r.model, r.provider, apiKeyMap, apiKeyIdentitySalt);
+      const identity = getApiKeyAggregate(r.apiKey, r.model, r.provider, apiKeyMap, apiKeyIdentitySalt, legacyKeyUnavailable(r.meta));
       if (!stats.byApiKey[identity.aggregateKey]) {
         stats.byApiKey[identity.aggregateKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cacheCreationTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked: identity.apiKeyMasked, keyName: identity.keyName, apiKeyKey: identity.apiKeyKey, lastUsed: r.timestamp };
       }

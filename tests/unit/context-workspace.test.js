@@ -345,3 +345,9 @@ describe('Context workspace', () => {
     expect(container.textContent).not.toContain('No context evidence in this selection');
   });
 });
+
+it.each([[null,'History preserved'],[45,'45 days retained'],[undefined,'Retention policy unknown']])('shows retention semantics for %s without inventing a finite window',async(retentionDays,label)=>{
+  fixture.overview.retentionDays=retentionDays;
+  await render();
+  expect(container.querySelector('footer').textContent).toContain(label);
+});

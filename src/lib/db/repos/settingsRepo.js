@@ -20,6 +20,8 @@ const isValidHeadroomTimeoutMs = (value) =>
 const DEFAULT_SETTINGS = {
   cloudEnabled: false,
   analyticsEnabled: false,
+  statsRetentionMode: "preserve",
+  statsRetentionDays: 45,
   tunnelEnabled: false,
   tunnelUrl: "",
   tunnelProvider: "cloudflare",

@@ -138,6 +138,12 @@ export async function PATCH(request) {
   try {
     const body = await request.json();
     if (!isPlainObject(body)) return NextResponse.json({error:"Settings must be an object"},{status:400});
+    if (Object.hasOwn(body, "statsRetentionMode") && !["preserve", "window"].includes(body.statsRetentionMode)) {
+      return NextResponse.json({ error: "statsRetentionMode must be preserve or window" }, { status: 400 });
+    }
+    if (Object.hasOwn(body, "statsRetentionDays") && (!Number.isInteger(body.statsRetentionDays) || body.statsRetentionDays < 1 || body.statsRetentionDays > 365)) {
+      return NextResponse.json({ error: "statsRetentionDays must be an integer from 1 through 365" }, { status: 400 });
+    }
     for (const key of QUOTA_AUTOPING_SETTINGS_KEYS) if (Object.hasOwn(body,key)) {
       const value=body[key];
       if (!isPlainObject(value) || Object.keys(value).some(field=>field!=="connections") || !isPlainObject(value.connections)

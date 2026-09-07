@@ -147,6 +147,9 @@ jobs:
         working-directory: tests
         run: npm install --no-audit --no-fund
 
+      - name: Verify offline legacy history import
+        run: python3 -m unittest discover -s tests -p 'history_import_test.py' -v
+
       # The suite is deliberately not green on a plain checkout. A set of
       # failures predates this fork and is catalogued in
       # tests/__baseline__/known-fails.txt, so vitest exits nonzero by design and

@@ -9,13 +9,21 @@ import { getAppVersion } from "./version.js";
 const _migratedAdapters = new WeakSet();
 
 function isFreshDb(adapter) {
-  // Table _meta may not exist yet on truly fresh DB
-  try {
-    const row = adapter.get(`SELECT COUNT(*) as c FROM _meta`);
-    return !row || row.c === 0;
-  } catch {
-    return true;
+  return !adapter.get("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1");
+}
+
+function needsSchemaSync(adapter) {
+  const objects = new Set(adapter.all("SELECT name FROM sqlite_master WHERE type IN ('table','index')").map(row => row.name));
+  for (const [tableName, def] of Object.entries(TABLES)) {
+    if (!objects.has(tableName)) return true;
+    const columns = new Set(adapter.all(`PRAGMA table_info(${tableName})`).map(row => row.name));
+    if (Object.keys(def.columns).some(name => !columns.has(name.replace(/^"|"$/g, "")))) return true;
+    for (const index of def.indexes || []) {
+      const name = /CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)/i.exec(index)?.[1];
+      if (!name || !objects.has(name)) return true;
+    }
   }
+  return false;
 }
 
 // ─── Versioned migrations runner (skip-version safe) ─────────────────────
@@ -65,14 +73,15 @@ function syncSchemaFromTables(adapter) {
           adapter.exec(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${safeDef}`);
           console.log(`[DB][sync] +column ${tableName}.${colName}`);
         } catch (e) {
-          console.warn(`[DB][sync] add column ${tableName}.${colName} failed: ${e.message}`);
+          throw new Error(`[DB][sync] add column ${tableName}.${colName} failed: ${e.message}`, { cause: e });
         }
       }
     }
 
     // Indexes (idempotent)
     for (const idx of def.indexes || []) {
-      try { adapter.exec(idx); } catch {}
+      try { adapter.exec(idx); }
+      catch (e) { throw new Error(`[DB][sync] index for ${tableName} failed (${idx}): ${e.message}`, { cause: e }); }
     }
   }
 }
@@ -80,46 +89,32 @@ function syncSchemaFromTables(adapter) {
 // ─── Main entry ──────────────────────────────────────────────────────────
 export async function runMigrationOnce(adapter) {
   if (_migratedAdapters.has(adapter)) return;
-  _migratedAdapters.add(adapter);
-
-  // Capture freshness BEFORE migrations stamp _meta (otherwise we'd misclassify
-  // a brand-new DB as non-fresh once schemaVersion is written).
   const fresh = isFreshDb(adapter);
-
-  // Prune stale backups every boot so old oversized backups shrink to KEEP.
-  pruneOldBackups();
-
-  // Bootstrap _meta so we can read the stored backup schema version below
-  // (runVersionedMigrations also ensures this, but we need it earlier here).
-  adapter.exec(buildCreateTableSql("_meta", TABLES._meta));
-
-  // Detect a pending schema change via the central SCHEMA_VERSION const.
-  // A lightweight backup is taken BEFORE any schema mutation below.
-  const storedSchemaVer = parseInt(getMetaSync(adapter, "backupSchemaVersion", "0"), 10) || 0;
-  const schemaChanging = !fresh && storedSchemaVer < SCHEMA_VERSION;
+  const hasMeta = adapter.get("SELECT name FROM sqlite_master WHERE type='table' AND name='_meta'");
+  const storedSchemaVer = hasMeta
+    ? parseInt(getMetaSync(adapter, "backupSchemaVersion", "0"), 10) || 0 : 0;
+  const migrationVersion = hasMeta ? parseInt(getMetaSync(adapter, "schemaVersion", "0"), 10) || 0 : 0;
+  const schemaChanging = !fresh && (storedSchemaVer < SCHEMA_VERSION || migrationVersion < latestVersion() || needsSchemaSync(adapter));
   if (schemaChanging) {
     try {
       const backupDir = makeBackupDir(`schema-${storedSchemaVer}-to-${SCHEMA_VERSION}`);
       backupDbLite(adapter, backupDir);
-      pruneOldBackups();
       console.log(`[DB][migrate] pre-schema backup ${storedSchemaVer} → ${SCHEMA_VERSION}: ${backupDir}`);
     } catch (e) {
-      console.warn(`[DB][migrate] pre-schema backup failed (continuing): ${e.message}`);
+      throw new Error(`[DB][migrate] required pre-schema backup failed; migration stopped: ${e.message}`, { cause: e });
     }
   }
 
-  // 1. Always run versioned migrations chain (skip-version safe)
-  runVersionedMigrations(adapter);
-
-  // 2. Additive sync (auto add missing columns/indexes declared in TABLES)
-  syncSchemaFromTables(adapter);
-
-  // Stamp the schema version we just reached so future boots skip re-backup.
-  setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);
-
-  // Track app version for informational purposes only. App version bumps no
-  // longer trigger a DB backup — only real schema changes (SCHEMA_VERSION) do.
-  const newVer = getAppVersion();
-  const oldVer = getMetaSync(adapter, "appVersion", null);
-  if (oldVer !== newVer) setMetaSync(adapter, "appVersion", newVer);
+  // DDL and completion stamps share one transaction. A failure leaves the
+  // original schema and version intact and can be retried on this adapter.
+  adapter.transaction(() => {
+    runVersionedMigrations(adapter);
+    syncSchemaFromTables(adapter);
+    setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);
+    const newVer = getAppVersion();
+    if (getMetaSync(adapter, "appVersion", null) !== newVer) setMetaSync(adapter, "appVersion", newVer);
+  });
+  adapter.flush?.();
+  _migratedAdapters.add(adapter);
+  pruneOldBackups();
 }

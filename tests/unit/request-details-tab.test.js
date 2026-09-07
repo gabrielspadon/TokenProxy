@@ -141,8 +141,8 @@ async function openSqliteForRead(file) {
   }
 }
 
-describe("backupDbLite — excludes requestDetails, keeps critical data", () => {
-  it("backup file omits requestDetails rows but keeps other tables", async () => {
+describe("backupDbLite — retains the complete database", () => {
+  it("backup file includes requestDetails rows and all other tables", async () => {
     const { backupDbLite } = await import("@/lib/db/backup.js");
     await saveDetail({ id: "bk-1", provider: "openai", model: "m", status: "ok", tokens: {}, request: {}, response: {} });
     adapter.exec('CREATE TABLE backupChild(id TEXT PRIMARY KEY, parentId TEXT REFERENCES backupParent(id))');
@@ -154,12 +154,11 @@ describe("backupDbLite — excludes requestDetails, keeps critical data", () => 
     const dest = backupDbLite(adapter, backupDir);
     expect(fs.existsSync(dest)).toBe(true);
 
-    // Open backup and assert requestDetails is empty, settings present
+    // Open the independent snapshot and verify both logs and settings.
     const bak = await openSqliteForRead(dest);
     try {
-      // requestDetails is fully excluded — table must not exist in the backup
-      const rdTable = bak.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='requestDetails'").get();
-      expect(rdTable).toBeUndefined();
+      expect(bak.prepare("SELECT data FROM requestDetails WHERE id=?").get("bk-1").data)
+        .toBe(adapter.get("SELECT data FROM requestDetails WHERE id=?", ["bk-1"]).data);
       // Critical data preserved
       const st = bak.prepare("SELECT COUNT(*) c FROM settings").get();
       expect(st.c).toBeGreaterThanOrEqual(1);
