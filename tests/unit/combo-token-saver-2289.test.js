@@ -22,6 +22,7 @@ const GLOBAL = {
   midPrefixInjectEnabled: false,
   epochMicroEnabled: false,
   epochAutoEnabled: false,
+  dietEnabled: false,
 };
 
 const ALL_OFF = {
@@ -38,6 +39,7 @@ const ALL_OFF = {
   midPrefixInjectEnabled: false,
   epochMicroEnabled: false,
   epochAutoEnabled: false,
+  dietEnabled: false,
 };
 
 function settings(comboStrategies) {

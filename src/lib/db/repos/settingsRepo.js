@@ -99,6 +99,10 @@ const DEFAULT_SETTINGS = {
   // default.
   epochMicroEnabled: false,
   epochAutoEnabled: false,
+  // AgentDiet-style expired tool-result pruning (open-sse/utils/dietPrune.js):
+  // stubs old, unreferenced tool_result payloads below the cache-epoch cut.
+  // Off by default.
+  dietEnabled: false,
   // Privacy filter (#2728): pseudonymise emails and the terms below in the
   // outbound body, restored before the client sees the answer. Off by
   // default — it walks every request, so it costs nothing until asked for.

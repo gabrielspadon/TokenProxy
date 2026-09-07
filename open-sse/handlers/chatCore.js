@@ -79,6 +79,7 @@ import {
   computeEpochCutIndex,
   placeholderEpochSummarizer,
 } from "../utils/epochCompact.js";
+import { pruneExpiredToolResults } from "../utils/dietPrune.js";
 import { reorderByRelevance } from "../utils/embedReorder.js";
 import {
   injectBoundaryNote,
@@ -387,6 +388,7 @@ export async function handleChatCore({
   midPrefixInjectEnabled,
   epochMicroEnabled,
   epochAutoEnabled,
+  dietEnabled,
   privacyEnabled,
   privacyTerms,
   headroomEnabled,
@@ -862,6 +864,7 @@ export async function handleChatCore({
           midPrefixInjectEnabled ||
           epochMicroEnabled ||
           epochAutoEnabled ||
+          dietEnabled ||
           headroomEnabled ||
           cavemanEnabled ||
           ponytailEnabled ||
@@ -1309,16 +1312,19 @@ export async function handleChatCore({
   }
   measureSaverStage("pairs", pairsWillRun);
 
-  // Epoch-aligned compaction cascade (#context-tuning): microcompact stubs
-  // old tool_result payloads, autocompact replaces the pre-tail history with
-  // one summary message. Both mutate ONLY below the session's cache-epoch
-  // cut — the byte region the provider still serves from cache — so they run
-  // after pairs and before the final cache anchor. The cut comes from a
-  // read-only peek at the previous epoch entry: storing this intermediate
-  // body would corrupt the epoch chain the final serializer records.
+  // Epoch-aligned compaction cascade (#context-tuning): diet prunes expired
+  // tool_result payloads, microcompact stubs old tool_result payloads,
+  // autocompact replaces the pre-tail history with one summary message. All
+  // mutate ONLY below the session's cache-epoch cut — the byte region the
+  // provider still serves from cache — so they run after pairs and before the
+  // final cache anchor. The cut comes from a read-only peek at the previous
+  // epoch entry: storing this intermediate body would corrupt the epoch
+  // chain the final serializer records. diet runs first and replaces payloads
+  // in place (no message count change), so the index-based cut stays valid
+  // for the later stages.
   const epochStageWanted =
     tokenSaverEnabled &&
-    (epochMicroEnabled || epochAutoEnabled) &&
+    (epochMicroEnabled || epochAutoEnabled || dietEnabled) &&
     claudePrefixTarget &&
     !!prefixMessages();
   let epochCutIndex = 0;
@@ -1326,6 +1332,31 @@ export async function handleChatCore({
     const peek = peekCacheEpoch(contextScope, JSON.stringify(translatedBody));
     epochCutIndex = peek ? computeEpochCutIndex(translatedBody.messages, peek) : 0;
   }
+
+  // AgentDiet-style expired tool-result pruning: old, unreferenced tool_result
+  // payloads below the epoch cut are stubbed; pairs and tool_use blocks are
+  // never touched. Default off (dietEnabled).
+  const dietWillRun = epochStageWanted && dietEnabled;
+  let dietApplied = false;
+  if (dietWillRun && epochCutIndex > 0) {
+    const res = pruneExpiredToolResults(translatedBody, {
+      epochCutIndex,
+      minAgeTurns: 8,
+      minBlockChars: 2048,
+      referenceScanTurns: 3,
+    });
+    if (res.applied) {
+      translatedBody.messages = res.messages;
+      dietApplied = true;
+      prefixRewritten = true;
+      notePath(rid, "XFORM.diet");
+      pushPrefixNote({
+        kind: "diet",
+        text: `pruned ${res.prunedBlocks} expired tool_result(s) (~${res.prunedChars} chars)`,
+      });
+    }
+  }
+  measureSaverStage("diet", dietApplied);
 
   const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
   let epochMicroApplied = false;
@@ -1699,6 +1730,7 @@ export async function handleChatCore({
       "thinking",
       "qac",
       "pairs",
+      "diet",
       "reorder",
       "midinject",
       "epochMicro",
@@ -1738,6 +1770,16 @@ export async function handleChatCore({
     // below-trigger evaluation is "window_pressure", and everything else
     // (no eligible blocks, no window known, nothing droppable, summarizer
     // failure) reports reason omitted rather than mislabeled.
+    if (dietWillRun && !dietApplied) {
+      const row = {
+        saver: "diet",
+        rid,
+        applied: false,
+        ce: saverFields.ce,
+      };
+      if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      onTokenSaverEvent?.(row);
+    }
     if (epochMicroWillRun && !epochMicroApplied) {
       const row = {
         saver: "epochMicro",

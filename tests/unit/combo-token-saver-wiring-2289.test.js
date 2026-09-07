@@ -21,12 +21,13 @@ const GLOBAL = {
   midPrefixInjectEnabled: false,
   epochMicroEnabled: false,
   epochAutoEnabled: false,
+  dietEnabled: false,
 };
 
 describe("a combo's token-saver overrides reach the handler (#2289, #2037)", () => {
   it("the handler resolves them instead of reading the global flags directly", () => {
     expect(chat).toContain("const comboTokenSaver = resolveComboTokenSaver(comboChain, chatSettings);");
-    for (const flag of ["rtkEnabled", "schemaDistillEnabled", "headroomEnabled", "cavemanEnabled", "ponytailEnabled", "pxpipeEnabled", "thinkingStripEnabled", "queryAwareCompressionEnabled", "pairDropEnabled", "embedReorderEnabled", "midPrefixInjectEnabled", "epochMicroEnabled", "epochAutoEnabled"]) {
+    for (const flag of ["rtkEnabled", "schemaDistillEnabled", "headroomEnabled", "cavemanEnabled", "ponytailEnabled", "pxpipeEnabled", "thinkingStripEnabled", "queryAwareCompressionEnabled", "pairDropEnabled", "embedReorderEnabled", "midPrefixInjectEnabled", "epochMicroEnabled", "epochAutoEnabled", "dietEnabled"]) {
       expect(chat, flag).toContain(`${flag}: comboTokenSaver.${flag},`);
       expect(chat, flag).not.toContain(`${flag}: !!chatSettings.${flag},`);
     }
@@ -88,6 +89,7 @@ describe("schema distillation is combo-wired (#2289)", () => {
       "midPrefixInjectEnabled",
       "epochMicroEnabled",
       "epochAutoEnabled",
+      "dietEnabled",
     ]);
   });
 });

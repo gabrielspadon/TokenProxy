@@ -16,7 +16,7 @@ const TOKEN_SAVER_DIR = path.join(DATA_DIR, "token-saver");
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const SAVERS = new Set(["rtk", "headroom", "pxpipe", "inject", "mem", "schema", "privacy", "thinking", "qac", "pairs", "reorder", "midinject", "tools", "epochMicro", "epochAuto"]);
+const SAVERS = new Set(["rtk", "headroom", "pxpipe", "inject", "mem", "schema", "privacy", "thinking", "qac", "pairs", "diet", "reorder", "midinject", "tools", "epochMicro", "epochAuto"]);
 // Bounded reason enum — only vetted labels, never free-form diagnostics text.
 const REASONS = new Set(["phantom", "epoch_boundary", "window_pressure"]);
 
