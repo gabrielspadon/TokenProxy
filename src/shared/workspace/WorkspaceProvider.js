@@ -1,6 +1,6 @@
 'use client';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useResource } from './useResource';
 import { INITIAL_SCOPE, validateDefinition, validateScope, validateSelection } from '@/lib/db/analytics/investigationModel.mjs';
 export { INITIAL_SCOPE } from '@/lib/db/analytics/investigationModel.mjs';
@@ -9,8 +9,7 @@ const WorkspaceContext = createContext(null);
 // One URL search param per scope field plus `compare`; absent means default.
 // A hard reload or a shared link restores the investigation from them.
 const SCOPE_KEYS = Object.keys(INITIAL_SCOPE);
-function scopeFromLocation() {
-  const params = new URLSearchParams(window.location.search);
+function scopeFromParams(params) {
   const patch = {};
   for (const key of SCOPE_KEYS) if (params.get(key)) patch[key] = params.get(key);
   const comparisonIds = (params.get('compare') || '').split(',').filter(Boolean);
@@ -32,10 +31,19 @@ export function analyticsUrl(scope, view = 'activity', extra = {}) {
 }
 export function WorkspaceProvider({ children }) {
   const pathname = usePathname();
-  const [scope, setScopeValue] = useState(INITIAL_SCOPE);
+  // Read the shared scope through useSearchParams so the server and the first
+  // client render agree. Restoring it during render instead made the server
+  // emit the default scope and the client the restored one, which React
+  // reported as hydration error #418 on every link carrying scope params.
+  // useSearchParams is null outside a Next router (unit tests mount the
+  // provider directly), so fall back to the live location there.
+  const searchParams = useSearchParams();
+  const restoredFromUrl = scopeFromParams(searchParams
+    || new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search));
+  const [scope, setScopeValue] = useState(() => restoredFromUrl?.scope || INITIAL_SCOPE);
   const [snapshot, setSnapshot] = useState(null);
   const [selectedRecord, setSelectedRecordValue] = useState(null);
-  const [comparisonIds, setComparisonIds] = useState([]);
+  const [comparisonIds, setComparisonIds] = useState(() => restoredFromUrl?.comparisonIds || []);
   const [contextView,setContextValue] = useState(INITIAL_CONTEXT);
   const [economicsView,setEconomicsValue] = useState(INITIAL_ECONOMICS);
   const [savedEntry,setSavedEntry] = useState(null);
@@ -64,14 +72,6 @@ export function WorkspaceProvider({ children }) {
     setSelectedRecord(id ? {kind:'account',id,connectionId:id,...(account?.provider ? {provider:account.provider} : {}),...(windowScope ? {windowScope} : {})} : null);
   },[accounts,setSelectedRecord]);
   const setScope = useCallback((patch) => {setScopeValue((old) => ({ ...old, ...patch }));setContextValue((old)=>({...old,page:1}));}, []);
-  // Hydrate once from the URL during the first client render rather than in an
-  // effect (react-hooks/set-state-in-effect), matching the sessions page idiom.
-  const [urlHydrated, setUrlHydrated] = useState(false);
-  if (!urlHydrated && typeof window !== 'undefined') {
-    setUrlHydrated(true);
-    const restored = scopeFromLocation();
-    if (restored) { setScopeValue(restored.scope); setComparisonIds(restored.comparisonIds); }
-  }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     for (const key of SCOPE_KEYS)

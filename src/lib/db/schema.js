@@ -16,13 +16,15 @@ import { SESSION_PIN_COLUMNS, SESSION_PIN_TABLES } from './sessionPinSchema.js';
 import { SHAPING_TABLES } from './shapingSchema.js';
 import { COMPATIBILITY_TABLES } from './compatibilitySchema.js';
 import { OPERATION_TABLES } from './operationSchema.js';
+import { NOTIFICATION_RULE_TABLES } from './notificationRuleSchema.js';
 import { ACCESS_PROFILE_KEY_COLUMNS, ACCESS_PROFILE_TABLES } from './accessProfileSchema.js';
 import { KEY_ROTATION_COLUMNS, KEY_ROTATION_TABLES } from './keyRotationSchema.js';
 
 // 14 = operation events (durable operation evidence). 15 is reserved for
-// project budgets - do not reuse it. 16 is left free for a sibling line of
-// work; 17 = access profiles and deliberate key rotation.
-export const SCHEMA_VERSION = 17;
+// project identity/budgets - do not reuse it. 16 = notification rules,
+// their version history, and the alerts they produced. 17 = access profiles
+// and deliberate key rotation. 18 = union of the 16/17 lines of work.
+export const SCHEMA_VERSION = 18;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -47,6 +49,7 @@ export const TABLES = {
   ...SHAPING_TABLES,
   ...COMPATIBILITY_TABLES,
   ...OPERATION_TABLES,
+  ...NOTIFICATION_RULE_TABLES,
   ...ACCESS_PROFILE_TABLES,
   ...KEY_ROTATION_TABLES,
   _meta: {
