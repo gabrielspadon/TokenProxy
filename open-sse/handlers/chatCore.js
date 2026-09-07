@@ -414,6 +414,7 @@ export async function handleChatCore({
   memorySettings,
   toolDisclosure,
   codexFastMode,
+  routeKindOverride = null,
 }) {
   body = isolateRequestBody(body);
   const credentials = rawCredentials
@@ -1619,7 +1620,7 @@ export async function handleChatCore({
     clientTool, inputEstimate, messageCount, toolCount,
     contextEstimate: Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(contextScope))), bodyAfterBytes: finalBodyBytes,
     cachePrefixBytes: saverMeta.ce, compactHint,
-    routeKind: passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated",
+    routeKind: routeKindOverride || (passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated"),
     formatPair: `${sourceFormat}>${targetFormat}`, selection: credentials?.selection?.verdict,
     controls: {
       contextStructure: contextStructureEnabled,

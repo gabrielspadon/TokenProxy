@@ -35,6 +35,10 @@ const DEFAULT_SETTINGS = {
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
+  // Step-level routing cascade (src/lib/stepRouter.js): each pair downgrades
+  // exploration-class steps from a strong model to its cheap member and
+  // escalates back on retryable-class errors. Default empty = inert.
+  cascadePairs: [],
   exposeComboOnly: false,
   capacityAdapter: {
     vision: { enabled: true, roundRobin: false, models: [] },
