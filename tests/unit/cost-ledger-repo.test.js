@@ -12,11 +12,12 @@ import { SCHEMA_VERSION } from "@/lib/db/schema.js";
 import { COST_LEDGER_TABLES } from "@/lib/db/costLedgerSchema.js";
 
 describe("costLedger schema registration", () => {
-  it("is part of the TABLES union at schema version 20", () => {
-    expect(SCHEMA_VERSION).toBe(20);
+  it("retains attribution and completion bindings from schema version 21", () => {
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(21);
     expect(COST_LEDGER_TABLES.costLedger).toBeDefined();
     expect(COST_LEDGER_TABLES.costLedger.columns.saverSavedUsd).toBeDefined();
     expect(COST_LEDGER_TABLES.costLedger.columns.cacheSavedUsd).toBeDefined();
+    expect(COST_LEDGER_TABLES.costLedger.columns.completionId).toBeDefined();
   });
 });
 
@@ -30,6 +31,14 @@ describe("estimateBaselineTokens", () => {
 });
 
 describe("computeCostLedgerEntry", () => {
+  it.each([
+    { prompt_tokens:100,cached_tokens:150,cache_creation_input_tokens:0,completion_tokens:20 },
+    { prompt_tokens:100,cached_tokens:50,cache_creation_input_tokens:60,completion_tokens:20 },
+    { prompt_tokens:100.5,cached_tokens:0,completion_tokens:20 },
+    { prompt_tokens:100,cached_tokens:-1,completion_tokens:20 },
+  ])('refuses inconsistent or invalid canonical cache accounting %#', async usage => {
+    expect(await computeCostLedgerEntry({rid:'invalid-cache',provider:'openai',model:'gpt-4o',preSaverSerialized:'x'.repeat(400),usage})).toBeNull();
+  });
   it("costs the baseline as fully uncached and the actual with cache rates", async () => {
     // gpt-4o: input 2.5, output 10.0, cached 1.25, cache_creation 2.5 (per 1M).
     const entry = await computeCostLedgerEntry({

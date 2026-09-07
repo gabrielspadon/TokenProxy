@@ -8,12 +8,17 @@ import { Confirm } from "@/shared/components/Confirm";
 import { QuotaWindow } from "@/shared/components/QuotaWindow";
 import { call } from "@/shared/api";
 import { refusal } from "@/shared/refusal";
-import { runGrant, importPasted } from "@/shared/oauthGrant";
+import { runGrant, importPasted, credentialDocument, requiresCredentialDocument } from "@/shared/oauthGrant";
 import { TONE, WORDS, AUTH } from "@/shared/status";
 import { fmtNum, fmtRelative, fmtTime, fmtDuration, isEpoch } from "@/shared/format";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
 import { resolveAccountCapacity, resolveProviderCeiling } from "@/shared/utils/accountCapacity";
 import { Icon } from "@/shared/components/Icon";
+import { ProviderMark } from '@/shared/components/ProviderMark';
+import { AccountModelAccess } from '../AccountModelAccess';
+import AccountOptions from '../AccountOptions';
+import AccountOperations from '../AccountOperations';
+import { accountPath } from '../../network/accountPath';
 import "../styles.css";
 
 const HORIZON_MS = 6 * 60 * 60 * 1000;
@@ -33,7 +38,7 @@ const COPY = {
   enable: { title: "Enable this connection", verb: "Enable", requires: "An operator session.", changes: "The account rejoins the fallback order and can receive traffic.", undo: "Disable it again." },
   disable: { title: "Disable this connection", verb: "Disable", requires: "An operator session.", changes: "The account leaves the fallback order. In-flight requests finish.", undo: "Enable it again." },
   priority: { title: "Change the priority", verb: "Save", requires: "An operator session.", changes: "The account moves in the fallback order the next time a request routes.", undo: "Set the old value back." },
-  thresholds: { title: "Set the quota pause thresholds", verb: "Save", requires: "An operator session.", changes: "The gateway pauses this account when a window's use crosses the threshold.", undo: "Clear the thresholds." },
+  thresholds: { title: "Set the quota pause thresholds", verb: "Save", requires: "An operator session.", changes: "The gateway pauses new work on this account when a window's remaining percentage falls below the threshold.", undo: "Clear an account override to restore its default policy." },
   pool: { title: "Bind a proxy pool", verb: "Save", requires: "An operator session, and an active pool.", changes: "Every upstream call from this account goes through the pool. Whether that is strict comes from the pool itself.", undo: "Bind no pool." },
   endpoint: { title: "Override the endpoint", verb: "Save", requires: "An operator session, and an absolute http or https URL.", changes: "Calls go to the new base URL in the chosen API shape instead of the provider default.", undo: "Clear the override." },
   concurrent: { title: "Set the provider's concurrency ceiling", verb: "Save", requires: "An operator session.", changes: "Every connection of this provider shares this additional outer ceiling. Independent account limits still apply.", undo: "Clear the provider ceiling to remove the outer limit. Account limits remain in effect." },
@@ -68,9 +73,9 @@ export default function ConnectionPage({ params }) {
   const psd = c?.providerSpecificData || {};
   const maxConcurrent = c ? settings.data?.providerStrategies?.[c.provider]?.maxConcurrent : undefined;
   const poolList = pools.data?.proxyPools || [];
-  const pool = psd.proxyPoolId ? poolList.find((p) => p.id === psd.proxyPoolId) : null;
+  const networkPath = accountPath(c, poolList);
 
-  const status = d?.status || (c?.isActive === false ? "unqualified" : "healthy");
+  const status = d?.status || "Unknown health";
   const kinds = entry?.serviceKinds?.length ? entry.serviceKinds : ["chat"];
 
   // ---- actions -----------------------------------------------------------
@@ -88,7 +93,8 @@ export default function ConnectionPage({ params }) {
     setField(seed);
     setAction(kind);
   }
-  const close = () => { setAction(null); setBusy(false); setRefused(null); };
+  useEffect(() => { const clear = () => { if (document.hidden) setField(current => ({ ...current, secret: '', document: '', proxyUrl: '' })); }; document.addEventListener('visibilitychange', clear); return () => document.removeEventListener('visibilitychange', clear); }, []);
+  const close = () => { setAction(null); setBusy(false); setRefused(null); setField({}); };
 
   async function run() {
     setBusy(true);
@@ -105,7 +111,7 @@ export default function ConnectionPage({ params }) {
         r = await call(`/api/providers/${id}`, { method: "PUT", body: { quotaPauseThresholds: t } });
         break;
       }
-      case "pool": r = await call(`/api/providers/${id}`, { method: "PUT", body: { proxyPoolId: field.poolId || "__none__" } }); break;
+      case "pool": r = await call(`/api/providers/${id}`, { method: "PUT", body: field.poolId === '__legacy__' ? { connectionProxyEnabled: true, connectionProxyUrl: field.proxyUrl, connectionNoProxy: field.noProxy || '' } : { proxyPoolId: field.poolId === '__clear__' ? null : field.poolId || '__none__' } }); break;
       case "endpoint": r = await call(`/api/providers/${id}`, { method: "PUT", body: { baseUrl: field.baseUrl || "", ...(field.apiType ? { apiType: field.apiType } : {}) } }); break;
       case "concurrent": {
         const v = field.maxConcurrent === "" ? null : Number(field.maxConcurrent);
@@ -120,15 +126,19 @@ export default function ConnectionPage({ params }) {
       case "drain": r = await call(`/api/admin/drain/${id}`, { method: "POST", body: ver ? { ifMatch: ver } : {} }); break;
       case "undrain": r = await call(`/api/admin/drain/${id}?${new URLSearchParams(ver ? { ifMatch: ver } : {})}`, { method: "DELETE" }); break;
       case "reauth": {
-        if (!entry?.hasOAuth) {
+        if (field.documentMode || (c.authType === 'oauth' && requiresCredentialDocument(c.provider))) {
+          let body; try { body = credentialDocument(field.document, field.force); } catch (error) { r = { ok: false, status: 400, body: { error: error.message } }; break; }
+          r = await call(`/api/providers/${id}/reauth`, { method: 'POST', body });
+        } else if (!entry?.hasOAuth || c.authType === 'apikey' || c.authType === 'cookie') {
           r = await call(`/api/providers/${id}/reauth`, { method: "POST", body: { [c.authType === "cookie" ? "accessToken" : "apiKey"]: field.secret, ...(field.force ? { force: true } : {}) } });
         } else {
           const flowProbe = await call(`/api/oauth/${c.provider}/authorize?redirect_uri=${encodeURIComponent(`${window.location.origin}/callback`)}`);
-          const kind = flowProbe.ok ? flowProbe.body.flowType : "authorization_code";
+          if (!flowProbe.ok) { r = flowProbe; break; }
+          const kind = flowProbe.body.flowType;
           const reauth = { reauthConnectionId: id, ...(field.force ? { forceReauth: true } : {}) };
           const out = (kind === "browser_token" || kind === "import_token")
-            ? await importPasted(c.provider, { token: field.secret, machineId: field.machineId, reauth })
-            : await runGrant(c.provider, kind, { reauth, report: setGrantStep });
+            ? await importPasted(c.provider, { token: field.secret, machineId: field.machineId ?? psd.machineId, reauth })
+            : await runGrant(c.provider, kind, { reauth, report: setGrantStep, deviceOptions: psd, meta: psd });
           r = out.ok ? { ok: true, status: 200, body: out.connection } : { ok: false, status: out.status, body: out.body };
         }
         break;
@@ -139,6 +149,11 @@ export default function ConnectionPage({ params }) {
         break;
       }
       default: r = { ok: false, status: 0, body: { error: "Nothing to do." } };
+    }
+    if (action === 'reauth' || action === 'pool') setField(current => ({ ...current, secret: '', document: '', proxyUrl: '' }));
+    if (r.ok && action === 'reauth') {
+      const read = await call(`/api/providers/${id}`);
+      if (!read.ok || read.body?.connection?.id !== id || read.body.connection.provider !== c.provider) { setRefused({ tone: 'warn', title: 'Credential replacement was accepted, but the selected account could not be read back.', next: 'Close and refresh before another change.' }); return; }
     }
     setBusy(false);
     if (r.ok) {
@@ -157,7 +172,7 @@ export default function ConnectionPage({ params }) {
       <header className="screen-head">
         <div>
           <p className="caption"><Link prefetch={false} href="/dashboard/connections">Connections</Link></p>
-          <h1 data-i18n-skip>{c ? (c.name || c.displayName || c.email || c.provider) : "…"}</h1>
+          <h1 className="connection-name" data-i18n-skip>{c ? <><ProviderMark provider={c.provider} />{c.name || c.displayName || c.email || c.provider}</> : "…"}</h1>
           {c ? <p className="caption"><span data-i18n-skip>{c.provider}</span> · {AUTH[c.authType] || c.authType}</p> : null}
         </div>
         <div className="actions">
@@ -183,20 +198,23 @@ export default function ConnectionPage({ params }) {
               <dt>Rate limited until</dt><dd>{c.rateLimitedUntil && !isEpoch(c.rateLimitedUntil) ? <span data-i18n-skip>{fmtTime(c.rateLimitedUntil)}</span> : <span>Not rate limited</span>}</dd>
               <dt>Default model</dt><dd>{c.defaultModel ? <span data-i18n-skip>{c.defaultModel}</span> : <span>Provider default</span>}</dd>
               <dt>Endpoint</dt><dd>{psd.baseUrl ? <span data-i18n-skip>{psd.baseUrl} ({psd.apiType || "chat"})</span> : <span>Provider default</span>}</dd>
-              <dt>Proxy pool</dt><dd>{pool ? <span data-i18n-skip>{pool.name}{pool.strictProxy ? " (strict)" : ""}</span> : psd.proxyPoolId ? <span data-i18n-skip>{psd.proxyPoolId}</span> : <span>None</span>}</dd>
+              <dt>Proxy pool</dt><dd><bdi data-i18n-skip>{networkPath.label}</bdi></dd>
               <dt>Provider ceiling</dt><dd>{resolveProviderCeiling(settings.data, c.provider) !== null ? <span data-i18n-skip>{fmtNum(resolveProviderCeiling(settings.data, c.provider))}</span> : <span>No outer limit configured</span>}</dd>
               <dt>Account ceiling</dt><dd>{resolveAccountCapacity(c) === 0 ? <span>Explicitly unlimited</span> : <span data-i18n-skip>{fmtNum(resolveAccountCapacity(c))}{c.maxConcurrent == null ? " (default)" : ""}</span>}</dd>
             </dl>
-            <p className="caption">Whether the proxy is strict is the pool&apos;s own setting; the connection only names the pool.</p>
+            <p className="caption">{networkPath.policy} Pool binding stores its strictness on the account; pool edits update bound snapshots atomically.</p>
           </section>
 
           <section>
             <h2>Services</h2>
-            <p className="caption">What this provider can serve. A non-language service shares this credential and this lifecycle; it is not a stored thing of its own.</p>
+            <p className="caption">Service types registered for this provider. They describe the adapter, not this account&apos;s verified upstream entitlement.</p>
             <ul className="bullets">
               {kinds.map((k) => <li key={k}>{KIND_WORD[k] || k}</li>)}
             </ul>
           </section>
+
+          <div className="verb-row"><AccountOptions connection={c} onSaved={() => { conn.refresh(); qual.refresh(); }} /><AccountOperations key={c.id} connection={c} onSaved={() => conn.refresh()} /></div>
+          <AccountModelAccess connection={c} />
 
           <section>
             <h2>Last validation</h2>
@@ -251,7 +269,7 @@ export default function ConnectionPage({ params }) {
               </div>
             </details>
             {drainState?.isDraining ? (
-              <p className="caption">Draining since <span data-i18n-skip>{drainState.requestedAt ? fmtTime(drainState.requestedAt) : "—"}</span>, <span data-i18n-skip>{fmtNum(drainState.activeStreams)}</span> streams still open.</p>
+              <p className="caption">Draining since <span data-i18n-skip>{drainState.requestedAt ? fmtTime(drainState.requestedAt) : "—"}</span>, <span data-i18n-skip>{fmtNum(drainState.activeStreams)}</span> observed pending requests. Process counters can expire or lag; they do not establish whether a response is still streaming.</p>
             ) : null}
           </section>
         </>
@@ -273,16 +291,21 @@ export default function ConnectionPage({ params }) {
                   value={field[scope] ?? ""} onChange={(e) => setField((f) => ({ ...f, [scope]: e.target.value }))} />
               </label>
             ))}
-            <p className="caption">Percent of the window used at which the gateway pauses this account. Empty means never.</p>
+            <p className="caption">Pause when the window has less than this percentage remaining. For example, 10 pauses below 10% remaining, after more than 90% has been used. Empty removes this account override.</p>
           </div>
         ) : null}
         {action === "pool" ? (
-          <label className="field"><span>Pool</span>
+          <div className="connections-form"><label className="field"><span>Pool or account proxy</span>
             <select className="select" value={field.poolId ?? ""} onChange={(e) => setField((f) => ({ ...f, poolId: e.target.value }))}>
-              <option value="">None</option>
+              <option value="">Explicit direct connection</option>
+              <option value="__clear__">Clear pool; restore the retained account/global path</option>
+              <option value="__legacy__">Custom proxy for this account</option>
               {poolList.filter((p) => p.isActive !== false).map((p) => <option key={p.id} value={p.id} data-i18n-skip>{p.name}</option>)}
             </select>
           </label>
+          <p className="caption">Clearing a pool preserves any existing explicit direct or custom proxy policy. A selected pool takes precedence over those retained settings.</p>
+          {field.poolId === '__legacy__' ? <><label className="field"><span>Account proxy URL</span><input className="input" type="password" autoComplete="off" value={field.proxyUrl || ''} onChange={event => { const value = event.currentTarget.value; setField(current => ({ ...current, proxyUrl: value })); }} /></label><label className="field"><span>Bypass hosts</span><input className="input" value={field.noProxy || ''} onChange={event => { const value = event.currentTarget.value; setField(current => ({ ...current, noProxy: value })); }} /></label></> : null}
+          </div>
         ) : null}
         {action === "endpoint" ? (
           <div className="connections-form">
@@ -304,9 +327,13 @@ export default function ConnectionPage({ params }) {
         ) : null}
         {action === "reauth" ? (
           <div className="connections-form">
-            {!entry?.hasOAuth ? (
+            <label className="connections-check"><input type="checkbox" checked={Boolean(field.documentMode || (c?.authType === 'oauth' && requiresCredentialDocument(c.provider)))} disabled={c?.authType === 'oauth' && requiresCredentialDocument(c.provider)} onChange={event => { const checked = event.currentTarget.checked; setField(value => ({ ...value, documentMode: checked, document: '', secret: '' })); }} /><span>Replace from a credential document</span></label>
+            {field.documentMode || (c?.authType === 'oauth' && requiresCredentialDocument(c.provider)) ? <label className="field"><span>Credential JSON for this account</span><textarea className="input" autoComplete="off" value={field.document || ''} onChange={event => { const value = event.currentTarget.value; setField(current => ({ ...current, document: value })); }} /><span className="caption">One account document or an export containing exactly one account. This path preserves the selected account identity. Local callback sign-ins create new accounts and are not used for replacement.</span></label> : null}
+            {!field.documentMode && (!entry?.hasOAuth || c?.authType === 'apikey' || c?.authType === 'cookie') ? (
               <label className="field"><span>{c?.authType === "cookie" ? "Cookie value" : "API key"}</span><input className="input" type="password" autoComplete="off" value={field.secret ?? ""} onChange={(e) => setField((f) => ({ ...f, secret: e.target.value }))} /></label>
             ) : null}
+            {!field.documentMode && ['cursor', 'kimchi'].includes(c?.provider) && c?.authType !== 'apikey' ? <label className="field"><span>Pasted token</span><input className="input" type="password" autoComplete="off" value={field.secret ?? ''} onChange={event => setField(value => ({ ...value, secret: event.target.value }))} /></label> : null}
+            {c?.provider === 'cursor' ? <label className="field"><span>Machine id</span><input className="input" value={field.machineId ?? psd.machineId ?? ''} onChange={event => setField(value => ({ ...value, machineId: event.target.value }))} /></label> : null}
             <label className="connections-check"><input type="checkbox" checked={!!field.force} onChange={(e) => setField((f) => ({ ...f, force: e.target.checked }))} /><span>Rebind even if the provider account differs</span></label>
             {grantStep ? <p className="caption">{grantStep}</p> : null}
           </div>

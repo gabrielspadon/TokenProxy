@@ -1,5 +1,5 @@
-// Inline reference into the self-hosted sprite at public/icons.svg.
-// Decoration beside a text label, never the label itself.
+// Self-hosted Material Symbols, with a local sprite for remaining legacy names.
+// Icons decorate a text label or an explicitly named icon control.
 const GLYPHS = {
   'i-now': 'dashboard',
   'i-context': 'account_tree',
@@ -28,6 +28,8 @@ const GLYPHS = {
   'i-check': 'check',
   'i-pause': 'pause_circle',
   'i-play': 'play_arrow',
+  'i-chevron-down': 'expand_more',
+  'i-back': 'arrow_back',
 };
 export function Icon({ name, mirror }) {
   if (GLYPHS[name])

@@ -3,8 +3,8 @@
 // DATA_DIR/token-saver/, LRU-capped at 512 sessions, atomic tmp+rename writes,
 // mode 0600 (same discipline as tokenSaver/events.js). Telemetry only: the
 // entry carries byte/token counts and flags, never prompts or bodies.
-// Every operation is best-effort async fs — a failure here must never reach
-// the request path, so all throws are swallowed inside this module.
+// Request-path reads and writes are best-effort. Operator snapshots may opt
+// into strict reads so storage failures cannot masquerade as empty evidence.
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -105,13 +105,29 @@ function sanitize(entry) {
   return out;
 }
 
-async function readAll() {
+export class ContextStatusReadError extends Error {
+  constructor(code, cause) {
+    super("Context status could not be read", { cause });
+    this.name = "ContextStatusReadError";
+    this.code = code;
+  }
+}
+
+async function readAll({ strict = false } = {}) {
   let parsed;
   try {
     parsed = JSON.parse(await fs.readFile(storeFile(), "utf8"));
-  } catch {
-    return []; // absent or corrupt file: start empty, never throw
+  } catch (error) {
+    if (strict && error?.code !== "ENOENT") {
+      throw new ContextStatusReadError(
+        error instanceof SyntaxError ? "context_status_corrupt" : "context_status_read_failed",
+        error,
+      );
+    }
+    return [];
   }
+  if (strict && !Array.isArray(parsed?.entries))
+    throw new ContextStatusReadError("context_status_corrupt");
   const list = Array.isArray(parsed?.entries) ? parsed.entries : [];
   const out = [];
   for (const e of list) {
@@ -205,13 +221,14 @@ export async function readContextStatus(sid) {
   return null;
 }
 
-// Full snapshot, newest last. Used by the MCP route when scanning candidates
-// and by tests.
-export async function readAllContextStatuses() {
+// Full snapshot, newest last. Only operator reads opt into failure reporting;
+// existing telemetry callers retain the best-effort default.
+export async function readAllContextStatuses({ strict = false } = {}) {
   try {
     await writeQueue;
-    return await readAll();
-  } catch {
+    return await readAll({ strict });
+  } catch (error) {
+    if (strict) throw error;
     return [];
   }
 }

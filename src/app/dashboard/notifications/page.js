@@ -1,4 +1,5 @@
 'use client';
+import { Button, Input } from '@mantine/core';
 import { useState } from 'react';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
@@ -50,7 +51,7 @@ function maskUrl(raw) {
 
 const wire = (e) => ({ id: e.id, url: e.url, events: e.events, active: e.active });
 
-function DestinationForm({ endpoint, onCancel, onSubmit }) {
+function DestinationForm({ endpoint, onCancel, onSubmit, onTest }) {
   const [url, setUrl] = useState(endpoint ? endpoint.url : '');
   const [events, setEvents] = useState(() => (endpoint ? endpoint.events : []));
   const [secret, setSecret] = useState('');
@@ -71,8 +72,7 @@ function DestinationForm({ endpoint, onCancel, onSubmit }) {
     <form className="notifications-form panel" onSubmit={submit}>
       <label className="field">
         <span>Address</span>
-        <input
-          className="input"
+        <Input
           type="url"
           required
           autoComplete="off"
@@ -92,8 +92,7 @@ function DestinationForm({ endpoint, onCancel, onSubmit }) {
       <p className="caption">Picking no event means every event.</p>
       <label className="field">
         <span>Signing value</span>
-        <input
-          className="input"
+        <Input
           type="password"
           autoComplete="off"
           value={secret}
@@ -105,13 +104,18 @@ function DestinationForm({ endpoint, onCancel, onSubmit }) {
         stored.
       </p>
       <div className="actions">
-        <button type="submit" className="button">
+        <Button type="button" variant="default" onClick={(event) => {
+          if (!event.currentTarget.form.reportValidity()) return;
+          onTest({ url: url.trim(), secret });
+          setSecret('');
+        }}>Test this address without saving</Button>
+        <Button type="submit" >
           Save destination
-        </button>
+        </Button>
         {endpoint ? (
-          <button type="button" className="button quiet" onClick={onCancel}>
+          <Button type="button" variant="default" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         ) : null}
       </div>
     </form>
@@ -134,8 +138,7 @@ function RateForm({ rate, onSubmit }) {
     <form className="notifications-form panel" onSubmit={submit}>
       <label className="field">
         <span>Error rate that counts as a problem, in percent</span>
-        <input
-          className="input"
+        <Input
           type="number"
           min="1"
           max="100"
@@ -147,8 +150,7 @@ function RateForm({ rate, onSubmit }) {
       </label>
       <label className="field">
         <span>Window, in seconds</span>
-        <input
-          className="input"
+        <Input
           type="number"
           min="60"
           max="86400"
@@ -160,8 +162,7 @@ function RateForm({ rate, onSubmit }) {
       </label>
       <label className="field">
         <span>Fewest requests worth judging on</span>
-        <input
-          className="input"
+        <Input
           type="number"
           min="1"
           max="100000"
@@ -172,9 +173,9 @@ function RateForm({ rate, onSubmit }) {
         />
       </label>
       <div className="actions">
-        <button type="submit" className="button">
+        <Button type="submit" >
           Save rule
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -238,6 +239,17 @@ export default function NotificationsPage() {
       done: () => ({ tone: 'ok', title: 'Destination saved' }),
     });
 
+  const testDraft = (draft) => setAsk({
+    title: 'Test this address without saving',
+    verb: 'Send test',
+    requires: `${OPERATOR} The address must resolve to a public host.`,
+    changes: 'Posts one test message to the entered address, using the entered signing value. No destination is saved. This direct test is not retained in the delivery history.',
+    undo: 'A sent message cannot be recalled.',
+    irreversible: true,
+    run: () => call('/api/notifications/test', { method: 'POST', body: draft }),
+    done: (body) => ({ tone: body.ok ? 'ok' : 'warn', title: body.ok ? 'Test response received' : 'Test delivery was not confirmed', detail: body.ok ? `HTTP ${body.status}` : body.error, next: 'No destination was saved. The test used one attempt and was not added to the process delivery list.' }),
+  });
+
   return (
     <>
       <div className="screen-head">
@@ -285,9 +297,16 @@ export default function NotificationsPage() {
             <div className="panel">
               <h3>Controls</h3>
               <div className="verb-row">
-                <button
+                <Button type="button" variant="default" onClick={() => setAsk({
+                  title: 'Evaluate webhook conditions now', verb: 'Evaluate now', requires: OPERATOR,
+                  changes: 'Reads recorded provider state and error-rate evidence now. Changed conditions may send real messages to enabled destinations. This does not probe providers or evaluate retained-evidence rules.',
+                  undo: 'Messages already sent cannot be recalled.', irreversible: true,
+                  run: () => call('/api/notifications', { method: 'POST' }),
+                  done: () => ({ tone: 'ok', title: 'Webhook conditions evaluated', next: 'Inspect delivery outcomes below. Evaluation does not establish that every destination received a message.' }),
+                })}>Evaluate webhook conditions now</Button>
+                <Button
                   type="button"
-                  className="button"
+
                   onClick={() =>
                     setAsk({
                       title: cfg.enabled ? 'Turn sending off' : 'Turn sending on',
@@ -306,7 +325,7 @@ export default function NotificationsPage() {
                   }
                 >
                   {cfg.enabled ? 'Turn sending off' : 'Turn sending on'}
-                </button>
+                </Button>
               </div>
             </div>
           </>
@@ -322,6 +341,7 @@ export default function NotificationsPage() {
           silently the first time it is seen, so a restart does not replay an old incident. A
           destination that does not answer delays no request and fails none.
         </p>
+        <p className="caption">Automatic evaluation follows traffic updates. An idle gateway has no independent evaluation timer. Retained-evidence rules below create local alerts and do not send these webhooks.</p>
       </section>
 
       <section aria-labelledby="h-where">
@@ -364,9 +384,9 @@ export default function NotificationsPage() {
                 </span>
                 <span>{e.hasSecret ? 'Set' : 'Not set'}</span>
                 <span className="notifications-actions">
-                  <button
+                  <Button
                     type="button"
-                    className="link-button"
+                    variant="subtle"
                     onClick={() =>
                       setAsk({
                         title: 'Send a test message',
@@ -393,13 +413,13 @@ export default function NotificationsPage() {
                     }
                   >
                     Send test
-                  </button>
-                  <button type="button" className="link-button" onClick={() => setEditing(e.id)}>
+                  </Button>
+                  <Button type="button" variant="subtle" onClick={() => setEditing(e.id)}>
                     Change
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="link-button"
+                    variant="subtle"
                     onClick={() =>
                       setAsk({
                         title: e.active ? 'Turn this destination off' : 'Turn this destination on',
@@ -424,10 +444,10 @@ export default function NotificationsPage() {
                     }
                   >
                     {e.active ? 'Turn off' : 'Turn on'}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="link-button"
+                    variant="subtle"
                     onClick={() =>
                       setAsk({
                         title: 'Clear this destination',
@@ -444,7 +464,7 @@ export default function NotificationsPage() {
                     }
                   >
                     Clear
-                  </button>
+                  </Button>
                 </span>
               </div>
             ))}
@@ -456,11 +476,12 @@ export default function NotificationsPage() {
             endpoint={endpoints.find((e) => e.id === editing)}
             onCancel={() => setEditing(null)}
             onSubmit={saveDestination}
+            onTest={testDraft}
           />
         ) : (
           <details>
             <summary>Add a destination</summary>
-            <DestinationForm key="new" onSubmit={saveDestination} />
+            <DestinationForm key="new" onSubmit={saveDestination} onTest={testDraft} />
           </details>
         )}
       </section>

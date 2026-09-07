@@ -24,14 +24,13 @@ export const OPERATION_STATES = [
 export function operationHistoryUrl(
   subjectId,
   page = 1,
-  { subjectKind = 'proxyPool', state } = {}
+  { subjectKind = 'proxyPool', state, allSubjects = false, filters = {} } = {}
 ) {
-  if (!subjectId) return null;
+  if (!subjectId && !allSubjects) return null;
   const params = new URLSearchParams({
-    subjectKind,
-    subjectId,
+    ...(allSubjects ? filters : { subjectKind, subjectId }),
     page: String(page),
-    pageSize: String(OPERATION_HISTORY_PAGE_SIZE),
+    pageSize: String(filters.pageSize || OPERATION_HISTORY_PAGE_SIZE),
   });
   if (state) params.set('state', state);
   return `/api/admin/operations/events?${params}`;
@@ -60,7 +59,7 @@ export const operationNumber = (value) =>
     ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value)
     : NOT_RECORDED;
 
-export const UNRESOLVED_LABEL = 'Unresolved after an interruption';
+export const UNRESOLVED_LABEL = 'No terminal receipt retained';
 
 // Tones map onto the module's own colours, where `open` is neither good nor
 // bad. `kind` is what the row IS: a start, a committed terminal receipt, or a
@@ -71,7 +70,7 @@ const STATE_PRESENTATION = {
     tone: 'open',
     kind: 'start',
     meaning:
-      'Recorded before any socket opened. The terminal receipt for this operation is retained alongside it, so its outcome is on this page.',
+      'Recorded before any socket opened. A terminal receipt for this operation is retained; it may be outside the selected page or range.',
     activation: 'Activation is decided by the terminal receipt, not by this row.',
   },
   succeeded: {
@@ -121,9 +120,9 @@ const UNRESOLVED_PRESENTATION = {
   tone: 'open',
   kind: 'unresolved',
   meaning:
-    'This operation recorded its start and no terminal receipt is retained for it. It is neither a success nor a failure, and it is not permission to resend the check.',
+    'This operation recorded its start and no terminal receipt is retained for it. It may still be running or have been interrupted. It is neither a success nor a failure, and it is not permission to resend the check.',
   activation:
-    'Activation was left exactly as it was. Nothing was enabled and nothing was disabled, because no outcome was ever committed.',
+    'The effect on activation cannot be established from this start record. Read the current pool state before taking another action.',
 };
 
 const UNKNOWN_PRESENTATION = {
@@ -150,25 +149,32 @@ const KEY = (row) => JSON.stringify([row.operationId, row.phase]);
  * Attach presentation to each retained row, deciding resolution by pairing a
  * `started` row against a terminal receipt for the same operation and phase.
  *
- * Pairing is judged ONLY among the rows handed in. The query orders by capture
- * time descending, so a terminal receipt normally sits directly above its
- * start; one captured outside the loaded page or the queried range is invisible
- * here, and its start then reads as unresolved. That limit is disclosed on the
- * screen rather than papered over, because the safe reading of a missing
- * receipt is "unresolved", not "succeeded".
+ * The API projects the retained terminal receipt across pagination and filters.
+ * Older responses can only be paired among the rows handed in; no missing
+ * receipt establishes an interruption or an unchanged activation state.
  */
 export function resolveOperationRows(items) {
   const rows = Array.isArray(items) ? items : [];
   const terminals = new Set();
   for (const row of rows) if (row.state !== 'started') terminals.add(KEY(row));
   return rows.map((row) => {
-    const unresolved = row.state === 'started' && !terminals.has(KEY(row));
+    const unresolved = row.state === 'started' && !row.terminalReceipt && !terminals.has(KEY(row));
+    const presentation = unresolved
+      ? UNRESOLVED_PRESENTATION
+      : STATE_PRESENTATION[row.state] || UNKNOWN_PRESENTATION;
+    const pool = !row.subjectKind || row.subjectKind === 'proxyPool';
     return {
       ...row,
       unresolved,
-      presentation: unresolved
-        ? UNRESOLVED_PRESENTATION
-        : STATE_PRESENTATION[row.state] || UNKNOWN_PRESENTATION,
+      presentation: pool ? presentation : {
+        ...presentation,
+        meaning: unresolved
+          ? UNRESOLVED_PRESENTATION.meaning
+          : row.state === 'started'
+            ? 'A start was retained. Its terminal receipt may be outside this page or range.'
+            : `This operation retained a ${row.state} terminal receipt. Its subject, phase and recorded detail describe the scope.`,
+        activation: 'This receipt does not establish a proxy-pool activation change. Inspect the named subject and phase before taking another action.',
+      },
     };
   });
 }
@@ -198,7 +204,7 @@ export function operationHistoryLimits(timeRange) {
   return [
     `Only events captured from ${operationTimestamp(timeRange?.start)} to ${operationTimestamp(timeRange?.end)} UTC are read. Anything captured outside that window is retained but not shown here.`,
     'Rows are ordered and filtered on capture time. Occurrence time is shown beside it because the two can differ, and a late capture moves a row without moving when it happened.',
-    'Whether a start has a terminal receipt is judged among the rows on this page alone. A receipt captured outside this page or this window leaves its start reading as unresolved here.',
+    'The retained terminal receipt is matched by operation and phase across all retained events, including other pages and times. A missing receipt does not establish whether the operation is still running or was interrupted.',
     'Nothing is joined onto the pool record. The pool name, its URL and its present activation are not read into these rows, so a row cannot be checked against the current configuration from this screen, and a pool deleted since a probe keeps its history.',
     'Retained detail is an allowlist of structural fields. An upstream error message, a response body and a full proxy URL were dropped before the row was written, so they are not recoverable here.',
   ];

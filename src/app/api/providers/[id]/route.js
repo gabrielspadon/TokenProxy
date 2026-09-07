@@ -256,6 +256,12 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (Object.hasOwn(body, 'maxConcurrent')) {
+      if (body.maxConcurrent !== null && (!Number.isInteger(body.maxConcurrent) || body.maxConcurrent < 1)) {
+        return NextResponse.json({ error: 'maxConcurrent must be a positive integer or null' }, { status: 400 });
+      }
+      updateData.maxConcurrent = body.maxConcurrent;
+    }
     if (name !== undefined) updateData.name = name;
     if (priority !== undefined) updateData.priority = priority;
     if (globalPriority !== undefined) updateData.globalPriority = globalPriority;

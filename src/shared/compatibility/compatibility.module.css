@@ -1,10 +1,10 @@
 .result {
   min-width: 0;
-  color: #24324a;
+  color: var(--ink);
   font-size: 13px;
 }
 .result h2 {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 500;
   margin: 0 0 2px;
 }
@@ -14,7 +14,7 @@
   margin: 0 0 6px;
 }
 .empty {
-  color: #596981;
+  color: var(--slate);
   font-size: 13px;
   line-height: 1.6;
   padding: 14px 0;
@@ -24,19 +24,19 @@
   font-size: 14px;
   font-weight: 600;
   margin: 0 0 6px;
-  color: #24324a;
+  color: var(--ink);
 }
 .muted {
-  color: #596981;
-  font-size: 12px;
+  color: var(--slate);
+  font-size: 13px;
   line-height: 1.55;
   margin: 6px 0;
   max-width: 80ch;
 }
 .warning {
-  border-inline-start: 3px solid #b3421f;
-  background: #fdf3f0;
-  color: #7a2e12;
+  border-inline-start: 3px solid var(--ember);
+  background: var(--paper);
+  color: var(--ember);
   padding: 9px 12px;
   font-size: 13px;
   line-height: 1.5;
@@ -58,51 +58,51 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px 22px;
-  font-size: 12px;
-  color: #596981;
+  font-size: 13px;
+  color: var(--slate);
   margin: 4px 0 12px;
 }
 .metrics b {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  color: #24324a;
+  color: var(--ink);
 }
 .jsonGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .jsonPanel {
   min-width: 0;
-  border: 1px solid #dce2ec;
-  background: #ffffff;
+  border: 1px solid var(--rule);
+  background: var(--raised);
   padding: 10px 12px;
 }
 .json {
   margin: 0;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .passed {
-  color: #1c7a4d;
+  color: var(--positive);
 }
 .failed {
-  color: #b3261e;
+  color: var(--refusal);
   font-weight: 600;
 }
 .receipt {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px 14px;
-  font-size: 12px;
+  font-size: 13px;
   margin: 0;
 }
 .receipt dt {
-  color: #596981;
+  color: var(--slate);
 }
 .receipt dd {
   margin: 0;

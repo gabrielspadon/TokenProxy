@@ -1,6 +1,7 @@
 'use client';
 import { useMemo, useRef, useState } from 'react';
-import { Button, Pagination } from '@mantine/core';
+import { Button, Pagination, useMantineColorScheme } from '@mantine/core';
+import { chartThemeColors } from '@/shared/workspace/metricColors';
 import { AnalyticalChart, METRIC_COLORS } from '@/shared/workspace/AnalyticalChart';
 import {
   economicRange,
@@ -14,6 +15,7 @@ import styles from './EconomicsLens.module.css';
 
 const utc = (value) => new Date(value).toISOString().slice(0, 16).replace('T', ' ');
 export function EconomicsTrend({ data, onTimeRangeChange }) {
+  const {colorScheme}=useMantineColorScheme();
   const chart = useRef(null);
   const [showData, setShowData] = useState(false),
     [page, setPage] = useState(1);
@@ -28,28 +30,30 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
     if (range) onTimeRangeChange?.(...range);
   };
   const option = useMemo(
-    () => ({
+    () => {const theme=chartThemeColors(colorScheme);return ({
       grid: [
-        { top: 27, height: 50, left: 60, right: 12 },
-        { top: 116, height: 64, left: 60, right: 12 },
+        { top: 27, height: 50, left: 64, right: 64, outerBoundsMode: 'none' },
+        { top: 116, height: 64, left: 64, right: 64, outerBoundsMode: 'none' },
       ],
       title: [
         {
-          text: 'Recorded estimate · USD',
+          text: 'Recorded amount · USD',
           top: 0,
           left: 0,
-          textStyle: { fontSize: 13, fontWeight: 500, color: '#5a687d' },
+          textStyle: { fontSize: 13, fontWeight: 500, color: theme.slate },
         },
         {
           text: 'Recorded quantities · tokens',
           top: 88,
           left: 0,
-          textStyle: { fontSize: 13, fontWeight: 500, color: '#5a687d' },
+          textStyle: { fontSize: 13, fontWeight: 500, color: theme.slate },
         },
       ],
       legend: {
         top: 87,
-        right: 8,
+        left: 220,
+        right: 16,
+        type: 'scroll',
         data: TREND_METRICS.slice(1).map((metric) => metric.name),
         itemWidth: 12,
         itemHeight: 3,
@@ -59,11 +63,10 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
         type: 'time',
         gridIndex,
         axisTick: { show: false },
-        axisLine: { lineStyle: { color: '#dce1e9' } },
+        axisLine: { lineStyle: { color: theme.rule } },
         axisLabel: {
           show: gridIndex === 1,
           fontSize: 13,
-          fontFamily: 'IBM Plex Mono',
           formatter: (value) => economicTick(value, (domain?.end || 0) - (domain?.start || 0)),
           hideOverlap: true,
         },
@@ -76,7 +79,7 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
           fontSize: 13,
           formatter: gridIndex ? formatTokens : (value) => `$${formatTokens(value)}`,
         },
-        splitLine: { lineStyle: { color: '#edf0f5' } },
+        splitLine: { lineStyle: { color: theme.rule } },
       })),
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       tooltip: {
@@ -106,22 +109,22 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
         brushType: 'lineX',
         brushMode: 'single',
         toolbox: [],
-        brushStyle: { color: 'rgba(69,91,202,0.12)', borderColor: '#7d90e2' },
+        brushStyle: { color: theme.signalWash, borderColor: METRIC_COLORS.selected },
       },
       series: TREND_METRICS.map((metric, index) => ({
         name: metric.name,
         type: 'line',
         xAxisIndex: metric.axis,
         yAxisIndex: metric.axis,
-        showSymbol: rows.length < 20,
+        showSymbol: true,
         symbolSize: 4,
         connectNulls: false,
         lineStyle: { width: index === 0 ? 2 : 1.5 },
-        itemStyle: { color: METRIC_COLORS[metric.color] },
+        itemStyle: { color: index === 0 ? theme.ink : METRIC_COLORS[metric.color] },
         data: rows.map((row) => [row.bucketStartMs, row.values[index], row]),
       })),
-    }),
-    [rows, domain]
+    });},
+    [rows, domain, colorScheme]
   );
   if (!points?.length) return null;
   return (
@@ -179,7 +182,7 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
       <AnalyticalChart
         option={option}
         height={215}
-        label="Recorded dollar estimates and four unstacked token series share the same UTC time axis. Missing samples are gaps. Toggle token series in the legend or use the bucket data table."
+        label="Recorded USD amounts and four unstacked token series share the same UTC time axis. Amounts are estimates or upstream reports. Missing samples are gaps. Toggle token series in the legend or use the bucket data table."
         onReady={(instance) => {
           chart.current = instance;
         }}

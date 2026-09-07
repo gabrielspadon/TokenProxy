@@ -39,7 +39,7 @@ export function ProviderMark({ provider, size = 'normal', label = false }) {
   const brand = providerIdentity(provider);
   const [failedSrc, setFailedSrc] = useState(null);
   return (
-    <span className="provider-identity" data-provider={brand.color} data-i18n-skip>
+    <span className="provider-identity" data-provider={brand.color} data-label={label || undefined} data-i18n-skip>
       <span className="provider-mark" data-size={size} aria-hidden="true">
         {brand.src && brand.src !== failedSrc ? (
           <Image

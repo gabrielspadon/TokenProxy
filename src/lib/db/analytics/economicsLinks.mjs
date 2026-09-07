@@ -1,12 +1,12 @@
 export const CLIENT_REFERENCE_FIELDS = ['clientRef','clientSessionRef','taskRef','projectRef'];
-export const ECONOMICS_LINK_FIELDS = ['requestLink','requestedModel','clientKeyId','clientIdentitySource',...CLIENT_REFERENCE_FIELDS];
+export const ECONOMICS_LINK_FIELDS = ['requestLink','requestedModel','completionId','clientKeyId','clientIdentitySource',...CLIENT_REFERENCE_FIELDS];
 
 // Only retained exact request identities enrich the durable completion ledger.
 // No freeform metadata or key material is projected from either source.
 export function economicsLedgerSource(db, columns) {
   const requestColumns = new Set(db.all('PRAGMA table_info(requestStats)', []).map(row=>row.name));
   const linked = columns.has('requestId') && requestColumns.has('id');
-  const agreement = ['logicalRequestId','contextSessionId','attempt'].filter(field=>columns.has(field) && requestColumns.has(field))
+  const agreement = ['logicalRequestId','contextSessionId','attempt','provider','model','connectionId'].filter(field=>columns.has(field) && requestColumns.has(field))
     .map(field=>`(u.${field} IS NULL OR u.${field}=r.${field})`).join(' AND ') || '1';
   const exact = linked ? `r.id IS NOT NULL AND ${agreement}` : '0';
   const identity = requestColumns.has('clientIdentitySource') && requestColumns.has('clientKeyId')
@@ -18,6 +18,7 @@ export function economicsLedgerSource(db, columns) {
   return `ledger AS (SELECT u.*,
     ${linked ? `CASE WHEN u.requestId IS NULL THEN 'unattributed' WHEN r.id IS NULL THEN 'unavailable' WHEN ${agreement} THEN 'linked' ELSE 'conflict' END` : "'unattributed'"} AS requestLink,
     CASE WHEN json_type(${meta},'$.requestedModel')='text' AND length(json_extract(${meta},'$.requestedModel'))<=200 THEN json_extract(${meta},'$.requestedModel') END AS requestedModel,
+    ${columns.has('completionId') ? '' : 'NULL AS completionId,'}
     ${linked && requestColumns.has('clientKeyId') ? `CASE WHEN ${exact} THEN r.clientKeyId END` : 'NULL'} AS clientKeyId,
     ${linked && requestColumns.has('clientIdentitySource') ? `CASE WHEN ${exact} THEN r.clientIdentitySource END` : 'NULL'} AS clientIdentitySource,
     ${fields.join(',')},

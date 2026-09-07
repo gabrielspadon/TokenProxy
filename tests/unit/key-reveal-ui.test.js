@@ -26,7 +26,7 @@ beforeEach(async () => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 async function openReveal() {
   await act(async () => [...container.querySelectorAll("button")].find(el => el.textContent.trim().endsWith("Reveal key")).click());
-  return container.querySelector("dialog");
+  return container.querySelector("dialog[open]");
 }
 async function submit(dialog) { await act(async () => dialog.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))); }
 
@@ -75,7 +75,7 @@ it("shows a refused reveal beside its control without creating a credential", as
 it("sends the selected protection policy only when the operator saves limits", async () => {
   fixture.response = { ok: true, body: {} };
   await act(async () => [...container.querySelectorAll("button")].find(el => el.textContent.trim().endsWith("Edit limits")).click());
-  const dialog = container.querySelector("dialog"), select = dialog.querySelector("select");
+  const dialog = container.querySelector("dialog[open]"), select = dialog.querySelector("select");
   expect(select.value).toBe("reserve-remaining");
   await act(async () => { select.value = "strict"; select.dispatchEvent(new Event("change", { bubbles: true })); });
   expect(fixture.calls).toHaveLength(0);
@@ -91,7 +91,7 @@ it("sends the selected protection policy only when the operator saves limits", a
 it("preserves the selected policy and refusal when saving fails", async () => {
   fixture.response = { ok: false, status: 503, body: { error: "Storage unavailable" } };
   await act(async () => [...container.querySelectorAll("button")].find(el => el.textContent.trim().endsWith("Edit limits")).click());
-  const dialog = container.querySelector("dialog");
+  const dialog = container.querySelector("dialog[open]");
   await submit(dialog);
   expect(dialog.open).toBe(true);
   expect(dialog.querySelector("select").value).toBe("reserve-remaining");

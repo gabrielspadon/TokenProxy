@@ -1,4 +1,17 @@
 @layer components {
+  .network-summary { display: flex; flex-wrap: wrap; gap: 8px 24px; border-block: 1px solid var(--rule); padding-block: 10px; margin: 0; }
+  .network-summary > div { display: flex; align-items: baseline; gap: 9px; font-size: 13px; }
+  .network-summary dt { color: var(--slate); }
+  .network-summary dd { margin: 0; font-family: var(--mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+  @media (max-width: 767px) { .network-summary > div { flex: 1 1 42%; justify-content: space-between; } }
+  .network-path-list { max-height: 420px; overflow: auto; }
+  .network-path-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(130px, .6fr); align-items: center; gap: 8px 16px; width: 100%; padding: 12px; text-align: start; border: 0; border-block-end: 1px solid var(--rule); border-inline-start: 3px solid transparent; background: var(--raised); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+  .network-path-row[aria-pressed='true'] { background: var(--signal-wash); border-inline-start-color: var(--signal); }
+  .network-path-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+  .network-path-row .connection-name { display: flex; align-items: center; gap: 8px; }
+  .network-path-inspector { padding: 14px; min-width: 0; overflow-wrap: anywhere; }
+  .network-path-inspector .facts { margin-block: 12px; }
+  @media (max-width: 767px) { .network-path-row { grid-template-columns: minmax(0, 1fr); } .network-path-inspector .facts { grid-template-columns: minmax(0, 1fr); } }
   .network-node-row { grid-template-columns: minmax(0, 1fr) auto auto; }
   .network-pool-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
 

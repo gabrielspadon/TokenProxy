@@ -1,12 +1,10 @@
-/* Follows quotaHistoryWorkbench.module.css: white surfaces, mono identifiers,
-   dimmed unknowns, tabular numerals so figures align down a column. */
 .surface {
-  color: #24324a;
+  color: var(--ink);
   min-width: 0;
-  --mantine-color-dimmed: #596981;
+  --mantine-color-dimmed: var(--slate);
 }
 .surface h3 {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 500;
   margin: 0 0 5px;
 }
@@ -16,9 +14,9 @@
   margin: 0 0 8px;
 }
 .note {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
-  color: #596981;
+  color: var(--slate);
   max-width: 80ch;
   margin: 4px 0 10px;
 }
@@ -26,13 +24,13 @@
   font-size: 13px;
   line-height: 1.5;
   padding: 9px 12px;
-  border-inline-start: 3px solid #a4b1cd;
-  background: #f3f6fb;
+  border-inline-start: 3px solid var(--rule);
+  background: var(--paper);
   max-width: 90ch;
   margin: 10px 0;
 }
 .empty {
-  color: #596981;
+  color: var(--slate);
   font-size: 13px;
   line-height: 1.6;
   padding: 14px 0;
@@ -42,14 +40,14 @@
 }
 
 .table {
-  font-size: 12px;
+  font-size: 13px;
   margin-top: 12px;
 }
 .table th {
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   font-weight: 500;
-  color: #596981;
+  color: var(--slate);
 }
 .table td {
   white-space: nowrap;
@@ -62,11 +60,16 @@
   text-align: right;
 }
 .table td.numeric {
-  font-family: var(--mono);
+  font-family: var(--sans);
+}
+.thresholdUnit {
+  display: block;
+  font-family: var(--sans);
+  color: var(--mantine-color-dimmed);
 }
 .table code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   display: inline-block;
   max-width: 260px;
   overflow: hidden;
@@ -74,51 +77,51 @@
   vertical-align: bottom;
 }
 .table tr[data-selected] {
-  background: #edf1fd;
-  box-shadow: inset 3px 0 #455bca;
+  background: var(--signal-wash);
+  box-shadow: inset 3px 0 var(--signal);
 }
 /* A value the evidence did not carry is dimmed, never drawn as a number. */
 .table td[data-unknown],
 .facts dd[data-unknown] {
-  color: #8794aa;
+  color: var(--mantine-color-dimmed);
 }
 
 .action {
   font-size: inherit;
   text-decoration: underline;
-  text-decoration-color: #bac6dd;
+  text-decoration-color: var(--control-edge);
   text-underline-offset: 3px;
 }
 .action:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 .action:disabled {
-  color: #8794aa;
+  color: var(--mantine-color-dimmed);
   text-decoration: none;
 }
 
 .state {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
 }
 .state[data-state='firing'] {
-  color: #a5391f;
+  color: var(--refusal);
 }
 .state[data-state='snoozed'] {
-  color: #7a6320;
+  color: var(--ember);
 }
 .state[data-state='acknowledged'] {
-  color: #596981;
+  color: var(--slate);
 }
 .table tr[data-state='firing'] {
-  box-shadow: inset 3px 0 #c0532f;
+  box-shadow: inset 3px 0 var(--ember);
 }
 
 .editor {
-  border: 1px solid #dce2ec;
-  background: #fbfcfe;
+  border: 1px solid var(--rule);
+  background: var(--raised);
   padding: 16px 18px;
   margin: 14px 0 18px;
   display: flex;
@@ -127,39 +130,37 @@
 }
 
 .detail {
-  margin-top: 22px;
-  border-top: 1px solid #dce2ec;
-  padding-top: 18px;
+  margin-top: 0;
 }
 
 .facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   column-gap: 20px;
   row-gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   margin: 12px 0 14px;
 }
 .facts dt {
-  color: #596981;
+  color: var(--slate);
 }
 .facts dd {
   margin: 2px 0 0;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
 .dryRun {
   margin-top: 20px;
-  border-top: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
   padding-top: 16px;
 }
 .firings {
   margin-top: 12px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .firings summary {
   cursor: pointer;
@@ -170,23 +171,23 @@
 }
 .firings code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .alerts {
   margin-top: 24px;
-  border-top: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
   padding-top: 18px;
 }
 
 .unavailable {
   margin-top: 24px;
-  border-top: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
   padding-top: 18px;
 }
 .unavailable dl {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   max-width: 90ch;
 }
@@ -196,12 +197,12 @@
 }
 .unavailable dd {
   margin: 3px 0 0;
-  color: #596981;
+  color: var(--slate);
 }
 .requires {
   display: block;
   margin-top: 4px;
-  color: #8794aa;
+  color: var(--mantine-color-dimmed);
 }
 
 @media (max-width: 720px) {
@@ -209,3 +210,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.audit { padding-inline-start: 20px; font-size: 13px; line-height: 1.6; }
+.audit li { list-style: decimal; margin-block: 10px; }
+.audit p { margin: 4px 0; }

@@ -58,5 +58,5 @@ export async function GET(request) {
   const status =
     database.status === "error" || scanFailed ? "error" : unhealthy ? "degraded" : "ok";
 
-  return adminJson({ status, checks: { database, connections } });
+  return adminJson({ status, scanFailed, checks: { database, connections } });
 }

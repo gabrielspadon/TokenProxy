@@ -4,6 +4,7 @@ import { call } from '@/shared/api';
 import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
 import { controlLabel } from './controlCatalog';
+import { UNAVAILABLE_CONTROLS } from '@/lib/shaping/runtimeSupport';
 import { normalizeProfileDefaults } from '@/lib/shaping/profileDefaults';
 
 const label = controlLabel;
@@ -84,7 +85,7 @@ export function ShapingWorkbench({ onSettingsChanged }) {
         <label>Profile name<input value={name} maxLength={100} onChange={e => setName(e.target.value)} /></label>
         <div className="actions"><button className="button quiet" onClick={() => { setDraft(current.settings); setEditing(null); setName(''); setConsent(false); }}>Start from current settings</button></div>
         <details><summary>Review and edit all {Object.keys(draft).length} scoped settings</summary><div className="shaping-setting-grid">{Object.entries(draft).map(([key, value]) => <label key={key}>
-          <span>{label(key)}</span>{typeof value === 'boolean' ? <input type="checkbox" checked={value} onChange={e => { setDraft({ ...draft, [key]: e.target.checked }); setConsent(false); }} /> : Array.isArray(value) ? <textarea value={value.join('\n')} onChange={e => { setDraft({ ...draft, [key]: e.target.value ? e.target.value.split('\n') : [] }); setConsent(false); }} /> : key.endsWith('Level') ? <select value={value} onChange={e => { setDraft({ ...draft, [key]: e.target.value }); setConsent(false); }}>{['lite', 'full', 'ultra'].map(level => <option key={level}>{level}</option>)}</select> : <input type="number" value={value ?? ''} onChange={e => { setDraft({ ...draft, [key]: e.target.value === '' ? null : Number(e.target.value) }); setConsent(false); }} />}
+          <span>{label(key)}</span>{UNAVAILABLE_CONTROLS[key] ? <span className="shaping-caption">Runtime unavailable. {UNAVAILABLE_CONTROLS[key]} Saved value {String(value)} is preserved.</span> : typeof value === 'boolean' ? <input type="checkbox" checked={value} onChange={e => { setDraft({ ...draft, [key]: e.target.checked }); setConsent(false); }} /> : Array.isArray(value) ? <textarea value={value.join('\n')} onChange={e => { setDraft({ ...draft, [key]: e.target.value ? e.target.value.split('\n') : [] }); setConsent(false); }} /> : key.endsWith('Level') ? <select value={value} onChange={e => { setDraft({ ...draft, [key]: e.target.value }); setConsent(false); }}>{['lite', 'full', 'ultra'].map(level => <option key={level}>{level}</option>)}</select> : <input type="number" value={value ?? ''} onChange={e => { setDraft({ ...draft, [key]: e.target.value === '' ? null : Number(e.target.value) }); setConsent(false); }} />}
         </label>)}</div></details>
         <p className="caption">History pruning, reasoning removal, disclosure, rewriting and prompt additions may alter content. Removed content is not recovered by later disabling a stage.</p>
         <p className="caption">Later-added controls are off in older saved versions. Review shows those effective defaults without rewriting the stored version.</p>

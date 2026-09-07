@@ -1,0 +1,13 @@
+.tool {min-width:0;color:var(--ink);font-size:14px;line-height:1.5;}
+.tool p {margin:0;color:var(--slate);}
+.fields {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:16px;}
+.scroll {max-width:100%;overflow:auto;}
+.scroll:focus-visible {outline:2px solid var(--signal);outline-offset:-2px;}
+.scroll table {border-collapse:collapse;width:100%;font-size:13px;}
+.scroll th,.scroll td {padding:8px 12px;text-align:start;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.scroll thead {background:var(--paper);}
+.scroll tr[data-selected] {background:var(--signal-wash);}
+.facts {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 16px;margin:0;}
+.facts dt {color:var(--slate);}.facts dd {margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
+.id {font-family:var(--mono);overflow-wrap:anywhere;}
+.review {border-block:1px solid var(--rule);padding-block:16px;}

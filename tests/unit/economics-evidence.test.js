@@ -4,6 +4,7 @@ import { saveRequestUsage } from '../../src/lib/db/repos/usageRepo.js';
 import { updatePricing } from '../../src/lib/db/repos/pricingRepo.js';
 import { createContextTelemetry, recordContextAttempt } from '../../open-sse/handlers/chatCore/contextTelemetry.js';
 import { readActivityAnalytics, validateActivityQuery } from '../../src/lib/db/analytics/activityQueries.mjs';
+import { recordCostLedger } from '../../src/lib/db/repos/costLedgerRepo.js';
 
 const db=await getAdapter(), stamp='2026-09-06T12:00:00.000Z';
 const reference=char=>`ctx1_${char.repeat(64)}`;
@@ -13,17 +14,28 @@ beforeEach(async()=>{
   db.run('DELETE FROM usageHistory');db.run('DELETE FROM requestStats');db.run('DELETE FROM contextSessions');
   await updatePricing({fixture:{model:{input:2,output:4,cached:0.5,cache_creation:3,reasoning:1}}});
 });
-async function capture({attempt=1,logical='logical',project='a',client='b',time=stamp,cost=null,latency=500}={}) {
+async function capture({attempt=1,logical='logical',project='a',client='b',time=stamp,cost=null,latency=500,rid,completionId}={}) {
   const context=createContextTelemetry({timestamp:time,logicalRequestId:logical,attempt,sessionHash:'a'.repeat(64),sessionIdentitySource:'explicit'});
   context.dispatchCoverage='physical-dispatch';
   await recordContextAttempt(context,fields);
   db.run('UPDATE requestStats SET clientKeyId=?,clientIdentitySource=?,clientRef=?,projectRef=?,taskRef=?,latencyTotal=?,latencyTtft=? WHERE id=?',
     ['key','client-reported',reference(client),reference(project),reference('c'),latency,100,context.requestId]);
-  await saveRequestUsage({...fields,timestamp:time,requestedModel:'requested-alias',contextTelemetry:context,
+  await saveRequestUsage({...fields,timestamp:time,requestedModel:'requested-alias',contextTelemetry:context,rid,completionId,
     tokens:{prompt_tokens:100,cached_tokens:60,cache_creation_input_tokens:20,completion_tokens:10,reasoning_tokens:5,...(cost===null?{}:{cost_usd:cost})}});
   return context;
 }
 describe('authoritative Economics evidence',()=>{
+  it('retains an explicit counterfactual identifier through the real usage writer and reads exact evidence',async()=>{
+    const rid='economics-writer-roundtrip';
+    const completionId='11111111-1111-4111-8111-111111111111';
+    const c=await capture({rid,completionId});
+    await recordCostLedger({id:rid,completionId,ts:stamp,provider:fields.provider,model:fields.model,baselineUsd:0.001,actualUsd:0.002,savedUsd:-0.001,saverSavedUsd:-0.0012,cacheSavedUsd:0.0002,inputTokens:100,cacheReadTokens:60,cacheWriteTokens:20,outputTokens:10});
+    const row=read({requestId:c.requestId}).items[0];
+    expect(row.completionId).toBe(completionId);
+    expect(row.counterfactual).toMatchObject({available:true,identityBasis:'server-completion-id',modeledDifferenceUsd:-0.001});
+    expect(db.get('SELECT completionId FROM usageHistory WHERE requestId=?',[c.requestId]).completionId).toBe(completionId);
+    expect(JSON.stringify(row)).not.toContain(rid);
+  });
   it('joins actual persisted capture to exact request metrics and captured rates',async()=>{
     const c=await capture();const result=read({requestId:c.requestId}), row=result.items[0];
     expect(row).toMatchObject({requestLink:'linked',requestedModel:'requested-alias',latencyMs:500,ttftMs:100,projectRef:reference('a'),clientIdentitySource:'client-reported'});
@@ -44,6 +56,11 @@ describe('authoritative Economics evidence',()=>{
     const row=read().items[0];expect(row).toMatchObject({requestLink:'conflict',latencyMs:null,projectRef:null,clientRef:null});
     expect(read({requestLink:'conflict'}).summary).toMatchObject({records:1,conflictingRequestRows:1,costLatencySamples:0});
     expect(read({projectRef:reference('a')}).summary.records).toBe(0);
+  });
+  it.each(['provider','model','connectionId'])('refuses mismatched %s identity on an exact request id',async field=>{
+    const c=await capture();
+    db.run(`UPDATE usageHistory SET ${field}=? WHERE requestId=?`,['another',c.requestId]);
+    expect(read().items[0]).toMatchObject({requestLink:'conflict',latencyMs:null,projectRef:null});
   });
   it('preserves costs when retained request evidence expires without inventing identity',async()=>{
     const c=await capture();db.run('DELETE FROM requestStats WHERE id=?',[c.requestId]);

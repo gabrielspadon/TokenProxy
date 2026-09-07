@@ -12,5 +12,7 @@ export default defineConfig({
     baseURL: process.env.E2E_BASE || "http://localhost:20143",
     locale: "en-US",
     viewport: { width: 1280, height: 900 },
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
 });

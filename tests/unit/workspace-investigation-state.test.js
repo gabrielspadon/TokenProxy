@@ -21,18 +21,19 @@ it('captures and restores fixed bounds, selected record, lens controls and compa
   expect(current.selectedRecord).toMatchObject({kind:'account',id:'account-1'});expect(current.comparisonIds).toEqual(['account-1','account-2']);expect(current.economicsView).toMatchObject({groupBy:'model',status:'failed'});expect(current.scope).toEqual(INITIAL_SCOPE);
 });
 it('restores a named filter set without replacing retained selected evidence',async()=>{
-  await render();await act(async()=>current.setSelectedRecord({kind:'routing-switch',id:'receipt-1'}));
+  await render();await act(async()=>{current.setSelectedRecord({kind:'routing-switch',id:'receipt-1'});current.setContextView({page:5,projectLabel:'Retained project'});});
   const definition={...current.captureDefinition('routing'),selection:null,scope:{...INITIAL_SCOPE,provider:'codex'}};
   await act(async()=>current.restoreInvestigation({kind:'filter-set',definition}));expect(current.scope.provider).toBe('codex');expect(current.selectedRecord.id).toBe('receipt-1');
+  expect(current.contextView).toMatchObject({page:1,projectLabel:'Retained project'});
 });
 
 it('recovers exact comparison identities across lens remounts, saves and legacy restores',async()=>{
   await render();await act(async()=>{current.setSelectedRecord({kind:'context-attempt',id:'selected',sessionId:8});current.setContextView({sessionId:8,baseline:{id:'baseline',sessionId:7}});});
-  const definition=current.captureDefinition('context');expect(definition.schemaVersion).toBe(3);
+  const definition=current.captureDefinition('context');expect(definition.schemaVersion).toBe(4);
   await render('economics');await act(async()=>current.setScope({provider:'outside'}));expect(current.contextView.baseline).toEqual({id:'baseline',sessionId:7});
   await act(async()=>{current.setContextView({baseline:null});current.restoreInvestigation({kind:'investigation',definition});});
   expect(current.contextView.baseline).toEqual({id:'baseline',sessionId:7});expect(current.selectedRecord.id).toBe('selected');
-  const {groupSortBy:_g,groupSortDirection:_d,costSource:_c,attemptKind:_a,...legacyEconomics}=definition.economics;
+  const {groupSortBy:_g,groupSortDirection:_d,costSource:_c,attemptKind:_a,filters:_f,...legacyEconomics}=definition.economics;
   const legacy={...definition,schemaVersion:1,economics:{...legacyEconomics,cohort:null},context:{sessionId:8,page:1,clientTool:null,projectLabel:null}};
   await act(async()=>current.restoreInvestigation({kind:'investigation',definition:legacy}));expect(current.contextView.baseline).toBeNull();
 });
@@ -80,4 +81,42 @@ it('ignores a hand-edited selection param rather than trusting it',async()=>{
   window.history.replaceState(null,'','/?selected=' + encodeURIComponent('{"kind":"not-a-kind","id":"x"}'));
   await render();
   expect(current.selectedRecord).toBeNull();
+});
+it('restores history scope and exact selection on back/forward without overwriting the location',async()=>{
+  await render();
+  await act(async()=>current.setScope({provider:'claude'}));
+  const selection={kind:'economics-record',id:'42',provider:'codex'};
+  const query=new URLSearchParams({provider:'codex',selected:JSON.stringify(selection),compare:'account-2'});
+  await act(async()=>{window.history.pushState(null,'',`/dashboard/usage?${query}`);window.dispatchEvent(new PopStateEvent('popstate'));});
+  expect(current.scope.provider).toBe('codex');expect(current.selectedRecord).toEqual(selection);expect(current.comparisonIds).toEqual(['account-2']);
+  expect(new URLSearchParams(window.location.search).get('provider')).toBe('codex');
+  await act(async()=>{window.history.pushState(null,'','/dashboard');window.dispatchEvent(new PopStateEvent('popstate'));});
+  expect(current.scope).toEqual(INITIAL_SCOPE);expect(current.selectedRecord).toBeNull();
+});
+it('restores saved advanced filters while retaining selected evidence for filter sets',async()=>{
+  await render();
+  await act(async()=>{current.setSelectedRecord({kind:'account',id:'retained'});current.setEconomicsView({filters:{requestId:'exact-request',requestLink:'linked'}});});
+  const definition=current.captureDefinition('economics');
+  await act(async()=>current.setEconomicsView({filters:{}}));
+  await act(async()=>current.restoreInvestigation({kind:'filter-set',definition}));
+  expect(current.economicsView.filters).toEqual({requestId:'exact-request',requestLink:'linked'});expect(current.selectedRecord.id).toBe('retained');
+});
+
+it('retains the exact historical quota series through a saved definition and reload',async()=>{
+  await render();
+  const windowId='a'.repeat(64);
+  await act(async()=>current.setSelectedAccountId('account-1','weekly',windowId));
+  const definition=current.captureDefinition('capacity');
+  expect(definition.selection).toMatchObject({windowScope:'weekly',windowId});
+  act(()=>root.unmount());container.remove();container=document.createElement('div');document.body.append(container);root=createRoot(container);
+  await render();expect(current.selectedRecord.windowId).toBe(windowId);
+  await act(async()=>current.setSelectedAccountId('account-1','weekly'));
+  expect(current.selectedRecord.windowId).toBeUndefined();
+  await act(async()=>current.restoreInvestigation({kind:'investigation',definition}));
+  expect(current.selectedRecord.windowId).toBe(windowId);
+});
+
+it.each(['account-1,account-1',Array.from({length:101},(_,i)=>`account-${i}`).join(','),'account-%00'])('rejects invalid comparison identities in a shared link',async(compare)=>{
+  window.history.replaceState(null,'','/?compare='+compare);
+  await render();expect(current.comparisonIds).toEqual([]);
 });

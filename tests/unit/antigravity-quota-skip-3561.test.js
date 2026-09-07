@@ -23,7 +23,8 @@ vi.mock("@/lib/network/connectionProxy", () => ({
   resolveConnectionProxyConfig: vi.fn(async () => ({ kind: "usable" })),
   toConnectionProxyOptions: vi.fn(() => ({})),
 }));
-vi.mock("@/shared/constants/providers.js", () => ({
+vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   FREE_PROVIDERS: {},
   FREE_TIER_PROVIDERS: {},
   NO_AUTH_PROVIDER_IDS: new Set(),

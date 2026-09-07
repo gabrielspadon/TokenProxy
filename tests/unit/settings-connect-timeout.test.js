@@ -456,6 +456,69 @@ describe("provider strategy proxy-pool snapshots", () => {
     });
   });
 
+  it.each([null, "", "__none__", "   "])(
+    "atomically clears an existing no-auth pool and snapshot with literal %#",
+    async (proxyPoolId) => {
+      const pool = await proxyPools.createProxyPool({
+        name: "Atomic clear Pool",
+        proxyUrl: "https://proxy.example.test:8443",
+        strictProxy: true,
+        isActive: true,
+      });
+      await repository.updateSettings({
+        providerStrategies: {
+          "edge-tts": { keep: "retain", rotateStrategy: "random" },
+          openai: { maxConcurrent: 3 },
+        },
+      });
+      const selected = await PATCH(settingsRequest({
+        providerStrategyPatch: { providerId: "edge-tts", values: { proxyPoolId: pool.id } },
+      }));
+      expect(selected.status).toBe(200);
+      expect((await selected.json()).providerStrategies["edge-tts"])
+        .toMatchObject({ proxyPoolId: pool.id, strictProxy: true });
+
+      const cleared = await PATCH(settingsRequest({
+        providerStrategyPatch: {
+          providerId: "edge-tts",
+          values: { proxyPoolId, rotateStrategy: "none" },
+        },
+      }));
+
+      expect(cleared.status).toBe(200);
+      const expected = {
+        "edge-tts": { keep: "retain", rotateStrategy: "none" },
+        openai: { maxConcurrent: 3 },
+      };
+      expect((await cleared.json()).providerStrategies).toEqual(expected);
+      expect((await (await GET()).json()).providerStrategies).toEqual(expected);
+      expect((await repository.exportSettings()).providerStrategies).toEqual(expected);
+    },
+  );
+
+  it("reads back each virtual-account rotation mode without losing its fixed pool", async () => {
+    const pool = await proxyPools.createProxyPool({
+      name: "Rotation Pool",
+      proxyUrl: "https://proxy.example.test:8443",
+      strictProxy: true,
+      isActive: true,
+    });
+
+    for (const rotateStrategy of ["none", "round-robin", "random"]) {
+      const response = await PATCH(settingsRequest({
+        providerStrategyPatch: {
+          providerId: "edge-tts",
+          values: { proxyPoolId: pool.id, rotateStrategy },
+        },
+      }));
+      const expected = { proxyPoolId: pool.id, strictProxy: true, rotateStrategy };
+      expect(response.status).toBe(200);
+      expect((await response.json()).providerStrategies["edge-tts"]).toEqual(expected);
+      expect((await (await GET()).json()).providerStrategies["edge-tts"]).toEqual(expected);
+      expect((await repository.exportSettings()).providerStrategies["edge-tts"]).toEqual(expected);
+    }
+  });
+
   it("rejects inactive and client-strict no-auth pool selections without writing", async () => {
     const pool = await proxyPools.createProxyPool({
       name: "Inactive Pool",

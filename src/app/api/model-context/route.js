@@ -259,7 +259,7 @@ export async function DELETE(request) {
 // each reloading the engine map). Invalid items are skipped and counted.
 export async function POST(request) {
   try {
-    const { set, deleteKeys } = await request.json();
+    const { set, deleteKeys, expectedOverrides } = await request.json();
     if (!Array.isArray(set) && !Array.isArray(deleteKeys)) {
       return NextResponse.json({ error: "set[] or deleteKeys[] required" }, { status: 400 });
     }
@@ -277,13 +277,15 @@ export async function POST(request) {
       validDeleteKeys.push(k);
     }
 
-    const { overrides, nSet, nDel } = await mutateContextWindowOverrides({
+    const result = await mutateContextWindowOverrides({
       set: validSet,
       deleteKeys: validDeleteKeys,
+      ...(expectedOverrides === undefined ? {} : { expectedOverrides }),
     });
     await reloadOverrides();
-    return NextResponse.json({ success: true, nSet, nDel, overrides });
+    return NextResponse.json({ success: true, ...result }, { status: result.persistence === 'unconfirmed' ? 207 : 200 });
   } catch (error) {
+    if (['context_window_conflict', 'invalid_context_expectations'].includes(error.code)) return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === 'context_window_conflict' ? 409 : 400, headers: HEADERS });
     console.log("Error bulk updating model context:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

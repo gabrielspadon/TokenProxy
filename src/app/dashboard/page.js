@@ -1,12 +1,14 @@
 'use client';
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Badge,
   Button,
   Checkbox,
   Group,
   Loader,
+  Pagination,
   Progress,
   ScrollArea,
   SegmentedControl,
@@ -17,6 +19,7 @@ import {
   TextInput,
   Tooltip,
   UnstyledButton,
+  useMantineColorScheme,
 } from '@mantine/core';
 import {
   createSortedRowModel,
@@ -28,14 +31,19 @@ import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark
 import { Icon } from '@/shared/components/Icon';
 import { QuotaSummary, WindowEvidence, orderQuotaWindows } from '@/shared/workspace/QuotaEvidence';
 import { QuotaHistoryWorkbench } from '@/shared/workspace/QuotaHistoryWorkbench';
+import { QuotaAcquisitionControls } from '@/shared/workspace/QuotaAcquisitionControls';
 import { ActivityBand } from '@/shared/workspace/ActivityBand';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import { AnalyticalChart, METRIC_COLORS } from '@/shared/workspace/AnalyticalChart';
+import { chartThemeColors } from '@/shared/workspace/metricColors';
 import { useWorkspace, analyticsUrl } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
 import shared from '@/shared/workspace/workspace.module.css';
 import styles from './capacity.module.css';
+import { CapacityControls } from './CapacityControls';
+import { AccountPolicyEvidence } from './AccountPolicyEvidence';
+import { DRAIN_ENDPOINT, capacityAttemptSelection, localCapacityState, retainAccountOrder } from './capacityControlsModel';
 
 const FEATURES = tableFeatures({ rowSortingFeature, sortedRowModel: createSortedRowModel() });
 const EMPTY = [];
@@ -47,6 +55,7 @@ const compact = (value) =>
         value
       );
 const pct = (value) => (value == null ? '—' : `${(value * 100).toFixed(1)}%`);
+const observedTokens = (record, field, samples) => record?.[samples] > 0 ? record[field] : null;
 const validDate = (value) => value && Number.isFinite(Date.parse(value)) && Date.parse(value) > 0;
 const timestamp = (value) =>
   validDate(value)
@@ -110,7 +119,7 @@ function TokenMeasure({ record, state }) {
     >
       <div className={styles.tokenMeasure}>
         <span>
-          {compact(total)}
+          {compact(total)} input
           <small>{pct(record.cacheReadFraction)} read</small>
         </span>
         {completeBreakdown ? (
@@ -118,17 +127,17 @@ function TokenMeasure({ record, state }) {
             <Progress.Section
               aria-label="Uncached share of recorded input"
               value={Math.max(0, 100 - read - write)}
-              color={METRIC_COLORS.input}
+              color="var(--metric-input)"
             />
             <Progress.Section
               aria-label="Cached read share of recorded input"
               value={read}
-              color={METRIC_COLORS.cacheRead}
+              color="var(--metric-cache)"
             />
             <Progress.Section
               aria-label="Cache write share of recorded input"
               value={write}
-              color={METRIC_COLORS.cacheWrite}
+              color="var(--metric-write)"
             />
           </Progress.Root>
         ) : (
@@ -139,6 +148,7 @@ function TokenMeasure({ record, state }) {
   );
 }
 function ResetOverview({ windows, anchor, onSelect }) {
+  const {colorScheme}=useMantineColorScheme();
   const future = windows.filter(
     (window) =>
       validDate(window.resetAt) &&
@@ -146,7 +156,7 @@ function ResetOverview({ windows, anchor, onSelect }) {
       Date.parse(window.resetAt) <= anchor + 7 * 86400000
   );
   const option = useMemo(
-    () => ({
+    () => {const theme=chartThemeColors(colorScheme);return ({
       grid: { left: 12, right: 14, top: 12, bottom: 23 },
       tooltip: {
         trigger: 'item',
@@ -160,7 +170,7 @@ function ResetOverview({ windows, anchor, onSelect }) {
         min: anchor,
         max: anchor + 7 * 86400000,
         axisLabel: {
-          color: '#5e6d85',
+          color: theme.slate,
           fontSize: 13,
           hideOverlap: true,
           formatter: (value) =>
@@ -170,8 +180,8 @@ function ResetOverview({ windows, anchor, onSelect }) {
               timeZone: 'UTC',
             }),
         },
-        axisLine: { lineStyle: { color: '#dbe2ed' } },
-        splitLine: { show: true, lineStyle: { color: '#eef1f7' } },
+        axisLine: { lineStyle: { color: theme.rule } },
+        splitLine: { show: true, lineStyle: { color: theme.rule } },
         axisTick: { show: false },
       },
       yAxis: { type: 'value', min: 0, max: 2, show: false },
@@ -180,7 +190,7 @@ function ResetOverview({ windows, anchor, onSelect }) {
           type: 'scatter',
           symbol: 'diamond',
           symbolSize: 9,
-          itemStyle: { color: '#6479c5', opacity: 0.8 },
+          itemStyle: { color: METRIC_COLORS.input, opacity: 0.8 },
           data: future.map((window, index) => ({
             value: [Date.parse(window.resetAt), 0.7 + (index % 3) * 0.3],
             connectionId: window.connectionId,
@@ -189,8 +199,8 @@ function ResetOverview({ windows, anchor, onSelect }) {
           })),
         },
       ],
-    }),
-    [anchor, future]
+    });},
+    [anchor, future, colorScheme]
   );
   return (
     <div className={styles.resetOverview}>
@@ -273,16 +283,22 @@ function QuotaTable({ windows, anchor, selectedScope }) {
     </Table>
   );
 }
-function AccountDetail({ row, anchor, onScope, selectedScope }) {
-  const { scope, observeSnapshot } = useWorkspace();
+function AccountDetail({ row, anchor, onScope, selectedScope, drains, onChanged }) {
+  const { scope, observeSnapshot, setSelectedRecord, setContextView } = useWorkspace();
+  const router = useRouter();
+  const inspectAttempt = (item) => {
+    const selection = capacityAttemptSelection(item);
+    if (!selection) return;
+    setContextView({ sessionId: selection.sessionId, page: 1 });
+    setSelectedRecord(selection);
+    router.push('/dashboard/context');
+  };
   const [tab, setTab] = useState(selectedScope ? 'quota' : 'summary');
   const requests = useResource(
-    tab === 'requests'
-      ? analyticsUrl({ ...scope, connectionId: row.connectionId }, 'activity', { pageSize: '20' })
-      : null,
+    analyticsUrl({ ...scope, connectionId: row.connectionId }, 'activity', { pageSize: '20' }),
     { onSnapshot: observeSnapshot }
   );
-  const record = row.activity;
+  const record = requests.error ? null : requests.data?.summary;
   return (
     <Tabs value={tab} onChange={setTab} keepMounted={false}>
       <Tabs.List px={20}>
@@ -321,20 +337,20 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
                 <dt>Failed</dt>
                 <dd className={styles.measured}>{number(record?.failed)}</dd>
                 <dt>Input tokens, cache-inclusive</dt>
-                <dd className={styles.measured}>{number(record?.inputTokens)}</dd>
+                <dd className={styles.measured}>{number(observedTokens(record, 'inputTokens', 'inputSamples'))}</dd>
                 <dt>Cached reads</dt>
-                <dd className={styles.measured}>{number(record?.cacheReadTokens)}</dd>
+                <dd className={styles.measured}>{number(observedTokens(record, 'cacheReadTokens', 'cacheReadSamples'))}</dd>
                 <dt>Cache writes</dt>
-                <dd className={styles.measured}>{number(record?.cacheWriteTokens)}</dd>
+                <dd className={styles.measured}>{number(observedTokens(record, 'cacheWriteTokens', 'cacheWriteSamples'))}</dd>
                 <dt>Output tokens</dt>
-                <dd className={styles.measured}>{number(record?.outputTokens)}</dd>
+                <dd className={styles.measured}>{number(observedTokens(record, 'outputTokens', 'outputSamples'))}</dd>
               </dl>
             </div>
             <div className={shared.detailSection}>
               <h3>Evidence and scope</h3>
               <Text size="sm" c="dimmed">
                 Reported health is derived from persisted test status, errors and local gates. The
-                status timestamp can be a connection update when no test timestamp exists. It does
+                status timestamp is the stored credential-check timestamp when available. It does
                 not establish model support or available quota. Historical token provenance was not
                 retained.
               </Text>
@@ -348,6 +364,8 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
               </Button>
             </div>
           </div>
+          <AccountPolicyEvidence account={row} />
+          <CapacityControls accounts={[row]} drains={drains} onChanged={onChanged} />
         </div>
       </Tabs.Panel>
       <Tabs.Panel value="quota">
@@ -357,10 +375,11 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
               <QuotaTable windows={row.windows} anchor={anchor} selectedScope={selectedScope} />
             </ScrollArea>
           ) : (
-            <Text size="sm" c="#596981">
+            <Text size="sm" c="var(--slate)">
               No quota windows were recorded for this account.
             </Text>
           )}
+          <QuotaAcquisitionControls key={row.connectionId} account={row} />
           <QuotaHistoryWorkbench account={row} anchor={anchor} selectedScope={selectedScope} />
         </div>
       </Tabs.Panel>
@@ -371,11 +390,13 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
           ) : requests.error ? (
             <Text c="red">{requests.error}</Text>
           ) : (
-            <Table striped>
+            <ScrollArea viewportProps={{tabIndex:0,role:'region','aria-label':'Recent account attempts'}}><Table striped miw={620}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>UTC</Table.Th>
-                  <Table.Th>Model</Table.Th>
+                  <Table.Th>Evidence</Table.Th>
+                  <Table.Th>Requested model</Table.Th>
+                  <Table.Th>Recorded model</Table.Th>
                   <Table.Th>Status</Table.Th>
                   <Table.Th>Input</Table.Th>
                   <Table.Th>Cached read</Table.Th>
@@ -386,7 +407,9 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
                 {(requests.data?.items || []).map((item) => (
                   <Table.Tr key={item.id}>
                     <Table.Td>{timestamp(item.timestamp)}</Table.Td>
-                    <Table.Td>{item.model}</Table.Td>
+                    <Table.Td>{capacityAttemptSelection(item) ? <Button size="compact-sm" variant="subtle" onClick={() => inspectAttempt(item)}>Inspect attempt</Button> : <Text size="sm" c="dimmed">No retained link</Text>}</Table.Td>
+                    <Table.Td><bdi>{item.requestedModel || 'Unknown'}</bdi></Table.Td>
+                    <Table.Td><bdi>{item.model || 'Unknown'}</bdi></Table.Td>
                     <Table.Td>{item.status}</Table.Td>
                     <Table.Td>{number(item.inputTokens)}</Table.Td>
                     <Table.Td>{number(item.cacheReadTokens)}</Table.Td>
@@ -394,17 +417,26 @@ function AccountDetail({ row, anchor, onScope, selectedScope }) {
                   </Table.Tr>
                 ))}
               </Table.Tbody>
-            </Table>
+            </Table></ScrollArea>
           )}
         </div>
       </Tabs.Panel>
     </Tabs>
   );
 }
-function CompareAccounts({ rows }) {
+function ComparisonAccountRow({row}) {
+  const {scope,observeSnapshot}=useWorkspace();
+  const excluded=(scope.provider && scope.provider!==row.provider) || (scope.connectionId && scope.connectionId!==row.connectionId);
+  const resource=useResource(excluded?null:analyticsUrl({...scope,connectionId:row.connectionId},'activity',{pageSize:1}),{onSnapshot:observeSnapshot});
+  const record=resource.error?null:resource.data?.summary;
+  return <Table.Tr><Table.Td>{row.displayName}</Table.Td><Table.Td><State value={row.status}/></Table.Td>
+    <Table.Td>{excluded?'Excluded by scope':resource.loading?'Reading…':resource.error?'Unavailable':number(record?.records)}</Table.Td>
+    <Table.Td>{number(observedTokens(record,'inputTokens','inputSamples'))}</Table.Td><Table.Td>{number(observedTokens(record,'cacheReadTokens','cacheReadSamples'))}</Table.Td><Table.Td>{pct(record?.cacheReadFraction)}</Table.Td><Table.Td>{row.windows.length}</Table.Td></Table.Tr>;
+}
+function CompareAccounts({ rows, drains, onChanged }) {
   return (
     <div className={shared.dockBody}>
-      <Table striped>
+      <ScrollArea viewportProps={{tabIndex:0,role:'region','aria-label':'Exact account comparison totals'}}><Table striped miw={740}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Account</Table.Th>
@@ -417,36 +449,28 @@ function CompareAccounts({ rows }) {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {rows.map((row) => (
-            <Table.Tr key={row.connectionId}>
-              <Table.Td>{row.displayName}</Table.Td>
-              <Table.Td>
-                <State value={row.status} />
-              </Table.Td>
-              <Table.Td>{number(row.activity?.records)}</Table.Td>
-              <Table.Td>{number(row.activity?.inputTokens)}</Table.Td>
-              <Table.Td>{number(row.activity?.cacheReadTokens)}</Table.Td>
-              <Table.Td>{pct(row.activity?.cacheReadFraction)}</Table.Td>
-              <Table.Td>{row.windows.length}</Table.Td>
-            </Table.Tr>
-          ))}
+          {rows.map(row=><ComparisonAccountRow key={row.connectionId} row={row}/>)}
         </Table.Tbody>
-      </Table>
+      </Table></ScrollArea>
       <Text mt="md" size="sm" c="dimmed">
         The same historical interval applies to every selected account. Quota measurements are
         separate observations; windows with unknown units cannot be summed.
       </Text>
+      <CapacityControls accounts={rows} drains={drains} onChanged={onChanged} />
     </div>
   );
 }
 function ModelSupport({ accounts, onSelect }) {
   const { scope, models, observeSnapshot } = useWorkspace();
-  const [model, setModel] = useState(scope.model);
+  const [chosenKey, setChosenKey] = useState(null);
   const choices = (models.data?.models || EMPTY).filter(
     (item) => !scope.provider || item.provider === scope.provider
   );
-  const modelOptions = [...new Set(choices.map((item) => item.model))];
-  const provider = scope.provider || choices.find((item) => item.model === model)?.provider;
+  const pairs = [...new Map(choices.map(item => [JSON.stringify([item.provider, item.model]), item])).entries()];
+  const scoped = pairs.filter(([, item]) => item.model === scope.model);
+  const chosen = pairs.find(([key]) => key === chosenKey) || (scoped.length === 1 ? scoped[0] : null);
+  const model = chosen?.[1].model, provider = chosen?.[1].provider;
+  const modelOptions = pairs.map(([value, item]) => ({ value, label: `${providerIdentity(item.provider).name} / ${item.model}` }));
   const query = new URLSearchParams({
     ...(provider ? { provider } : {}),
     ...(model ? { model } : {}),
@@ -468,8 +492,9 @@ function ModelSupport({ accounts, onSelect }) {
           placeholder="Choose a model"
           searchable
           data={modelOptions}
-          value={model}
-          onChange={setModel}
+          value={chosen?.[0] || null}
+          onChange={setChosenKey}
+          allowDeselect={false}
           w={300}
         />
       </Group>
@@ -529,10 +554,11 @@ function ModelSupport({ accounts, onSelect }) {
 }
 export default function CapacityPage() {
   const workspace = useWorkspace();
+  const drains = useResource(DRAIN_ENDPOINT, { onSnapshot: workspace.observeSnapshot });
+  const refreshAccounts = () => { drains.refresh(); workspace.health.refresh(); };
   const {
     accounts,
     quota,
-    activity,
     snapshot,
     scope,
     setScope,
@@ -541,11 +567,14 @@ export default function CapacityPage() {
     comparisonIds,
     setComparisonIds,
   } = workspace;
+  const activity=workspace.inventoryActivity || workspace.activity;
+  const activityPagination=activity.data?.groupPagination || workspace.activity.data?.groupPagination;
   const [view, setView] = useState('accounts'),
     [query, setQuery] = useState(''),
     [stateFilter, setStateFilter] = useState(null),
     [comparing, setComparing] = useState(false);
   const [windowSelection, setSelectedScope] = useState(null);
+  const [heldOrder, setHeldOrder] = useState({ key: null, ids: [] });
   const selectedScope=workspace.selectedRecord?.windowScope || windowSelection;
   const anchor = snapshot?.capturedAt
     ? Date.parse(snapshot.capturedAt)
@@ -563,15 +592,16 @@ export default function CapacityPage() {
         );
         return {
           ...account,
+          drain: !drains.error ? drains.data?.connections?.find(item => item.connectionId === account.connectionId) : null,
           windows,
           primary: orderQuotaWindows(windows)[0],
           activity: record,
-          activityState: activity.loading ? 'Loading activity…' : activity.error ? 'Activity unavailable' : !record && activity.data?.groupsTruncated ? 'Outside returned groups' : null,
+          activityState: activity.loading ? 'Loading activity…' : activity.error ? 'Activity unavailable' : !record && activity.data?.groupPagination?.totalPages>1 ? 'Not on this activity page' : null,
           records: record?.records ?? -1,
           inputTokens: record?.inputTokens ?? -1,
         };
       }),
-    [accounts, quota.data, activity.data, activity.loading, activity.error]
+    [accounts, quota.data, activity.data, activity.loading, activity.error, drains.data, drains.error]
   );
   const filteredRows = useMemo(
     () =>
@@ -586,7 +616,6 @@ export default function CapacityPage() {
   );
   const selected = rows.find((row) => row.connectionId === selectedAccountId);
   const compareRows = rows.filter((row) => comparisonIds.includes(row.connectionId));
-  const maxRequests = Math.max(1, ...rows.map((row) => row.records));
   const allWindows = useMemo(
     () =>
       filteredRows.flatMap((row) =>
@@ -615,7 +644,7 @@ export default function CapacityPage() {
         enableSorting: false,
         cell: ({ row }) => (
           <Checkbox
-            size="xs"
+            size="sm"
             aria-label={`Compare ${row.original.displayName} (${row.original.provider})`}
             checked={comparisonIds.includes(row.original.connectionId)}
             disabled={
@@ -647,44 +676,35 @@ export default function CapacityPage() {
               }}
             >
               <ProviderMark provider={row.original.provider} size="small" />
-              <span>{row.original.displayName || row.original.provider}</span>
+              <span><strong>{row.original.displayName || row.original.provider}</strong><small>{providerIdentity(row.original.provider).name}</small></span>
             </UnstyledButton>
           </Tooltip>
         ),
       },
       {
         accessorKey: 'status',
-        header: 'Reported health',
+        header: 'Health and local gates',
         cell: ({ row }) => (
           <Tooltip
-            label={`Derived from stored test status, errors, cooldown and local controls. Not model support or quota availability. Status timestamp ${timestamp(row.original.lastQualifiedAt)} UTC may be a connection update.`}
+            label={`Derived from stored test status, errors, cooldown and local controls. Not model support or quota availability. Pending counters can expire or lag and do not establish whether a response is still streaming. Credential-check timestamp ${timestamp(row.original.lastQualifiedAt)} UTC.`}
           >
-            <span>
+            <div className={styles.gateCell}>
               <State value={row.original.status} />
-            </span>
+              <span>{localCapacityState(row.original, row.original.drain)}</span>
+              <small>{row.original.drain ? `${number(row.original.drain.activeStreams)} observed pending · this process` : 'Pending count unknown'}</small>
+            </div>
           </Tooltip>
         ),
       },
       {
         accessorKey: 'records',
-        header: 'Attempts',
+        header: 'Recorded activity',
         cell: ({ row }) => (
-          <div className={styles.requestMeasure}>
-            <span>{row.original.activityState ? 'Unknown' : row.original.records >= 0 ? number(row.original.records) : '—'}</span>
-            {!row.original.activityState && <Progress
-              aria-label={`Attempts relative to the busiest configured account (${number(maxRequests)})`}
-              value={(Math.max(0, row.original.records) / maxRequests) * 100}
-              color="#a5b3df"
-              size={3}
-              radius={0}
-            />}
+          <div className={styles.accountActivity}>
+            <span>{row.original.activityState || (row.original.records >= 0 ? `${number(row.original.records)} attempts` : 'No recorded attempts')}</span>
+            <TokenMeasure record={row.original.activity} state={row.original.activityState ? 'Input unavailable' : null} />
           </div>
         ),
-      },
-      {
-        accessorKey: 'inputTokens',
-        header: 'Recorded input',
-        cell: ({ row }) => <TokenMeasure record={row.original.activity} state={row.original.activityState} />,
       },
       {
         id: 'quota',
@@ -705,38 +725,33 @@ export default function CapacityPage() {
           />
         ),
       },
-      {
-        id: 'reset',
-        accessorFn: (row) =>
-          validDate(row.primary?.resetAt) ? Date.parse(row.primary.resetAt) : Infinity,
-        header: (
-          <Tooltip label="Stored reset for the first displayed window, ordered by longer reported duration first. Every window remains available in the account inspector.">
-            <span>First window reset · UTC</span>
-          </Tooltip>
-        ),
-        cell: ({ row }) => <ResetDeadline window={row.original.primary} anchor={anchor} />,
-      },
     ],
-    [comparisonIds, setComparisonIds, setSelectedAccountId, maxRequests, anchor]
+    [comparisonIds, setComparisonIds, setSelectedAccountId]
   );
   const table = useTable({
     features: FEATURES,
     columns,
     data: filteredRows,
+    getRowId: row => row.connectionId,
     initialState: { sorting: [{ id: 'records', desc: true }] },
   });
+  const orderedRows = table.getRowModel().rows;
+  const hold = Boolean(selectedAccountId) || comparing;
+  const orderKey = hold ? JSON.stringify([query, stateFilter, scope.provider, scope.connectionId, scope.start, scope.end, table.getAllLeafColumns().map(column => [column.id, column.getIsSorted()])]) : null;
+  if (heldOrder.key !== orderKey && (!hold || orderedRows.length)) setHeldOrder({ key: orderKey, ids: orderedRows.map(row => row.id) });
+  const displayRows = hold && heldOrder.key === orderKey ? retainAccountOrder(orderedRows, heldOrder.ids) : orderedRows;
   return (
-    <>
+    <div className={shared.lensViewport}>
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
-          <h1>Capacity book</h1>
-          <p>Account allocation, quota evidence and reset horizons</p>
+          <h1>Capacity</h1>
+          <p>Compare account constraints, quota windows and where work can go.</p>
         </div>
         <SegmentedControl
           aria-label="Capacity view"
           value={view}
           onChange={setView}
-          size="xs"
+          size="sm"
           data={[
             { value: 'accounts', label: 'Accounts' },
             { value: 'support', label: 'Model support' },
@@ -745,7 +760,7 @@ export default function CapacityPage() {
       </div>
       <ScopeBar />
       <ActivityBand />
-      <div className={styles.book}>
+      <div className={`${styles.book} ${shared.lensContent}`}>
         <SelectionDock
           open={Boolean(selected) || comparing}
           title={comparing ? `Compare ${compareRows.length} accounts` : selected?.displayName}
@@ -763,18 +778,20 @@ export default function CapacityPage() {
           }}
           detail={
             comparing ? (
-              <CompareAccounts rows={compareRows} />
+              <CompareAccounts rows={compareRows} drains={drains} onChanged={refreshAccounts} />
             ) : selected ? (
               <AccountDetail
                 key={`${selected.connectionId}:${selectedScope || 'summary'}`}
                 row={selected}
                 anchor={anchor}
                 selectedScope={selectedScope}
+                drains={drains}
+                onChanged={refreshAccounts}
                 onScope={(connectionId) => setScope({ connectionId })}
               />
             ) : null
           }
-          height="calc(100dvh - 270px)"
+          height="100%"
         >
           <div className={styles.bookBody}>
             <div className={styles.bookToolbar}>
@@ -783,7 +800,7 @@ export default function CapacityPage() {
                 <Badge variant="light" color="gray" size="sm">
                   {filteredRows.length}
                 </Badge>
-                <span>{allWindows.length} quota windows</span>
+                <span>{allWindows.length} quota windows · compare up to 4 accounts</span>
               </div>
               <Group gap={8}>
                 <TextInput
@@ -817,6 +834,10 @@ export default function CapacityPage() {
                 </Button>
               </Group>
             </div>
+            {view==='accounts' && activityPagination?.totalPages>1 && <div className={styles.activityPages}>
+              <Text size="sm">Activity groups {number(activityPagination.totalItems)} · page {workspace.activityGroupPage} of {number(activityPagination.totalPages)}. Totals above cover the complete scope. Accounts absent from this page stay unknown; selection and comparison read their exact totals.</Text>
+              <Pagination size="sm" total={activityPagination.totalPages} value={workspace.activityGroupPage} onChange={workspace.setActivityGroupPage} disabled={activity.loading} aria-label="Inventory activity pages"/>
+            </div>}
             {anchor > 0 && allWindows.length > 0 && view === 'accounts' && (
               <ResetOverview windows={allWindows} anchor={anchor} onSelect={select} />
             )}
@@ -833,7 +854,13 @@ export default function CapacityPage() {
               ) : view === 'support' ? (
                 <ModelSupport accounts={accounts} onSelect={select} />
               ) : (
-                <Table.ScrollContainer minWidth={990} type="native" className={styles.tableScroll}>
+                <><div className={styles.accountCards} aria-label="Configured account capacity cards">
+                  {displayRows.map(({original:row})=><article key={row.connectionId} className={styles.accountCard} data-selected={selectedAccountId===row.connectionId || undefined}>
+                    <div className={styles.cardHeading}><Checkbox size="sm" aria-label={`Compare ${row.displayName} (${row.provider})`} checked={comparisonIds.includes(row.connectionId)} disabled={comparisonIds.length>=4 && !comparisonIds.includes(row.connectionId)} onChange={event=>setComparisonIds(event.currentTarget.checked?[...comparisonIds,row.connectionId]:comparisonIds.filter(id=>id!==row.connectionId))}/><UnstyledButton className={styles.accountCell} onClick={()=>select(row.connectionId)}><ProviderMark provider={row.provider} size="small"/><span>{row.displayName || row.provider}</span></UnstyledButton></div>
+                    <dl className={styles.cardFacts}><div><dt>Reported health</dt><dd><State value={row.status}/></dd></div><div><dt>New selections</dt><dd>{localCapacityState(row,row.drain)}</dd></div><div><dt>Recorded attempts</dt><dd>{row.activityState || (row.records>=0?number(row.records):'No recorded attempts')}</dd></div><div><dt>Recorded input</dt><dd>{number(observedTokens(row.activity,'inputTokens','inputSamples'))} tokens</dd></div><div className={styles.cardQuota}><dt>Remaining quota by window</dt><dd><QuotaSummary windows={row.windows} onInspect={windowScope=>select(row.connectionId,windowScope)}/></dd></div><div className={styles.cardQuota}><dt>First window reset · UTC</dt><dd><ResetDeadline window={row.primary} anchor={anchor}/></dd></div></dl>
+                  </article>)}
+                  {!filteredRows.length && <div className={shared.emptyMessage}>No configured accounts match these filters.</div>}
+                </div><Table.ScrollContainer minWidth={760} type="native" className={styles.tableScroll} tabIndex={0} role="region" aria-label="Configured account capacity table scroll">
                   <Table
                     stickyHeader
                     highlightOnHover
@@ -877,7 +904,7 @@ export default function CapacityPage() {
                       ))}
                     </Table.Thead>
                     <Table.Tbody>
-                      {table.getRowModel().rows.map((row) => (
+                      {displayRows.map((row) => (
                         <Table.Tr
                           key={row.original.connectionId}
                           data-selected={
@@ -904,26 +931,27 @@ export default function CapacityPage() {
                       No configured accounts match these filters.
                     </div>
                   )}
-                </Table.ScrollContainer>
+                </Table.ScrollContainer></>
               )}
             </div>
             <div className={styles.bookFoot}>
+              {hold && <span>Row order is held while inspecting. Choose a sort to order current measurements.</span>}
               <span>
                 {historicalOnly.length
                   ? `${historicalOnly.length} historical account IDs are absent from current configuration.`
-                  : 'Only configured accounts appear in this book.'}{' '}
-                <Link href="/dashboard/usage">Open ledger</Link>
+                  : 'Current configured accounts · historical activity in the shared interval.'}{' '}
+                <Link href="/dashboard/usage">Open Economics</Link>
               </span>
               <span>
-                <i style={{ background: METRIC_COLORS.input }} />
-                Uncached input <i style={{ background: METRIC_COLORS.cacheRead }} />
-                Cached read <i style={{ background: METRIC_COLORS.cacheWrite }} />
+                <i style={{ background: 'var(--metric-input)' }} />
+                Uncached input <i style={{ background: 'var(--metric-cache)' }} />
+                Cached read <i style={{ background: 'var(--metric-write)' }} />
                 Cache write
               </span>
             </div>
           </div>
         </SelectionDock>
       </div>
-    </>
+    </div>
   );
 }

@@ -24,6 +24,8 @@ import {
 } from '@/lib/db/repos/accessProfilesRepo.js';
 import { adoptAccessProfile, releaseAccessProfile } from '@/lib/db/repos/keyLifecycleRepo.js';
 import * as list from '@/app/api/keys/route.js';
+import * as keyRoute from '@/app/api/keys/[id]/route.js';
+import * as profileRoute from '@/app/api/access-profiles/[id]/route.js';
 
 let db, key;
 const request = (path = '/api/keys', method = 'GET', body, headers = { 'x-operator': 'yes' }) =>
@@ -51,6 +53,60 @@ const PROFILE = {
   maxCostUsd: 5,
   budgetPolicy: 'strict',
 };
+
+it('refuses stale edits and deletes without changing a profile or adopting keys', async () => {
+  const profile = await createAccessProfile(PROFILE);
+  await adoptAccessProfile(key.id, profile.id);
+  await updateAccessProfile(profile.id, { maxCostUsd: 8, expectedVersion: 1 });
+  const params = { params: Promise.resolve({ id: profile.id }) };
+  const edit = await profileRoute.PUT(request(`/api/access-profiles/${profile.id}`, 'PUT', { expectedVersion: 1, maxCostUsd: 99 }), params);
+  expect(edit.status).toBe(409);
+  const deletion = await profileRoute.DELETE(request(`/api/access-profiles/${profile.id}?expectedVersion=1`, 'DELETE'), params);
+  expect(deletion.status).toBe(409);
+  expect((await getAccessProfiles())[0]).toMatchObject({ version: 2, maxCostUsd: 8, keyCount: 1 });
+  expect((await getApiKeyById(key.id)).maxCostUsd).toBe(5);
+});
+
+it('refuses a stale rename even when policy version did not change', async () => {
+  const profile = await createAccessProfile(PROFILE);
+  await updateAccessProfile(profile.id, { name: 'Changed label' });
+  await expect(updateAccessProfile(profile.id, { name: 'Stale editor', expectedName: PROFILE.name, expectedVersion: 1 })).rejects.toMatchObject({ status: 409 });
+  await expect(deleteAccessProfile(profile.id, 1, PROFILE.name)).rejects.toMatchObject({ status: 409 });
+  expect((await getAccessProfiles())[0].name).toBe('Changed label');
+});
+
+it('refuses fractional expiry days rather than issuing an immediately expired key', async () => {
+  await expect(createAccessProfile({ ...PROFILE, expiryDays: 0.5 })).rejects.toMatchObject({ status: 400 });
+  expect(await getAccessProfiles()).toEqual([]);
+});
+
+it('sets and clears existing key expiry through the redacted operator API', async () => {
+  const params = { params: Promise.resolve({ id: key.id }) };
+  const expiresAt = '2030-01-02T03:04:05.000Z';
+  const set = await keyRoute.PUT(request(`/api/keys/${key.id}`, 'PUT', { expiresAt }), params);
+  expect(set.status).toBe(200);
+  expect(await set.json()).toMatchObject({ key: { expiresAt, secretRedacted: true } });
+  expect((await getApiKeyById(key.id)).expiresAt).toBe(expiresAt);
+  const clear = await keyRoute.PUT(request(`/api/keys/${key.id}`, 'PUT', { expiresAt: null }), params);
+  expect(clear.status).toBe(200);
+  expect((await getApiKeyById(key.id)).expiresAt).toBeNull();
+});
+
+it.each(['garbage', '', '2030-02-30T00:00:00Z', 0, {}, '2030-01-02'])('refuses invalid expiry %j without silently removing it', async invalid => {
+  const expiresAt = '2030-01-02T03:04:05.000Z';
+  await updateApiKey(key.id, { expiresAt });
+  const result = await keyRoute.PUT(request(`/api/keys/${key.id}`, 'PUT', { expiresAt: invalid }), { params: Promise.resolve({ id: key.id }) });
+  expect(result.status).toBe(400);
+  expect((await getApiKeyById(key.id)).expiresAt).toBe(expiresAt);
+});
+
+it('refuses expiry writes from inference callers and remote operators', async () => {
+  for (const headers of [{ 'x-inference': 'yes' }, { 'x-operator': 'yes', 'x-peer': 'remote' }]) {
+    const result = await keyRoute.PUT(request(`/api/keys/${key.id}`, 'PUT', { expiresAt: '2030-01-02T03:04:05Z' }, headers), { params: Promise.resolve({ id: key.id }) });
+    expect(result.status).toBe(403);
+  }
+  expect((await getApiKeyById(key.id)).expiresAt).toBeNull();
+});
 
 it("copies the profile's settings onto the key at adoption", async () => {
   const profile = await createAccessProfile(PROFILE);

@@ -27,7 +27,8 @@ import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
 // and deliberate key rotation. 18 = union of the 16/17 lines of work.
 // 19 = counterfactual dollar-cost ledger (costLedger).
 // 20 = cost-ledger saver/cache attribution split (saverSavedUsd, cacheSavedUsd).
-export const SCHEMA_VERSION = 20;
+// 21 = exact server completion binding between usageHistory and costLedger.
+export const SCHEMA_VERSION = 21;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -173,6 +174,7 @@ export const TABLES = {
       tokens: 'TEXT',
       meta: 'TEXT',
       requestId: 'TEXT',
+      completionId: 'TEXT',
       logicalRequestId: 'TEXT',
       attempt: 'INTEGER',
       contextSessionId: 'INTEGER',
@@ -195,6 +197,7 @@ export const TABLES = {
       // path. Without this index that is a full scan of a table nothing prunes.
       'CREATE INDEX IF NOT EXISTS idx_uh_apikey ON usageHistory(apiKey)',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_uh_request_id ON usageHistory(requestId) WHERE requestId IS NOT NULL',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_uh_completion ON usageHistory(completionId) WHERE completionId IS NOT NULL',
       'CREATE INDEX IF NOT EXISTS idx_uh_logical ON usageHistory(logicalRequestId, id)',
       'CREATE INDEX IF NOT EXISTS idx_uh_session ON usageHistory(contextSessionId, id)',
       'CREATE INDEX IF NOT EXISTS idx_uh_project ON usageHistory(projectId, id)',

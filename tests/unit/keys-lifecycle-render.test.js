@@ -133,3 +133,10 @@ it('separates a key whose requests named no client from one with no requests', (
     })
   ).toContain('claude-code');
 });
+
+it('does not present an edited expiry as the original overlap deadline', () => {
+  const out = html({ ...base, expiresAt: null, rotation: { role: 'superseded', counterpartKeyId: 'k2', rotatedAt: '2026-05-30T00:00:00Z', overlapEndsAt: '2026-06-03T00:00:00Z', overlapHours: 96 } });
+  expect(out).toContain('expiry changed after rotation');
+  expect(out).toContain('Current expiry is not set');
+  expect(out).not.toContain('stops on its next use');
+});

@@ -14,6 +14,7 @@ import { fmtNum, fmtRelative, fmtUnit, fmtUsd } from '@/shared/format';
 import { KeyBudget } from './KeyBudget';
 import { KeyLifecycle } from './KeyLifecycle';
 import { ClientSetupDisclosure } from './ClientSetup';
+import { AccessProfiles } from './AccessProfiles';
 import { keyBudgetState } from './budget';
 import './styles.css';
 
@@ -190,7 +191,9 @@ export default function KeysPage() {
             allowedModels: (key.allowedModels || []).join(', '),
             budgetPolicy: key.budget?.policy || key.effectiveBudgetPolicy || 'reserve-remaining',
           }
-        : BLANK
+        : kind === 'expiry' && key
+          ? { ...BLANK, expiresAt: key.expiresAt?.slice(0, 19) || '' }
+          : BLANK
     );
     setAction({ kind, key });
   };
@@ -226,6 +229,10 @@ export default function KeysPage() {
         method: 'PUT',
         body: limitsBody(),
       });
+    } else if (action.kind === 'expiry') {
+      res = await call(`/api/keys/${encodeURIComponent(k.id)}`, {
+        method: 'PUT', body: { expiresAt: form.expiresAt ? new Date(`${form.expiresAt}Z`).toISOString() : null },
+      });
     } else if (action.kind === 'activate' || action.kind === 'deactivate') {
       res = await call(`/api/keys/${encodeURIComponent(k.id)}`, {
         method: 'PUT',
@@ -252,10 +259,27 @@ export default function KeysPage() {
     if (epoch !== actionEpoch.current) return;
     setBusy(false);
     if (!res.ok) {
+      if (!res.status) {
+        setRefused({ tone: 'warn', title: 'The key mutation outcome is unknown.', next: 'Close and refresh the key list before taking another action. Do not repeat an interrupted create, rotation or other mutation.' });
+        setBusy(true);
+        keys.refresh();
+        return;
+      }
       setRefused(refusal(res.status, res.body));
       return;
     }
     keys.refresh();
+    if (action.kind === 'expiry') {
+      setBusy(true);
+      const readback = await call(`/api/keys/${encodeURIComponent(k.id)}`);
+      if (epoch !== actionEpoch.current) return;
+      const expected = form.expiresAt ? new Date(`${form.expiresAt}Z`).toISOString() : null;
+      if (!readback.ok || readback.body?.key?.expiresAt !== expected) {
+        setRefused({ tone: 'warn', title: 'The expiry change was accepted; readback was not verified.', next: 'Close this dialog and refresh the key before making another change. Do not repeat the mutation.' });
+        return;
+      }
+      setBusy(false);
+    }
     if (action.kind === 'create' || action.kind === 'reveal') {
       setCreated(res.body);
       return;
@@ -283,6 +307,7 @@ export default function KeysPage() {
         tone: 'ok',
         title: {
           limits: 'Saved.',
+          expiry: 'Expiry saved and verified.',
           adopt: form.profileId ? 'Profile adopted.' : 'No longer following a profile.',
           activate: 'Activated.',
           deactivate: 'Deactivated.',
@@ -352,6 +377,11 @@ export default function KeysPage() {
       changes: 'Lets this key authenticate again from its next use. Its value does not change.',
       undo: 'Deactivate it again.',
     },
+    expiry: {
+      title: 'Change key expiry', verb: 'Save expiry', requires: 'An operator session.',
+      changes: 'Replaces the UTC expiry for this key. A past date refuses it on its next use. Clearing the date removes the expiry, including an expiry set by rotation.',
+      undo: 'Restore the previous expiry date. In-flight responses are not interrupted.',
+    },
     deactivate: {
       title: 'Deactivate this key',
       verb: 'Deactivate',
@@ -404,7 +434,7 @@ export default function KeysPage() {
         <Freshness status={pollFresh(keys)} lastDataAt={keys.goodAt} />
       </div>
 
-      <div className="measures tiles">
+      <div className="measures keys-summary">
         <Measure
           big
           label="Keys issued"
@@ -434,6 +464,11 @@ export default function KeysPage() {
           render={fmtNum}
         />
       </div>
+
+      <details className="fold keys-profiles-disclosure">
+        <summary>Manage access profiles ({profiles.length})</summary>
+        <AccessProfiles poll={accessProfiles} onKeysChanged={keys.refresh} />
+      </details>
 
       <section aria-labelledby="h-keys">
         <p className="caption">
@@ -593,6 +628,13 @@ export default function KeysPage() {
                         >
                           <Icon name="i-edit" />
                           Edit limits
+                        </button>
+                        <button
+                          type="button"
+                          className="button quiet"
+                          onClick={() => open('expiry', k)}
+                        >
+                          Change expiry
                         </button>
                         <button
                           type="button"
@@ -761,18 +803,12 @@ export default function KeysPage() {
       </section>
 
       <section aria-labelledby="h-keys-gap">
-        <h2 id="h-keys-gap">Not reported</h2>
-        <ul className="bullets">
-          <li>
-            Whether one named model is permitted for one key. The allowlist is shown above, but no
-            route answers that question, so the gateway settles it at request time and this screen
-            cannot preview the answer.
-          </li>
-          <li>
-            A key&apos;s name and its expiry after it exists. Both are set when the key is created,
-            and the update route accepts neither.
-          </li>
-        </ul>
+        <h2 id="h-keys-gap">Check model permission</h2>
+        <p>
+          Open Client setup for a key and name a model to check its current allowlist, expiry,
+          enabled state and ceilings locally. This does not establish provider entitlement,
+          available quota or a successful model response.
+        </p>
       </section>
 
       <p className="caption">
@@ -830,6 +866,12 @@ export default function KeysPage() {
         {action?.kind === 'limits' ? (
           <div className="keys-form">
             <LimitFields form={form} set={set} />
+          </div>
+        ) : null}
+        {action?.kind === 'expiry' ? (
+          <div className="keys-form">
+            <label className="field"><span>Expiry in UTC</span><input className="input" type="datetime-local" step="1" value={form.expiresAt} onChange={event => set('expiresAt', event.target.value)} /></label>
+            <p className="caption">All fields are UTC. Leave empty for no expiry. The previous expiry was <bdi>{action.key.expiresAt || 'not set'}</bdi>.</p>
           </div>
         ) : null}
         {action?.kind === 'rotate' && !created ? (

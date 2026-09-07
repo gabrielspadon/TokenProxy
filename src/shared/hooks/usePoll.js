@@ -1,9 +1,16 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useObservationPolicy } from '@/shared/workspace/ObservationPolicy';
 
 // Polls a JSON route. Keeps the last good body when a later read fails, so the
 // screen can say "stale since" instead of going blank.
 export function usePoll(url, intervalMs) {
+  const observations = useObservationPolicy();
+  const background = observations?.background ?? true;
+  const mode = observations?.mode ?? 'live';
+  const sharedRevision = observations?.revision ?? 0;
+  const effectiveInterval = background ? intervalMs : 0;
+  const requested = useRef(null);
   const [r, setR] = useState({
     data: null,
     error: null,
@@ -16,13 +23,25 @@ export function usePoll(url, intervalMs) {
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
-    if (!url) return undefined;
+    if (!url) { requested.current = null; return undefined; }
+    const previous = requested.current;
+    const same = previous?.url === url && previous.tick === tick && previous.sharedRevision === sharedRevision;
+    if (!background && same && previous.complete) return undefined;
+    if (!background && same && previous.background && mode === 'paused') {
+      let current = true;
+      Promise.resolve().then(() => { if (current) setR(old => ({ ...old, url, data: old.url === url ? old.data : null, loading: false, error: old.url === url ? old.error : null, goodAt: old.url === url ? old.goodAt : null })); });
+      return () => { current = false; };
+    }
+    const requestIdentity = { url, tick, sharedRevision, background, complete: false };
+    requested.current = requestIdentity;
     let alive = true;
     let historical = false;
     let timer;
     const controller = new AbortController();
     const run = async () => {
+      requestIdentity.complete = false;
       try {
+        setR(old => ({ ...old, url, data: old.url === url ? old.data : null, loading: old.url !== url || old.data == null, error: old.url === url ? old.error : null, status: old.url === url ? old.status : null, at: old.url === url ? old.at : null, goodAt: old.url === url ? old.goodAt : null }));
         const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
         historical = res.headers?.get('x-tokenproxy-preview') === 'historical-snapshot';
         const body = await res.json().catch(() => null);
@@ -47,7 +66,8 @@ export function usePoll(url, intervalMs) {
             at: Date.now(),
           }));
       }
-      if (alive && intervalMs && !historical) timer = setTimeout(run, intervalMs);
+      requestIdentity.complete = true;
+      if (alive && effectiveInterval && !historical) timer = setTimeout(run, effectiveInterval);
     };
     run();
     return () => {
@@ -55,7 +75,7 @@ export function usePoll(url, intervalMs) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [url, intervalMs, tick]);
+  }, [url, effectiveInterval, tick, background, sharedRevision, mode]);
 
   return r.url === url
     ? { ...r, refresh }

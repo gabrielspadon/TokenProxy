@@ -5,6 +5,7 @@ import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum } from '@/shared/format';
+import { Button, TextInput } from '@mantine/core';
 
 // The two tiers an operator can actually run, and what each one settles. The
 // third is described and deliberately not offered, because running it spends
@@ -121,10 +122,15 @@ export function ClientSetupDisclosure({ record }) {
 }
 
 export function ClientSetup({ record }) {
+  return <ClientSetupForKey key={record.id} record={record} />;
+}
+
+function ClientSetupForKey({ record }) {
   const [config, setConfig] = useState(null);
   const [outcome, setOutcome] = useState(null);
   const [busy, setBusy] = useState(null);
   const [refused, setRefused] = useState(null);
+  const [model, setModel] = useState('');
   const id = record.id;
 
   useEffect(() => {
@@ -147,7 +153,7 @@ export function ClientSetup({ record }) {
       setOutcome(null);
       const res = await call(`/api/keys/${encodeURIComponent(id)}/connectivity`, {
         method: 'POST',
-        body: { tier },
+        body: { tier, ...(model.trim() ? { model: model.trim() } : {}) },
       });
       setBusy(null);
       if (!res.ok) {
@@ -156,7 +162,7 @@ export function ClientSetup({ record }) {
       }
       setOutcome(res.body);
     },
-    [id]
+    [id, model]
   );
 
   return (
@@ -180,18 +186,19 @@ export function ClientSetup({ record }) {
               note="For a client that appends its own full path."
             />
           </div>
+          <TextInput label="Model to check" description="Optional provider/model identifier. Without one, this check does not establish permission for a specific model." value={model} onChange={event => { setModel(event.currentTarget.value); setOutcome(null); }} disabled={busy !== null} />
           <div className="verb-row">
             {RUNNABLE.map((t) => (
-              <button
+              <Button
                 key={t.tier}
                 type="button"
-                className="button quiet"
+                variant="default"
                 disabled={busy !== null}
                 onClick={() => run(t.tier)}
               >
                 <Icon name="i-check" />
-                {busy === t.tier ? 'Checking' : t.label}
-              </button>
+                {t.label}
+              </Button>
             ))}
           </div>
           {/* dt and dd are direct children on purpose: globals.css sizes
@@ -213,8 +220,8 @@ export function ClientSetup({ record }) {
           {/* Stated, not offered. An operator should know the check exists and
               know that nothing here will run it for them. */}
           <p className="caption">
-            Neither check sends a real completion. Only a billed request against an upstream
-            provider proves the whole path works, and that is not run from this page.
+            Neither check sends a real completion. A model request against an upstream provider
+            is needed to establish that the whole generation path works. It may be billed and is not run from this page.
           </p>
         </>
       ) : refused ? null : (

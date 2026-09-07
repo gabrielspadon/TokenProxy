@@ -29,7 +29,7 @@ export async function PATCH(request) {
     const body = await request.json();
 
     // Validate body structure
-    if (typeof body !== "object" || body === null) {
+    if (typeof body !== "object" || body === null || Array.isArray(body) || !Object.keys(body).length) {
       return NextResponse.json(
         { error: "Invalid pricing data format" },
         { status: 400 }
@@ -38,7 +38,7 @@ export async function PATCH(request) {
 
     // Validate pricing structure
     for (const [provider, models] of Object.entries(body)) {
-      if (typeof models !== "object" || models === null) {
+      if (!provider.trim() || provider.length>200 || ["__proto__","prototype","constructor"].includes(provider) || typeof models !== "object" || models === null || Array.isArray(models) || !Object.keys(models).length) {
         return NextResponse.json(
           { error: `Invalid pricing for provider: ${provider}` },
           { status: 400 }
@@ -46,7 +46,7 @@ export async function PATCH(request) {
       }
 
       for (const [model, pricing] of Object.entries(models)) {
-        if (typeof pricing !== "object" || pricing === null) {
+        if (!model.trim() || model.length>200 || ["__proto__","prototype","constructor"].includes(model) || typeof pricing !== "object" || pricing === null || Array.isArray(pricing) || !Object.keys(pricing).length) {
           return NextResponse.json(
             { error: `Invalid pricing for model: ${provider}/${model}` },
             { status: 400 }
@@ -62,7 +62,7 @@ export async function PATCH(request) {
               { status: 400 }
             );
           }
-          if (typeof value !== "number" || isNaN(value) || value < 0) {
+          if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
             return NextResponse.json(
               { error: `Invalid pricing value for ${key} in ${provider}/${model}: must be non-negative number` },
               { status: 400 }
@@ -93,6 +93,10 @@ export async function DELETE(request) {
     const { searchParams } = new URL(request.url);
     const provider = searchParams.get("provider");
     const model = searchParams.get("model");
+    if ([...searchParams.keys()].some(key=>!["provider","model"].includes(key) || searchParams.getAll(key).length!==1) || (model && !provider)
+      || [provider,model].some(value=>value!==null && (!value.trim() || value.length>200 || ["__proto__","prototype","constructor"].includes(value)))) {
+      return NextResponse.json({error:"Invalid pricing reset scope"},{status:400});
+    }
 
     if (provider && model) {
       // Reset specific model

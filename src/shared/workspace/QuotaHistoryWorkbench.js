@@ -14,6 +14,7 @@ import {
   Table,
   Text,
   UnstyledButton,
+  useMantineColorScheme,
 } from '@mantine/core';
 import { useWorkspace } from './WorkspaceProvider';
 import { useResource } from './useResource';
@@ -33,7 +34,7 @@ import styles from './quotaHistoryWorkbench.module.css';
 function Freshness({ value }) {
   if (!value) return null;
   return (
-    <Text size="xs" c="dimmed">
+    <Text size="sm" c="dimmed">
       {value.source === 'last-persisted-snapshot'
         ? `Persisted file ${quotaTimestamp(value.persistedAt)}`
         : `Committed snapshot ${quotaTimestamp(value.snapshotCompletedAt)}`}{' '}
@@ -161,6 +162,7 @@ function Scenario({ analysis }) {
 }
 
 function ObservationSeries({ series }) {
+  const {colorScheme}=useMantineColorScheme();
   const [selectedId, setSelectedId] = useState(null),
     [zoom, setZoom] = useState(null),
     [page, setPage] = useState(1);
@@ -184,8 +186,8 @@ function ObservationSeries({ series }) {
   const actualPage = Math.min(page, Math.max(1, Math.ceil(filtered.length / 10)));
   const selected = series.points.find((point) => point.id === selectedId);
   const option = useMemo(
-    () => quotaObservationOption(series, selectedId, zoom),
-    [series, selectedId, zoom]
+    () => quotaObservationOption(series, selectedId, zoom, colorScheme),
+    [series, selectedId, zoom, colorScheme]
   );
   const select = (id) => {
     setSelectedId(id);
@@ -198,7 +200,7 @@ function ObservationSeries({ series }) {
         <section className={styles.observations} aria-label="Quota observation analysis">
           <Group justify="space-between">
             <h4>Observed {series.analysis.unit || 'balance'}</h4>
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               {quotaNumber(series.coverage.measured)} measured /{' '}
               {quotaNumber(series.coverage.records)} records
             </Text>
@@ -221,7 +223,7 @@ function ObservationSeries({ series }) {
             </p>
             {zoom && (
               <Button
-                size="compact-xs"
+                size="compact-sm"
                 variant="subtle"
                 onClick={() => {
                   setZoom(null);
@@ -269,7 +271,7 @@ function ObservationSeries({ series }) {
             </Table>
           </ScrollArea>
           <Group justify="space-between" mt="xs">
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               {quotaNumber(filtered.length)} contributing records
               {zoom ? ' in this observation zoom' : ''}
             </Text>
@@ -277,7 +279,7 @@ function ObservationSeries({ series }) {
               total={Math.ceil(filtered.length / 10)}
               value={actualPage}
               onChange={setPage}
-              size="xs"
+              size="sm"
               aria-label="Quota observation pages"
               getControlProps={(control) => ({ 'aria-label': `${control} quota observation page` })}
               getItemProps={(page) => ({ 'aria-label': `Quota observation page ${page}` })}
@@ -320,10 +322,10 @@ function ObservationSeries({ series }) {
   );
 }
 
-function ResetChecks({ analysisUrl, onSnapshot }) {
+function ResetChecks({ analysisUrl, onSnapshot, windowScope }) {
   const [page, setPage] = useState(1),
     [eventType, setEventType] = useState(null);
-  const resource = useResource(quotaChecksUrl(analysisUrl, page, eventType), { onSnapshot });
+  const resource = useResource(quotaChecksUrl(analysisUrl, page, eventType, windowScope), { onSnapshot });
   return (
     <section className={styles.checks} aria-label="Reset planning evidence">
       <Group justify="space-between" align="start">
@@ -333,6 +335,7 @@ function ResetChecks({ analysisUrl, onSnapshot }) {
             Scheduling decisions, recorded execution and outcomes. A scheduling record does not
             prove that a check is still queued.
           </p>
+          {windowScope && <p className={styles.note}>Filtered to {windowScope}. Check events retain scope only; resource and unit attribution may be unavailable.</p>}
         </div>
         <Select
           aria-label="Reset event type"
@@ -406,14 +409,14 @@ function ResetChecks({ analysisUrl, onSnapshot }) {
             </Table>
           </ScrollArea>
           <Group justify="space-between" mt="xs">
-            <Text size="xs" c="dimmed">
+            <Text size="sm" c="dimmed">
               {quotaNumber(resource.data.total)} matching retained events
             </Text>
             <Pagination
               total={resource.data.pages}
               value={page}
               onChange={setPage}
-              size="xs"
+              size="sm"
               aria-label="Reset check pages"
               getControlProps={(control) => ({ 'aria-label': `${control} reset check page` })}
               getItemProps={(page) => ({ 'aria-label': `Reset check page ${page}` })}
@@ -427,17 +430,14 @@ function ResetChecks({ analysisUrl, onSnapshot }) {
 }
 
 export function QuotaHistoryWorkbench({ account, anchor, selectedScope }) {
-  const { scope, observeSnapshot, setSelectedAccountId } = useWorkspace();
+  const { scope, observeSnapshot, setSelectedAccountId, selectedRecord } = useWorkspace();
   const url = quotaWorkbenchUrl(scope, account.connectionId, anchor);
   const resource = useResource(url, { onSnapshot: observeSnapshot });
   const [activeId, setActiveId] = useState(null);
   const series = resource.data?.series || [];
-  const active =
-    series.find(
-      (item) => item.id === activeId && (!selectedScope || item.scope === selectedScope)
-    ) ||
-    series.find((item) => item.scope === selectedScope) ||
-    series[0];
+  const retainedId = selectedRecord?.windowId || activeId;
+  const active = retainedId ? series.find(item => item.id === retainedId)
+    : series.find(item => item.scope === selectedScope) || series[0];
   return (
     <section className={styles.workbench} aria-label="Quota history workbench">
       <Group justify="space-between">
@@ -478,12 +478,14 @@ export function QuotaHistoryWorkbench({ account, anchor, selectedScope }) {
         <>
           <Select
             label="Reported quota window"
-            value={active.id}
+            value={active?.id || null}
+            placeholder="Choose a retained quota window"
+            allowDeselect={false}
             onChange={(id) => {
               const chosen = series.find((item) => item.id === id);
               if (chosen) {
                 setActiveId(id);
-                setSelectedAccountId(account.connectionId, chosen.scope);
+                setSelectedAccountId(account.connectionId, chosen.scope, chosen.id);
               }
             }}
             data={series.map((item) => ({
@@ -493,11 +495,11 @@ export function QuotaHistoryWorkbench({ account, anchor, selectedScope }) {
             className={styles.windowSelect}
             searchable
           />
-          <ObservationSeries key={`${url}:${active.id}`} series={active} />
+          {active ? <ObservationSeries key={`${url}:${active.id}`} series={active} /> : <Alert color="gray" title="Selected window is outside the retained population">The selected historical series is preserved. Choose another window to inspect its evidence; no other series was substituted.</Alert>}
         </>
       )}
       <Freshness value={resource.data?.freshness} />
-      <ResetChecks key={url} analysisUrl={url} onSnapshot={observeSnapshot} />
+      <ResetChecks key={`${url}:${active?.scope || selectedScope || ''}`} analysisUrl={url} onSnapshot={observeSnapshot} windowScope={active?.scope || selectedScope} />
     </section>
   );
 }

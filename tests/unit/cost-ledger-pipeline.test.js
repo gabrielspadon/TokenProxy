@@ -188,6 +188,10 @@ describe("cost ledger pipeline", () => {
     expect(res.success).toBe(true);
     const row = await readLedgerRow("c0ffee51");
     expect(row).not.toBeNull();
+    const db = await getAdapter();
+    const usage = db.get('SELECT requestId,completionId FROM usageHistory WHERE completionId=?',[row.completionId]);
+    expect(usage?.requestId).toBeTruthy();
+    expect(usage?.completionId).toBe(row.completionId);
     // RTK shrank the 2000-char message to 100 before dispatch, so the provider
     // billed a small prompt while the baseline still costs the pre-saver body.
     expect(row.inputTokens).toBeGreaterThan(0);

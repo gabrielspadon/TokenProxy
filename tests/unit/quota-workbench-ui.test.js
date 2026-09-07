@@ -196,4 +196,14 @@ describe('Quota workbench interaction', () => {
     expect(option.series[0].data).toHaveLength(11);
     expect(option.series[0].data.some((point) => point.id === 'sample-0')).toBe(false);
   });
+  it('restores the exact same-scope historical identity and keeps missing selections unavailable', async () => {
+    fixture.series.push({ ...fixture.series[0], id: 'window-usd', analysis: { ...fixture.series[0].analysis, unit:'USD' }, unit:'USD',resourceType:'monetary-budget' });
+    state.workspace.selectedRecord = { kind:'account', id:'account-1', windowScope:'weekly', windowId:'window-usd' };
+    await render({ selectedScope:'weekly' });
+    expect(state.chart.label).toContain('USD');
+    state.workspace.selectedRecord = { ...state.workspace.selectedRecord, windowId:'missing-window' };
+    await render({ selectedScope:'weekly' });
+    expect(container.textContent).toContain('no other series was substituted');
+    expect(container.querySelector('[aria-label="Quota exhaustion scenario"]')).toBeNull();
+  });
 });

@@ -1,6 +1,6 @@
 # Shared analysis component contracts
 
-The new shell is owned by the Capacity implementation. Context and Economics may
+The shell and visual system are owned by the redesign lead under [the corrective mandate](REDESIGN-20260907.md). The shared component specimen is `/dashboard/specimen`. The current wide inspector is horizontal with a 408px initial width, and compact screens use Mantine's full-width Drawer with return focus. Context and Economics may
 import these modules from `src/shared/workspace` without creating another shell,
 scope store, snapshot flag, chart lifecycle or resize implementation.
 

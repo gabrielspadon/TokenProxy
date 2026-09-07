@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getProxyPoolById, getSettings, updateProviderStrategy, updateSettings } from "@/lib/localDb";
+import { getProxyPoolById, getSettings, getProviderConnectionById, updateProviderStrategy, updateSettings } from "@/lib/localDb";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { isValidConnectTimeoutMs } from "open-sse/config/connectTimeout.js";
-import { QUOTA_AUTOPING_PROVIDERS, QUOTA_AUTOPING_SETTINGS_KEYS } from "@/shared/constants/config";
+import { QUOTA_AUTOPING_PROVIDERS, QUOTA_AUTOPING_SETTINGS_KEYS, quotaAutoPingSupportsAuthType } from "@/shared/constants/config";
 import bcrypt from "bcryptjs";
 
 export const dynamic = "force-dynamic";
@@ -137,6 +137,19 @@ export async function GET() {
 export async function PATCH(request) {
   try {
     const body = await request.json();
+    if (!isPlainObject(body)) return NextResponse.json({error:"Settings must be an object"},{status:400});
+    for (const key of QUOTA_AUTOPING_SETTINGS_KEYS) if (Object.hasOwn(body,key)) {
+      const value=body[key];
+      if (!isPlainObject(value) || Object.keys(value).some(field=>field!=="connections") || !isPlainObject(value.connections)
+        || Object.entries(value.connections).some(([id,enabled])=>!id.trim() || id.length>200 || DANGEROUS_STRATEGY_KEYS.has(id) || typeof enabled!=="boolean")) {
+        return NextResponse.json({error:"Quota warming requires a map of exact account IDs to boolean values"},{status:400});
+      }
+      const provider=QUOTA_AUTOPING_PROVIDERS.find(item=>item.settingsKey===key)?.id;
+      for (const [id,enabled] of Object.entries(value.connections)) if (enabled) {
+        const account=await getProviderConnectionById(id);
+        if (!account || account.provider!==provider || !quotaAutoPingSupportsAuthType(provider,account.authType)) return NextResponse.json({error:"Quota warming is unsupported for this account and authentication type"},{status:400});
+      }
+    }
 
     if (Object.prototype.hasOwnProperty.call(body, "providerStrategyPatch")) {
       if (Object.keys(body).length !== 1) {
@@ -178,7 +191,12 @@ export async function PATCH(request) {
       if (normalizedSelection.error) {
         return NextResponse.json({ error: normalizedSelection.error }, { status: 400 });
       }
-      const settings = await updateProviderStrategy(providerId, normalizedSelection.values);
+      const selectionCleared = Object.prototype.hasOwnProperty.call(values, "proxyPoolId")
+        && !Object.prototype.hasOwnProperty.call(normalizedSelection.values, "proxyPoolId");
+      const strategyValues = selectionCleared
+        ? { ...normalizedSelection.values, proxyPoolId: null, strictProxy: null }
+        : normalizedSelection.values;
+      const settings = await updateProviderStrategy(providerId, strategyValues);
       return NextResponse.json(toSafeSettings(settings), { headers: SETTINGS_RESPONSE_HEADERS });
     }
 

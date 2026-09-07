@@ -209,24 +209,26 @@ export async function getRuleVersions(ruleId) {
 
 // ── Alerts ────────────────────────────────────────────────────────────────
 
-const toEvent = (row) => row && { ...row, evidence: JSON.parse(row.evidence) };
+const toEvent = (row) => row && { ...row, evidence: JSON.parse(row.evidence), ...(row.ruleDefinition ? { ruleDefinition: JSON.parse(row.ruleDefinition) } : {}) };
 
 export async function listRuleEvents({ ruleId, outcome, limit = 100 } = {}) {
   const db = await getAdapter();
   const clauses = [];
   const values = [];
   if (ruleId) {
-    clauses.push('ruleId = ?');
+    clauses.push('events.ruleId = ?');
     values.push(ruleId);
   }
   if (outcome) {
-    clauses.push('outcome = ?');
+    clauses.push('events.outcome = ?');
     values.push(outcome);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const capped = Math.min(Number(limit) || 100, 500);
   return db
-    .all(`SELECT * FROM notificationRuleEvents ${where} ORDER BY firedAt DESC, id DESC LIMIT ?`, [
+    .all(`SELECT events.*, versions.definition AS ruleDefinition FROM notificationRuleEvents events
+      LEFT JOIN notificationRuleVersions versions ON versions.ruleId=events.ruleId AND versions.revision=events.ruleRevision
+      ${where} ORDER BY events.firedAt DESC, events.id DESC LIMIT ?`, [
       ...values,
       capped,
     ])

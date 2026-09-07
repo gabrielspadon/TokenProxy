@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import { readFile, writeFile, realpath } from 'node:fs/promises';
+import { join } from 'node:path';
+import { EDGE_IDS } from './edge-seed.mjs';
+
+// Explicit, destructive-to-fixture verification. Use a fresh owned edge run.
+const root = await realpath(process.argv[2]);
+const json = async path => JSON.parse(await readFile(join(root, path), 'utf8'));
+const [owner, run, auth, seed] = await Promise.all(['owner.json', 'process.json', 'preview-auth.json', 'seed-receipt.json'].map(json));
+assert.equal(owner.kind, 'tokenproxy-redesign-preview-v1');
+assert.equal(owner.root, root);
+assert.equal(owner.runId, run.runId);
+assert.equal(seed.scenario, 'edge-cases');
+assert.match(run.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+const challenge = await fetch(`${run.url}/__redesign_owner`, { headers: { 'x-redesign-owner': auth.ownerToken }, signal: AbortSignal.timeout(5000) });
+assert.equal((await challenge.json()).runId, owner.runId);
+const login = await fetch(`${run.url}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: auth.initialPassword }), signal: AbortSignal.timeout(5000) });
+assert.equal(login.status, 200);
+const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+async function request(path, method = 'GET', body) {
+  const response = await fetch(`${run.url}${path}`, { method, headers: { cookie, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000) });
+  return { status: response.status, version: response.headers.get('x-tokenproxy-preview-version'), body: await response.json() };
+}
+const budgetPath = `/api/admin/budgets?apiKeyId=${seed.edges.budget.keyId}`;
+const before = await request(budgetPath);
+assert.equal(before.status, 200);
+assert.equal(before.version, run.fixtureVersion);
+assert.equal(before.body.reservations.length, 2);
+assert.equal(before.body.outstanding.costUsd, 0.002);
+const settled = await request('/api/admin/budgets', 'POST', { apiKeyId: seed.edges.budget.keyId, requestId: seed.edges.budget.uncertain, evidence: { kind: 'provider-usage', reference: 'synthetic-report-1', tokens: { input_tokens: 80, output_tokens: 20, cached_tokens: 0, cache_creation_input_tokens: 0, reasoning_tokens: 0, cost_usd: 0.00024 } } });
+assert.equal(settled.status, 200, settled.body.error);
+assert.equal(settled.body.reservation.state, 'settled');
+const released = await request('/api/admin/budgets', 'POST', { apiKeyId: seed.edges.budget.keyId, requestId: seed.edges.budget.reserved, evidence: { kind: 'proven-no-dispatch', reference: 'synthetic-no-dispatch-1' } });
+assert.equal(released.status, 200, released.body.error);
+assert.equal(released.body.reservation.state, 'released');
+const after = await request(budgetPath);
+assert.equal(after.body.outstanding.costUsd, 0);
+assert.equal(after.body.account.recordedPromptTokens, 80);
+assert.equal(after.body.account.recordedCompletionTokens, 20);
+assert.equal(after.body.account.recordedCostUsd, 0.00024);
+const deletion = await request('/api/proxy-pools', 'DELETE', { ids: [EDGE_IDS.boundPool, EDGE_IDS.freePool] });
+assert.equal(deletion.status, 200);
+assert.equal(deletion.body.success, false);
+assert.equal(deletion.body.deleted, 1);
+assert.equal(deletion.body.results.find(row => row.id === EDGE_IDS.boundPool).deleted, false);
+const pools = await request('/api/proxy-pools?includeUsage=true');
+assert.deepEqual(pools.body.proxyPools.map(row => row.id), [EDGE_IDS.boundPool]);
+const refused = await request('/api/settings', 'PATCH', { codexAutoPing: { connections: { 'capacity-fixture-a': true } } });
+assert.notEqual(refused.status, 200);
+const guard = await fetch(`${run.url}/__redesign_owner`, { headers: { 'x-redesign-owner': auth.ownerToken }, signal: AbortSignal.timeout(5000) });
+const counters = (await guard.json()).guard;
+assert.equal(counters.outboundBlocked, 0);
+const receipt = { version: 'redesign-edge-check-v1', runId: run.runId, buildId: run.buildId, fixtureVersion: run.fixtureVersion, sourceManifestHash: run.sourceManifestHash, recordedAt: new Date().toISOString(), budget: { settled: true, released: true, recordedInputTokens: 80, recordedOutputTokens: 20, recordedUsd: 0.00024, heldUsd: 0 }, proxyDeletion: { deleted: 1, boundRetained: 1 }, providerSchedulerRejected: true, outboundCalls: 0, guard: counters, browserInspected: false };
+await writeFile(join(root, 'edge-verification.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+console.log(JSON.stringify(receipt, null, 2));

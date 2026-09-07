@@ -52,9 +52,14 @@ export async function POST(request) {
         "[Settings][DatabaseImport] Failed to re-apply outbound proxy env:",
         err,
       );
+      return NextResponse.json({
+        success: true, outcome: 'partial',
+        completion: { databaseImported: true, outboundProxyEnvironment: 'failed' },
+        message: 'The database import completed, but the process proxy environment could not be refreshed. Read the restored configuration before taking another action. Do not automatically repeat the import.',
+      }, { status: 207 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, outcome: 'applied', completion: { databaseImported: true, outboundProxyEnvironment: 'applied' } });
   } catch (error) {
     console.log("Error importing database:", error);
     return NextResponse.json(

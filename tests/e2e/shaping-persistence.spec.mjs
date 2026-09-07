@@ -1,9 +1,7 @@
 import { test, expect } from 'playwright/test';
 import { randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { signIn } from './helpers.mjs';
+import { credentiallessDatabase } from './capacity-economics-fixture-guard.mjs';
 
 // No route interception, mocked response, or direct configuration POST/PATCH.
 // Authentication follows the suite helper; every shaping mutation uses the UI.
@@ -45,22 +43,11 @@ async function openWorkbench(page) {
   await expect(workbench.getByRole('heading', { name: 'Profiles and offline experiments', exact: true })).toBeVisible();
   return workbench;
 }
-async function optionalDatabase() {
-  if (!process.env.E2E_DATA_DIR) return null;
-  // The caller explicitly supplies the disposable directory. Never discover or
-  // fall back to an operator home database. Real paths prevent symlink escapes.
-  expect(path.isAbsolute(process.env.E2E_DATA_DIR), 'E2E_DATA_DIR must be absolute').toBe(true);
-  const directory = realpathSync(process.env.E2E_DATA_DIR);
-  const temporaryRoots = [realpathSync(os.tmpdir()), ...(process.platform === 'win32' ? [] : [realpathSync('/tmp')])];
-  expect(temporaryRoots.some(root => directory.startsWith(`${root}${path.sep}`)), 'SQLite evidence is restricted to temporary directories').toBe(true);
-  const filename = realpathSync(path.join(directory, 'data.sqlite'));
-  expect(path.dirname(filename), 'The database must stay inside the supplied disposable directory').toBe(directory);
-  const { DatabaseSync } = await import('node:sqlite');
-  const database = new DatabaseSync(filename, { readOnly: true });
+function fixtureAccountIdentities() {
+  const database = credentiallessDatabase();
   try {
-    expect(database.prepare('SELECT COUNT(*) AS count FROM providerConnections').get().count, 'Synthetic persistence requires zero credentialed connections').toBe(0);
-    return database;
-  } catch (error) { database.close(); throw error; }
+    return database.prepare('SELECT id, provider FROM providerConnections ORDER BY id').all();
+  } finally { database.close(); }
 }
 
 // One sequence owns its named profiles and receipt; no retries can replay an
@@ -75,14 +62,16 @@ test('synthetic UI saves, compares, promotes and rolls back real shaping records
   expect(base.username || base.password, 'Do not put credentials in E2E_BASE').toBe('');
   const gate = await page.request.get(new URL('/api/admin/health', base).href, { maxRedirects: 0 });
   assertSynthetic(gate); // Before sending credentials or any UI mutation.
+  const fixtureAccounts = fixtureAccountIdentities();
   await signIn(page);
   const connections = await readJson(page, '/api/providers');
-  expect(connections.connections, 'The preview must have no credentialed provider accounts').toEqual([]);
+  expect(connections.connections.map(({ id, provider }) => ({ id, provider })).sort((a, b) => a.id.localeCompare(b.id)),
+    'The preview must expose exactly the verified credentialless fixture accounts').toEqual(fixtureAccounts);
   const initial = await readJson(page, '/api/admin/shaping');
   const fixtures = initial.fixtureSets.find(set => set.id === 'context-integrity-v1');
   expect(fixtures).toMatchObject({ synthetic: true, count: 4, revision: 1 });
   const initialReceipts = await readJson(page, '/api/admin/shaping/receipts?pageSize=100');
-  const database = await optionalDatabase();
+  const database = credentiallessDatabase();
   const suffix = randomUUID().slice(0, 10);
   const baselineName = `Persistence baseline ${suffix}`;
   const candidateName = `Persistence candidate ${suffix}`;
@@ -210,9 +199,10 @@ test('synthetic UI saves, compares, promotes and rolls back real shaping records
       const stored = database.prepare('SELECT data FROM settings WHERE id = 1').get();
       const actual = JSON.parse(stored.data);
       for (const key of Object.keys(FLAG_LABELS)) expect(actual[key]).toBe(initial.settings[key]);
-      expect(database.prepare('SELECT COUNT(*) AS count FROM providerConnections').get().count).toBe(0);
+      expect(database.prepare('SELECT id, provider FROM providerConnections ORDER BY id').all()).toEqual(fixtureAccounts);
     }
-    expect((await readJson(page, '/api/providers')).connections).toEqual([]);
+    expect(fixtureAccountIdentities()).toEqual(fixtureAccounts);
+    expect((await readJson(page, '/api/providers')).connections.map(({ id, provider }) => ({ id, provider })).sort((a, b) => a.id.localeCompare(b.id))).toEqual(fixtureAccounts);
     expect(forbiddenRequests).toEqual([]);
     await testInfo.attach('shaping-persistence-receipts', { body: JSON.stringify({ fixtureSetId: 'context-integrity-v1', cases: 4, baselineVersionId: baseline.version.id, candidateVersionId: candidate.version.id, experimentId: experiment.id, promotionReceiptId: promotion.id, rollbackReceiptId: rollback.id, restoredHash: initial.currentHash, sqliteVerified: Boolean(database), providerCalls: 0 }, null, 2), contentType: 'application/json' });
   } finally {

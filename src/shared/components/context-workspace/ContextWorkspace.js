@@ -22,7 +22,7 @@ function ReadState({ resource, children, empty }) {
   return <>{resource.error && <Alert color="orange" title="Showing the last successful read">{resource.error}<Button variant="subtle" onClick={resource.refresh}>Try again</Button></Alert>}{resource.data ? children : empty}</>;
 }
 export function RecordingCoverage({ recording }) {
-  const segments = [['attributedAttempts', 'With context evidence', '#6f83cd'], ['unattributedAttempts', 'Unattributed', '#c8d0dd'], ['rejectedAttempts', 'Telemetry rejected', '#bd6370']];
+  const segments = [['attributedAttempts', 'With context evidence', 'var(--metric-input)'], ['unattributedAttempts', 'Unattributed', 'var(--control-edge)'], ['rejectedAttempts', 'Telemetry rejected', 'var(--refusal)']];
   const total = recording?.totalRetainedAttempts;
   const complete = finite(total) && total > 0 && segments.every(([key]) => finite(recording?.[key]))
     && segments.reduce((sum, [key]) => sum + recording[key], 0) === total;
@@ -45,10 +45,17 @@ function ProjectEditor({ session, refresh, overviewRefresh }) {
   const [saving, setSaving] = useState(false), [error, setError] = useState(null);
   async function save(event) {
     event.preventDefault(); setSaving(true); setError(null);
+    const projectLabel = draft.trim() || null;
     try {
-      const response = await fetch(`/api/context/sessions/${session.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectLabel: draft.trim() || null }) });
+      const response = await fetch(`/api/context/sessions/${session.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ projectLabel }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body?.error?.message || body?.error || 'The label could not be saved.');
+      if (body?.updated !== true) throw new Error('The server did not confirm this label change. Your draft is retained.');
+      const readback = await fetch(`/api/context/sessions/${session.id}`, { cache: 'no-store' });
+      const stored = await readback.json();
+      if (!readback.ok || Number(stored?.session?.id) !== Number(session.id) || (stored.session.projectLabel || null) !== projectLabel) {
+        throw new Error('The label change was acknowledged, but its stored value could not be verified. Your draft is retained. Refresh the session before trying again.');
+      }
       setEditing(false); refresh(); overviewRefresh();
     } catch (failure) { setError(failure.message); } finally { setSaving(false); }
   }
@@ -67,13 +74,14 @@ export function ContextWorkspace() {
   const resource = useResource(identity ? contextUrl({}, {sessionId:identity.sessionId,requestId:identity.id}) : null, {onSnapshot:workspace.observeSnapshot});
   const baseline = identity ? {identity,turn:resource.data?.turns?.find((row)=>String(row.id)===identity.id && Number(row.contextSessionId)===identity.sessionId),
     loading:resource.loading,error:resource.error,refresh:resource.refresh,receivedAt:resource.data?.freshness?.snapshotCompletedAt || resource.receivedAt} : null;
-  const setBaseline = (turn) => workspace.setContextView({baseline:turn ? {id:String(turn.id),sessionId:workspace.contextView.sessionId} : null});
+  const setBaseline = (turn) => workspace.setContextView({baseline:turn ? {id:String(turn.id),sessionId:turn.contextSessionId ?? workspace.contextView.sessionId} : null});
   return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace} baseline={baseline} setBaseline={setBaseline} />;
 }
 function ContextScope({ workspace, baseline, setBaseline }) {
   const { scope, setScope, accounts, snapshot, observeSnapshot, contextView, setContextView, selectedRecord, setSelectedRecord } = workspace;
   const [page, setPage] = useState(1);
   const [showReports,setShowReports] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
   const {sessionId, page:turnPage, projectLabel, clientTool} = contextView;
   const turnId = selectedRecord?.kind === 'context-attempt' ? selectedRecord.id : null;
   const setSessionId = useCallback((id) => setContextView({sessionId:id}),[setContextView]);
@@ -85,10 +93,13 @@ function ContextScope({ workspace, baseline, setBaseline }) {
   const overview = useResource(contextUrl(scope, { ...filters, page }), { onSnapshot: observeSnapshot });
   const data = overview.data;
   const sessions = data?.sessions || EMPTY;
-  const selectedSessionId = sessionId;
+  const selectedSessionId = selectedRecord?.kind?.startsWith('context-') ? selectedRecord.sessionId : sessionId;
   const detail = useResource(selectedSessionId ? contextUrl(scope, { ...filters, page: turnPage, sessionId: selectedSessionId }) : null, { onSnapshot: observeSnapshot });
   const turns = detail.data?.turns || EMPTY;
-  const selectedTurn = turns.find((turn) => String(turn.id) === String(turnId));
+  const pageTurn = turns.find((turn) => String(turn.id) === String(turnId));
+  const exact = useResource(turnId && selectedSessionId && !pageTurn ? contextUrl({}, { sessionId: selectedSessionId, requestId: turnId }) : null, { onSnapshot: observeSnapshot });
+  const selectedTurn = pageTurn || exact.data?.turns?.find(turn=>String(turn.id)===String(turnId) && Number(turn.contextSessionId)===selectedSessionId);
+  const selectedDetail = pageTurn ? detail.data : exact.data;
   const setTurnId = useCallback((id) => {
     const turn=turns.find((item)=>String(item.id)===String(id));
     setSelectedRecord(turn ? {kind:'context-attempt',id:String(turn.id),sessionId:selectedSessionId,provider:turn.provider,model:turn.model,connectionId:turn.connectionId,timestamp:turn.timestamp} : null);
@@ -99,31 +110,34 @@ function ContextScope({ workspace, baseline, setBaseline }) {
   const changePage = (next) => { setPage(next); };
   const filterByProject = (value) => { setProjectLabel(value); changePage(1); };
   const columns = useMemo(() => [
-    { id: 'request', header: 'Attempt · UTC', cell: ({ row }) => <UnstyledButton className={styles.attemptButton} aria-label={`Inspect attempt ${row.original.id}`} onClick={() => { setSessionId(selectedSessionId); setTurnId(row.original.id); }}><strong title={`${utc(row.original.timestamp)} UTC`}>{utc(row.original.timestamp).slice(5)}</strong><small title={String(row.original.id)}>#{String(row.original.id).slice(0,14)}{String(row.original.id).length > 14 ? '…' : ''} · try {row.original.attempt ?? 'Unknown'}</small></UnstyledButton> },
-    { id: 'route', header: 'Served provider / model', cell: ({ row }) => <div className={styles.routeCell}><span>{row.original.provider || 'Unknown'}</span><small title={row.original.model}>{row.original.model || 'Unknown model'}</small>{row.original.requestedModel !== row.original.model && <small title={row.original.requestedModel}>Requested · {row.original.requestedModel || 'Unknown'}</small>}</div> },
+    { id: 'request', header: 'Attempt · UTC', cell: ({ row }) => <UnstyledButton className={styles.attemptButton} aria-label={`Inspect attempt ${row.original.id}`} aria-pressed={String(row.original.id) === String(turnId)} onClick={() => { setSessionId(selectedSessionId); setTurnId(row.original.id); }}><strong title={`${utc(row.original.timestamp)} UTC`}>{utc(row.original.timestamp).slice(5)}</strong><small title={String(row.original.id)}>#{String(row.original.id).slice(0,14)}{String(row.original.id).length > 14 ? '…' : ''} · try {row.original.attempt ?? 'Unknown'}</small></UnstyledButton> },
+    { id: 'route', header: 'Selected provider / model', cell: ({ row }) => <div className={styles.routeCell}><span>{row.original.provider || 'Unknown'}</span><small title={row.original.model}>{row.original.model || 'Unknown model'}</small>{row.original.requestedModel !== row.original.model && <small title={row.original.requestedModel}>Requested · {row.original.requestedModel || 'Unknown'}</small>}</div> },
     { id: 'state', header: 'Recorded state', cell: ({ row }) => <span className={styles.status} data-state={row.original.status}>{row.original.status === 'pending' ? 'Incomplete' : row.original.status || 'Unknown'}<small>{row.original.usageSource === 'provider' ? 'Provider usage' : row.original.usageSource === 'estimated' ? 'Estimated usage' : 'Usage missing'}</small></span> },
     ...[['contextEstimate', 'Context est.'], ['providerInputTokens', 'Input'], ['cacheReadTokens', 'Cache read'], ['cacheWriteTokens', 'Cache write'], ['providerOutputTokens', 'Output']].map(([key, header]) => ({ id: key, header, cell: ({ row }) => <span className={styles.numeric} title={quantity(row.original[key])}>{quantity(row.original[key], true)}</span> })),
     { id: 'bytes', header: 'Body change', cell: ({ row }) => <span className={styles.numeric} data-expansion={row.original.savedBytes < 0 || undefined}>{signedBytes(finite(row.original.savedBytes) ? -row.original.savedBytes : null)}</span> },
-  ], [selectedSessionId, setSessionId, setTurnId]);
+  ], [selectedSessionId, setSessionId, setTurnId, turnId]);
   const refreshOverview = () => { if (selectedSessionId) setSessionId(selectedSessionId); overview.refresh(); };
-  const refresh = () => { refreshOverview(); detail.refresh(); };
+  const refresh = () => { refreshOverview(); detail.refresh(); exact.refresh(); };
   const focusInterval = (next) => { if (selectedSessionId) setSessionId(selectedSessionId); setScope(next); };
-  return <>
+  const recordingStart = utc(data?.recordingStartedAt);
+  const dataTimestamp = utc(data?.freshness?.persistedAt || data?.freshness?.snapshotCompletedAt);
+  return <div className={`${shared.lensViewport} ${styles.viewport}`}>
     <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" aria-pressed={showReports} onClick={()=>setShowReports(!showReports)}>{showReports ? 'Return to session tracks' : 'Browse client reports'}</Button><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Shaping controls</Button></Group></div>
-    <ScopeBar /><ActivityBand title="Retained request activity" />
-    <div className={styles.workspace}>
+    <ScopeBar />
+    <details className={styles.scopeActivity} onToggle={event => setShowActivity(event.currentTarget.open)}><summary>Activity across the shared scope</summary>{showActivity && <ActivityBand title="Retained request activity" />}</details>
+    <div className={`${styles.workspace} ${shared.lensContent}`}>
       <RecordingCoverage recording={data?.recording} />
       {data?.recording?.rejectedAttempts > 0 && <Alert color="orange" className={styles.rejection} title={`${quantity(data.recording.rejectedAttempts)} context ${data.recording.rejectedAttempts === 1 ? 'record' : 'records'} rejected`}>Usage may remain available; context and stage evidence is absent. Counts follow the current filters.</Alert>}
-      {showReports ? <ContextClientEvents key={contextUrl(scope,filters)} scope={scope} filters={filters} onSnapshot={observeSnapshot} /> : <ReadState resource={overview}>
+      {showReports ? <div className={styles.reportsViewport}><ContextClientEvents key={contextUrl(scope,filters)} scope={scope} filters={filters} onSnapshot={observeSnapshot} /></div> : <ReadState resource={overview}>
         <div className={styles.toolbar}><div><h2>Session cohort</h2><span>{quantity(data?.summary?.sessions)} identities · latest observation first</span></div><Group gap={8}><Select aria-label="Project label filter" placeholder="All project labels" value={projectLabel} onChange={filterByProject} data={(data?.projects || []).filter((project) => project.projectLabel).map((project) => project.projectLabel)} clearable searchable w={180} /><form className={styles.clientFilter} onSubmit={(event) => { event.preventDefault(); setClientTool(clientDraft.trim()); changePage(1); }}><TextInput aria-label="Exact client filter" placeholder="Exact client name" value={clientDraft} onChange={(event) => setClientDraft(event.currentTarget.value)} w={150} /><Button type="submit" variant="default">Apply</Button></form>{clientTool && <Button variant="subtle" onClick={() => { setClientDraft(''); setClientTool(''); changePage(1); }}>Clear client</Button>}</Group></div>
-        {!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="calc(100dvh - 412px)" detail={selectedTurn && <ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={detail.data} accounts={accounts} baseline={baseline} onBaseline={setBaseline} onClearBaseline={()=>setBaseline(null)} onSnapshot={observeSnapshot} />}>
+        <div className={styles.sessionViewport}>{!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="100%" detail={selectedTurn && <ReadState resource={pageTurn ? detail : exact}><ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={selectedDetail} accounts={accounts} baseline={baseline} onBaseline={setBaseline} onClearBaseline={()=>setBaseline(null)} onSnapshot={observeSnapshot} onEconomics={row => setSelectedRecord({kind: 'economics-record', id: String(row.ledgerId)})} /></ReadState>}>
           <div className={styles.cohortGrid}>
             <aside className={styles.sessions} aria-label="Recorded session cohort"><div className={styles.sessionList}>{sessions.map((item) => <UnstyledButton key={item.id} className={styles.sessionButton} data-selected={item.id === selectedSessionId || undefined} aria-pressed={item.id === selectedSessionId} onClick={() => selectSession(item.id)}><div className={styles.sessionName}><strong>{item.projectLabel || 'Unlabeled session'}</strong><span>#{item.id}</span></div><div className={styles.sessionClient}>{item.clientTool || 'Unknown client'}<Badge size="xs" color="gray" variant="light">{IDENTITY[item.identitySource] || 'Unknown identity'}</Badge></div><div className={styles.sessionNumbers}><span>{quantity(item.requests)} requests <small>· {quantity(item.attempts)} attempts</small></span><span>{quantity(item.providerInputTokens, true)} input</span></div><time className={styles.sessionTime} dateTime={item.lastSeenAt}>{utc(item.lastSeenAt)} UTC</time></UnstyledButton>)}</div><Pager pagination={data?.pagination} onPage={changePage} label="Sessions" /><p className={styles.identityFoot}>Identity is not a count of agents. Inferred locality may combine separate callers. Project labels are operator assigned.</p></aside>
             <div className={styles.sessionDetail}>{!selectedSessionId && <p className={styles.emptyInline}>Choose a recorded session to inspect its evidence.</p>}<ReadState resource={detail}>{session && <>
               <div className={styles.sessionHeading}><div><h2>{session.projectLabel || `Session #${session.id}`}<span>{IDENTITY[session.identitySource] || 'Identity source unknown'}</span></h2><p>{IDENTITY_NOTE[session.identitySource] || 'The identity source is not recorded.'}</p></div><ProjectEditor key={session.id} session={session} refresh={detail.refresh} overviewRefresh={refreshOverview} /></div>
               <SummaryMeasures summary={detail.data.summary} />
               {detail.data.summary?.attempts === 0 && <p className={styles.emptyInline}>Selected session #{session.id} has no attempts in this scope. The session selection is preserved.</p>}
-              {turnId !== null && !selectedTurn && <p className={styles.emptyInline}>Selected request #{turnId} is outside this page or scope. Choose another request or return to its interval.</p>}
+              {turnId !== null && !pageTurn && <p className={styles.emptyInline}>{exact.error ? `Exact attempt #${turnId} ${selectedTurn ? 'refresh failed; the inspector retains the last successful read.' : 'is unavailable.'} ${exact.error}` : exact.loading ? `Reading exact attempt #${turnId}…` : selectedTurn ? `Attempt #${turnId} is inspected by its exact identity outside this page or scope. The cohort and time filters are preserved.` : `Exact attempt #${turnId} is not retained. No neighboring attempt is substituted.`}</p>}
               <ContextTracks trend={detail.data.trend} scope={scope} onScope={focusInterval} />
               <div className={styles.ledgerHead}><h3>Attempt ledger</h3><span>Chronological · token quantities except body change</span></div>
               {turns.length ? <ContextTable rows={turns} columns={columns} selectedId={turnId} label="Session request attempts" minWidth={1000} /> : <p className={styles.emptyInline}>No attempts on this page match the selected scope.</p>}
@@ -131,10 +145,10 @@ function ContextScope({ workspace, baseline, setBaseline }) {
               <p className={styles.footnote}>Provider input is cache-inclusive. Cache read and write are reported separately, never added to it. Incomplete means a retained pending receipt, not a confirmed active generation.</p>
             </>}</ReadState></div>
           </div>
-        </SelectionDock>}
+        </SelectionDock>}</div>
       </ReadState>}
       {data?.summary?.sessions > 0 && !sessions.length && !selectedSessionId && <Pager pagination={data?.pagination} onPage={changePage} label="Sessions" />}
-      <footer className={styles.footer}><span>{quantity(data?.retentionDays)} days retained · recording began {utc(data?.recordingStartedAt)} UTC</span><span>{data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · {utc(data?.freshness?.persistedAt || data?.freshness?.snapshotCompletedAt)} UTC</span></footer>
+      <footer className={styles.footer}><span>{quantity(data?.retentionDays)} days retained · {recordingStart === 'Unknown' ? 'recording start unknown' : `recording began ${recordingStart} UTC`}</span><span>{dataTimestamp === 'Unknown' ? 'Data timestamp unknown' : `${data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · ${dataTimestamp} UTC`}</span></footer>
     </div>
-  </>;
+  </div>;
 }

@@ -117,7 +117,7 @@ function OrderedMembers({ plan, document, onChange, accounts, disabled }) {
           Add member
         </Button>
       </div>
-      <Text size="sm" c="#5b6980" mb="sm">
+      <Text size="sm" c="var(--slate)" mb="sm">
         Capability fit and round-robin can change dispatch order. This list preserves the configured
         sequence.
       </Text>
@@ -161,7 +161,7 @@ function OrderedMembers({ plan, document, onChange, accounts, disabled }) {
         </SortableContext>
       </DndContext>
       {!plan.models.length && (
-        <Text size="sm" c="#91430f">
+        <Text size="sm" c="var(--ember)">
           This plan has no members. Add one before validating.
         </Text>
       )}
@@ -310,7 +310,7 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
               </UnstyledButton>
             ))}
             {!document.combos.length && (
-              <Text size="sm" c="#5b6980">
+              <Text size="sm" c="var(--slate)">
                 No plans are recorded. A stored draft can add one.
               </Text>
             )}
@@ -375,14 +375,14 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
                 />
               </Stack>
             ) : (
-              <Text c="#5b6980">Select a recorded plan or add one to the draft.</Text>
+              <Text c="var(--slate)">Select a recorded plan or add one to the draft.</Text>
             )}
           </div>
         </div>
       </Tabs.Panel>
       <Tabs.Panel value="aliases">
         <div className={styles.panelBody}>
-          <Text size="sm" c="#5b6980" mb="md">
+          <Text size="sm" c="var(--slate)" mb="md">
             Aliases target one physical provider/model. Alias chains are not a routing capability.
           </Text>
           {Object.entries(document.aliases).map(([name, value]) => (
@@ -484,7 +484,7 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
               }
             />
           </div>
-          <Text size="sm" c="#5b6980" mt="md">
+          <Text size="sm" c="var(--slate)" mt="md">
             Clearing a covered setting restores its existing gateway default. Account policy,
             disabled models, proxy settings and shaping options are preserved separately.
           </Text>

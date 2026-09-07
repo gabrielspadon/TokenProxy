@@ -1,26 +1,26 @@
 .shell {
-  --surface: #fff;
-  --canvas: #f3f5f8;
-  --border: #dce2ec;
-  --text: #202d43;
-  --muted: #5e6b82;
-  --accent: #455bca;
+  --surface: var(--raised);
+  --canvas: var(--paper);
+  --border: var(--rule);
+  --text: var(--ink);
+  --muted: var(--slate);
+  --accent: var(--signal);
   color: var(--text);
 }
 .header {
-  background: #fff;
+  background: var(--raised);
   border-bottom: 1px solid var(--border);
 }
 .wordmark {
-  font-size: 22px;
+  font-size: 1.375rem;
   font-weight: 600;
   letter-spacing: -1px;
   text-decoration: none;
-  color: #17263f;
+  color: var(--ink);
   white-space: nowrap;
 }
 .wordmarkPoint {
-  color: #586cda;
+  color: var(--signal);
 }
 .headerDivider {
   width: 1px;
@@ -29,8 +29,8 @@
   margin-inline: 12px 2px;
 }
 .workspaceLabel {
-  font-size: 13px;
-  color: #63718a;
+  font-size: 0.8125rem;
+  color: var(--slate);
 }
 .headerSpacer {
   flex: 1;
@@ -39,15 +39,15 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  color: #58677d;
+  font-size: 0.8125rem;
+  color: var(--slate);
   white-space: nowrap;
 }
 .snapshotDot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #9ca6b9;
+  background: var(--control-edge);
 }
 .snapshotIdentity {
   display: inline-flex;
@@ -55,16 +55,16 @@
   gap: 8px;
 }
 .isolation {
-  border: 1px solid #dbe1ed;
+  border: 1px solid var(--rule);
   padding: 1px 6px;
   border-radius: 4px;
-  color: #667187;
-  background: #f5f7fa;
+  color: var(--slate);
+  background: var(--paper);
 }
 .navbar {
-  background: #142039;
-  border-inline-end: 1px solid #22304a;
-  color: #ced6e7;
+  background: var(--navy);
+  border-inline-end: 1px solid var(--nav-active);
+  color: var(--nav-text);
 }
 .navIntro {
   display: flex;
@@ -73,15 +73,15 @@
   padding: 24px 14px 18px;
 }
 .navIntro strong {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   display: block;
-  color: #eef1fb;
+  color: var(--nav-text);
 }
 .navIntro span:not(.workspaceOrb) {
   display: block;
-  font-size: 13px;
-  color: #a8b5cd;
+  font-size: 0.8125rem;
+  color: var(--nav-muted);
   margin-top: 3px;
 }
 .workspaceOrb {
@@ -91,8 +91,8 @@
   width: 32px;
   height: 34px;
   flex-shrink: 0;
-  background: linear-gradient(145deg, #5466b2, #293c75);
-  color: #eff0ff;
+  background: var(--nav-active);
+  color: var(--nav-text);
 }
 .navScroll {
   flex: 1;
@@ -101,53 +101,61 @@
   padding: 9px 10px;
 }
 .navGroupLabel {
-  color: #91a1bc;
+  color: var(--nav-muted);
   padding: 0 10px 8px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 .navItem {
   border-radius: 5px;
-  color: #c3cee2;
+  color: var(--nav-text);
   min-height: 36px;
   margin-bottom: 2px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .navItem:hover {
-  color: #fff;
-  background: #21314e;
+  color: var(--nav-text);
+  background: var(--nav-active);
 }
 .navItem[data-active] {
-  background: #2d3f68;
-  color: #fff;
-  box-shadow: inset 2px 0 #a3b3ff;
+  background: var(--nav-active);
+  color: var(--nav-text);
+  box-shadow: inset 2px 0 var(--nav-selected-edge);
 }
 .navItem :global(.mantine-NavLink-label) {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
 }
 .navItem :global(.icon) {
   width: 18px;
   height: 18px;
-  font-size: 18px;
+  font-size: 1.125rem;
 }
 .navBottom {
-  border-top: 1px solid #2b3750;
+  border-top: 1px solid var(--nav-active);
   padding: 12px 10px 16px;
 }
 .navBottom > p {
-  color: #95a5c0;
+  color: var(--nav-muted);
   padding: 9px 10px 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .navBottom button {
-  color: #c5cfe3;
+  color: var(--nav-text);
   justify-content: flex-start;
 }
+.navBottom [data-observation-control] {
+  color: var(--nav-text);
+  background: var(--nav-active);
+  border-color: var(--nav-muted);
+}
+.navBottom [data-observation-control]:hover {
+  background: var(--nav-active);
+}
 .navBottom kbd {
-  background: #263652;
-  border-color: #415172;
-  color: #cdd7ec;
+  background: var(--nav-active);
+  border-color: var(--nav-muted);
+  color: var(--nav-text);
 }
 .main {
   background: var(--canvas);
@@ -156,8 +164,31 @@
   min-width: 0;
   outline: none;
 }
+.lensViewport {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 52px);
+  min-width: 0;
+}
+.lensViewport > * {
+  flex-shrink: 0;
+}
+.lensViewport > .lensContent {
+  flex: 1;
+  min-height: 380px;
+}
+@media (max-width: 760px) {
+  .lensViewport {
+    height: auto;
+  }
+  .lensViewport > .lensContent {
+    flex: none;
+    height: auto;
+    min-height: 0;
+  }
+}
 .legacyMain {
-  padding: 28px 32px;
+  padding: 24px;
   min-width: 0;
 }
 .lensHeading {
@@ -165,7 +196,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 20px;
-  padding: 15px 26px 12px;
+  padding: 20px 24px 16px;
 }
 .lensTitle {
   display: flex;
@@ -173,20 +204,20 @@
   gap: 16px;
 }
 .lensTitle h1 {
-  font-size: 25px;
-  letter-spacing: -0.75px;
-  font-weight: 500;
-  color: #202e48;
+  font-size: var(--type-title);
+  letter-spacing: -.035em;
+  font-weight: 600;
+  color: var(--ink);
 }
 .lensTitle p {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
 }
 .scope {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 26px 12px;
+  padding: 0 24px 12px;
   flex-wrap: wrap;
 }
 .scope > * {
@@ -196,7 +227,7 @@
   width: 160px;
 }
 .periodSelect {
-  width: 158px;
+  width: 190px;
 }
 .scopeSeparator {
   height: 20px;
@@ -205,15 +236,15 @@
   margin-inline: 2px;
 }
 .scopeSummary {
-  font-size: 13px;
-  color: #5e6b82;
+  font-size: 0.8125rem;
+  color: var(--slate);
   margin-inline-start: auto;
 }
 .activity {
-  padding: 0 26px;
+  padding: 0 24px;
 }
 .activitySurface {
-  background: #fff;
+  background: var(--raised);
   border-block: 1px solid var(--border);
   display: grid;
   grid-template-columns: 165px minmax(0, 1fr);
@@ -221,24 +252,24 @@
 }
 .activitySummary {
   padding: 5px 18px 3px 0;
-  border-inline-end: 1px solid #e8ecf2;
+  border-inline-end: 1px solid var(--rule);
   margin-block: 7px;
 }
 .activitySummary h2 {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
-  color: #64728a;
+  color: var(--slate);
 }
 .activityTotal {
-  font-size: 26px;
+  font-size: 1.625rem;
   font-weight: 500;
   letter-spacing: -0.8px;
   margin-block: 4px 2px;
   line-height: 1.2;
 }
 .activitySummary p {
-  font-size: 13px;
-  color: #5e6b82;
+  font-size: 0.8125rem;
+  color: var(--slate);
 }
 .activityChart {
   padding: 5px 0 0 20px;
@@ -248,8 +279,8 @@
   display: flex;
   gap: 20px;
   align-items: center;
-  color: #64728a;
-  font-size: 13px;
+  color: var(--slate);
+  font-size: 0.8125rem;
   padding-block: 8px 0;
 }
 .legendItem {
@@ -272,8 +303,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 13px;
-  color: #5e6b82;
+  font-size: 0.8125rem;
+  color: var(--slate);
   padding: 12px 20px;
 }
 .activityFoot {
@@ -281,12 +312,12 @@
   justify-content: space-between;
   gap: 12px;
   padding: 5px 0;
-  font-size: 13px;
-  color: #5e6d85;
+  font-size: 0.8125rem;
+  color: var(--slate);
 }
 .selectionDock {
-  background: #fff;
-  border-top: 1px solid #cdd5e4;
+  background: var(--raised);
+  border-top: 1px solid var(--rule);
   min-width: 0;
   height: 100%;
   overflow: auto;
@@ -304,17 +335,18 @@
   align-items: center;
   min-width: 0;
 }
+.dockHeading > div { min-width: 0; overflow-wrap: anywhere; }
 .dockHeading h2 {
-  font-size: 17px;
+  font-size: 1.0625rem;
   font-weight: 500;
 }
 .dockHeading p {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
   margin-top: 2px;
 }
 .resizeHandle {
-  background: #e0e5ef;
+  background: var(--rule);
   height: 5px;
   position: relative;
   cursor: row-resize;
@@ -327,27 +359,27 @@
   border-radius: 2px;
   inset: 1px 0 auto;
   margin-inline: auto;
-  background: #a3aec4;
+  background: var(--control-edge);
 }
 .resizeHandle:hover,
 .resizeHandle:focus-visible {
-  background: #c6d0f4;
+  background: var(--signal-wash);
 }
 .dockBody {
   padding: 12px 20px 20px;
 }
 .dockGrid {
   display: grid;
-  grid-template-columns: minmax(240px, 0.85fr) minmax(340px, 1.3fr) minmax(230px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
 }
 .detailSection + .detailSection {
-  border-inline-start: 1px solid var(--border);
-  padding-inline-start: 24px;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 16px;
 }
 .detailSection h3 {
-  font-size: 13px;
-  color: #5e6b82;
+  font-size: 0.8125rem;
+  color: var(--slate);
   font-weight: 500;
   margin-bottom: 12px;
 }
@@ -355,20 +387,20 @@
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 8px 16px;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .facts dt {
-  color: #6b778c;
+  color: var(--slate);
 }
 .facts dd {
   text-align: end;
-  color: #29374e;
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
 .emptyMessage {
   padding: 28px;
-  color: #5e6b82;
-  font-size: 14px;
+  color: var(--slate);
+  font-size: 0.875rem;
   text-align: center;
 }
 @media (min-width: 1700px) {
@@ -390,7 +422,7 @@
     display: none;
   }
   .dockGrid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .detailSection:last-child {
     grid-column: 1 / -1;
@@ -412,7 +444,7 @@
     display: none;
   }
   .snapshot {
-    font-size: 13px;
+    font-size: 0.8125rem;
     gap: 5px;
   }
   .snapshotDot {
@@ -426,14 +458,14 @@
     line-height: 1.2;
   }
   .wordmark {
-    font-size: 18px;
+    font-size: 1.125rem;
   }
   .lensHeading {
     padding: 19px 16px 14px;
     flex-wrap: wrap;
   }
   .lensTitle h1 {
-    font-size: 23px;
+    font-size: 1.4375rem;
   }
   .scope {
     padding: 0 16px 14px;
@@ -450,7 +482,7 @@
     grid-template-columns: 100px minmax(0, 1fr);
   }
   .activityTotal {
-    font-size: 23px;
+    font-size: 1.4375rem;
   }
   .activitySummary {
     padding-right: 10px;
@@ -479,6 +511,50 @@
 }
 
 .activityTotal {
-  font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+}
+.headerContent { padding-inline: 0 16px; gap: 16px; }
+.wordmark { display: flex; align-items: center; height: 52px; width: 208px; padding-inline: 24px; background: var(--navy); color: var(--nav-text); font-size: 1.25rem; letter-spacing: -.04em; flex-shrink: 0; }
+.wordmarkPoint { color: var(--nav-selected-edge); }
+.navIntro { padding: 20px 20px 12px; }
+.navGroup { padding: 8px 12px; }
+.navGroupLabel { padding-inline: 10px; margin: 0; }
+.navItem { min-height: 38px; border-radius: 6px; }
+.navItem :global(.mantine-NavLink-label) { font-size: var(--type-ui); line-height: var(--line-ui); white-space: normal; }
+.navItem[data-active] :global(.mantine-NavLink-label) { font-weight: 600; }
+.navBottom { padding: 12px; }
+.lensTitle { flex-wrap: wrap; gap: 4px 16px; }
+.lensTitle h1 { font-weight: 600; }
+.lensTitle p { font-size: var(--type-ui); line-height: var(--line-ui); }
+.scopeSummary { white-space: nowrap; }
+.activitySurface { border-block: 1px solid var(--rule); border-inline: 0; border-radius: 0; padding: 4px 0; background: transparent; }
+.activitySummary h2 { font-weight: 500; }
+.activityTotal { font-weight: 600; letter-spacing: -.035em; }
+.selectionDock { border: 0; container-type: inline-size; }
+.dockHead { position: sticky; inset-block-start: 0; background: var(--raised); border-block-end: 1px solid var(--rule); padding: 16px; z-index: 1; }
+.dockHeading { align-items: flex-start; }
+.dockHeading h2 { font-size: var(--type-section); font-weight: 600; overflow-wrap: anywhere; }
+.dockHeading p { overflow-wrap: anywhere; }
+.dockBody { padding: 16px; }
+.resizeHandle { width: 8px; height: auto; cursor: col-resize; background: var(--paper); border-inline: 1px solid var(--rule); }
+.resizeHandle::after { width: 2px; height: 40px; inset: 50% auto auto 2px; transform: translateY(-50%); }
+.resizeHandle:hover, .resizeHandle:focus-visible { background: var(--signal-wash); }
+.inspectorGroup { min-width: 0; width: 100%; }
+.dockViewport { min-width: 0; width: 100%; height: 100%; }
+.inventoryRegion { min-width: 0; overflow: auto; height: 100%; }
+.detailDrawer :global(.mantine-Drawer-body) { padding: 16px; }
+.detailDrawer :global(.mantine-Drawer-header) { border-block-end: 1px solid var(--rule); }
+.searchSection { font-size: var(--type-dense); color: var(--slate); font-weight: 500; margin: 12px 10px 4px; }
+.searchEmpty { padding: 20px 10px; color: var(--slate); }
+@media (max-width: 62em) {
+  .headerContent { padding-inline: 12px; gap: 12px; }
+  .wordmark { width: auto; padding: 0; background: transparent; color: var(--ink); }
+  .wordmarkPoint { color: var(--signal); }
+}
+@media (max-width: 48em) {
+  .lensTitle h1 { font-size: 1.75rem; }
+  .lensTitle p { display: block; }
+  .lensHeading { gap: 12px; }
+  .scope { gap: 12px; }
+  .activitySurface { padding: 8px; }
 }

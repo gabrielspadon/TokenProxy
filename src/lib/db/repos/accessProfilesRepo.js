@@ -60,11 +60,21 @@ function normalizeModels(value) {
 function normalizeExpiryDays(value) {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0)
+  if (!Number.isSafeInteger(n) || n <= 0)
     throw new AccessProfileError(
-      'expiryDays must be a positive number of days, or null for no required expiry.'
+      'expiryDays must be a positive whole number of days, or null for no required expiry.'
     );
   return Math.floor(n);
+}
+
+function checkExpectedVersion(profile, expectedVersion, expectedName) {
+  if (expectedName !== undefined && expectedName !== profile.name)
+    throw new AccessProfileError('This profile was renamed. Refresh it before applying another change.', 409);
+  if (expectedVersion === undefined) return;
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+    throw new AccessProfileError('expectedVersion must be a positive integer.');
+  if (profile.version !== expectedVersion)
+    throw new AccessProfileError('This profile changed. Refresh it before applying another change.', 409);
 }
 
 export function normalizeProfileSettings(input) {
@@ -154,6 +164,7 @@ export async function updateAccessProfile(id, input) {
   db.transaction(() => {
     const profile = db.get('SELECT * FROM accessProfiles WHERE id = ?', [id]);
     if (!profile) throw new AccessProfileError('Profile not found.', 404);
+    checkExpectedVersion(profile, input?.expectedVersion, input?.expectedName);
     const current = versionRow(
       db.get('SELECT * FROM accessProfileVersions WHERE profileId = ? AND version = ?', [
         id,
@@ -212,10 +223,13 @@ export async function getAccessProfiles() {
     }));
 }
 
-export async function deleteAccessProfile(id) {
+export async function deleteAccessProfile(id, expectedVersion, expectedName) {
   const db = await getAdapter();
   let deleted = false;
   db.transaction(() => {
+    const profile = db.get('SELECT version, name FROM accessProfiles WHERE id = ?', [id]);
+    if (!profile) return;
+    checkExpectedVersion(profile, expectedVersion, expectedName);
     // A key keeps the settings it adopted. Deleting the bundle removes the
     // bundle, never the access it granted: silently loosening or tightening a
     // live key because someone tidied a list is the failure mode this avoids.

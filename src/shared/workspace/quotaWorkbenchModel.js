@@ -1,3 +1,4 @@
+import { METRIC_COLORS, chartThemeColors } from './metricColors';
 export const quotaNumber = (value) =>
   typeof value === 'number' && Number.isFinite(value)
     ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(value)
@@ -43,17 +44,19 @@ export function quotaWorkbenchUrl(scope, connectionId, anchor) {
   return `/api/admin/quota/workbench?${params}`;
 }
 
-export function quotaChecksUrl(analysisUrl, page = 1, eventType = null) {
+export function quotaChecksUrl(analysisUrl, page = 1, eventType = null, windowScope = null) {
   const params = new URLSearchParams(analysisUrl.split('?')[1]);
   if (!params.has('start')) params.set('start', '1970-01-01T00:00:00.000Z');
   params.set('kind', 'checks');
   params.set('page', String(page));
   params.set('pageSize', '10');
   if (eventType) params.set('eventType', eventType);
+  if (windowScope) params.set('scope', windowScope);
   return `/api/admin/quota/history?${params}`;
 }
 
 export function quotaObservationOption(series, selectedId, zoom) {
+  const theme=chartThemeColors();
   const points = series.points.filter(
     (point) =>
       point.observedAt &&
@@ -88,13 +91,23 @@ export function quotaObservationOption(series, selectedId, zoom) {
       min: series.measurement === 'percentage' ? 0 : undefined,
       max: series.measurement === 'percentage' ? 100 : undefined,
       axisLabel: { formatter: (value) => quotaNumber(value) },
-      splitLine: { lineStyle: { color: '#e9edf4' } },
+      splitLine: { lineStyle: { color: theme.rule } },
     },
     dataZoom: [
       {
         type: 'slider',
+        left: 65,
+        right: 18,
+        top: null,
+        width: null,
         bottom: 5,
-        height: 20,
+        height: 32,
+        handleSize: '100%',
+        realtime: false,
+        brushSelect: false,
+        backgroundColor: theme.paper,
+        fillerColor: theme.signalWash,
+        handleStyle: {color:theme.raised,borderColor:theme.slate},
         showDetail: false,
         ...(zoom ? { startValue: zoom[0], endValue: zoom[1] } : { start: 0, end: 100 }),
       },
@@ -108,7 +121,7 @@ export function quotaObservationOption(series, selectedId, zoom) {
           id: point.id,
           observedAt: point.observedAt,
           value: [Date.parse(point.observedAt), point.value],
-          itemStyle: { color: point.id === selectedId ? '#455bca' : '#527b9a' },
+          itemStyle: { color: point.id === selectedId ? METRIC_COLORS.selected : METRIC_COLORS.input, opacity:1 },
         })),
       },
     ],

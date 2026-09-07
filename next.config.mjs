@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import proxyBodyLimit from "./open-sse/config/proxyBodyLimit.cjs";
 import { SHAPING_WORKER_FILES } from "./src/lib/shaping/runtimeFiles.mjs";
+import { COMPATIBILITY_WORKER_FILES } from "./src/lib/compatibility/runtimeFiles.mjs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -68,9 +69,10 @@ const nextConfig = {
   outputFileTracingIncludes: {
     // The bounded analytics worker is loaded by path at runtime, so Next
     // traces nothing it imports. notificationRuleQueries.mjs reaches into
-    // src/lib/notifications, and a miss there kills the whole worker, which
+    // src/lib/notifications and counterfactual evidence imports the shared
+    // completion identity helper. A miss kills the whole worker, which
     // also serves Capacity, Context and Economics.
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/notifications/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES],
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/db/completionIdentity.mjs", "./src/lib/notifications/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES, ...COMPATIBILITY_WORKER_FILES],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
   },

@@ -75,9 +75,12 @@ export function readOperationEvents(db, query) {
   const where = clauses.join(" AND ");
   const total = db.get(`SELECT COUNT(*) AS total FROM operationEvents WHERE ${where}`, values).total;
   const items = db.all(
-    `SELECT * FROM operationEvents WHERE ${where} ORDER BY capturedAt DESC, id DESC LIMIT ? OFFSET ?`,
+    `SELECT *, (SELECT json_object('id', terminal.id, 'state', terminal.state, 'capturedAt', terminal.capturedAt)
+       FROM operationEvents terminal WHERE terminal.operationId = operationEvents.operationId
+       AND terminal.phase = operationEvents.phase AND terminal.state != 'started' LIMIT 1) AS terminalReceipt
+     FROM operationEvents WHERE ${where} ORDER BY capturedAt DESC, id DESC LIMIT ? OFFSET ?`,
     [...values, pageSize, offset]
-  ).map((row) => ({ ...row, details: JSON.parse(row.details) }));
+  ).map((row) => ({ ...row, details: JSON.parse(row.details), terminalReceipt: row.terminalReceipt ? JSON.parse(row.terminalReceipt) : null }));
   return {
     items, total, page, pageSize,
     pages: Math.ceil(total / pageSize),

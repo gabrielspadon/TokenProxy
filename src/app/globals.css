@@ -1,38 +1,6 @@
 @layer reset, base, layout, components, states;
 
-@font-face { font-family: "Fira Sans"; font-weight: 400; font-display: swap; src: url("/fonts/fira-sans-400.woff2") format("woff2"); }
-@font-face { font-family: "Fira Sans"; font-weight: 500; font-display: swap; src: url("/fonts/fira-sans-500.woff2") format("woff2"); }
-@font-face { font-family: "Fira Sans"; font-weight: 600; font-display: swap; src: url("/fonts/fira-sans-600.woff2") format("woff2"); }
-@font-face { font-family: "Fira Mono"; font-weight: 400; font-display: swap; src: url("/fonts/fira-mono-400.woff2") format("woff2"); }
 
-:root {
-  --paper: #f4f6f8;
-  --raised: #ffffff;
-  --ink: #17202a;
-  --slate: #5b6672;
-  --rule: #d5dbe1;
-  --signal: #0f6b5c;
-  --ember: #b54708;
-  --refusal: #a3222b;
-  --signal-deep: #0a4a40;
-  --wire: #7ba8a0;
-  --strap-h: 34px;
-  --signal-wash: #e3f1ed;
-  --ember-wash: #f8ebe1;
-  --refusal-wash: #f7e5e6;
-  --sans: "Fira Sans", "Noto Sans", "Segoe UI", system-ui, sans-serif;
-  --mono: "Fira Mono", "Noto Sans Mono", ui-monospace, monospace;
-  --t-12: 0.8rem;
-  --t-13: 0.8667rem;
-  --t-15: 1rem;
-  --t-19: 1.2667rem;
-  --t-24: 1.6rem;
-  --t-30: 2rem;
-  --rail: 200px;
-  --measure: 1120px;
-  --radius: 4px;
-  --tick: 1s;
-}
 
 @layer reset {
   *, *::before, *::after { box-sizing: border-box; }

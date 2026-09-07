@@ -1,5 +1,6 @@
 import { test, expect } from 'playwright/test';
 import { signIn } from './helpers.mjs';
+import { credentiallessDatabase } from './capacity-economics-fixture-guard.mjs';
 
 // Real isolated requests only. Configuration writes go through the editor and
 // its confirmation; API reads verify them without replacing browser responses.
@@ -66,9 +67,15 @@ test('synthetic UI persists an exact model window and removes it back to the ori
   expect(base.username || base.password, 'Do not put credentials in E2E_BASE').toBe('');
   const gate = await page.request.get(new URL('/api/admin/health', base).href, { maxRedirects: 0 });
   assertSynthetic(gate); // Check before transmitting the supplied password.
+  const database = credentiallessDatabase();
+  let fixtureAccounts;
+  try {
+    fixtureAccounts = database.prepare('SELECT id, provider FROM providerConnections ORDER BY id').all();
+  } finally { database.close(); }
   await signIn(page);
   const providers = await readJson(page, '/api/providers');
-  expect(providers.connections, 'The disposable preview must have zero provider accounts').toEqual([]);
+  expect(providers.connections.map(({ id, provider }) => ({ id, provider })).sort((a, b) => a.id.localeCompare(b.id)),
+    'The preview must expose exactly the verified credentialless fixture accounts').toEqual(fixtureAccounts);
   const initial = await readJson(page, ENDPOINT);
   expect(initial.inventory).toMatchObject({ source: 'local', dynamicCatalogs: false });
   expect(Array.isArray(initial.models)).toBe(true);

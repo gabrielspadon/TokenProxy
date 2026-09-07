@@ -7,7 +7,7 @@ export const TIMELINE_ROOT = '/api/admin/session-pins/timeline';
 export const TIMELINE_PAGE_SIZE = 25;
 
 export const TIMELINE_KIND_LABEL = {
-  request: 'Request',
+  request: 'Physical attempt',
   switch: 'Account switch',
   action: 'Control receipt',
 };
@@ -16,10 +16,18 @@ export const TIMELINE_KIND_LABEL = {
 // that the backend does not accept would be refused as an unknown parameter.
 export const TIMELINE_KINDS = [
   { value: '', label: 'All sources' },
-  { value: 'request', label: 'Requests' },
+  { value: 'request', label: 'Physical attempts' },
   { value: 'switch', label: 'Account switches' },
   { value: 'action', label: 'Control receipts' },
 ];
+
+export function pinAttemptSelection(item, sessionId) {
+  const id = item?.requestId ?? item?.id;
+  if (!Number.isSafeInteger(sessionId) || sessionId < 1 || typeof id !== 'string' || !id) return null;
+  return { kind: 'context-attempt', id, sessionId,
+    ...(item.connectionId ? { connectionId: item.connectionId } : {}),
+    ...(item.selectedModel || item.model ? { model: item.selectedModel || item.model } : {}) };
+}
 
 export function timelineUrl({ pinId, kind = '', connectionId = '', cursor = '', pageSize } = {}) {
   const query = new URLSearchParams({ pinId });

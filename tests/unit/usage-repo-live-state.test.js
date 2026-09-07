@@ -116,6 +116,7 @@ describe('pending requests and active sessions', () => {
       completionTokens: 4,
       status: 'done',
       provider: 'prov-s',
+      connectionId: 'conn-s',
     });
     expect(done.durationMs).toBeGreaterThanOrEqual(0);
 
@@ -134,6 +135,11 @@ describe('pending requests and active sessions', () => {
     // The error provider flag surfaces through the stats snapshots.
     const { errorProvider } = await getActiveRequests();
     expect(errorProvider).toBe('prov-s');
+  });
+  it('keeps absent account identity null instead of resolving by a display label', async () => {
+    const requestId = trackActiveSession({ model:'unattributed-model',provider:'prov-s' });
+    const rows = await getActiveSessions();
+    expect(rows.find(row => row.requestId === requestId)).toMatchObject({ connectionId:null,account:null });
   });
 });
 

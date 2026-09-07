@@ -37,7 +37,7 @@ test("a transport that never ran says what to do next, and withholds an address 
   await expect(page.getByText("No relay has run on this machine yet. Start the relay to publish a public address.")).toBeVisible();
   const relay = page.locator("section", { has: page.getByRole("heading", { name: "Relay" }) });
   await expect(relay.locator(".unreported").first()).toHaveText("Not reported");
-  await expect(relay).toContainText("Withheld until the relay confirms it answers there");
+  await expect(relay).toContainText("No registered public address is stored. This status read does not test reachability.");
 });
 
 test("the switch and the process are read as two separate facts", async ({ page }) => {
@@ -85,7 +85,7 @@ test("starting a transport names internet reachability and what guards it", asyn
   await expect(dialog.locator("dt", { hasText: "Requires" })).toBeVisible();
   await expect(dialog).toContainText("A request from the machine that runs the gateway.");
   await dialog.getByRole("button", { name: "Start the relay" }).click();
-  await expect(page.getByText("Relay started.")).toBeVisible();
+  await expect(page.getByText("The process request was accepted. Inspect the refreshed status below; reachability remains unverified.")).toBeVisible();
 });
 
 test("stopping a transport names which remote clients lose access", async ({ page }) => {

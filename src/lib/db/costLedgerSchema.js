@@ -23,6 +23,7 @@ export const COST_LEDGER_TABLES = {
   costLedger: {
     columns: {
       id: 'TEXT PRIMARY KEY', // request rid
+      completionId: 'TEXT', // server-generated UUID shared with one usage completion; legacy NULL
       ts: 'TEXT NOT NULL', // ISO-8601 completion timestamp
       sid: 'TEXT', // client session id; NULL when the request carried none
       provider: 'TEXT',
@@ -38,6 +39,7 @@ export const COST_LEDGER_TABLES = {
       outputTokens: 'INTEGER NOT NULL DEFAULT 0',
     },
     indexes: [
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_cl_completion ON costLedger(completionId) WHERE completionId IS NOT NULL',
       'CREATE INDEX IF NOT EXISTS idx_cl_sid_ts ON costLedger(sid, ts)',
       'CREATE INDEX IF NOT EXISTS idx_cl_ts ON costLedger(ts)',
     ],

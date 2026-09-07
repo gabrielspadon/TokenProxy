@@ -36,7 +36,7 @@ export async function POST(request) {
     const user = await userRes.json();
     const email = user.email || user.public_email || "";
 
-    await createProviderConnection({
+    const connection = await createProviderConnection({
       provider: "gitlab",
       authType: "oauth",
       accessToken: token.trim(),
@@ -54,7 +54,7 @@ export async function POST(request) {
       },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, connection: { id: connection.id, provider: connection.provider, email: connection.email } });
   } catch (error) {
     console.error("GitLab PAT auth error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

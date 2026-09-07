@@ -177,4 +177,12 @@ describe("/api/model-context", () => {
       deleteKeys: ["stale"],
     });
   });
+  it('passes reviewed-key expectations and exposes conflict or persistence uncertainty', async () => {
+    mocks.mutateContextWindowOverrides.mockRejectedValue(Object.assign(new Error('Reviewed key changed'), { code: 'context_window_conflict' }));
+    const request = () => new Request('http://localhost/api/model-context', { method: 'POST', body: JSON.stringify({ set: [{ key: 'reviewed', contextWindow: 64000 }], expectedOverrides: { reviewed: 32000 } }) });
+    expect((await POST(request())).status).toBe(409);
+    expect(mocks.mutateContextWindowOverrides).toHaveBeenCalledWith({ set: [{ key: 'reviewed', contextWindow: 64000 }], deleteKeys: [], expectedOverrides: { reviewed: 32000 } });
+    mocks.mutateContextWindowOverrides.mockResolvedValue({ overrides: { reviewed: 64000 }, nSet: 1, nDel: 0, persistence: 'unconfirmed' });
+    expect((await POST(request())).status).toBe(207);
+  });
 });

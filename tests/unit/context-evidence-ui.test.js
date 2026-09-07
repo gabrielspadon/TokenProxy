@@ -71,4 +71,14 @@ describe('Content-free Context evidence views',()=>{
     await render(<ContextCostEvidence records={[{ledgerId:9,recordedCostUsd:0,estimatedCostUsd:null,reportedCostUsd:null,costSource:null}]}/>);
     expect(container.textContent).toContain('Recorded amount$0.00');expect(container.textContent).toContain('Rate estimate · USDUnavailable');expect(container.textContent).toContain('Historical zero is ambiguous');
   });
+  it('exposes the exact completion identity before navigation to Economics',async()=>{
+    const onInspect=vi.fn();
+    const record={ledgerId:19,recordedCostUsd:0.12,costSource:'application-estimate'};
+    await render(<ContextCostEvidence records={[record]} onInspect={onInspect}/>);
+    const link=container.querySelector('a[aria-label="Inspect exact completion record 19"]');
+    expect(link.getAttribute('href')).toBe('/dashboard/usage');
+    link.addEventListener('click',event=>event.preventDefault());
+    await act(async()=>link.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})));
+    expect(onInspect).toHaveBeenCalledWith(record);
+  });
 });

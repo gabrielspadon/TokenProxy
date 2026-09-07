@@ -1,6 +1,6 @@
 # Direction 2 — from editorial surface to operator dashboard
 
-Historical direction, superseded on 2026-09-06 by [the Graphite workspace](./GRAPHITE.md).
+Historical direction, superseded by [the corrective redesign mandate](./REDESIGN-20260907.md). The intermediate Graphite composition was also rejected.
 The paper/Fira palette and tile-led layout below are no longer binding.
 Existing files under `docs/design/evidence/` record earlier passes, not current verification.
 

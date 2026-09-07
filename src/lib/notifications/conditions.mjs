@@ -89,9 +89,9 @@ export const UNAVAILABLE_CONDITIONS = Object.freeze([
     kind: 'compression_saver_failure',
     label: 'Compression / token-saver failure',
     reason:
-      'No failure is recorded to detect. contextStages.outcome is written by normalizeContextStages (src/lib/db/repos/contextRepo.js:26) with the domain skipped | unchanged | applied, none of which is a failure, and the RTK hooks are fail-open by contract: on error they return null and leave the body untouched without writing a stage row. A saver that threw is indistinguishable in retained data from one that chose to skip.',
+      'Failed context reductions cannot currently be distinguished from deliberately skipped reductions in the retained evidence. An unchanged request does not establish whether a reduction failed, so it cannot reliably trigger a failure alert.',
     wouldRequire:
-      'A failure outcome persisted on the stage ledger, distinct from a deliberate skip, written where the saver hooks currently swallow the error.',
+      'A recorded failure outcome for each affected transformation, kept separate from deliberate skips and unchanged results.',
   },
 ]);
 

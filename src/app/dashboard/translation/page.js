@@ -1,5 +1,7 @@
 'use client';
+import { Button, Input, Textarea } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useEventStream } from '@/shared/hooks/useEventStream';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
@@ -9,6 +11,7 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum } from '@/shared/format';
 import './styles.css';
+import { sendDiagnostic } from './diagnosticSend';
 
 // The eight fixed artifact names a stage snapshot may be saved or loaded
 // under. An arbitrary name is refused server-side, so the UI never offers a
@@ -37,7 +40,7 @@ const SAMPLE_BODY = JSON.stringify(
   2
 );
 
-const OPERATOR = 'An operator session on this gateway.';
+const OPERATOR = 'Dashboard access under this installation’s sign-in policy.';
 
 // A line that looks like a bearer token, an sk- key, or a cookie header is
 // redacted before it ever reaches the DOM. Log lines carry request bodies,
@@ -52,38 +55,25 @@ function redact(line) {
 function classifySend(status, ok) {
   if (ok) return 'succeeded';
   if (status === 499) return 'abandoned';
+  if (status === 0) return 'unconfirmed';
   if (status === 502) return 'timeout';
   if (status === 400) return 'invalid';
   return 'refused';
 }
 
 const SEND_WORD = {
-  succeeded: 'Succeeded',
+  succeeded: 'Response received',
   abandoned: 'Abandoned by the caller',
   timeout: 'Timed out before connection',
-  refused: 'Refused upstream',
+  refused: 'Request refused',
+  unconfirmed: 'Response unconfirmed',
 };
-const SEND_TONE = { succeeded: 'ok', abandoned: 'warn', timeout: 'warn', refused: 'bad' };
-
-// Captures raw text so the panel can show what the provider actually
-// returned. `@/shared/api`'s call() discards a non-JSON body, which this
-// action needs, so it fetches directly rather than through that helper.
-async function sendRaw(body) {
-  try {
-    const res = await fetch('/api/translator/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) return { ok: false, status: res.status, body: await res.json().catch(() => null) };
-    return { ok: true, status: res.status, body: { raw: await res.text() } };
-  } catch (e) {
-    return { ok: false, status: 0, body: { error: e.message, code: 'network' } };
-  }
-}
+const SEND_TONE = { succeeded: 'ok', abandoned: 'warn', timeout: 'warn', refused: 'bad', unconfirmed: 'warn' };
 
 export default function TranslationPage() {
   const [logs, setLogs] = useState([]);
+  const sendController = useRef(null);
+  useEffect(() => () => sendController.current?.abort(), []);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
   useEffect(() => {
@@ -129,9 +119,11 @@ export default function TranslationPage() {
   const [d1, setD1] = useState(null); // { data } | { error }
   const [d2, setD2] = useState(null);
   const [d3, setD3] = useState(null);
+  const bodyRevision = useRef(0);
   const [translating, setTranslating] = useState(false);
 
   const translate = async () => {
+    const revision = bodyRevision.current;
     let parsed;
     try {
       parsed = JSON.parse(clientBodyText);
@@ -148,6 +140,7 @@ export default function TranslationPage() {
         body: { step: 1, body: parsed },
       });
       setTranslating(false);
+      if (revision !== bodyRevision.current) return;
       if (!res.ok) {
         setD1({ error: refusal(res.status, res.body) });
         return;
@@ -164,11 +157,12 @@ export default function TranslationPage() {
         body: { step: 2, body: parsed },
       });
       setTranslating(false);
+      if (revision !== bodyRevision.current) return;
       if (!res.ok) {
         setD2({ error: refusal(res.status, res.body) });
         return;
       }
-      setD2({ data: res.body.result.body });
+      setD2({ data: res.body.result.body, route: res.body.result.route });
       return;
     }
     if (!d2?.data) {
@@ -198,6 +192,7 @@ export default function TranslationPage() {
       body: { step: 3, body: { provider, model, body: d2.data } },
     });
     setTranslating(false);
+    if (revision !== bodyRevision.current) return;
     if (!res.ok) {
       setD3({ error: refusal(res.status, res.body) });
       return;
@@ -226,6 +221,7 @@ export default function TranslationPage() {
     setAsk(null);
   };
   const close = () => {
+    sendController.current?.abort();
     setAsk(null);
     setDeny(null);
   };
@@ -251,16 +247,22 @@ export default function TranslationPage() {
       return;
     }
     setAsk({
+      kind: 'provider-send',
       title: 'Send this request to a live provider',
       verb: 'Send',
       requires: OPERATOR,
       changes:
-        'A stored account is selected for the provider, a real upstream call is made, and it spends real quota against that account. A refresh during the call writes a new stored secret back.',
+        'Uses the first active stored connection for this provider and sends directly through its executor. This may spend quota and refresh stored credentials. It does not test gateway routing, eligibility, fallback or client-key budget admission.',
       undo: 'None. The call already happened and cannot be recalled.',
       irreversible: true,
       hardDeny: false,
-      run: () => sendRaw({ provider, model, body }),
-      done: (res) => setSendResult({ ok: res.ok, status: res.status, body: res.body }),
+      run: async () => {
+        const controller = new AbortController();
+        sendController.current = controller;
+        try { return await sendDiagnostic({ provider, model, body }, controller.signal); }
+        finally { if (sendController.current === controller) sendController.current = null; }
+      },
+      done: (res) => setSendResult(res),
     });
   };
 
@@ -311,20 +313,21 @@ export default function TranslationPage() {
         <Freshness status={stream.status} lastDataAt={stream.lastDataAt} />
       </div>
       {done ? <Notice {...done} /> : null}
+      <p><Link href="/dashboard/requests">Open API requests</Link> for a complete gateway request, or <Link href="/dashboard/compatibility">Open the retained compatibility workbench</Link> to save suitable fixtures, pin revisions, inspect local checks and export a run receipt.</p>
 
       <section aria-labelledby="h-translate">
         <h2 id="h-translate">Walk the pipeline</h2>
         <p className="caption">
           Translate touches nothing persistent, spends no quota, and makes no outbound call. Only
-          the third depth produces anything a provider could receive.
+          the third depth constructs executor diagnostics using a stored account. Credentials are redacted; this does not test authentication or provider acceptance.
         </p>
         <label className="field">
           <span>Request as received</span>
-          <textarea
-            className="input translation-code"
+          <Textarea
+            classNames={{ input: "translation-code" }}
             rows={6}
             value={clientBodyText}
-            onChange={(e) => setClientBodyText(e.target.value)}
+            onChange={(e) => { bodyRevision.current++; setClientBodyText(e.target.value); setD1(null); setD2(null); setD3(null); }}
             spellCheck={false}
             data-i18n-skip
           />
@@ -346,26 +349,24 @@ export default function TranslationPage() {
           </fieldset>
           <label className="field">
             <span>Provider</span>
-            <input
-              className="input"
+            <Input
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => { bodyRevision.current++; setProvider(e.target.value); setD3(null); }}
               data-i18n-skip
             />
           </label>
           <label className="field">
             <span>Model</span>
-            <input
-              className="input"
+            <Input
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => { bodyRevision.current++; setModel(e.target.value); setD3(null); }}
               data-i18n-skip
             />
           </label>
           <div className="actions">
-            <button type="button" className="button" onClick={translate} disabled={translating}>
+            <Button type="button"  onClick={translate} disabled={translating}>
               Translate
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -383,14 +384,8 @@ export default function TranslationPage() {
             <dd data-i18n-skip>{d1.data.targetFormat}</dd>
             <dt>Direct bridge or neutral pivot</dt>
             <dd>
-              <span className="unreported">Not reported</span>
-              {/* docs/contract/05-shaping-translator.md:276-284 */}
-              <details className="why">
-                <summary>Why</summary>
-                <p>
-                  No route exposes the registered translator pairs or which ones are direct routes.
-                </p>
-              </details>
+              {d1.data.route ? `${d1.data.route.mode} · ${d1.data.route.supported ? 'registered conversion available' : 'conversion unavailable'}` : <span className="unreported">Not reported</span>}
+              {d1.data.route?.edges && <p>{d1.data.route.edges.map((edge) => `${edge.from} → ${edge.to}`).join(' · ')}</p>}
             </dd>
           </dl>
         ) : null}
@@ -403,13 +398,13 @@ export default function TranslationPage() {
               {JSON.stringify(d2.data, null, 2)}
             </pre>
             <div className="actions">
-              <button
+              <Button
                 type="button"
-                className="link-button"
+                variant="subtle"
                 onClick={() => setSnapshotText(JSON.stringify(d2.data, null, 2))}
               >
                 Copy into the snapshot editor
-              </button>
+              </Button>
             </div>
           </>
         ) : null}
@@ -419,7 +414,7 @@ export default function TranslationPage() {
         {d3?.data ? (
           <>
             <p className="caption">
-              This is the only depth that produces anything a provider could receive.
+              Local executor construction only. No authenticated request was sent and no upstream schema acceptance was established. {d3.data.diagnosticRedaction}
             </p>
             <dl className="facts">
               <dt>URL</dt>
@@ -431,13 +426,13 @@ export default function TranslationPage() {
               {JSON.stringify(d3.data.body, null, 2)}
             </pre>
             <div className="actions">
-              <button
+              <Button
                 type="button"
-                className="link-button"
+                variant="subtle"
                 onClick={() => setSnapshotText(JSON.stringify(d3.data.body, null, 2))}
               >
                 Copy into the snapshot editor
-              </button>
+              </Button>
             </div>
           </>
         ) : null}
@@ -446,13 +441,12 @@ export default function TranslationPage() {
       <section aria-labelledby="h-send">
         <h2 id="h-send">Send to a provider</h2>
         <p className="caption">
-          The one action here with effects beyond the trace: it selects a stored account, spends
-          real quota, and a refresh mid-call writes a new stored secret back.
+          Sends directly through the first active connection’s provider executor. This may spend real quota and refresh stored credentials. It does not validate full gateway routing, account eligibility, fallback or client-key budget admission.
         </p>
         <label className="field">
           <span>Body to send (defaults to the request above)</span>
-          <textarea
-            className="input translation-code"
+          <Textarea
+            classNames={{ input: "translation-code" }}
             rows={4}
             placeholder={clientBodyText}
             value={sendBodyText}
@@ -462,9 +456,9 @@ export default function TranslationPage() {
           />
         </label>
         <div className="actions">
-          <button type="button" className="button" onClick={requestSend}>
+          <Button type="button"  onClick={requestSend}>
             Send
-          </button>
+          </Button>
         </div>
         {sendResult ? (
           <dl className="facts">
@@ -482,19 +476,12 @@ export default function TranslationPage() {
               )}
             </dd>
             <dt>Stored account selected</dt>
-            <dd>
-              <span className="unreported">Not reported</span>
-              {/* src/app/api/translator/send/route.js:97-103, :111 */}
-              <details className="why">
-                <summary>Why</summary>
-                <p>
-                  The response carries no connection id and no refresh flag either on success or on
-                  failure.
-                </p>
-              </details>
-            </dd>
+            <dd>{sendResult.metadata?.connectionId || 'Not reported'}</dd>
+            <dt>Request scope</dt><dd>{sendResult.metadata?.scope || 'Not reported'}</dd>
+            <dt>Refreshed credentials saved</dt><dd>{sendResult.metadata?.credentialRefreshed === true ? 'Yes' : sendResult.metadata?.credentialRefreshed === false ? 'No' : 'Not reported'}</dd>
           </dl>
         ) : null}
+        {sendResult?.body?.complete === false && <Notice tone="warn" title="Diagnostic preview is incomplete" next="The response exceeded the 1 MiB preview limit and reading was cancelled. This does not establish provider completion. No request was replayed." />}
         {sendResult?.ok && sendResult.body?.raw ? (
           <>
             <p className="caption">
@@ -504,13 +491,13 @@ export default function TranslationPage() {
               {sendResult.body.raw}
             </pre>
             <div className="actions">
-              <button
+              <Button
                 type="button"
-                className="link-button"
+                variant="subtle"
                 onClick={() => setSnapshotText(sendResult.body.raw)}
               >
                 Copy into the snapshot editor
-              </button>
+              </Button>
             </div>
           </>
         ) : null}
@@ -531,8 +518,8 @@ export default function TranslationPage() {
           </div>
           <label className="field">
             <span>Snapshot content, as JSON</span>
-            <textarea
-              className="input translation-code"
+            <Textarea
+              classNames={{ input: "translation-code" }}
               rows={6}
               value={snapshotText}
               onChange={(e) => setSnapshotText(e.target.value)}
@@ -554,14 +541,14 @@ export default function TranslationPage() {
                 <span className="id" data-i18n-skip>
                   {name}
                 </span>
-                <button type="button" className="button quiet" onClick={() => loadSnapshot(name)}>
+                <Button type="button" variant="default" onClick={() => loadSnapshot(name)}>
                   <Icon name="i-refresh" />
                   Load
-                </button>
-                <button type="button" className="button quiet" onClick={() => saveSnapshot(name)}>
+                </Button>
+                <Button type="button" variant="default" onClick={() => saveSnapshot(name)}>
                   <Icon name="i-edit" />
                   Save
-                </button>
+                </Button>
                 {snapshotStatus[name] ? <Notice {...snapshotStatus[name]} /> : null}
               </div>
             ))}
@@ -590,20 +577,20 @@ export default function TranslationPage() {
           <div className="verb-row">
             <label className="field">
               <span>Filter</span>
-              <input className="input" value={filter} onChange={(e) => setFilter(e.target.value)} />
+              <Input value={filter} onChange={(e) => setFilter(e.target.value)} />
             </label>
-            <button type="button" className="button quiet" onClick={() => setPaused((p) => !p)}>
+            <Button type="button" variant="default" onClick={() => setPaused((p) => !p)}>
               <Icon name={paused ? 'i-play' : 'i-pause'} />
               {paused ? 'Resume' : 'Pause'}
-            </button>
-            <button type="button" className="button quiet" onClick={checkNow}>
+            </Button>
+            <Button type="button" variant="default" onClick={checkNow}>
               <Icon name="i-refresh" />
               Check for new lines
-            </button>
-            <button type="button" className="button danger" onClick={clearLogs}>
+            </Button>
+            <Button type="button" color="red" onClick={clearLogs}>
               <Icon name="i-delete" />
               Clear
-            </button>
+            </Button>
           </div>
           {lastCheck ? (
             lastCheck.error ? (
@@ -660,7 +647,9 @@ export default function TranslationPage() {
         refusal={deny}
         onConfirm={confirm}
         onClose={close}
-      />
+      >
+        {busy && ask?.kind === 'provider-send' && <Button variant="default" onClick={() => sendController.current?.abort()}>Stop reading this send</Button>}
+      </Confirm>
     </>
   );
 }

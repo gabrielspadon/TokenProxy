@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useResource } from './useResource';
+import { ObservationProvider, useObservationPolicy } from './ObservationPolicy';
 import { INITIAL_SCOPE, validateDefinition, validateScope, validateSelection } from '@/lib/db/analytics/investigationModel.mjs';
 export { INITIAL_SCOPE } from '@/lib/db/analytics/investigationModel.mjs';
 
@@ -21,14 +22,15 @@ function scopeFromParams(params) {
     // investigation takes, so a hand-edited link cannot inject a record.
     let selection = null;
     if (rawSelection) selection = validateSelection(JSON.parse(rawSelection));
-    return { scope: validateScope({ ...INITIAL_SCOPE, ...patch }), comparisonIds, selection };
+    const definition = validateDefinition({ schemaVersion: 3, lens: 'capacity', scope: validateScope({ ...INITIAL_SCOPE, ...patch }), comparisonIds, selection });
+    return { scope: definition.scope, comparisonIds: definition.comparisonIds, selection };
   } catch {
     return null; // A malformed shared link falls back to the default scope.
   }
 }
 const EMPTY = [];
 const INITIAL_CONTEXT = { sessionId: null, page: 1, projectLabel: null, clientTool: null, baseline:null };
-const INITIAL_ECONOMICS = { groupBy:'provider', status:'all', sortBy:'timestamp', sortDirection:'desc', cohort:null, groupSortBy:'recordedCostUsd',groupSortDirection:'desc',costSource:'all',attemptKind:'all' };
+const INITIAL_ECONOMICS = { groupBy:'provider', status:'all', sortBy:'timestamp', sortDirection:'desc', cohort:null, groupSortBy:'recordedCostUsd',groupSortDirection:'desc',costSource:'all',attemptKind:'all',filters:{} };
 export function analyticsUrl(scope, view = 'activity', extra = {}) {
   const query = new URLSearchParams({ view, groupBy: 'account', pageSize: '50', ...extra });
   for (const key of ['start', 'end', 'provider', 'model', 'connectionId',...(view==='economics' ? ['sessionId','logicalRequestId','clientRef','projectRef','taskRef','missing'] : [])])
@@ -36,6 +38,10 @@ export function analyticsUrl(scope, view = 'activity', extra = {}) {
   return `/api/analytics?${query}`;
 }
 export function WorkspaceProvider({ children }) {
+  return <ObservationProvider><WorkspaceStateProvider>{children}</WorkspaceStateProvider></ObservationProvider>;
+}
+function WorkspaceStateProvider({ children }) {
+  const observations = useObservationPolicy();
   const pathname = usePathname();
   // Read the shared scope through useSearchParams so the server and the first
   // client render agree. Restoring it during render instead made the server
@@ -53,6 +59,11 @@ export function WorkspaceProvider({ children }) {
   const [contextView,setContextValue] = useState(INITIAL_CONTEXT);
   const [economicsView,setEconomicsValue] = useState(INITIAL_ECONOMICS);
   const [savedEntry,setSavedEntry] = useState(null);
+  const [activityPageState,setActivityPageState]=useState({key:null,page:1});
+  const setHistorical = observations.setHistorical;
+  const setSnapshotMode = observations.setSnapshot;
+  useEffect(() => { setHistorical(Boolean(scope.start || scope.end)); }, [scope.start, scope.end, setHistorical]);
+  useEffect(() => { setSnapshotMode(Boolean(snapshot)); }, [snapshot, setSnapshotMode]);
   const setSelectedRecord = useCallback((value) => setSelectedRecordValue(validateSelection(value)),[]);
   const setContextView = useCallback((patch) => setContextValue((previous)=>({...previous,...patch})),[]);
   const setEconomicsView = useCallback((patch) => setEconomicsValue((previous)=>({...previous,...patch})),[]);
@@ -69,15 +80,30 @@ export function WorkspaceProvider({ children }) {
   );
   const health = useResource('/api/admin/health/detail', { onSnapshot: observeSnapshot });
   const quota = useResource('/api/admin/quota', { onSnapshot: observeSnapshot });
-  const models = useResource('/api/admin/models', { onSnapshot: observeSnapshot });
-  const activity = useResource(analyticsUrl(scope), { onSnapshot: observeSnapshot });
+  const models = useResource('/api/admin/models', { onSnapshot: observeSnapshot, interval: 60000 });
+  const activityScopeKey=analyticsUrl(scope);
+  const activityGroupPage=activityPageState.key===activityScopeKey?activityPageState.page:1;
+  const setActivityGroupPage=page=>setActivityPageState({key:activityScopeKey,page});
+  const activity = useResource(activityScopeKey, { onSnapshot: observeSnapshot });
+  const pagedInventoryActivity=useResource(activityGroupPage>1?analyticsUrl(scope,'activity',{groupPage:activityGroupPage,groupPageSize:100}):null,{onSnapshot:observeSnapshot});
+  const inventoryActivity=activityGroupPage===1?activity:pagedInventoryActivity;
   const accounts = health.data?.checks?.connections || EMPTY;
   const selectedAccountId = selectedRecord?.kind === 'account' ? selectedRecord.id : null;
-  const setSelectedAccountId = useCallback((id,windowScope=null) => {
+  const setSelectedAccountId = useCallback((id,windowScope=null,windowId=null) => {
     const account = accounts.find((row)=>row.connectionId===id);
-    setSelectedRecord(id ? {kind:'account',id,connectionId:id,...(account?.provider ? {provider:account.provider} : {}),...(windowScope ? {windowScope} : {})} : null);
+    setSelectedRecord(id ? {kind:'account',id,connectionId:id,...(account?.provider ? {provider:account.provider} : {}),...(windowScope ? {windowScope} : {}),...(windowId ? {windowId} : {})} : null);
   },[accounts,setSelectedRecord]);
   const setScope = useCallback((patch) => {setScopeValue((old) => ({ ...old, ...patch }));setContextValue((old)=>({...old,page:1}));}, []);
+  useEffect(() => {
+    const restoreHistory=()=>{
+      const restored=scopeFromParams(new URLSearchParams(window.location.search));
+      setScopeValue(restored?.scope || INITIAL_SCOPE);
+      setComparisonIds(restored?.comparisonIds || []);
+      setSelectedRecordValue(restored?.selection || null);
+    };
+    window.addEventListener('popstate',restoreHistory);
+    return()=>window.removeEventListener('popstate',restoreHistory);
+  },[]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     for (const key of SCOPE_KEYS)
@@ -91,10 +117,7 @@ export function WorkspaceProvider({ children }) {
       window.history.replaceState(window.history.state, '', next);
   }, [scope, comparisonIds, selectedRecord, pathname]);
   const refresh = () => {
-    health.refresh();
-    quota.refresh();
-    models.refresh();
-    activity.refresh();
+    observations.refresh();
   };
   const value = {
     scope,
@@ -105,11 +128,15 @@ export function WorkspaceProvider({ children }) {
     quota,
     models,
     activity,
+    inventoryActivity,
+    activityGroupPage,
+    setActivityGroupPage,
     selectedAccountId,
     setSelectedAccountId,
     comparisonIds,
     setComparisonIds,
     refresh,
+    observations,
     observeSnapshot,
     selectedRecord,
     setSelectedRecord,
@@ -119,13 +146,16 @@ export function WorkspaceProvider({ children }) {
     setEconomicsView,
     savedEntry,
     setSavedEntry,
-    captureDefinition: (lens) => validateDefinition({schemaVersion:3,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
+    captureDefinition: (lens) => validateDefinition({schemaVersion:4,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
     restoreInvestigation: (entry) => {
       const definition = validateDefinition(entry.definition);
       setScopeValue(definition.scope);
       if (entry.kind !== 'filter-set') {
         setSelectedRecordValue(definition.selection); setComparisonIds(definition.comparisonIds);
         setContextValue({...INITIAL_CONTEXT,...definition.context}); setEconomicsValue({...INITIAL_ECONOMICS,...definition.economics});
+      } else {
+        setContextValue((previous) => ({ ...previous, page: 1 }));
+        setEconomicsValue({...INITIAL_ECONOMICS,...definition.economics,cohort:null});
       }
       setSavedEntry(entry);
     },

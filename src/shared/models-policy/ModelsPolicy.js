@@ -7,6 +7,8 @@ import { useResource } from '@/shared/workspace/useResource';
 import { PolicyEditor } from './PolicyEditor';
 import { PolicyHistory } from './PolicyHistory';
 import { RoutingSimulator } from './RoutingSimulator';
+import { CascadePolicy } from './CascadePolicy';
+import { PlanTransfer } from './PlanTransfer';
 import { policyRequest, shortHash } from './policyModel';
 import styles from './policy.module.css';
 
@@ -26,7 +28,7 @@ function Differences({ changes }) {
             <Table.Tr key={`${change.path}:${index}`}>
               <Table.Td className={styles.mono}>
                 {change.path}
-                <Text size="sm" c="#5b6980">
+                <Text size="sm" c="var(--slate)">
                   {change.operation}
                 </Text>
               </Table.Td>
@@ -41,7 +43,7 @@ function Differences({ changes }) {
         </Table.Tbody>
       </Table>
       {changes.length === 0 && (
-        <Text c="#5b6980" p="md">
+        <Text c="var(--slate)" p="md">
           No covered differences from the current configuration.
         </Text>
       )}
@@ -51,14 +53,14 @@ function Differences({ changes }) {
 function Validation({ result }) {
   if (!result)
     return (
-      <Text size="sm" c="#5b6980">
+      <Text size="sm" c="var(--slate)">
         This revision has not been validated in this view.
       </Text>
     );
   return (
     <div className={styles.validation}>
       <Group gap="xs">
-        <Badge color={result.valid ? 'teal' : 'orange'} c={result.valid ? '#076449' : '#804000'} variant="light">
+        <Badge color={result.valid ? 'teal' : 'orange'} c={result.valid ? 'var(--positive)' : 'var(--ember)'} variant="light">
           {result.valid ? 'Locally valid' : 'Needs correction'}
         </Badge>
         <Text size="sm">
@@ -71,7 +73,7 @@ function Validation({ result }) {
           <span className={styles.mono}>{error.path}</span>
         </div>
       ))}
-      <Text size="sm" c="#5b6980" mt="xs">
+      <Text size="sm" c="var(--slate)" mt="xs">
         Validation checks local identifiers and plan structure. It does not verify credentials,
         quota, entitlement or upstream acceptance.
       </Text>
@@ -93,6 +95,8 @@ export function ModelsPolicy() {
     [historyKey, setHistoryKey] = useState(0);
   const [section, setSection] = useState('editor');
   const [discardTarget, setDiscardTarget] = useState(null);
+  const [publicationUncertain, setPublicationUncertain] = useState(false);
+  const [historyKind, setHistoryKind] = useState('drafts');
   const dirty =
     draft && (!draft.id || JSON.stringify(document) !== JSON.stringify(draft.version.document));
   const activeDocument = document || current.data?.document;
@@ -231,17 +235,19 @@ export function ModelsPolicy() {
   }
   function publish() {
     action(async () => {
+      const reviewed = review;
+      setReview(null);
+      setPublicationUncertain(true);
       const result = await policyRequest(
-        review.action === 'activate'
-          ? `/api/admin/configuration/drafts/${review.id}/activate`
-          : `/api/admin/configuration/versions/${review.id}/rollback`,
+        reviewed.action === 'activate'
+          ? `/api/admin/configuration/drafts/${reviewed.id}/activate`
+          : `/api/admin/configuration/versions/${reviewed.id}/rollback`,
         'POST',
         {
-          expectedCurrent: review.expectedCurrent,
-          ...(review.action === 'activate' ? { expectedRevision: review.revision } : {}),
+          expectedCurrent: reviewed.expectedCurrent,
+          ...(reviewed.action === 'activate' ? { expectedRevision: reviewed.revision } : {}),
         }
       );
-      setReview(null);
       current.refresh();
       refreshHistory();
       setNotice({
@@ -252,6 +258,18 @@ export function ModelsPolicy() {
             : `Configuration version ${result.version.id} applied. Subsequent requests use it.`,
         result,
       });
+      const readback = await policyRequest('/api/admin/configuration');
+      if (readback.currentHash !== result.currentHash) throw new Error('The active policy differs from the publication receipt. Inspect current state and receipts before another action.');
+      if (result.outcome !== 'partial') setPublicationUncertain(false);
+    });
+  }
+  function inspectPublication() {
+    action(async () => {
+      await policyRequest('/api/admin/configuration');
+      await policyRequest('/api/admin/configuration/receipts?limit=20');
+      current.refresh(); refreshHistory(); setHistoryKind('receipts'); setSection('history');
+      setPublicationUncertain(false);
+      setNotice({message:'Current policy and operation receipts read. Inspect the recorded outcome before reviewing a new activation or restoration.'});
     });
   }
   return (
@@ -268,9 +286,10 @@ export function ModelsPolicy() {
       <ScopeBar analysisActions={false} />
       <div className={styles.note}>
         Versioned scope covers plans, direct aliases and their routing defaults. Account policy,
-        disabled models, provider endpoints, network and shaping settings stay unchanged by
+        disabled models, cascade pairs, provider endpoints, network and shaping settings stay unchanged by
         restoration.
       </div>
+      {publicationUncertain && <Alert color="orange" title="Publication requires reconciliation" mt="sm">The prior publication has no verified complete readback. It will not be replayed. Inspect the current hash and operation receipts before another publication.<Button variant="subtle" disabled={busy} onClick={inspectPublication}>Inspect current policy and receipts</Button></Alert>}
       {failure && (
         <Alert
           color="red"
@@ -320,7 +339,7 @@ export function ModelsPolicy() {
       )}
       <div className={styles.toolbar}>
         <Group gap="xs">
-          <Badge variant="light" color={dirty ? 'orange' : 'indigo'}>
+          <Badge variant="light" color={dirty ? 'orange' : 'teal'}>
             {draft
               ? draft.id
                 ? `Draft r${draft.revision}${dirty ? ' · unsaved edits' : ''}`
@@ -349,7 +368,7 @@ export function ModelsPolicy() {
                 Validate locally
               </Button>
               <Button
-                disabled={busy || dirty || !validation?.valid}
+                disabled={busy || publicationUncertain || dirty || !validation?.valid}
                 onClick={() => publication('activate')}
               >
                 Review activation
@@ -373,6 +392,8 @@ export function ModelsPolicy() {
           <Tabs.Tab value="editor">Plan editor</Tabs.Tab>
           <Tabs.Tab value="history">History and receipts</Tabs.Tab>
           <Tabs.Tab value="simulator">Offline account decision</Tabs.Tab>
+          <Tabs.Tab value="cascade">Solo chat cascade</Tabs.Tab>
+          <Tabs.Tab value="transfer">Import and export</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="editor" keepMounted>
           {activeDocument && (
@@ -395,8 +416,9 @@ export function ModelsPolicy() {
         <Tabs.Panel value="history">
           <div className={styles.surface}>
             <PolicyHistory
+              initialKind={historyKind}
               refreshKey={historyKey}
-              disabled={busy}
+              disabled={busy || publicationUncertain}
               onLoadDraft={load}
               onRollback={(id) => publication('rollback', id)}
             />
@@ -416,6 +438,8 @@ export function ModelsPolicy() {
             }
           />
         </Tabs.Panel>
+        <Tabs.Panel value="cascade"><CascadePolicy /></Tabs.Panel>
+        <Tabs.Panel value="transfer"><PlanTransfer disabled={busy || dirty} onImported={(value) => { adopt(value); refreshHistory(); setNotice({ message: `Imported draft revision ${value.revision} stored and read back. Validate and review its differences before activation.` }); }} /></Tabs.Panel>
       </Tabs>
       <Modal
         opened={Boolean(review)}
@@ -451,7 +475,7 @@ export function ModelsPolicy() {
               Expected active {review.expectedCurrent}
             </Text>
             <Differences changes={review.diff} />
-            <Text size="sm" c="#91430f">
+            <Text size="sm" c="var(--ember)">
               A partial or interrupted operation requires receipt inspection. It is never retried
               automatically.
             </Text>

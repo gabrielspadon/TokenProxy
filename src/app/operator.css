@@ -5,38 +5,6 @@
   font-display: block;
   src: url('/fonts/material-symbols-outlined-subset.woff2') format('woff2');
 }
-:root:root {
-  --paper: #f3f6f8;
-  --raised: #fff;
-  --ink: #172433;
-  --slate: #526373;
-  --rule: #e2e8ee;
-  --signal: #007f70;
-  --signal-deep: #006555;
-  --signal-wash: #e4f5ef;
-  --ember: #a65b11;
-  --ember-wash: #fff3df;
-  --refusal: #be4053;
-  --refusal-wash: #fff0f2;
-  --rail: 228px;
-  --radius: 10px;
-  --navy: #122d35;
-  --blue: #5575df;
-  --brand-claude: #d48764;
-  --brand-openai: #68bea7;
-  --brand-gemini: #728ee9;
-  --brand-deepseek: #648eff;
-  --brand-groq: #ed9268;
-  --brand-openrouter: #b2a4ed;
-  --brand-kimi: #8ba7da;
-  --brand-other: #9bacbb;
-}
-html {
-  font-size: 14px;
-}
-body {
-  letter-spacing: -0.012em;
-}
 .icon.material-symbol {
   font-family: 'Operator Symbols';
   font-weight: 400;
@@ -80,7 +48,7 @@ body {
 .brand-lockup small {
   display: block;
   margin-block-start: 1px;
-  font-size: 10px;
+  font-size: var(--type-dense);
   letter-spacing: 0.02em;
   color: var(--slate);
   font-weight: 400;
@@ -110,13 +78,13 @@ body {
   border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 8px;
-  font-size: 11px;
+  font-size: var(--type-dense);
   margin-block-start: 26px;
   cursor: pointer;
 }
 .nav-search kbd {
   margin-inline-start: auto;
-  font-size: 10px;
+  font-size: var(--type-dense);
   border: 1px solid var(--rule);
   padding: 0 3px;
   border-radius: 3px;
@@ -130,7 +98,7 @@ body {
 }
 .nav-group-label {
   display: block;
-  font-size: 10px;
+  font-size: var(--type-dense);
   color: var(--slate);
   margin: 0 12px 7px;
   font-weight: 500;
@@ -144,7 +112,7 @@ body {
   align-items: center;
   padding: 9px 11px;
   gap: 11px;
-  font-size: 12px;
+  font-size: var(--type-dense);
   border-radius: 7px;
   font-weight: 400;
   color: var(--slate);
@@ -169,10 +137,10 @@ body {
 .rail-foot {
   border-block-start: 1px solid var(--rule);
   padding-block-start: 16px;
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .rail-foot .caption {
-  font-size: 10px;
+  font-size: var(--type-dense);
 }
 .rail-foot .locale-select {
   max-width: 100%;
@@ -188,11 +156,11 @@ body {
   gap: 26px;
   border-color: var(--rule);
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: var(--type-dense);
   z-index: 6;
 }
 .strap .fresh {
-  font-size: 11px;
+  font-size: var(--type-dense);
   padding: 5px 9px;
   background: var(--signal-wash);
   border-radius: 6px;
@@ -221,7 +189,7 @@ body {
 }
 .screen-subtitle {
   margin-block-start: 5px;
-  font-size: 12px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
 .page-title {
@@ -245,7 +213,7 @@ body {
   min-height: 35px;
   border-radius: 7px;
   padding: 7px 12px;
-  font-size: 12px;
+  font-size: var(--type-dense);
   background: var(--signal);
   border-color: var(--signal);
   color: white;
@@ -272,11 +240,11 @@ body {
   border-radius: 7px;
   min-height: 36px;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: var(--type-dense);
 }
 .field label,
 .field > span {
-  font-size: 12px;
+  font-size: var(--type-dense);
 }
 .measures {
   border: 0;
@@ -289,7 +257,7 @@ body {
   border-radius: 9px;
 }
 .measure .label {
-  font-size: 11px;
+  font-size: var(--type-dense);
   margin-block-end: 6px;
 }
 .measure .value {
@@ -307,37 +275,37 @@ body {
 }
 .facts {
   gap: 10px 20px;
-  font-size: 12px;
+  font-size: var(--type-dense);
 }
 .rows {
   border-color: var(--rule);
 }
 .row {
   padding: 12px 4px;
-  font-size: 12px;
+  font-size: var(--type-dense);
   border-color: var(--rule);
 }
 .row.head {
   color: var(--slate);
-  font-size: 10px;
+  font-size: var(--type-dense);
   background: var(--paper);
   padding: 10px 8px;
   border-radius: 5px;
 }
 .row .who .name {
-  font-size: 12px;
+  font-size: var(--type-dense);
 }
 .row .who .sub {
-  font-size: 11px;
+  font-size: var(--type-dense);
   margin-block-start: 3px;
 }
 .notice {
   border-radius: 8px;
   padding: 13px 16px;
-  font-size: 12px;
+  font-size: var(--type-dense);
 }
 .empty {
-  font-size: 12px;
+  font-size: var(--type-dense);
   padding: 18px;
   border: 1px dashed var(--rule);
   border-radius: 8px;
@@ -349,7 +317,7 @@ body {
   padding: 12px 15px;
   border-radius: 8px;
   margin-block-start: 14px;
-  font-size: 12px;
+  font-size: var(--type-dense);
 }
 .fold summary {
   font-weight: 500;
@@ -359,7 +327,7 @@ body {
   margin-block-end: 16px;
 }
 .status {
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .status[data-tone='ok'] {
   color: var(--signal-deep);
@@ -396,11 +364,11 @@ body {
 }
 .panel-head p {
   color: var(--slate);
-  font-size: 11px;
+  font-size: var(--type-dense);
   margin-block-start: 3px;
 }
 .panel-head .text-link {
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .panel-body {
   padding: 0 21px 20px;
@@ -432,7 +400,7 @@ body {
   min-width: 0;
 }
 .kpi-label {
-  font-size: 11px;
+  font-size: var(--type-dense);
   color: var(--slate);
   display: flex;
   align-items: center;
@@ -450,7 +418,7 @@ body {
   line-height: 1.1;
 }
 .kpi-foot {
-  font-size: 10px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
 .kpi[data-tone='warn'] .kpi-value {
@@ -468,7 +436,7 @@ body {
   color: var(--slate);
   border: 0;
   padding: 5px 9px;
-  font-size: 10px;
+  font-size: var(--type-dense);
   border-radius: 4px;
   cursor: pointer;
 }
@@ -487,7 +455,7 @@ body {
   color: var(--slate);
   text-align: center;
   padding: 20px;
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .chart-empty strong {
   color: var(--ink);
@@ -509,6 +477,8 @@ body {
   gap: 10px;
   min-width: 0;
 }
+.provider-identity:not([data-label]) { flex-shrink: 0; }
+.provider-identity[data-label] > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .provider-mark {
   width: 36px;
   height: 36px;
@@ -519,7 +489,7 @@ body {
   border: 1px solid #e5e9ee;
   flex: none;
   color: var(--ink);
-  font-size: 10px;
+  font-size: var(--type-dense);
   overflow: hidden;
 }
 .provider-mark img {
@@ -542,7 +512,7 @@ body {
   padding: 11px 0;
   align-items: center;
   border-block-end: 1px solid var(--rule);
-  font-size: 12px;
+  font-size: var(--type-dense);
   text-decoration: none;
 }
 .health-row:last-child {
@@ -554,7 +524,7 @@ body {
 }
 .health-row .health-name small {
   display: block;
-  font-size: 10px;
+  font-size: var(--type-dense);
   margin-block-start: 3px;
 }
 .health-dot {
@@ -578,14 +548,14 @@ body {
   border-radius: 9px;
   margin-block-start: 18px;
   background: var(--raised);
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .endpoint-bar .endpoint-label {
   color: var(--slate);
 }
 .endpoint-bar code {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .endpoint-bar button {
   margin-inline-start: auto;
@@ -595,7 +565,7 @@ body {
   flex-wrap: wrap;
   gap: 22px;
   padding: 14px 0 0;
-  font-size: 10px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
 .runtime-facts strong {
@@ -609,7 +579,7 @@ body {
   align-items: center;
   padding: 11px 0;
   border-block-end: 1px solid var(--rule);
-  font-size: 11px;
+  font-size: var(--type-dense);
 }
 .request-row .request-model {
   overflow: hidden;
@@ -619,7 +589,7 @@ body {
 }
 .request-row small {
   display: block;
-  font-size: 10px;
+  font-size: var(--type-dense);
 }
 .skip-link {
   position: fixed;
@@ -844,7 +814,7 @@ body {
   display: none;
 }
 .operator-panel .row.window > :last-child .band-meta {
-  font-size: 9px;
+  font-size: var(--type-dense);
 }
 
 .strap .cell .fig {
@@ -867,7 +837,7 @@ body {
   text-decoration: none;
 }
 .risk-chip {
-  font-size: 9px;
+  font-size: var(--type-dense);
   color: var(--ember);
   background: var(--ember-wash);
   border-radius: 4px;
@@ -897,7 +867,7 @@ body {
   font-size: 13px;
 }
 .tool-card-head p {
-  font-size: 11px;
+  font-size: var(--type-dense);
   color: var(--slate);
   margin-block-start: 3px;
 }
@@ -918,7 +888,7 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-block-start: 18px;
-  font-size: 11px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
 

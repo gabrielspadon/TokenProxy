@@ -1,6 +1,6 @@
 # Analytical workspace
 
-The operator's [shared design contract](WORKSPACE-CONTRACT.md) is the acceptance authority for the current implementation. Use it alongside the component and data contracts.
+The [corrective redesign mandate](REDESIGN-20260907.md) supersedes earlier visual choices. This document retains the analytical and component context. Use the new Manrope, petrol-teal, shared appearance and side-inspector system for current implementation; preserve the measurement and interaction requirements below.
 
 The user rejected the Graphite composition. Its build and interaction results are
 historical technical evidence, not visual acceptance. This direction replaces its

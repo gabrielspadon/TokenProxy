@@ -16,6 +16,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useResource } from './useResource';
+import { SelectionDock } from './SelectionDock';
 import {
   ALERT_STATE_LABEL,
   DEFAULT_RULE,
@@ -69,6 +70,7 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [conflict, setConflict] = useState(null);
+  const [revision, setRevision] = useState(rule?.revision);
   const condition = conditions.find((entry) => entry.kind === draft.conditionKind);
   const editing = Boolean(rule?.id);
 
@@ -91,9 +93,15 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
         enabled: draft.enabled,
       };
       const saved = editing
-        ? await send(`${ENDPOINT}/${rule.id}`, 'PUT', { ...body, revision: rule.revision })
+        ? await send(`${ENDPOINT}/${rule.id}`, 'PUT', { ...body, revision })
         : await send(ENDPOINT, 'POST', body);
-      onSaved(saved);
+      const readback = await send(`${ENDPOINT}/${saved.id}`, 'GET');
+      if (readback.rule?.revision !== saved.revision) {
+        throw new Error(
+          'The save returned, but the stored revision changed before readback. Refresh the rule before editing again.'
+        );
+      }
+      onSaved(readback.rule);
     } catch (caught) {
       // A revision conflict is shown as a conflict, with the live values, so
       // the operator decides. It is never resolved by overwriting.
@@ -208,10 +216,11 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
             applied.
           </p>
           <Button
-            size="compact-sm"
+            size="sm"
             variant="subtle"
             onClick={() => {
               setDraft({ ...DEFAULT_RULE, ...conflict.current });
+              setRevision(conflict.current.revision);
               setConflict(null);
             }}
           >
@@ -220,15 +229,15 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
         </Alert>
       )}
       {error && (
-        <Alert color="orange" title="This rule was not saved">
+        <Alert color="orange" title="The save was not confirmed">
           {error}
         </Alert>
       )}
       <Group gap="sm" mt="sm">
-        <Button type="submit" size="compact-sm" loading={busy}>
+        <Button type="submit" size="sm" loading={busy}>
           {editing ? 'Save rule' : 'Create rule'}
         </Button>
-        <Button size="compact-sm" variant="subtle" onClick={onCancel} type="button">
+        <Button size="sm" variant="subtle" onClick={onCancel} type="button">
           Cancel
         </Button>
       </Group>
@@ -240,13 +249,32 @@ function DryRun({ rule, conditions }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
   const condition = conditions.find((entry) => entry.kind === rule.conditionKind);
 
   const run = async () => {
     setBusy(true);
     setError(null);
+    setResult(null);
     try {
-      setResult(await send(`${ENDPOINT}/dry-run`, 'POST', { rule }));
+      if (
+        (start && !end) ||
+        (!start && end) ||
+        (start && Date.parse(`${start}Z`) >= Date.parse(`${end}Z`))
+      ) {
+        throw new Error(
+          'Choose both UTC bounds with the start before the end, or leave both empty for the retained default range.'
+        );
+      }
+      setResult(
+        await send(`${ENDPOINT}/dry-run`, 'POST', {
+          rule,
+          ...(start
+            ? { start: new Date(`${start}Z`).toISOString(), end: new Date(`${end}Z`).toISOString() }
+            : {}),
+        })
+      );
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -265,9 +293,23 @@ function DryRun({ rule, conditions }) {
             touched. Periods with no retained evidence cannot be evaluated and are reported as such.
           </p>
         </div>
-        <Button size="compact-sm" variant="default" onClick={run} loading={busy}>
+        <Button size="sm" variant="default" onClick={run} loading={busy}>
           Run against history
         </Button>
+      </Group>
+      <Group gap="md" align="end" mt="sm">
+        <TextInput
+          type="datetime-local"
+          label="Range start (UTC)"
+          value={start}
+          onChange={(event) => setStart(event.currentTarget.value)}
+        />
+        <TextInput
+          type="datetime-local"
+          label="Range end (UTC)"
+          value={end}
+          onChange={(event) => setEnd(event.currentTarget.value)}
+        />
       </Group>
       {error && (
         <Alert color="orange" title="Dry run unavailable">
@@ -371,15 +413,39 @@ function DryRun({ rule, conditions }) {
 
 function AlertRow({ event, conditions, rules, onChanged }) {
   const [busy, setBusy] = useState(false);
-  const rule = rules.find((entry) => entry.id === event.ruleId);
+  const [feedback, setFeedback] = useState(null);
+  const [snoozeHours, setSnoozeHours] = useState('24');
+  const currentRule = rules.find((entry) => entry.id === event.ruleId);
+  const rule =
+    event.ruleDefinition || (currentRule?.revision === event.ruleRevision ? currentRule : null);
   const condition = conditions.find((entry) => entry.kind === rule?.conditionKind);
   const state = alertState(event);
   const act = async (body) => {
     setBusy(true);
+    setFeedback(null);
     try {
-      await send(`${ENDPOINT}/events/${event.id}`, 'POST', body);
+      const receipt = await send(`${ENDPOINT}/events/${event.id}`, 'POST', body);
+      const readback = await send(ENDPOINT, 'GET');
+      const stored = readback.events?.find((entry) => entry.id === event.id);
+      if (
+        !stored ||
+        stored.outcome !== receipt.outcome ||
+        stored.snoozedUntil !== receipt.snoozedUntil
+      ) {
+        throw new Error(
+          'The action returned but its retained state could not be verified. Refresh before another action.'
+        );
+      }
+      setFeedback({
+        ok: true,
+        text:
+          body.action === 'acknowledge'
+            ? `Acknowledged at ${ruleTimestamp(stored.acknowledgedAt)} UTC.`
+            : `Snooze retained until ${ruleTimestamp(stored.snoozedUntil)} UTC.`,
+      });
       onChanged();
-    } catch {
+    } catch (caught) {
+      setFeedback({ ok: false, text: `${caught.message} No automatic retry was sent.` });
       onChanged();
     } finally {
       setBusy(false);
@@ -389,7 +455,12 @@ function AlertRow({ event, conditions, rules, onChanged }) {
   return (
     <Table.Tr data-state={state}>
       <Table.Td>{ruleTimestamp(event.firedAt)}</Table.Td>
-      <Table.Td>{rule?.name || 'Rule deleted'}</Table.Td>
+      <Table.Td>
+        {rule?.name || currentRule?.name || 'Rule deleted'}
+        <Text size="sm" c="dimmed">
+          Fired at revision {ruleNumber(event.ruleRevision)}
+        </Text>
+      </Table.Td>
       <Table.Td>
         <code title={event.scopeKey}>{event.scopeKey}</code>
       </Table.Td>
@@ -402,7 +473,7 @@ function AlertRow({ event, conditions, rules, onChanged }) {
           {ALERT_STATE_LABEL[state]}
         </span>
         {state === 'snoozed' && (
-          <Text size="xs" c="dimmed">
+          <Text size="sm" c="dimmed">
             until {ruleTimestamp(event.snoozedUntil)}
           </Text>
         )}
@@ -427,7 +498,7 @@ function AlertRow({ event, conditions, rules, onChanged }) {
       </Table.Td>
       <Table.Td>
         {event.outcome === 'firing' && (
-          <Group gap="xs">
+          <Group gap="xs" align="end">
             <UnstyledButton
               className={styles.action}
               disabled={busy}
@@ -436,20 +507,48 @@ function AlertRow({ event, conditions, rules, onChanged }) {
             >
               Acknowledge
             </UnstyledButton>
+            <Select
+              label="Snooze duration"
+              aria-label={`Snooze duration for ${event.scopeKey}`}
+              value={snoozeHours}
+              onChange={setSnoozeHours}
+              allowDeselect={false}
+              data={[
+                { value: '1', label: '1 hour' },
+                { value: '4', label: '4 hours' },
+                { value: '24', label: '24 hours' },
+              ]}
+              w={120}
+              disabled={busy}
+            />
             <UnstyledButton
               className={styles.action}
               disabled={busy}
               onClick={() =>
                 act({
                   action: 'snooze',
-                  until: new Date(Date.now() + 86_400_000).toISOString(),
+                  until: new Date(Date.now() + Number(snoozeHours) * 3_600_000).toISOString(),
                 })
               }
-              aria-label={`Snooze alert on ${event.scopeKey} for a day`}
+              aria-label={`Snooze alert on ${event.scopeKey} for ${snoozeHours} hours`}
             >
-              Snooze 24h
+              Snooze {snoozeHours}h
             </UnstyledButton>
           </Group>
+        )}
+        {feedback && (
+          <Text
+            size="sm"
+            role={feedback.ok ? 'status' : 'alert'}
+            c={feedback.ok ? 'dimmed' : 'orange'}
+          >
+            {feedback.text}
+          </Text>
+        )}
+        {event.acknowledgedAt && (
+          <Text size="sm" c="dimmed">
+            Acknowledged {ruleTimestamp(event.acknowledgedAt)} UTC
+          </Text>
         )}
       </Table.Td>
     </Table.Tr>
@@ -465,11 +564,20 @@ export function NotificationRules() {
   const events = useMemo(() => resource.data?.events || [], [resource.data]);
   const unavailable = resource.data?.unavailableConditions || [];
   const selected = rules.find((rule) => rule.id === selectedId);
+  const audit = useResource(selectedId ? `${ENDPOINT}/${selectedId}` : null);
+  const [receipt, setReceipt] = useState(null);
   const { refresh } = resource;
-  const onSaved = useCallback(() => {
-    setEditing(null);
-    refresh();
-  }, [refresh]);
+  const refreshAudit = audit.refresh;
+  const onSaved = useCallback(
+    (saved) => {
+      setEditing(null);
+      setSelectedId(saved.id);
+      setReceipt(`Rule revision ${saved.revision} saved and read back from local storage.`);
+      refresh();
+      refreshAudit();
+    },
+    [refresh, refreshAudit]
+  );
 
   return (
     <section className={styles.surface} aria-label="Notification rules">
@@ -482,11 +590,11 @@ export function NotificationRules() {
           </p>
         </div>
         <Group gap="sm">
-          <Button size="compact-sm" variant="subtle" onClick={resource.refresh}>
+          <Button size="sm" variant="subtle" onClick={resource.refresh}>
             Refresh
           </Button>
           <Button
-            size="compact-sm"
+            size="sm"
             onClick={() => {
               setEditing({});
               setSelectedId(null);
@@ -496,6 +604,11 @@ export function NotificationRules() {
           </Button>
         </Group>
       </Group>
+      {receipt && (
+        <Text role="status" size="sm">
+          {receipt}
+        </Text>
+      )}
 
       {resource.loading ? (
         <Loader size="sm" mt="md" />
@@ -516,90 +629,143 @@ export function NotificationRules() {
             />
           )}
 
-          {!rules.length ? (
-            <p className={styles.empty}>
-              No rules are defined. A rule alerts on evidence this installation already retains; it
-              cannot reconstruct history it never recorded.
-            </p>
-          ) : (
-            <ScrollArea
-              viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Scroll rules' }}
-            >
-              <Table className={styles.table} aria-label="Notification rules">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Rule</Table.Th>
-                    <Table.Th>Condition</Table.Th>
-                    <Table.Th>Scope</Table.Th>
-                    <Table.Th className={styles.numeric}>Threshold</Table.Th>
-                    <Table.Th className={styles.numeric}>Duration</Table.Th>
-                    <Table.Th className={styles.numeric}>Cooldown</Table.Th>
-                    <Table.Th className={styles.numeric}>Rev</Table.Th>
-                    <Table.Th>State</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {rules.map((rule) => {
-                    const condition = conditions.find((entry) => entry.kind === rule.conditionKind);
-                    return (
-                      <Table.Tr key={rule.id} data-selected={rule.id === selectedId || undefined}>
-                        <Table.Td>
-                          <UnstyledButton
-                            className={styles.action}
-                            aria-pressed={rule.id === selectedId}
-                            onClick={() => setSelectedId(rule.id === selectedId ? null : rule.id)}
-                          >
-                            {rule.name}
-                          </UnstyledButton>
-                        </Table.Td>
-                        <Table.Td>{condition?.label || rule.conditionKind}</Table.Td>
-                        <Table.Td>
-                          <code>{scopeLabel(rule)}</code>
-                        </Table.Td>
-                        <Table.Td className={styles.numeric}>{ruleNumber(rule.threshold)}</Table.Td>
-                        <Table.Td className={styles.numeric}>
-                          {humanDuration(rule.durationSeconds)}
-                        </Table.Td>
-                        <Table.Td className={styles.numeric}>
-                          {humanDuration(rule.cooldownSeconds)}
-                        </Table.Td>
-                        <Table.Td className={styles.numeric}>{ruleNumber(rule.revision)}</Table.Td>
-                        <Table.Td>{rule.enabled ? 'Enabled' : 'Disabled'}</Table.Td>
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </ScrollArea>
-          )}
-
-          {selected && (
-            <div className={styles.detail}>
-              <Group justify="space-between" align="start">
-                <div>
-                  <h4>{selected.name}</h4>
+          <SelectionDock
+            open={Boolean(selected) && !editing}
+            title={selected?.name || 'Rule evidence'}
+            subtitle={selected ? `Revision ${selected.revision} · ${scopeLabel(selected)}` : ''}
+            onClose={() => setSelectedId(null)}
+            height="min(780px, calc(100dvh - 200px))"
+            closedMaxHeight="420px"
+            detail={
+              selected && (
+                <div className={styles.detail}>
+                  <Button size="sm" variant="default" onClick={() => setEditing(selected)}>
+                    Edit rule
+                  </Button>
                   <p className={styles.sentence}>
                     {ruleSentence(
                       selected,
                       conditions.find((entry) => entry.kind === selected.conditionKind)
                     )}
                   </p>
+                  <Facts
+                    rows={[
+                      ['Revision', ruleNumber(selected.revision)],
+                      ['Created (UTC)', ruleTimestamp(selected.createdAt)],
+                      ['Last changed (UTC)', ruleTimestamp(selected.updatedAt)],
+                      ['Evidence source', selected.condition?.source || UNKNOWN],
+                    ]}
+                  />
+                  <DryRun
+                    key={`${selected.id}:${selected.revision}`}
+                    rule={selected}
+                    conditions={conditions}
+                  />
+                  <section aria-label="Rule revision audit">
+                    <Group justify="space-between">
+                      <h4>Retained revisions</h4>
+                      <Button size="sm" variant="subtle" onClick={audit.refresh}>
+                        Refresh audit
+                      </Button>
+                    </Group>
+                    {audit.error ? (
+                      <Alert color="orange" title="Audit unavailable">
+                        {audit.error}
+                      </Alert>
+                    ) : audit.loading ? (
+                      <Loader size="sm" />
+                    ) : (
+                      <ol className={styles.audit}>
+                        {(audit.data?.versions || []).map((version) => (
+                          <li key={version.revision}>
+                            <strong>
+                              Revision {version.revision}, {version.change}
+                            </strong>{' '}
+                            · {ruleTimestamp(version.changedAt)} UTC
+                            <p>
+                              {scopeLabel(version.definition)}.{' '}
+                              {ruleSentence(
+                                version.definition,
+                                conditions.find(
+                                  (entry) => entry.kind === version.definition.conditionKind
+                                )
+                              )}
+                            </p>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </section>
                 </div>
-                <Button size="compact-sm" variant="default" onClick={() => setEditing(selected)}>
-                  Edit
-                </Button>
-              </Group>
-              <Facts
-                rows={[
-                  ['Revision', ruleNumber(selected.revision)],
-                  ['Created (UTC)', ruleTimestamp(selected.createdAt)],
-                  ['Last changed (UTC)', ruleTimestamp(selected.updatedAt)],
-                  ['Evidence source', selected.condition?.source || UNKNOWN],
-                ]}
-              />
-              <DryRun rule={selected} conditions={conditions} />
-            </div>
-          )}
+              )
+            }
+          >
+            {!rules.length ? (
+              <p className={styles.empty}>
+                No rules are defined. A rule alerts on evidence this installation already retains;
+                it cannot reconstruct history it never recorded.
+              </p>
+            ) : (
+              <ScrollArea
+                viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Scroll rules' }}
+              >
+                <Table className={styles.table} aria-label="Notification rules">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Rule</Table.Th>
+                      <Table.Th>Condition</Table.Th>
+                      <Table.Th>Scope</Table.Th>
+                      <Table.Th className={styles.numeric}>Threshold</Table.Th>
+                      <Table.Th className={styles.numeric}>Duration</Table.Th>
+                      <Table.Th className={styles.numeric}>Cooldown</Table.Th>
+                      <Table.Th className={styles.numeric}>Rev</Table.Th>
+                      <Table.Th>State</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {rules.map((rule) => {
+                      const condition = conditions.find(
+                        (entry) => entry.kind === rule.conditionKind
+                      );
+                      return (
+                        <Table.Tr key={rule.id} data-selected={rule.id === selectedId || undefined}>
+                          <Table.Td>
+                            <UnstyledButton
+                              className={styles.action}
+                              aria-pressed={rule.id === selectedId}
+                              onClick={() => setSelectedId(rule.id === selectedId ? null : rule.id)}
+                            >
+                              {rule.name}
+                            </UnstyledButton>
+                          </Table.Td>
+                          <Table.Td>{condition?.label || rule.conditionKind}</Table.Td>
+                          <Table.Td>
+                            <code>{scopeLabel(rule)}</code>
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {ruleNumber(rule.threshold)}
+                            <span className={styles.thresholdUnit}>
+                              {condition?.unit || 'unit unavailable'}
+                            </span>
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {humanDuration(rule.durationSeconds)}
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {humanDuration(rule.cooldownSeconds)}
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {ruleNumber(rule.revision)}
+                          </Table.Td>
+                          <Table.Td>{rule.enabled ? 'Enabled' : 'Disabled'}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            )}
+          </SelectionDock>
 
           <section className={styles.alerts} aria-label="Alert history">
             <h4>Alert history</h4>
@@ -645,8 +811,7 @@ export function NotificationRules() {
             <section className={styles.unavailable} aria-label="Conditions not available">
               <h4>Conditions this build cannot offer</h4>
               <p className={styles.note}>
-                These are listed rather than omitted, because a missing condition an operator
-                expects is worse than a stated one.
+                These conditions need additional recorded evidence before they can trigger alerts.
               </p>
               <dl>
                 {unavailable.map((entry) => (

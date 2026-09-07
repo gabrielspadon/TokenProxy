@@ -41,6 +41,15 @@ export async function PUT(request, { params }) {
     }
 
     const updateData = {};
+    if (Object.hasOwn(body, 'expiresAt')) {
+      if (body.expiresAt !== null && (typeof body.expiresAt !== 'string'
+        || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(body.expiresAt)
+        || !Number.isFinite(Date.parse(body.expiresAt))
+        || new Date(body.expiresAt).toISOString().replace('.000Z', 'Z') !== body.expiresAt.replace('.000Z', 'Z'))) {
+        return NextResponse.json({ error: 'expiresAt must be an ISO UTC timestamp or null.' }, { status: 400 });
+      }
+      updateData.expiresAt = body.expiresAt;
+    }
     if (isActive !== undefined) updateData.isActive = isActive;
     // Each ceiling is set independently, and passing null clears it back to no
     // ceiling (#3371); allowedModels behaves the same way and null clears it

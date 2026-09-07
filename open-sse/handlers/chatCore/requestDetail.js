@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../src/lib/usageDb.js";
 import { recordCostLedgerForRequest } from "../../../src/lib/db/repos/costLedgerRepo.js";
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
@@ -189,9 +190,13 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
   // (actual). Fire-and-forget: the repo is best-effort, and a ledger failure
   // must never block or alter the response. Estimated usage is not actual and
   // is skipped inside the repo, along with unknown-model rate cards.
-  if (usageFinality === "final" && typeof preSaverSerialized === "string" && preSaverSerialized) {
+  // This UUID belongs to this completion, independently of client-supplied rid
+  // prefixes or retries. A failed ledger write cannot bind an older rid row.
+  const completionId = usageFinality === "final" ? randomUUID() : null;
+  if (completionId && typeof preSaverSerialized === "string" && preSaverSerialized) {
     void recordCostLedgerForRequest({
       rid: rid || contextTelemetry?.requestId,
+      completionId,
       sid,
       provider,
       model,
@@ -207,6 +212,7 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     usagePresence: usageQuantityPresence(tokens),
     contextTelemetry,
     usageFinality,
+    completionId,
     timestamp: new Date().toISOString(),
     connectionId: connectionId || undefined,
     apiKey: apiKey || undefined,

@@ -4,11 +4,11 @@ const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFra
 const currency = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
 
 export const TOKEN_COLUMNS = [
-  { id: 'inputTokens', samples: 'inputSamples', label: 'Input', detail: 'Cache inclusive', color: METRIC_COLORS.selected },
-  { id: 'uncachedInputTokens', samples: 'uncachedInputSamples', label: 'Uncached', detail: 'Derived input', color: METRIC_COLORS.input },
-  { id: 'cacheReadTokens', samples: 'cacheReadSamples', label: 'Cache read', detail: 'Recorded tokens', color: METRIC_COLORS.cacheRead },
-  { id: 'cacheWriteTokens', samples: 'cacheWriteSamples', label: 'Cache write', detail: 'Recorded tokens', color: METRIC_COLORS.cacheWrite },
-  { id: 'outputTokens', samples: 'outputSamples', label: 'Output', detail: 'Recorded tokens', color: METRIC_COLORS.output },
+  { id: 'inputTokens', samples: 'inputSamples', label: 'Input', detail: 'Cache inclusive', color: 'var(--metric-input)' },
+  { id: 'uncachedInputTokens', samples: 'uncachedInputSamples', label: 'Uncached', detail: 'Derived input', color: 'var(--metric-input)' },
+  { id: 'cacheReadTokens', samples: 'cacheReadSamples', label: 'Cache read', detail: 'Recorded tokens', color: 'var(--metric-cache)' },
+  { id: 'cacheWriteTokens', samples: 'cacheWriteSamples', label: 'Cache write', detail: 'Recorded tokens', color: 'var(--metric-write)' },
+  { id: 'outputTokens', samples: 'outputSamples', label: 'Output', detail: 'Recorded tokens', color: 'var(--metric-output)' },
 ];
 
 export const formatCount = (value) => Number.isFinite(value) ? integer.format(value) : 'Unknown';
@@ -21,6 +21,11 @@ export const formatPercent = (value) => Number.isFinite(value)
 
 export function groupKey(group, groupBy) {
   return economicsGroupKey(group,groupBy);
+}
+
+export function comparisonScopeKey(filters = {}, groupBy) {
+  const presentation = new Set(['page', 'pageSize', 'groupPage', 'groupPageSize', 'sortBy', 'sortDirection', 'groupSortBy', 'groupSortDirection']);
+  return JSON.stringify([groupBy, Object.entries(filters).filter(([key]) => !presentation.has(key)).sort(([a], [b]) => a.localeCompare(b))]);
 }
 
 export function groupName(group, groupBy, accounts = []) {
@@ -81,4 +86,3 @@ export function recordTime(value, full = false) {
   if (!Number.isFinite(date.getTime())) return 'Invalid timestamp';
   return full ? date.toISOString() : `${date.toISOString().slice(5, 10)} ${date.toISOString().slice(11, 19)}`;
 }
-import { METRIC_COLORS } from '../../workspace/metricColors';

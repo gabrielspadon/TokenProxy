@@ -13,7 +13,8 @@ vi.mock("@/lib/network/connectionProxy", () => ({
   pickProxyPoolId: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(),
 }));
-vi.mock("@/shared/constants/providers.js", () => ({
+vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   FREE_PROVIDERS: {},
   FREE_TIER_PROVIDERS: {},
   resolveProviderId: (provider) => provider === "codex-alias" ? "codex" : provider,

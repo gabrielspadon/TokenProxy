@@ -34,7 +34,7 @@ const WORDS = {
 // unmapped value prints raw rather than being renamed to something it is not.
 const TRIGGER = {
   exhausted: 'Quota exhausted',
-  reset: 'A window reset restored an earlier account',
+  reset: 'Reset-triggered account selection',
   drain: 'The account was drained',
   model_failure: 'This model failed on that account',
   manual: 'Set by hand',
@@ -49,6 +49,7 @@ const SINCE = [
 ];
 
 const EMPTY = { connectionId: '', model: '', since: '' };
+const recordStartedAt = row => typeof row.startedAt === 'number' ? row.startedAt : Date.parse(row.startedAt);
 
 function pollFresh(p) {
   if (p.loading) return 'connecting';
@@ -203,7 +204,13 @@ export default function SessionsPage() {
     () => new Map((detail.data?.checks?.connections || []).map((c) => [c.connectionId, c])),
     [detail.data]
   );
-  const sessions = usage?.activeSessions || [];
+  const sessions = (usage?.activeSessions || []).filter(row =>
+    (!scope.provider || row.provider === scope.provider) && (!scope.model || row.model === scope.model)
+    && (!scope.connectionId || row.connectionId === scope.connectionId)
+    && (!scope.start || recordStartedAt(row) >= Date.parse(scope.start))
+    && (!scope.end || recordStartedAt(row) < Date.parse(scope.end)))
+    .sort((a,b)=>recordStartedAt(a)-recordStartedAt(b) || String(a.requestId || '').localeCompare(String(b.requestId || '')));
+  const liveFollowing = !['summary','paused','historical','snapshot'].includes(stream.status);
   // ponytail: page one is polled and later pages are held here, so a switch
   // recorded while paged deep arrives on the next poll and dedupes by id.
   const rows = useMemo(() => {
@@ -262,11 +269,11 @@ export default function SessionsPage() {
         <p className="caption">Exact retained identity, independent of the current list scope.</p>
         {retainedReceipt.loading ? <p role="status">Reading selected receipt…</p> : retainedReceipt.error ? <p role="alert">The selected receipt is unavailable. Its identity is retained; no substitute was chosen.</p> : retainedReceipt.data ? <Receipt r={retainedReceipt.data} names={names} now={now}/> : null}
       </section>}
-      <div className="measures">
+      <div className="measures sessions-summary">
         <div className="measure big">
           <span className="label">In flight</span>
           <span className="value" data-i18n-skip>
-            {usage ? fmtNum(sessions.length) : '—'}
+            {usage ? fmtNum(sessions.filter(row=>row.status === 'active').length) : '—'}
           </span>
         </div>
         <div className="measure big">
@@ -289,11 +296,14 @@ export default function SessionsPage() {
         </div>
       </div>
 
+      <SessionPins />
+
       <section aria-labelledby="h-inflight">
-        <h2 id="h-inflight">Sessions in flight</h2>
+        <h2 id="h-inflight">Observed request activity</h2>
         <p className="caption">
           A session is named by the account it is on, never by its own identity. The gateway stores
           only a one-way hash of that identity, and this surface never shows it.
+          {' '}Provider, model and account filters use exact retained identities. Rows without an exact account ID cannot enter an account-filtered population. Started time defines the activity interval.
         </p>
         {stream.status === 'stale' ? (
           <Notice
@@ -302,10 +312,11 @@ export default function SessionsPage() {
             next="The sessions below are from the last frame received. Reconnecting in the background."
           />
         ) : null}
-        {!usage && stream.status !== 'stale' ? (
+        {!liveFollowing && <p className="caption">{stream.status === 'paused' ? 'Live activity is paused. The last received frame remains visible.' : stream.status === 'historical' || stream.status === 'snapshot' ? 'Historical or snapshot scope does not reconstruct in-flight activity. Retained pins and receipts below use their own recorded evidence.' : 'Summary mode keeps the activity stream closed. Choose Live to follow current activity.'}</p>}
+        {!usage && liveFollowing && stream.status !== 'stale' ? (
           <p className="skeleton">Waiting for the first frame</p>
         ) : null}
-        {usage && sessions.length === 0 ? (
+        {usage && sessions.length === 0 && liveFollowing ? (
           <p className="empty">
             No session is in flight right now. One appears here while a request it owns is open.
           </p>
@@ -319,7 +330,7 @@ export default function SessionsPage() {
             </div>
             {sessions.map((s, i) => (
               <div
-                key={`${s.provider}-${s.model}-${s.startedAt}-${i}`}
+                key={s.requestId || `${s.provider}-${s.model}-${s.startedAt}-${i}`}
                 className="row sessions-live"
               >
                 <span className="who">
@@ -483,8 +494,6 @@ export default function SessionsPage() {
           </div>
         ) : null}
       </section>
-
-      <SessionPins />
 
       <section aria-labelledby="h-stick">
         <h2 id="h-stick">When a pin moves</h2>

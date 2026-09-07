@@ -56,8 +56,10 @@ beforeEach(() => {
   process.env.OBSERVABILITY_MAX_RECORDS = '5';
 });
 
-afterEach(() => {
-  releaseAdapter?.(null);
+afterEach(async () => {
+  releaseAdapter?.({ transaction: callback => callback(), run() {}, get: () => ({ c: 0 }) });
+  const repo = await import('@/lib/db/repos/requestDetailsRepo.js');
+  await repo.__test__.dispose();
   delete process.env.OBSERVABILITY_ENABLED;
   delete process.env.OBSERVABILITY_BATCH_SIZE;
   delete process.env.OBSERVABILITY_MAX_RECORDS;

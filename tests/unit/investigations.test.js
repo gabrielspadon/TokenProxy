@@ -17,6 +17,13 @@ beforeEach(()=>{
 });
 afterEach(()=>native.close());
 describe('Persistent operator workspaces',()=>{
+  it('retains a historical quota series fingerprint with its exact account',()=>{
+    const selection={kind:'account',id:'one',windowScope:'weekly',windowId:'a'.repeat(64)};
+    const row=store.create(saved({definition:definition({selection})}));
+    expect(store.get(row.id).definition.selection).toEqual(selection);
+    for (const patch of [{windowId:'not-a-fingerprint'},{kind:'routing-switch'}])
+      expect(()=>validateSelection({...selection,...patch})).toThrow();
+  });
   it('persists a bounded definition, exact selection and multiaccount comparison',()=>{
     const input=saved({definition:definition({selection:{kind:'account',id:'one'},comparisonIds:['one','two']})});
     const row=store.create(input);
@@ -47,7 +54,7 @@ describe('Persistent operator workspaces',()=>{
       expect(()=>store.create(saved({definition:definition({schemaVersion:2,economics:{...v2economics,...economicsPatch}})}))).toThrow();
     for(const cohort of [{projectRef:'raw'},{missing:'projectRef',projectRef:reference},{missing:'apiKey'},{sessionId:0}])
       expect(()=>store.create(saved({definition:definition({schemaVersion:3,economics:{...economics,cohort}})}))).toThrow();
-    expect(()=>store.create(saved({definition:definition({schemaVersion:4})}))).toThrow(/version/);
+    expect(()=>store.create(saved({definition:definition({schemaVersion:5})}))).toThrow(/version/);
   });
   it('rejects lost updates and stale deletes without changing stored bytes',()=>{
     const row=store.create(saved());
@@ -89,6 +96,24 @@ describe('Persistent operator workspaces',()=>{
   });
 });
 describe('Complete evidence exports',()=>{
+  it('persists version 4 identity filters and exports the same selected cohort as its lens',()=>{
+    seed(6);
+    db.run("UPDATE usageHistory SET status='success',costSource='provider-reported',logicalRequestId='logical',dispatchCoverage='physical-dispatch',attempt=2");
+    db.run("UPDATE usageHistory SET status='error' WHERE id=1");
+    db.run("UPDATE usageHistory SET costSource='application-estimate' WHERE id=3");
+    const selection={kind:'economics-group',id:JSON.stringify(['provider','claude',null]),groupBy:'provider',provider:'claude'};
+    const economics={status:'succeeded',costSource:'provider-reported',attemptKind:'additional',filters:{logicalRequestId:'logical',missing:'clientKeyId'}};
+    const row=store.create(saved({definition:definition({schemaVersion:4,lens:'economics',selection,economics})}));
+    expect(store.get(row.id).definition.economics.filters).toEqual(economics.filters);
+    const exported=readEvidence(db,{operation:'evidence',mode:'selected',definition:row.definition});
+    expect(exported.items.map(item=>item.id)).toEqual([5]);
+    const displayed=readActivityAnalytics(db,{operation:'activity',view:'economics',provider:'claude',status:'succeeded',costSource:'provider-reported',attemptKind:'additional',...economics.filters});
+    expect(exported.items.map(item=>item.id)).toEqual(displayed.items.map(item=>item.id));
+    const exact=readEvidence(db,{operation:'evidence',mode:'selected',definition:{...row.definition,selection:{kind:'economics-record',id:'1'}}});
+    expect(exact.items.map(item=>item.id)).toEqual([1]);
+    expect(()=>store.create(saved({definition:definition({schemaVersion:4,economics:{filters:{clientSessionRef:'private raw session'}}})}))).toThrow(/reference/);
+    expect(()=>readEvidence(db,{operation:'evidence',mode:'selected',definition:{...row.definition,economics:{...economics,filters:{missing:'provider'}}}})).toThrow(/conflict/);
+  });
   function seed(count=103) {
     db.transaction(()=>{for(let i=1;i<=count;i++) db.run('INSERT INTO usageHistory(id,timestamp,provider,model,promptTokens,completionTokens,tokens,meta,requestId) VALUES(?,?,?,?,?,?,?,?,?)',
       [i,'2026-09-06T12:00:00.000Z',i%2?'claude':'codex','model',100,2,'{"cached_tokens":20,"cache_creation_input_tokens":0,"secret":"PRIVATE"}','PRIVATE',i===1?'exact-request':null]);});

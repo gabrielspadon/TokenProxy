@@ -3,7 +3,7 @@
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: 14px;
-  color: #243550;
+  color: var(--ink);
   font-size: 14px;
 }
 .root h1 {
@@ -23,16 +23,16 @@
 }
 .root p {
   margin: 5px 0;
-  color: #5b6980;
+  color: var(--slate);
 }
 .root input:disabled:not([type='checkbox']):not([type='radio']) {
-  color: #5b6980;
-  -webkit-text-fill-color: #5b6980;
+  color: var(--slate);
+  -webkit-text-fill-color: var(--slate);
   opacity: 1;
 }
 .root input:disabled::placeholder {
-  color: #66768d;
-  -webkit-text-fill-color: #66768d;
+  color: var(--slate);
+  -webkit-text-fill-color: var(--slate);
 }
 .heading,
 .toolbar,
@@ -46,14 +46,14 @@
   margin-top: 4px;
 }
 .mono {
-  font-family: var(--font-plex-mono), monospace;
+  font-family: var(--mono);
   font-size: 13px;
   overflow-wrap: anywhere;
 }
 .note {
   padding: 9px 12px;
-  background: #edf1f8;
-  color: #5b6980;
+  background: var(--paper);
+  color: var(--slate);
   font-size: 13px;
   line-height: 1.55;
 }
@@ -63,8 +63,8 @@
 }
 .surface {
   min-width: 0;
-  background: #fff;
-  border: 1px solid #dce3ee;
+  background: var(--raised);
+  border: 1px solid var(--rule);
   border-top: 0;
 }
 .editorGrid {
@@ -76,8 +76,8 @@
   min-height: 170px;
 }
 .planList {
-  background: #f8faff;
-  border-inline-end: 1px solid #dce3ee;
+  background: var(--paper);
+  border-inline-end: 1px solid var(--rule);
   padding: 14px 10px;
 }
 .planList .sectionHead {
@@ -96,12 +96,12 @@
   overflow-wrap: anywhere;
 }
 .plan span {
-  color: #5b6980;
+  color: var(--slate);
 }
 .plan[data-active] {
-  color: #293d8f;
-  background: #edf1fe;
-  border-inline-start-color: #455bca;
+  color: var(--signal);
+  background: var(--signal-wash);
+  border-inline-start-color: var(--signal);
 }
 .planDetail {
   padding: 20px;
@@ -116,13 +116,13 @@
   gap: 9px;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid #e6ebf2;
-  background: white;
+  border-bottom: 1px solid var(--rule);
+  background: var(--raised);
 }
 .ordinal {
-  font-family: var(--font-plex-mono), monospace;
+  font-family: var(--mono);
   font-size: 13px;
-  color: #5b6980;
+  color: var(--slate);
 }
 .overrideGrid {
   display: grid;
@@ -134,12 +134,12 @@
   min-width: 0;
 }
 .validation {
-  border-top: 1px solid #e6ebf2;
+  border-top: 1px solid var(--rule);
   padding-top: 12px;
 }
 .validationError {
   margin-top: 7px;
-  color: #91430f;
+  color: var(--ember);
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
@@ -150,7 +150,7 @@
   gap: 14px;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid #e6ebf2;
+  border-bottom: 1px solid var(--rule);
 }
 .diffTable {
   table-layout: fixed;
@@ -162,7 +162,7 @@
 .tableViewport:focus-visible,
 .diffTable pre:focus-visible,
 .receiptDetails pre:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: -2px;
 }
 .diffTable th:first-child {
@@ -174,7 +174,7 @@
 .diffTable pre,
 .receipt pre,
 .receiptDetails pre {
-  font-family: var(--font-plex-mono), monospace;
+  font-family: var(--mono);
   font-size: 13px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -191,20 +191,20 @@
 }
 .notice {
   padding: 10px 12px;
-  border-inline-start: 3px solid #27836e;
-  background: #fff;
-  color: #243550;
+  border-inline-start: 3px solid var(--positive);
+  background: var(--raised);
+  color: var(--ink);
   font-size: 13px;
 }
 .notice > strong {
-  color: #076449;
+  color: var(--positive);
   margin-inline-end: 12px;
 }
 .notice[data-partial] {
-  border-inline-start-color: #a96b19;
+  border-inline-start-color: var(--ember);
 }
 .notice[data-partial] > strong {
-  color: #804000;
+  color: var(--ember);
 }
 .receipt pre {
   flex-basis: 100%;
@@ -221,22 +221,22 @@
   flex-wrap: wrap;
   gap: 6px 18px;
   padding: 12px;
-  background: #f3f6fb;
+  background: var(--paper);
   font-size: 13px;
 }
 .capture > :last-child {
   flex-basis: 100%;
-  color: #5b6980;
+  color: var(--slate);
 }
 .result {
-  border-top: 1px solid #dce3ee;
+  border-top: 1px solid var(--rule);
 }
 .decision {
   display: grid;
   grid-template-columns: 1.5fr 0.6fr 0.8fr 1.1fr;
   gap: 20px;
   padding: 17px 20px;
-  background: #edf1fe;
+  background: var(--signal-wash);
 }
 .decision > div {
   display: flex;
@@ -245,7 +245,7 @@
   min-width: 0;
 }
 .decision span {
-  color: #5b6980;
+  color: var(--slate);
   font-size: 13px;
 }
 .decision strong,
@@ -253,7 +253,7 @@
   overflow-wrap: anywhere;
 }
 .result tr[data-selected] {
-  background: #edf1fe;
+  background: var(--signal-wash);
 }
 .evidenceGrid {
   display: grid;
@@ -267,7 +267,7 @@
 }
 .receiptDetails {
   margin-top: 18px;
-  border-top: 1px solid #dce3ee;
+  border-top: 1px solid var(--rule);
   padding-top: 12px;
 }
 .receiptDetails summary {
@@ -307,7 +307,7 @@
   }
   .planList {
     border-inline-end: 0;
-    border-bottom: 1px solid #dce3ee;
+    border-bottom: 1px solid var(--rule);
     max-height: 240px;
     overflow: auto;
   }
@@ -341,3 +341,9 @@
     transition: none !important;
   }
 }
+.cascadeFacts { display:grid; gap:12px; margin:20px 0; font-size:13px; }
+.cascadeFacts > div { display:grid; grid-template-columns:minmax(130px, 1fr) minmax(0, 4fr); gap:16px; }
+.cascadeFacts dt { color:var(--slate); }
+.cascadeFacts dd { margin:0; line-height:1.5; }
+.cascadeDiff { max-height:320px; overflow:auto; font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; }
+@media (max-width:600px) { .cascadeFacts > div { grid-template-columns:1fr; gap:4px; } }

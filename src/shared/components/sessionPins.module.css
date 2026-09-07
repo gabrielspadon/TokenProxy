@@ -1,10 +1,10 @@
 .workbench {
   margin-top: 24px;
   padding-top: 18px;
-  border-top: 1px solid var(--border, #dce2ec);
-  color: #24324a;
+  border-top: 1px solid var(--border, var(--rule));
+  color: var(--ink);
   min-width: 0;
-  --mantine-color-dimmed: #596981;
+  --mantine-color-dimmed: var(--slate);
 }
 .workbench h3 {
   font-size: 17px;
@@ -17,9 +17,9 @@
   margin: 0 0 8px;
 }
 .note {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
-  color: #596981;
+  color: var(--slate);
   max-width: 80ch;
   margin: 4px 0 10px;
 }
@@ -27,26 +27,28 @@
   font-size: 13px;
   line-height: 1.5;
   padding: 9px 12px;
-  border-inline-start: 3px solid #a4b1cd;
-  background: #f3f6fb;
+  border-inline-start: 3px solid var(--control-edge);
+  background: var(--paper);
   margin: 0 0 10px;
 }
 .alert {
   font-size: 13px;
   line-height: 1.5;
   padding: 9px 12px;
-  border-inline-start: 3px solid #b34e61;
-  background: #fbf3f5;
+  border-inline-start: 3px solid var(--refusal);
+  background: color-mix(in srgb, var(--refusal) 8%, var(--raised));
   margin: 0 0 10px;
 }
 .table {
-  font-size: 12px;
+  font-size: 13px;
 }
+.scrollContainer { max-width: 100%; overscroll-behavior-inline: contain; }
+.scrollContainer:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .table th {
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   font-weight: 500;
-  color: #596981;
+  color: var(--slate);
 }
 .table td {
   white-space: nowrap;
@@ -59,45 +61,45 @@
   font-size: inherit;
   font-family: inherit;
   text-decoration: underline;
-  text-decoration-color: #bac6dd;
+  text-decoration-color: var(--control-edge);
   text-underline-offset: 3px;
 }
 .table button:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 .table tr[data-selected] {
-  background: #edf1fd;
-  box-shadow: inset 3px 0 #455bca;
+  background: var(--signal-wash);
+  box-shadow: inset 3px 0 var(--signal);
 }
 .facts {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
   column-gap: 14px;
   row-gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   margin: 0 0 14px;
 }
 .facts dt {
-  color: #596981;
+  color: var(--slate);
 }
 .facts dd {
   margin: 0;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .history {
   margin: 0 0 12px;
   padding-inline-start: 18px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 .history code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 .form {
@@ -110,29 +112,29 @@
 .field {
   display: grid;
   gap: 3px;
-  font-size: 12px;
-  color: #596981;
+  font-size: 13px;
+  color: var(--slate);
 }
 .field select,
 .field input {
   font: inherit;
-  color: #24324a;
+  color: var(--ink);
   padding: 5px 8px;
-  border: 1px solid #cdd5e4;
-  background: #fff;
+  border: 1px solid var(--control-edge);
+  background: var(--raised);
   min-width: 200px;
 }
 .field select:focus-visible,
 .field input:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 1px;
 }
 .preview {
   margin-top: 14px;
   padding: 10px 12px;
-  border-inline-start: 3px solid #455bca;
-  background: #f5f7fc;
-  font-size: 12px;
+  border-inline-start: 3px solid var(--signal);
+  background: var(--paper);
+  font-size: 13px;
   line-height: 1.5;
 }
 .preview p {
@@ -141,9 +143,9 @@
 .receipt {
   margin-top: 14px;
   padding: 10px 12px;
-  border-inline-start: 3px solid #a4b1cd;
-  background: #f3f6fb;
-  font-size: 12px;
+  border-inline-start: 3px solid var(--control-edge);
+  background: var(--paper);
+  font-size: 13px;
   line-height: 1.5;
 }
 .receipt strong {
@@ -153,11 +155,11 @@
 }
 .receipt code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 .empty {
-  color: #596981;
+  color: var(--slate);
   font-size: 13px;
   line-height: 1.6;
   padding: 14px 0;
@@ -170,7 +172,7 @@
 .timeline {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #e0e5ef;
+  border-top: 1px solid var(--rule);
 }
 .timelineControls {
   display: flex;
@@ -183,41 +185,41 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
 }
 .timelineList > li {
   padding: 8px 0 8px 12px;
-  border-inline-start: 3px solid #cdd5e4;
+  border-inline-start: 3px solid var(--control-edge);
 }
 .timelineList > li + li {
-  border-top: 1px solid #eef1f7;
+  border-top: 1px solid var(--paper);
 }
 .timelineList > li[data-kind='switch'] {
-  border-inline-start-color: #a4b1cd;
+  border-inline-start-color: var(--control-edge);
 }
 .timelineList > li[data-kind='action'] {
-  border-inline-start-color: #455bca;
+  border-inline-start-color: var(--signal);
 }
 .timelineList p {
   margin: 3px 0 0;
 }
 .timelineList button {
   margin-top: 5px;
-  font-size: 12px;
+  font-size: 13px;
   text-decoration: underline;
-  text-decoration-color: #bac6dd;
+  text-decoration-color: var(--control-edge);
   text-underline-offset: 3px;
 }
 .timelineList button:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 .timelineKind {
   font-weight: 600;
 }
 .timelineAt {
-  color: #596981;
+  color: var(--slate);
   font-variant-numeric: tabular-nums;
 }
 .timelineIds {
@@ -232,16 +234,18 @@
   min-width: 0;
 }
 .timelineIds dt {
-  color: #596981;
+  color: var(--slate);
 }
 .timelineIds dd {
   margin: 0;
 }
 .timelineIds code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 .dockBody {
   padding: 12px 20px 20px;
 }
+
+.attemptLink { display:block; margin-top:5px; color:var(--signal); font-size:13px; }

@@ -6,6 +6,15 @@ import {
 } from "../../src/lib/db/repos/settingsRepo.js";
 
 describe("context window override mutations", () => {
+  it('checks only reviewed keys atomically and preserves a concurrently changed sibling', async () => {
+    await updateSettings({ contextWindowOverrides: { reviewed: 32000, sibling: 64000 } });
+    await mutateContextWindowOverrides({ set: [{ key: 'sibling', contextWindow: 128000 }] });
+    const changed = await mutateContextWindowOverrides({ set: [{ key: 'reviewed', contextWindow: 96000 }], expectedOverrides: { reviewed: 32000 } });
+    expect(changed).toMatchObject({ overrides: { reviewed: 96000, sibling: 128000 }, persistence: 'confirmed' });
+    await expect(mutateContextWindowOverrides({ set: [{ key: 'reviewed', contextWindow: 256000 }, { key: 'new', contextWindow: 16000 }], expectedOverrides: { reviewed: 32000, new: null } })).rejects.toMatchObject({ code: 'context_window_conflict' });
+    expect((await getSettings()).contextWindowOverrides).toEqual({ reviewed: 96000, sibling: 128000 });
+    await expect(mutateContextWindowOverrides({ deleteKeys: ['reviewed'], expectedOverrides: {} })).rejects.toMatchObject({ code: 'invalid_context_expectations' });
+  });
   it("serializes concurrent per-key writes and preserves unrelated overrides", async () => {
     await updateSettings({
       contextWindowOverrides: { remove: 8000, retained: 16000 },

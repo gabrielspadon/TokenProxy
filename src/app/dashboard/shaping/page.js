@@ -1,5 +1,6 @@
 "use client";
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
+import { Checkbox } from '@mantine/core';
 import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
@@ -9,6 +10,8 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
 import { ShapingWorkbench } from './Workbench';
+import { PlanOverrides } from './PlanOverrides';
+import { RuntimeSettings } from './RuntimeSettings';
 import { ControlInventory, SignedBytes } from './ControlInventory';
 import { CONTROLS, THRESHOLDS, controlScope, configuredState, stageEvidence, thresholdPatch } from './controlCatalog';
 import './styles.css';
@@ -26,7 +29,7 @@ const SERVICE = {
     verb: 'Stop',
     title: 'Stop the compression service',
     changes:
-      'Drops the loaded module, so new requests pass through uncompressed. A request already mid-transform finishes on the copy it holds.',
+      'Drops the currently loaded module. If visual compression is enabled, the next eligible request can load it again. Turn off the global control and any plan override to stop future compression. A transform already in flight finishes on its retained copy.',
     undo: 'Start it again here.',
     done: 'Stop finished.',
   },
@@ -49,7 +52,7 @@ const SERVICE = {
   },
 };
 
-const DEPTHS = ['Controls', 'Recorded evidence', 'Profiles and comparison', 'Service'];
+const DEPTHS = ['Controls', 'Plan overrides', 'Recorded evidence', 'Profiles and comparison', 'Service'];
 const REASONS = { epoch_boundary: 'Stable or unknown cache boundary', window_pressure: 'Below context-pressure threshold', no_backend: 'No compression sidecar', phantom: 'Reported reduction without corresponding body reduction' };
 function pollFresh(p) {
   if (p.loading) return 'connecting';
@@ -61,7 +64,7 @@ const numeric = value => Number.isFinite(value) ? fmtNum(value) : 'Not reported'
 
 function ServiceDetails({ onAction, health }) {
   const status = usePoll('/api/pxpipe/status', 15000);
-  const logs = usePoll('/api/pxpipe/logs?limit=20', 60000);
+
   return <section className="shaping-service" aria-labelledby="shaping-service-title">
     <div className="shaping-section-head"><h2 id="shaping-service-title">Visual compression service</h2><Freshness status={pollFresh(status)} lastDataAt={status.goodAt} /><button className="button quiet" type="button" onClick={status.refresh}>Refresh status</button></div>
     <p>PXPIPE runs inside the gateway process. Reading status does not install, load or test the module.</p>
@@ -77,7 +80,7 @@ function ServiceDetails({ onAction, health }) {
     <div className="actions">{Object.keys(SERVICE).map(id => <button key={id} type="button" className={id === 'install' ? 'button danger' : 'button quiet'} onClick={() => onAction({ ...SERVICE[id], url: `/api/pxpipe/${id}` })}>{SERVICE[id].verb}</button>)}<button type="button" className="button quiet" onClick={() => onAction({ title: 'Run the local compression check', verb: 'Run local check', changes: 'Loads the installed PXPIPE module and transforms synthetic local input. This can change the loaded state. It does not call a model provider.', undo: 'Stop the module here if it should remain unloaded.', url: '/api/pxpipe/health', health: true, done: 'Local check finished.' })}>Run local check</button></div>
     {health?.checks?.length ? <ul className="shaping-observations">{health.checks.map(check => <li key={check.id}><span>{check.label}</span><span>{check.ok ? 'Passing' : 'Failing'}</span>{check.detail ? <span data-i18n-skip>{check.detail}</span> : null}</li>)}</ul> : null}
     {health && !health.healthy ? <Notice tone="warn" title="The local self-test did not pass." detail={health.error} /> : null}
-    {logs.data?.installLog ? <details className="shaping-technical"><summary>Installation log</summary><pre className="shaping-log" data-i18n-skip>{logs.data.installLog}</pre></details> : null}
+    <p className="shaping-caption">A retained installation-log endpoint is not available in this gateway.</p>
   </section>;
 }
 
@@ -108,44 +111,52 @@ function RecordedEvidence({ stats, period, onPeriod }) {
 
 export default function ShapingPage() {
   const settings = usePoll('/api/settings', 30000);
+  const controls = usePoll('/api/admin/shaping', 30000);
+  const [controlConsent, setControlConsent] = useState(false);
   const stats = usePoll('/api/token-saver/stats?timelineDays=30&recentLimit=100', 15000);
   const [depth, setDepth] = useState('Controls');
   const [opened, setOpened] = useState(['Controls']);
   const [period, setPeriod] = useState('all');
-  const [pending, setPending] = useState(null);
+  const [pending, setPendingState] = useState(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(null);
   const [notice, setNotice] = useState(null);
   const [draft, setDraft] = useState({});
   const [health, setHealth] = useState(null);
   const [serviceRevision, setServiceRevision] = useState(0);
-  const s = settings.data;
+  const s = controls.data?.settings ? { ...settings.data, ...controls.data.settings } : null;
+  function setPending(action) {
+    setControlConsent(false);
+    setPendingState(action?.body ? { ...action, expectedCurrent: controls.data?.currentHash, before: controls.data?.settings } : action);
+  }
   const stageMap = stats.data?.windows?.all?.stages || {};
   const enabled = s ? CONTROLS.filter(control => s[control.key] === true).length : null;
   const known = s ? CONTROLS.filter(control => configuredState(s, control) !== 'Unknown').length : 0;
   const recorded = Object.keys(stageMap).length;
-  const chains = useMemo(() => Object.entries(s?.comboStrategies || {}).filter(([, value]) => value && Object.hasOwn(value, 'tokenSaver')).map(([name, value]) => ({ name, value: value.tokenSaver })), [s]);
+  const chains = Object.entries(s?.comboStrategies || {}).filter(([, value]) => value && Object.hasOwn(value, 'tokenSaver')).map(([name, value]) => ({ name, value: value.tokenSaver }));
   const patch = thresholdPatch(draft);
   function navigate(next) { setDepth(next); setOpened(previous => previous.includes(next) ? previous : [...previous, next]); }
   function close() { if (!busy) { setPending(null); setFailed(null); } }
   function toggle(control, on) {
-    setFailed(null);
+    setFailed(null); setControlConsent(false);
     setPending({ title: `${on ? 'Turn on' : 'Turn off'} ${control.name.toLowerCase()}`, verb: on ? 'Turn on' : 'Turn off', layer: control.name, changes: `${controlScope(control)}. New requests take this setting; a request already in flight retains its settings. ${on ? control.effect : control.override ? 'This control is disabled globally; a supported routing-plan override may still enable it.' : 'New requests skip this globally disabled control.'}`, undo: 'Restore the previous setting here. Already removed request content cannot be recovered by changing this setting.', body: { [control.key]: on }, done: `${control.name} saved and verified after refresh.` });
   }
   async function run() {
     if (!pending || busy) return;
     const action = pending;
+    if (action.body && (!action.expectedCurrent || !controlConsent)) { setFailed({ tone: 'warn', title: 'Review and consent to the enabled content-changing controls before saving.' }); return; }
     setBusy(true); setFailed(null); setNotice(null);
     if (action.url) setHealth(null);
-    const response = await call(action.url || '/api/settings', { method: action.url ? 'POST' : 'PATCH', ...(action.body ? { body: action.body } : {}) });
+    const after = action.body ? { ...action.before, ...action.body } : null;
+    const response = await call(action.url || '/api/admin/shaping/controls', { method: 'POST', ...(action.body ? { body: { patch: action.body, expectedCurrent: action.expectedCurrent, consent: Object.keys(after).filter(key => after[key] === true) } } : {}) });
     const observedHealth = action.health ? response.body : response.body?.health;
     if (observedHealth && typeof observedHealth.healthy === 'boolean') { setHealth(observedHealth); setServiceRevision(value => value + 1); }
-    if (!response.ok) { setFailed(refusal(response.status, response.body)); setBusy(false); return; }
+    if (!response.ok) { setFailed(response.body?.code === 'settings_conflict' ? { tone: 'warn', title: 'Settings changed after this view was read.', children: 'Refresh controls and review the change again. Your draft is retained.' } : refusal(response.status, response.body)); setBusy(false); return; }
     if (action.body) {
-      const verification = await call('/api/settings');
-      const verified = verification.ok && Object.entries(action.body).every(([key, value]) => verification.body?.[key] === value);
+      const verification = await call('/api/admin/shaping');
+      const verified = response.status !== 207 && verification.ok && verification.body?.currentHash === response.body?.afterHash && Object.entries(action.body).every(([key, value]) => JSON.stringify(verification.body?.settings?.[key]) === JSON.stringify(value));
       setNotice(verified ? { tone: 'ok', title: action.done } : { tone: 'warn', title: 'Save accepted; refreshed settings could not be confirmed.', children: 'Refresh the settings and inspect the control before making another change.' });
-      settings.refresh();
+      settings.refresh(); controls.refresh(); setControlConsent(false);
       if (verified && action.thresholds) setDraft({});
     } else { setNotice(observedHealth?.healthy === false ? { tone: 'warn', title: 'Operation finished, but the local self-test failed.', children: observedHealth.error } : { tone: 'ok', title: action.done }); setServiceRevision(value => value + 1); }
     setPending(null); setBusy(false);
@@ -158,16 +169,18 @@ export default function ShapingPage() {
     <header className="shaping-page-head"><div><h1>Optimization</h1><p>Control what changes before a request reaches its provider.</p></div><Freshness status={pollFresh(settings)} lastDataAt={settings.goodAt} /></header>
     <div className="shaping-summary" aria-label="Optimization summary"><div><span>Configured on</span><strong>{enabled === null ? 'Unknown' : <bdi dir="ltr" data-i18n-skip>{fmtNum(enabled)} / {fmtNum(known)}</bdi>}</strong><span>Global controls, before plan overrides</span></div><div><span>Stages with records</span><strong>{stats.data ? fmtNum(recorded) : 'Unknown'}</strong><span>Retained history, coverage can be partial</span></div><div className="shaping-summary-note"><strong>Configuration is not execution</strong><span>Inspect request evidence to establish applicability, execution and measured change.</span><Link href="/dashboard/context">Open Context</Link></div></div>
     {settings.error ? <Notice {...refusal(settings.status, settings.error)} /> : null}
+    {controls.error ? <Notice {...refusal(controls.status, controls.error)} /> : null}
     {notice ? <div role="status"><Notice {...notice} /></div> : null}
     <nav className="shaping-depths" aria-label="Optimization views">{DEPTHS.map(item => <button type="button" key={item} aria-current={depth === item ? 'page' : undefined} onClick={() => navigate(item)}>{item}</button>)}</nav>
     <div hidden={depth !== 'Controls'}>
       {!s && settings.loading ? <p className="shaping-empty">Reading global settings.</p> : <ControlInventory settings={s} stageMap={stageMap} recent={stats.data?.recent || []} onToggle={toggle} renderThresholds={renderThresholds} onInvestigate={() => navigate('Profiles and comparison')} />}
-      <details className="shaping-technical shaping-scope"><summary>Routing precedence and context-window policy</summary><p>Global settings are the baseline. The outermost routing-plan declaration wins; unspecified supported flags inherit global values. A plan can bypass shaping. Privacy, disclosure, memory controls, content-change permissions and adaptive cache lifetime remain global.</p>{chains.length ? <ul className="shaping-observations">{chains.map(chain => <li key={chain.name}><code data-i18n-skip>{chain.name}</code><code data-i18n-skip>{JSON.stringify(chain.value)}</code></li>)}</ul> : <p>No routing-plan shaping override is configured.</p>}<p>Context-window overrides and cascade routing have separate settings and are outside shaping profiles.</p><div className="shaping-next"><Link href="/dashboard/models">Open model and plan settings</Link><Link href="/dashboard/model-context">Edit context-window overrides</Link></div></details>
+      <details className="shaping-technical shaping-scope"><summary>Routing precedence and context-window policy</summary><p>Global settings are the baseline. The outermost routing-plan declaration wins; unspecified supported flags inherit global values. A plan can disable its 15 supported override flags; an explicit per-stage value wins over that plan gate. Privacy, disclosure, memory controls, content-change permissions and adaptive cache lifetime remain global.</p>{chains.length ? <ul className="shaping-observations">{chains.map(chain => <li key={chain.name}><code data-i18n-skip>{chain.name}</code><code data-i18n-skip>{JSON.stringify(chain.value)}</code></li>)}</ul> : <p>No routing-plan shaping override is configured.</p>}<p>Context-window overrides and cascade routing have separate settings and are outside shaping profiles.</p><div className="shaping-next"><Link href="/dashboard/models">Open model and plan settings</Link><Link href="/dashboard/model-context">Edit context-window overrides</Link></div></details>
     </div>
     {opened.includes('Recorded evidence') ? <div hidden={depth !== 'Recorded evidence'}><RecordedEvidence stats={stats} period={period} onPeriod={setPeriod} /></div> : null}
-    {opened.includes('Profiles and comparison') ? <div hidden={depth !== 'Profiles and comparison'}><ShapingWorkbench onSettingsChanged={settings.refresh} /></div> : null}
-    {opened.includes('Service') ? <div hidden={depth !== 'Service'}><ServiceDetails key={serviceRevision} onAction={action => { setFailed(null); setPending(action); }} health={health} /></div> : null}
-    {Object.keys(draft).length ? <div className="shaping-draft-bar"><span>{fmtNum(Object.keys(draft).length)} unsaved threshold changes</span>{!patch ? <span>Enter whole numbers within each field’s limits.</span> : null}<button type="button" className="button" disabled={!patch} onClick={() => { setFailed(null); setPending({ title: 'Save threshold changes', verb: 'Save thresholds', changes: 'New requests use these global thresholds. In-flight requests retain their settings.', undo: 'Restore the previous numbers here.', body: patch, thresholds: true, done: 'Thresholds saved and verified after refresh.' }); }}>Review threshold changes</button><button type="button" className="button quiet" onClick={() => setDraft({})}>Discard</button></div> : null}
-    <Confirm open={!!pending} title={pending?.title} verb={pending?.verb} requires="A signed-in operator session on the gateway host." changes={pending?.changes} undo={pending?.undo} irreversible={pending?.irreversible} busy={busy} refusal={failed} onConfirm={run} onClose={close}>{pending?.layer ? <p>{pending.layer}</p> : null}{pending?.thresholds ? <dl className="shaping-control-facts">{Object.entries(pending.body).map(([key, value]) => <div key={key}><dt>{THRESHOLDS.find(field => field.key === key)?.name}</dt><dd>{numeric(s?.[key])} → {fmtNum(value)} {THRESHOLDS.find(field => field.key === key)?.unit}</dd></div>)}</dl> : null}</Confirm>
+    {opened.includes('Plan overrides') ? <div hidden={depth !== 'Plan overrides'}><PlanOverrides globalSettings={controls.data?.settings} onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /></div> : null}
+    {opened.includes('Profiles and comparison') ? <div hidden={depth !== 'Profiles and comparison'}><ShapingWorkbench onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /></div> : null}
+    {opened.includes('Service') ? <div hidden={depth !== 'Service'}><RuntimeSettings /><ServiceDetails key={serviceRevision} onAction={action => { setFailed(null); setPending(action); }} health={health} /></div> : null}
+    {Object.keys(draft).length ? <div className="shaping-draft-bar"><span>{fmtNum(Object.keys(draft).length)} unsaved threshold changes</span>{!patch ? <span>Enter whole numbers within each field’s limits.</span> : null}<button type="button" className="button" disabled={!patch} onClick={() => { setFailed(null); setControlConsent(false); setPending({ title: 'Save threshold changes', verb: 'Save thresholds', changes: 'New requests use these global thresholds. In-flight requests retain their settings.', undo: 'Restore the previous numbers here.', body: patch, thresholds: true, done: 'Thresholds saved and verified after refresh.' }); }}>Review threshold changes</button><button type="button" className="button quiet" onClick={() => setDraft({})}>Discard</button></div> : null}
+    <Confirm open={!!pending} title={pending?.title} verb={pending?.verb} requires="A signed-in operator session on the gateway host." changes={pending?.changes} undo={pending?.undo} irreversible={pending?.irreversible} busy={busy} refusal={failed} onConfirm={run} onClose={close}>{pending?.body ? <Checkbox mt="md" mb="md" checked={controlConsent} onChange={event => setControlConsent(event.currentTarget.checked)} label="I have reviewed this change and consent to the enabled content-changing transformations. Existing saved controls remain in effect." /> : null}{pending?.layer ? <p>{pending.layer}</p> : null}{pending?.thresholds ? <dl className="shaping-control-facts">{Object.entries(pending.body).map(([key, value]) => <div key={key}><dt>{THRESHOLDS.find(field => field.key === key)?.name}</dt><dd>{numeric(s?.[key])} → {fmtNum(value)} {THRESHOLDS.find(field => field.key === key)?.unit}</dd></div>)}</dl> : null}</Confirm>
   </div>;
 }

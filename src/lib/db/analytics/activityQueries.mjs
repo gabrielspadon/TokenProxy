@@ -1,5 +1,6 @@
 import { CLIENT_REFERENCE_FIELDS, ECONOMICS_LINK_FIELDS, economicsLedgerSource, costComponents } from './economicsLinks.mjs';
 import { ECONOMICS_GROUP_VALUES, economicsGroupFields } from './economicsDimensions.mjs';
+import { attachCounterfactualEvidence } from './counterfactualEvidence.mjs';
 const MAX_POINTS = 720;
 const MINUTE = 60000;
 const GROUPS = new Set(ECONOMICS_GROUP_VALUES);
@@ -155,7 +156,7 @@ function baseQuery(db, query) {
   }
   return { params, sql: `WITH quantities AS (
     SELECT id,timestamp,provider,model,connectionId,status,${attribution},
-      ${ECONOMICS_LINK_FIELDS.map(field=>`NULL AS ${field}`).join(',')},NULL AS reasoningTokens,
+      ${ECONOMICS_LINK_FIELDS.map(field=>field === 'requestedModel' && columns.has(field) ? field : `NULL AS ${field}`).join(',')},NULL AS reasoningTokens,
       ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
       ${quantity('cachedTokens')} AS cacheRead,${quantity('cacheCreationTokens')} AS cacheWrite,
       NULL AS recordedCost,
@@ -301,6 +302,7 @@ function readActivityItems(db,query,base,limit,offset=0) {
     row.rateSnapshot = snapshotMap.get(row.rateSnapshotId) || null;
     if (query.view==='economics') row.costComponents=costComponents(row);
   }
+  if (query.view === 'economics') attachCounterfactualEvidence(db, rows);
   return rows;
 }
 

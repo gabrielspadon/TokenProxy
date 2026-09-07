@@ -10,6 +10,7 @@ import { useAuthStatus } from '@/store/authStatus';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtPct, fmtRelative } from '@/shared/format';
+import './styles.css';
 
 // The Now screen's derivation, unchanged, so every screen reads one way.
 function pollFresh(p) {
@@ -21,11 +22,11 @@ function pollFresh(p) {
 
 // The four states of §17. "Confirmed" differs per transport: the relay confirms
 // by having registered its short address, the mesh by having a served address.
-function transportState(t, confirmed) {
-  if (!t || !t.settingsEnabled) return { tone: 'warn', word: 'Off' };
-  if (!t.running) return { tone: 'warn', word: 'Starting' };
-  if (!confirmed) return { tone: 'warn', word: 'Running, address not confirmed' };
-  return { tone: 'ok', word: 'Serving' };
+function transportState(t) {
+  if (!t) return { tone: 'warn', word: 'Unknown' };
+  if (!t.settingsEnabled) return { tone: 'warn', word: 'Configured off' };
+  if (!t.running) return { tone: 'warn', word: 'Configured on; process not running' };
+  return { tone: 'warn', word: 'Running; reachability unverified' };
 }
 
 function Probe({ state, at, now }) {
@@ -37,7 +38,7 @@ function Probe({ state, at, now }) {
       {at ? (
         <span className="caption">
           {' '}
-          Probed <span data-i18n-skip>{fmtRelative(at, now)}</span>
+          Status read <span data-i18n-skip>{fmtRelative(at, now)}</span>
         </span>
       ) : null}
     </>
@@ -92,18 +93,32 @@ export default function RemotePage() {
       setFailed(refusal(r.status, r.body));
       return;
     }
+    tunnel.refresh();
+    mesh.refresh();
+    access.refresh();
     // enable returns HTTP 200 with success:false when the daemon needs a login
     // or the tailnet has not turned Funnel on, so a 2xx is not yet a success.
     if (r.body && r.body.success === false) {
       setFailed({
         tone: 'warn',
         title: 'The gateway did not finish this.',
-        next: 'Its reason is below.',
+        next: 'Some setup may have changed before this outcome. Inspect refreshed configuration and process evidence before retrying.',
         detail: r.body.error || r.body.authUrl || r.body.enableUrl,
       });
       return;
     }
-    setDone({ title: pending.settled });
+    if (pending.url === '/api/settings' || pending.url === '/api/settings/require-login') {
+      const readback = await call(pending.url);
+      const verified = readback.ok && Object.entries(pending.body || {}).every(([key, value]) => readback.body?.[key] === value);
+      if (!verified) {
+        setFailed({ tone: 'warn', title: 'The setting was accepted; refreshed state was not verified.', next: 'Close this dialog and refresh before making another change. Do not repeat the mutation.' });
+        setBusy(true);
+        return;
+      }
+      setDone({ title: pending.settled });
+    } else {
+      setDone({ title: 'The process request was accepted. Inspect the refreshed status below; reachability remains unverified.' });
+    }
     setPending(null);
     tunnel.refresh();
     mesh.refresh();
@@ -119,6 +134,17 @@ export default function RemotePage() {
 
       {done ? <Notice tone="ok" title={done.title} /> : null}
 
+      <div className="remote-overview" role="region" aria-label="Remote evidence comparison" tabIndex={0}>
+        <table><thead><tr><th>Transport</th><th>Configuration</th><th>Process</th><th>Authentication</th><th>Reachability</th></tr></thead>
+          <tbody>{[['Relay', relay, '#h-relay'], ['Mesh', funnel, '#h-mesh']].map(([label, state, target]) => <tr key={label}>
+            <th><a href={target}>{label}</a></th><td>{state ? state.settingsEnabled ? 'On' : 'Off' : 'Unknown'}</td>
+            <td>{!state ? 'Unknown' : !state.settingsEnabled ? 'Probe skipped while off' : state.running ? 'Running' : 'Not running'}</td>
+            <td>{label === 'Mesh' ? host ? host.loggedIn ? 'Joined to tailnet' : 'Not joined to tailnet' : 'Unknown' : 'No separate relay authentication reported'}</td><td>Not reported by status API</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      <p className="caption">A stored address and running process do not establish that a remote client can reach the gateway. Sign-in protection and dashboard exposure are separate controls below.</p>
+
       <section aria-labelledby="h-relay">
         <div className="screen-head">
           <h2 id="h-relay">
@@ -127,12 +153,17 @@ export default function RemotePage() {
           </h2>
           <Freshness status={pollFresh(tunnel)} lastDataAt={tunnel.goodAt} />
         </div>
-        {tunnel.error && !tunnel.data ? <Notice {...refusal(tunnel.status, tunnel.error)} /> : null}
+        {tunnel.error ? <>
+          <Notice {...(tunnel.status === 0 || tunnel.error.code === 'network'
+            ? { tone: 'warn', title: 'Remote process status could not be refreshed.', next: tunnel.data ? 'Showing the last successful observation. Current process state is unknown until the next successful read.' : 'Retry this observation. Sign-in policy and mesh host status are read separately.' }
+            : refusal(tunnel.status, tunnel.error))} />
+          <button type="button" className="button quiet" onClick={tunnel.refresh} disabled={tunnel.loading}>Retry remote process read</button>
+        </> : null}
         {tunnel.loading && !tunnel.data ? <p className="skeleton">Reading</p> : null}
         {relay ? (
           <>
             <dl className="facts">
-              <dt>Serving</dt>
+              <dt>Configuration and process</dt>
               <dd>
                 <Probe state={relayState} at={tunnel.goodAt} now={now} />
               </dd>
@@ -140,7 +171,7 @@ export default function RemotePage() {
               <dd>{relay.settingsEnabled ? <span>On</span> : <span>Off</span>}</dd>
               <dt>Process</dt>
               <dd>
-                {relay.running ? (
+                {!relay.settingsEnabled ? <span className="unreported">Not probed while configured off</span> : relay.running ? (
                   <span className="status" data-tone="ok">
                     Running
                   </span>
@@ -160,8 +191,7 @@ export default function RemotePage() {
                   <>
                     <span className="unreported">Not reported</span>{' '}
                     <span className="caption">
-                      Withheld until the relay confirms it answers there, because an address that
-                      does not answer is worse than none
+                      No registered public address is stored. This status read does not test reachability.
                     </span>
                   </>
                 )}
@@ -192,6 +222,7 @@ export default function RemotePage() {
                 )}
               </dd>
             </dl>
+            <p className="caption">A public address is retained from relay registration. Its current reachability and last successful health-check time are not reported by this API.</p>
             {download?.downloading ? (
               <>
                 <p className="caption">Downloading the relay program</p>
@@ -296,10 +327,17 @@ export default function RemotePage() {
           </h2>
           <Freshness status={pollFresh(mesh)} lastDataAt={mesh.goodAt} />
         </div>
-        {mesh.error && !mesh.data ? <Notice {...refusal(mesh.status, mesh.error)} /> : null}
+        {mesh.error ? <>
+          <Notice {...(mesh.status === 0 || mesh.error.code === 'network'
+            ? { tone: 'warn', title: 'Mesh host status could not be read.', next: mesh.data ? 'Showing the last successful host observation. Current authentication and daemon state remain unverified.' : 'Retry this read. Mesh configuration and process state are reported separately below.' }
+            : refusal(mesh.status, mesh.error))} />
+          <button type="button" className="button quiet" onClick={mesh.refresh} disabled={mesh.loading}>
+            Retry mesh host read
+          </button>
+        </> : null}
         {mesh.loading && !mesh.data ? <p className="skeleton">Reading</p> : null}
         <dl className="facts">
-          <dt>Serving</dt>
+          <dt>Configuration and process</dt>
           <dd>
             {funnel ? (
               <Probe state={meshState} at={tunnel.goodAt} now={now} />
@@ -493,7 +531,12 @@ export default function RemotePage() {
           </h2>
           <Freshness status={pollFresh(access)} lastDataAt={access.goodAt} />
         </div>
-        {access.error && !access.data ? <Notice {...refusal(access.status, access.error)} /> : null}
+        {access.error ? <>
+          <Notice {...(access.status === 0 || access.error.code === 'network'
+            ? { tone: 'warn', title: 'Remote access policy could not be refreshed.', next: access.data ? 'The displayed policy is the last successful read. Refresh it before changing remote access.' : 'Policy is unknown. Relay process status does not establish dashboard access policy.' }
+            : refusal(access.status, access.error))} />
+          <button type="button" className="button quiet" onClick={access.refresh} disabled={access.loading}>Retry access policy read</button>
+        </> : null}
         <dl className="facts">
           <dt>Dashboard sign-in</dt>
           <dd>
@@ -599,6 +642,14 @@ export default function RemotePage() {
           </li>
         </ul>
       </section>
+
+      <details className="fold"><summary>Host configuration for remote transports</summary>
+        <p>These startup options belong to the gateway service environment. They cannot be changed by saving a dashboard setting. After changing them, restart the gateway through its normal service manager and inspect the transport state above.</p>
+        <dl className="facts"><dt>Cloudflare worker service</dt><dd><code>TUNNEL_WORKER_URL=https://your-worker.example</code> selects the registration service and the host used to construct its public address. It must provide the gateway’s worker protocol.</dd>
+          <dt>Worker TLS verification</dt><dd><code>TUNNEL_WORKER_INSECURE=1</code> disables certificate verification for that worker host only. Leave this unset when the worker has a trusted certificate.</dd>
+          <dt>Tailscale authorization</dt><dd>Set <code>TAILSCALE_AUTHKEY</code> in the gateway’s private service environment to supply the key when Tailscale starts. This page never reads, displays, or stores it. Without it, complete Tailscale’s interactive sign-in.</dd></dl>
+        <p>A configured worker URL or auth key is not evidence that the transport runs or that a remote client can reach the gateway. Starting and testing transports remain separate explicit actions.</p>
+      </details>
 
       <section aria-labelledby="h-gap">
         <h2 id="h-gap">Not reported</h2>
