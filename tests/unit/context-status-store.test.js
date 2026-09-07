@@ -29,6 +29,9 @@ describe("contextStatusStore", () => {
       ctxTokens: 12345,
       saveBytes: -800,
       ceBytes: 4096,
+      dollarsSaved: 0.0012,
+      epochHitRate: 0.75,
+      volatileKeys: ["metadata"],
       compactHint: true,
       bogus: "dropped",
       saveBytesNegativeCheck: -5,
@@ -40,10 +43,24 @@ describe("contextStatusStore", () => {
       ctxTokens: 12345,
       saveBytes: -800, // signed delta preserved
       ceBytes: 4096,
+      dollarsSaved: 0.0012,
+      epochHitRate: 0.75,
+      volatileKeys: ["metadata"],
       compactHint: true,
       updatedAt: entry.updatedAt,
     });
     expect(Number.isNaN(Date.parse(entry.updatedAt))).toBe(false);
+  });
+
+  it("a dollarsSaved-only write merges over the rid-stamped completion row", async () => {
+    // The listener's two writes land in order: the completion write carries
+    // rid+ctxTokensActual, the rollup write then merges dollarsSaved over it.
+    writeContextStatus("abcd1234", { rid: "0bad000c", ctxTokensActual: 9000 });
+    writeContextStatus("abcd1234", { dollarsSaved: 0.004 });
+    const entry = await readContextStatus("abcd1234");
+    expect(entry.rid).toBe("0bad000c");
+    expect(entry.ctxTokensActual).toBe(9000);
+    expect(entry.dollarsSaved).toBe(0.004);
   });
 
   it("omitted fields stay absent; saveBytes of exactly 0 is kept", async () => {

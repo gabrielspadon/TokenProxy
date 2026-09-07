@@ -57,7 +57,7 @@ import {
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { withSaverHeaders } from "./chatCore/saverHeaders.js";
 import { writeContextStatus } from "./chatCore/contextStatusStore.js";
-import { sumSavedUsdSince } from "../../src/lib/db/repos/costLedgerRepo.js";
+import { sumSavedUsdSince, waitForLedgerWrite } from "../../src/lib/db/repos/costLedgerRepo.js";
 import { clientRequestedStreaming as requestedStreaming } from "./chatCore/streamMode.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import {
@@ -263,15 +263,20 @@ onReqSummary((verdict, fields) => {
   if (entry.sid) {
     writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
     // Dollar rollup for the same entry: what the savers saved this session in
-    // the last 24h, from the cost ledger. Async fire-and-forget; the sum
-    // resolves after the rid-stamped write above, and the store's writeQueue
-    // serializes in invocation order, so this merges over that row without a
-    // rid (it carries no completion field and cannot trip the rid guard).
+    // the last 24h, from the cost ledger's saver component (the cache-discount
+    // component rides the same rollup but never claims to be saver work).
+    // Async fire-and-forget; the sum resolves after the rid-stamped write
+    // above, and the store's writeQueue serializes in invocation order, so
+    // this merges over that row without a rid (it carries no completion field
+    // and cannot trip the rid guard). waitForLedgerWrite chains THIS request's
+    // async ledger write ahead of the read, or the rollup would lag one
+    // request behind its own savings.
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    sumSavedUsdSince(entry.sid, since)
-      .then((dollarsSaved) => {
-        if (typeof dollarsSaved === "number" && Number.isFinite(dollarsSaved)) {
-          writeContextStatus(entry.sid, { dollarsSaved });
+    waitForLedgerWrite(rid)
+      .then(() => sumSavedUsdSince(entry.sid, since))
+      .then((rollup) => {
+        if (rollup && Number.isFinite(rollup.saverSavedUsd)) {
+          writeContextStatus(entry.sid, { dollarsSaved: rollup.saverSavedUsd });
         }
       })
       .catch(() => { /* telemetry must never break the request path */ });

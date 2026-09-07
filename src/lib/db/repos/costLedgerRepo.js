@@ -18,8 +18,8 @@ import { getPricingForModel } from "./pricingRepo.js";
 const CHARS_PER_TOKEN = 4;
 
 // Serialized string length / 4, rounded up; null when there is nothing to
-// tokenize. String length (UTF-16 code units) matches estimateRequestTokens
-// and the token-saver events sink convention.
+// tokenize. String length (UTF-16 code units) matches estimateInputTokens
+// (open-sse/utils/usageTracking.js) and the token-saver events sink convention.
 export function estimateBaselineTokens(serialized) {
   if (typeof serialized !== "string" || serialized.length === 0) return null;
   return Math.ceil(serialized.length / CHARS_PER_TOKEN);
@@ -28,7 +28,8 @@ export function estimateBaselineTokens(serialized) {
 /**
  * Build one ledger row from the counterfactual inputs, or null when a row
  * cannot be computed truthfully: no rid, no model, no pre-saver body, no
- * provider-reported usage (estimated usage is not actual), or no rate card.
+ * provider-reported usage (estimated usage is not actual), provider-reported
+ * usage with zero input AND zero output (unmeasurable), or no rate card.
  */
 export async function computeCostLedgerEntry({ rid, sid, provider, model, preSaverSerialized, usage, now } = {}) {
   if (typeof rid !== "string" || !rid) return null;
@@ -37,6 +38,10 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
   if (usage.estimated === true) return null; // only provider-reported usage is "actual"
   const canonical = canonicalizeUsage(usage);
   if (!canonical) return null;
+  // Reported zeros in both directions are not a measurement, they are an
+  // absent one: costed against a priced baseline the row would claim the whole
+  // prompt as savings. Same skip as the estimated-usage path.
+  if (canonical.prompt_tokens === 0 && canonical.completion_tokens === 0) return null;
   const baselineTokens = estimateBaselineTokens(preSaverSerialized);
   if (baselineTokens === null) return null;
   // Operator overrides merge over the built-in catalog in pricingRepo.
@@ -52,6 +57,12 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
     usage: canonical,
     multipliers: cacheMultiplierFor(provider),
   }).totalUsd;
+  // Attribution split of savedUsd: the saver component prices the ACTUAL usage
+  // as if fully uncached and subtracts it from the baseline, so only the
+  // pre-saver body shrink moves it; the cache component is what the provider
+  // discount took off that actual usage. saver + cache = savedUsd exactly.
+  const actualUncachedUsd =
+    canonical.prompt_tokens * (inputRate / 1e6) + outputTokens * (outputRate / 1e6);
 
   return {
     id: rid,
@@ -62,6 +73,8 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
     baselineUsd,
     actualUsd,
     savedUsd: baselineUsd - actualUsd,
+    saverSavedUsd: baselineUsd - actualUncachedUsd,
+    cacheSavedUsd: actualUncachedUsd - actualUsd,
     inputTokens: canonical.prompt_tokens,
     cacheReadTokens: canonical.cached_tokens,
     cacheWriteTokens: canonical.cache_creation_input_tokens,
@@ -76,14 +89,18 @@ export async function recordCostLedger(entry) {
     if (!entry || typeof entry.id !== "string" || !entry.id) return false;
     const db = await getAdapter();
     db.run(
-      `INSERT INTO costLedger(id, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+      `INSERT INTO costLedger(id, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, saverSavedUsd, cacheSavedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO UPDATE SET ts=excluded.ts, sid=excluded.sid, provider=excluded.provider,
          model=excluded.model, baselineUsd=excluded.baselineUsd, actualUsd=excluded.actualUsd,
-         savedUsd=excluded.savedUsd, inputTokens=excluded.inputTokens, cacheReadTokens=excluded.cacheReadTokens,
+         savedUsd=excluded.savedUsd, saverSavedUsd=excluded.saverSavedUsd, cacheSavedUsd=excluded.cacheSavedUsd,
+         inputTokens=excluded.inputTokens, cacheReadTokens=excluded.cacheReadTokens,
          cacheWriteTokens=excluded.cacheWriteTokens, outputTokens=excluded.outputTokens`,
       [entry.id, entry.ts, entry.sid, entry.provider, entry.model, entry.baselineUsd, entry.actualUsd,
-        entry.savedUsd, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.outputTokens],
+        // A caller omitting the split columns stores 0/0, the same "unknown
+        // decomposition" marker pre-split rows carry.
+        entry.savedUsd, entry.saverSavedUsd ?? 0, entry.cacheSavedUsd ?? 0, entry.inputTokens,
+        entry.cacheReadTokens, entry.cacheWriteTokens, entry.outputTokens],
     );
     return true;
   } catch {
@@ -93,28 +110,56 @@ export async function recordCostLedger(entry) {
 
 // Compute + persist in one call. Returns the row when written, null when
 // skipped or the write failed — the caller never needs the distinction.
-export async function recordCostLedgerForRequest(args) {
-  try {
-    const entry = await computeCostLedgerEntry(args);
-    if (!entry) return null;
-    return (await recordCostLedger(entry)) ? entry : null;
-  } catch {
-    return null;
+// In-flight writes are tracked by rid: the onReqSummary listener in chatCore
+// reads the session rollup the moment a request completes, while saveUsageStats
+// fires this write async — without a handle on it the rollup lagged one
+// request behind its own savings.
+const pendingWrites = new Map();
+
+export function recordCostLedgerForRequest(args) {
+  const rid = typeof args?.rid === "string" && args.rid ? args.rid : null;
+  const write = (async () => {
+    try {
+      const entry = await computeCostLedgerEntry(args);
+      if (!entry) return null;
+      return (await recordCostLedger(entry)) ? entry : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (rid) {
+    pendingWrites.set(rid, write);
+    write.then(() => {
+      if (pendingWrites.get(rid) === write) pendingWrites.delete(rid);
+    });
   }
+  return write;
 }
 
-// Session rollup for the MCP context_status entry: dollars saved by the savers
-// over the last 24h for one sid. Null (not 0) when the read itself failed, so
-// a broken DB never reports a fake "saved nothing".
+// The pending write for one rid (never rejects — the write swallows its own
+// errors), or an already-resolved null when none is in flight.
+export function waitForLedgerWrite(rid) {
+  return pendingWrites.get(rid) || Promise.resolve(null);
+}
+
+// Session rollup for the MCP context_status entry, decomposed by attribution:
+// saverSavedUsd is what the savers cut over the window (baseline minus the
+// actual usage priced fully uncached), cacheSavedUsd is the provider cache
+// discount on top of that. Null (not 0) when the read itself failed, so a
+// broken DB never reports a fake "saved nothing".
 export async function sumSavedUsdSince(sid, sinceIso) {
   try {
     if (typeof sid !== "string" || !sid || typeof sinceIso !== "string" || !sinceIso) return null;
     const db = await getAdapter();
     const row = db.get(
-      `SELECT COALESCE(SUM(savedUsd), 0) AS total FROM costLedger WHERE sid = ? AND ts >= ?`,
+      `SELECT COALESCE(SUM(saverSavedUsd), 0) AS saver, COALESCE(SUM(cacheSavedUsd), 0) AS cache
+       FROM costLedger WHERE sid = ? AND ts >= ?`,
       [sid, sinceIso],
     );
-    return row && Number.isFinite(Number(row.total)) ? Number(row.total) : null;
+    const saverSavedUsd = Number(row?.saver);
+    const cacheSavedUsd = Number(row?.cache);
+    if (!row || !Number.isFinite(saverSavedUsd) || !Number.isFinite(cacheSavedUsd)) return null;
+    return { saverSavedUsd, cacheSavedUsd };
   } catch {
     return null;
   }

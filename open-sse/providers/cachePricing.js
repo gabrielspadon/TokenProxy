@@ -6,9 +6,13 @@
 //      the providers that publish them (OpenAI per-model table, Gemini implicit
 //      per-model discount, Anthropic 0.1x/1.25x). An explicit rate always wins.
 //   2. A provider-keyed MULTIPLIER table for rate cards that lack explicit
-//      cache rates: the multiplier scales the plain input rate. Unknown
-//      providers degrade to {read: 1.0, write: 1.0}, i.e. cache tokens cost the
-//      same as uncached input (plain pricing, no invented discount).
+//      cache rates: the multiplier scales the plain input rate. Providers
+//      without a published cache policy degrade to {read: 1.0, write: 1.0},
+//      i.e. cache tokens cost the same as uncached input (plain pricing, no
+//      invented discount). The OpenAI read 0.5 and Gemini read 0.25 fallbacks
+//      were removed: their discounts are per-model and live on the rate cards,
+//      so a model missing them must not inherit a discount the provider never
+//      stated — overstated savings are worse than none.
 //
 // `usage` MUST be canonical (canonicalizeUsage): prompt_tokens cache-inclusive,
 // cached_tokens = cache-read portion, cache_creation_input_tokens = cache-write
@@ -17,11 +21,11 @@
 // Cache multipliers on the plain input rate, keyed by provider id. `write` is
 // the 5-minute cache tier everywhere that distinguishes tiers; the 1-hour tier
 // (Anthropic 2.0x) is exported for consumers that know which tier was written.
+// Only Anthropic publishes a flat policy for every model; every other provider
+// falls through to DEFAULT_MULTIPLIERS.
 export const CACHE_MULTIPLIERS = {
   anthropic: { read: 0.1, write: 1.25, write1h: 2.0 },
   claude: { read: 0.1, write: 1.25, write1h: 2.0 },
-  openai: { read: 0.5, write: 1.25 },
-  gemini: { read: 0.25, write: 1.0 },
 };
 
 const DEFAULT_MULTIPLIERS = { read: 1.0, write: 1.0 };

@@ -11,8 +11,14 @@
 // chars/token convention the token-saver byte ledger documents).
 //
 // Per-saver attribution is a query-time join: saver events (tokenSaver
-// events.jsonl rows) and ledger rows share the rid, so no saver column exists
-// here and the SAVERS allowlist needs no entry for this table.
+// events.jsonl rows) and ledger rows share the rid, so no saver-identity
+// column exists here and the SAVERS allowlist needs no entry for this table.
+// saverSavedUsd/cacheSavedUsd are the dollar split of savedUsd: the saver
+// component (baseline minus the actual usage priced fully uncached) and the
+// provider cache-discount component (that uncached actual minus the
+// cache-priced actual). saverSavedUsd + cacheSavedUsd = savedUsd by
+// construction. Rows written before the split carry 0/0 — the decomposition
+// of their savedUsd is unknown, not zero; only their total stays honest.
 export const COST_LEDGER_TABLES = {
   costLedger: {
     columns: {
@@ -24,6 +30,8 @@ export const COST_LEDGER_TABLES = {
       baselineUsd: 'REAL NOT NULL',
       actualUsd: 'REAL NOT NULL',
       savedUsd: 'REAL NOT NULL', // baseline - actual; negative = savers grew the body
+      saverSavedUsd: 'REAL NOT NULL DEFAULT 0', // saver component of savedUsd
+      cacheSavedUsd: 'REAL NOT NULL DEFAULT 0', // cache-discount component
       inputTokens: 'INTEGER NOT NULL DEFAULT 0', // cache-inclusive provider input
       cacheReadTokens: 'INTEGER NOT NULL DEFAULT 0',
       cacheWriteTokens: 'INTEGER NOT NULL DEFAULT 0',

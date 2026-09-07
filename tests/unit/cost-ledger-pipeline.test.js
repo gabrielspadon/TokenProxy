@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // Counterfactual dollar ledger end-to-end through handleChatCore with a
 // mocked executor (no network). The executor sizes its reported prompt_tokens
@@ -40,9 +43,9 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
   }),
 }));
 
-vi.mock("../../open-sse/utils/stream.js", () => ({
+vi.mock("../../open-sse/utils/stream.js", async (orig) => ({
+  ...(await orig()),
   COLORS: { red: "", reset: "" },
-  createPassthroughStreamWithLogger: vi.fn(() => new TransformStream()),
 }));
 
 // Same mutation contract as real RTK: shrink any long string content.
@@ -92,6 +95,8 @@ vi.mock("@/lib/usageDb.js", async () => {
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 const { getAdapter } = await import("@/lib/db/driver.js");
+const { readContextStatus, __setContextStatusDirForTest } =
+  await import("../../open-sse/handlers/chatCore/contextStatusStore.js");
 
 // Report usage for the body actually received: prompt = dispatched chars / 4.
 function makeSizedExecutorRes(args) {
@@ -148,12 +153,20 @@ async function readLedgerRow(rid) {
 }
 
 describe("cost ledger pipeline", () => {
+  let storeDir;
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.executeMock.mockImplementation(async (args) => makeSizedExecutorRes(args));
     globalThis.fetch = vi.fn(async () => {
       throw new Error("unexpected fetch");
     });
+    storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "cost-ledger-ctx-"));
+    __setContextStatusDirForTest(storeDir);
+  });
+
+  afterEach(() => {
+    __setContextStatusDirForTest(null);
+    fs.rmSync(storeDir, { recursive: true, force: true });
   });
 
   it("savers off: baseline equals actual, savedUsd is zero", async () => {
@@ -166,9 +179,11 @@ describe("cost ledger pipeline", () => {
     expect(row.outputTokens).toBe(50);
     expect(row.baselineUsd).toBeCloseTo(row.actualUsd, 12);
     expect(row.savedUsd).toBe(0);
+    expect(row.saverSavedUsd).toBe(0);
+    expect(row.cacheSavedUsd).toBe(0);
   });
 
-  it("savers on: baseline exceeds actual, savedUsd is positive", async () => {
+  it("savers on: baseline exceeds actual, savedUsd is positive and lands in the saver component", async () => {
     const res = await handleChatCore(baseArgs({ requestId: "c0ffee51", rtkEnabled: true }));
     expect(res.success).toBe(true);
     const row = await readLedgerRow("c0ffee51");
@@ -179,6 +194,9 @@ describe("cost ledger pipeline", () => {
     expect(row.inputTokens).toBeLessThan(500);
     expect(row.baselineUsd).toBeGreaterThan(row.actualUsd);
     expect(row.savedUsd).toBeGreaterThan(0);
+    // No cache tokens reported: the whole saving is saver work.
+    expect(row.saverSavedUsd).toBeCloseTo(row.savedUsd, 12);
+    expect(row.cacheSavedUsd).toBe(0);
   });
 
   it("estimated usage (provider omitted it) writes no ledger row", async () => {
@@ -201,6 +219,64 @@ describe("cost ledger pipeline", () => {
     const db = await getAdapter();
     await new Promise((r) => setTimeout(r, 200));
     expect(db.get(`SELECT * FROM costLedger WHERE id = ?`, ["c0ffee52"])).toBeUndefined();
+  });
+
+  it("the current request's saver dollars land on its own context-status entry (no one-request lag)", async () => {
+    const res = await handleChatCore(baseArgs({ requestId: "c0ffee61", sid: "cafe9999", rtkEnabled: true }));
+    expect(res.success).toBe(true);
+    const row = await readLedgerRow("c0ffee61");
+    expect(row).not.toBeNull();
+    expect(row.saverSavedUsd).toBeGreaterThan(0);
+    // The onReqSummary listener chains this request's own ledger write ahead
+    // of the rollup read, so the entry's dollarsSaved already includes the
+    // request that just completed — not only the previous ones.
+    let entry = null;
+    for (let i = 0; i < 50; i++) {
+      entry = await readContextStatus("cafe9999");
+      if (entry && typeof entry.dollarsSaved === "number") break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(entry).not.toBeNull();
+    expect(entry.dollarsSaved).toBeGreaterThan(0);
+    expect(entry.dollarsSaved).toBeCloseTo(row.saverSavedUsd, 12);
+  });
+
+  it("streaming path: usage with cache fields lands one ledger row with the saver/cache split", async () => {
+    const sse =
+      'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n' +
+      'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":200,"prompt_tokens_details":{"cached_tokens":400}}}\n\n' +
+      "data: [DONE]\n\n";
+    mocks.executeMock.mockImplementation(async () => ({
+      response: new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+      url: "https://api.openai.com/v1/chat/completions",
+      headers: {},
+      transformedBody: null,
+    }));
+    const res = await handleChatCore(baseArgs({
+      requestId: "c0ffee71",
+      sid: "cafe9998",
+      rtkEnabled: false,
+      body: {
+        model: "openai/gpt-4o",
+        stream: true,
+        messages: [{ role: "user", content: "hello" }],
+      },
+      modelInfo: { provider: "openai", model: "gpt-4o" },
+    }));
+    expect(res.success).toBe(true);
+    await res.response.text(); // drain: onStreamComplete fires at flush
+    const row = await readLedgerRow("c0ffee71");
+    expect(row).not.toBeNull();
+    expect(row.inputTokens).toBe(1000);
+    expect(row.cacheReadTokens).toBe(400);
+    expect(row.cacheWriteTokens).toBe(0);
+    expect(row.outputTokens).toBe(200);
+    // gpt-4o rates per 1M: input 2.5, cached 1.25, output 10.0.
+    const actualUncachedUsd = (1000 * 2.5 + 200 * 10.0) / 1e6;
+    const actualUsd = (600 * 2.5 + 400 * 1.25 + 200 * 10.0) / 1e6;
+    expect(row.cacheSavedUsd).toBeCloseTo(actualUncachedUsd - actualUsd, 12);
+    expect(row.saverSavedUsd).toBeCloseTo(row.baselineUsd - actualUncachedUsd, 12);
+    expect(row.savedUsd).toBeCloseTo(row.saverSavedUsd + row.cacheSavedUsd, 12);
   });
 
   it("ledger failure never blocks usage persistence", async () => {

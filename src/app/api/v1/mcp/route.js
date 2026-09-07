@@ -30,7 +30,7 @@ const SID_RE = /^[a-f0-9]{8}$/;
 const CONTEXT_STATUS_TOOL = {
   name: "context_status",
   description:
-    "TokenProxy per-session context telemetry for the session identified by the request bearer credential. ctxTokensActual is the prompt size the provider billed on the last completed request (input + cache read + cache creation) and is the number to size against; ctxTokens is the gateway's byte-based estimate of the last dispatched body; saveBytes is what the savers cut; ceBytes is how much of the previous request's prefix the last one reproduced; compactHint is true when that prefix was rewritten by more than half.",
+    "TokenProxy per-session context telemetry for the session identified by the request bearer credential. ctxTokensActual is the prompt size the provider billed on the last completed request (input + cache read + cache creation) and is the number to size against; ctxTokens is the gateway's byte-based estimate of the last dispatched body; saveBytes is what the savers cut; ceBytes is how much of the previous request's prefix the last one reproduced; compactHint is true when that prefix was rewritten by more than half. dollarsSaved is the savers' 24h dollar rollup for the session (the cache-discount component is excluded); epochHitRate is the rolling cache-epoch hit rate; volatileKeys names the early top-level keys whose value changed last.",
   inputSchema: {
     type: "object",
     properties: {
@@ -128,6 +128,19 @@ async function resolveOwnStatus(request) {
 }
 
 function statusResult(entry) {
+  const status = {
+    sid: entry.sid,
+    rid: entry.rid ?? null,
+    ctxTokens: entry.ctxTokens ?? null,
+    ctxTokensActual: entry.ctxTokensActual ?? null,
+    saveBytes: entry.saveBytes ?? null,
+    ceBytes: entry.ceBytes ?? null,
+    dollarsSaved: entry.dollarsSaved ?? null,
+    epochHitRate: entry.epochHitRate ?? null,
+    volatileKeys: Array.isArray(entry.volatileKeys) ? entry.volatileKeys : null,
+    compactHint: entry.compactHint === true,
+    updatedAt: entry.updatedAt ?? null,
+  };
   return {
     isError: false,
     content: [
@@ -135,28 +148,10 @@ function statusResult(entry) {
         type: "resource",
         uri: "context://status",
         mimeType: "application/json",
-        text: JSON.stringify({
-          sid: entry.sid,
-          rid: entry.rid ?? null,
-          ctxTokens: entry.ctxTokens ?? null,
-          ctxTokensActual: entry.ctxTokensActual ?? null,
-          saveBytes: entry.saveBytes ?? null,
-          ceBytes: entry.ceBytes ?? null,
-          compactHint: entry.compactHint === true,
-          updatedAt: entry.updatedAt ?? null,
-        }),
+        text: JSON.stringify(status),
       },
     ],
-    structuredContent: {
-      sid: entry.sid,
-      rid: entry.rid ?? null,
-      ctxTokens: entry.ctxTokens ?? null,
-      ctxTokensActual: entry.ctxTokensActual ?? null,
-      saveBytes: entry.saveBytes ?? null,
-      ceBytes: entry.ceBytes ?? null,
-      compactHint: entry.compactHint === true,
-      updatedAt: entry.updatedAt ?? null,
-    },
+    structuredContent: status,
   };
 }
 
