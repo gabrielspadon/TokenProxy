@@ -73,6 +73,12 @@ import { distillToolSchemas } from "../utils/schemaDistiller.js";
 import { stripHistoricalThinking } from "../utils/thinkingStrip.js";
 import { compressPrefixByQuery } from "../utils/queryAwareCompress.js";
 import { dropOldestPairs } from "../utils/pairDropper.js";
+import {
+  microcompact,
+  autocompact,
+  computeEpochCutIndex,
+  placeholderEpochSummarizer,
+} from "../utils/epochCompact.js";
 import { reorderByRelevance } from "../utils/embedReorder.js";
 import {
   injectBoundaryNote,
@@ -269,6 +275,42 @@ onReqSummary((verdict, fields) => {
   }
 });
 
+// Shared-prefix byte count of `whole` against a stored previous body: one
+// digest per CE_BLOCK_BYTES block plus a byte-for-byte tail compare, exact
+// when the new body extends the old one, block-granular when history was
+// rewritten earlier. See the digest rationale in trackCacheEpoch below.
+function sharedPrefixBytes(prev, whole, byteLen) {
+  const blocks = [];
+  for (let off = 0; off < byteLen; off += CE_BLOCK_BYTES) {
+    blocks.push(createHash("sha1").update(whole.subarray(off, off + CE_BLOCK_BYTES)).digest("base64"));
+  }
+  const fullPrev = Math.max(0, prev.blocks.length - 1);
+  const n = Math.min(fullPrev, blocks.length);
+  let i = 0;
+  while (i < n && prev.blocks[i] === blocks[i]) i++;
+  let ce = i * CE_BLOCK_BYTES;
+  if (i === fullPrev && prev.tail) {
+    const here = whole.subarray(prev.tailOff, prev.tailOff + prev.tail.length);
+    const m = Math.min(prev.tail.length, here.length);
+    let j = 0;
+    while (j < m && prev.tail[j] === here[j]) j++;
+    ce = prev.tailOff + j;
+  }
+  return Math.min(ce, prev.len, byteLen);
+}
+
+// Read-only sibling of trackCacheEpoch for the epoch-compaction stages: the
+// same comparison against the session's previous final body WITHOUT storing
+// this intermediate body (storing it would corrupt the epoch chain — the
+// stages below may still mutate, and the tracker must record the final
+// pre-dispatch body exactly once).
+function peekCacheEpoch(sid, serialized) {
+  const prev = sid ? ceBodies.get(sid) : null;
+  if (!prev || Date.now() - prev.at > CE_TTL_MS) return null;
+  const whole = Buffer.from(serialized, "utf8");
+  return { ce: sharedPrefixBytes(prev, whole, whole.length), prevBytes: prev.len, bytes: whole.length };
+}
+
 function trackCacheEpoch(sid, serialized) {
   const whole = Buffer.from(serialized, "utf8");
   const byteLen = whole.length;
@@ -290,19 +332,7 @@ function trackCacheEpoch(sid, serialized) {
   let out;
   const prev = ceBodies.get(sid);
   if (prev && now - prev.at <= CE_TTL_MS) {
-    const fullPrev = Math.max(0, prev.blocks.length - 1);
-    const n = Math.min(fullPrev, blocks.length);
-    let i = 0;
-    while (i < n && prev.blocks[i] === blocks[i]) i++;
-    let ce = i * CE_BLOCK_BYTES;
-    if (i === fullPrev && prev.tail) {
-      const here = whole.subarray(prev.tailOff, prev.tailOff + prev.tail.length);
-      const m = Math.min(prev.tail.length, here.length);
-      let j = 0;
-      while (j < m && prev.tail[j] === here[j]) j++;
-      ce = prev.tailOff + j;
-    }
-    out = { ce: Math.min(ce, prev.len, byteLen), prevBytes: prev.len, bytes: byteLen };
+    out = { ce: sharedPrefixBytes(prev, whole, byteLen), prevBytes: prev.len, bytes: byteLen };
   }
   ceBodies.delete(sid);
   ceBodies.set(sid, {
@@ -355,6 +385,8 @@ export async function handleChatCore({
   embedReorderUrl,
   embedReorderModel,
   midPrefixInjectEnabled,
+  epochMicroEnabled,
+  epochAutoEnabled,
   privacyEnabled,
   privacyTerms,
   headroomEnabled,
@@ -828,6 +860,8 @@ export async function handleChatCore({
           pairDropEnabled ||
           embedReorderEnabled ||
           midPrefixInjectEnabled ||
+          epochMicroEnabled ||
+          epochAutoEnabled ||
           headroomEnabled ||
           cavemanEnabled ||
           ponytailEnabled ||
@@ -1275,6 +1309,73 @@ export async function handleChatCore({
   }
   measureSaverStage("pairs", pairsWillRun);
 
+  // Epoch-aligned compaction cascade (#context-tuning): microcompact stubs
+  // old tool_result payloads, autocompact replaces the pre-tail history with
+  // one summary message. Both mutate ONLY below the session's cache-epoch
+  // cut — the byte region the provider still serves from cache — so they run
+  // after pairs and before the final cache anchor. The cut comes from a
+  // read-only peek at the previous epoch entry: storing this intermediate
+  // body would corrupt the epoch chain the final serializer records.
+  const epochStageWanted =
+    tokenSaverEnabled &&
+    (epochMicroEnabled || epochAutoEnabled) &&
+    claudePrefixTarget &&
+    !!prefixMessages();
+  let epochCutIndex = 0;
+  if (epochStageWanted) {
+    const peek = peekCacheEpoch(contextScope, JSON.stringify(translatedBody));
+    epochCutIndex = peek ? computeEpochCutIndex(translatedBody.messages, peek) : 0;
+  }
+
+  const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
+  let epochMicroApplied = false;
+  if (epochMicroWillRun && epochCutIndex > 0) {
+    const res = microcompact(translatedBody, {
+      epochCutIndex,
+      keepLastTurns: 4,
+    });
+    if (res.applied) {
+      translatedBody.messages = res.messages;
+      epochMicroApplied = true;
+      prefixRewritten = true;
+      notePath(rid, "XFORM.epoch-micro");
+      pushPrefixNote({
+        kind: "epochMicro",
+        text: `cleared ${res.clearedBlocks} block(s) (~${res.clearedChars} chars)`,
+      });
+    }
+  }
+  measureSaverStage("epochMicro", epochMicroApplied);
+
+  const epochAutoWillRun = epochStageWanted && epochAutoEnabled;
+  let epochAutoApplied = false;
+  if (epochAutoWillRun && epochCutIndex > 0) {
+    // The model's own window from the capability table, same lookup the
+    // memory ladder and pair dropping use.
+    const epochWindowTokens =
+      getCapabilitiesForModel(provider, upstreamModel)?.contextWindow ?? null;
+    if (Number.isFinite(epochWindowTokens) && epochWindowTokens > 0) {
+      const res = await autocompact(translatedBody, {
+        windowTokens: epochWindowTokens,
+        usedTokens: estimateRequestTokens(translatedBody),
+        summarizeFn: placeholderEpochSummarizer,
+        keepRecentTurns: 6,
+        epochCutIndex,
+      });
+      if (res.applied) {
+        translatedBody.messages = res.messages;
+        epochAutoApplied = true;
+        prefixRewritten = true;
+        notePath(rid, "XFORM.epoch-auto");
+        pushPrefixNote({
+          kind: "epochAuto",
+          text: `auto-compacted ${res.droppedTurns} turn(s)`,
+        });
+      }
+    }
+  }
+  measureSaverStage("epochAuto", epochAutoApplied);
+
   // Embedding reorder: moves the most relevant historical pairs next to the
   // recent tail via local OpenAI-compatible embeddings. A permutation of the
   // prefix is a full cache rewrite, so a fresh embedding pass runs only on a
@@ -1589,6 +1690,8 @@ export async function handleChatCore({
       "pairs",
       "reorder",
       "midinject",
+      "epochMicro",
+      "epochAuto",
     ]) {
       const stageBytes = saverStageDelta(stageName);
       const stageGated =
@@ -1618,6 +1721,27 @@ export async function handleChatCore({
         }
         onTokenSaverEvent?.(row);
       }
+    }
+    // Epoch cascade skips are reported, not silenced: a skip means the gate
+    // was on but the trigger did not fire (stable/unknown epoch boundary, or
+    // the window below the 75% auto-compaction trigger).
+    if (epochMicroWillRun && !epochMicroApplied) {
+      onTokenSaverEvent?.({
+        saver: "epochMicro",
+        rid,
+        applied: false,
+        reason: "epoch_boundary",
+        ce: saverFields.ce,
+      });
+    }
+    if (epochAutoWillRun && !epochAutoApplied) {
+      onTokenSaverEvent?.({
+        saver: "epochAuto",
+        rid,
+        applied: false,
+        reason: "window_pressure",
+        ce: saverFields.ce,
+      });
     }
   } catch {
     /* stats must not break requests */

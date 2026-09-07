@@ -994,6 +994,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         embedReorderUrl: chatSettings.embedReorderUrl,
         embedReorderModel: chatSettings.embedReorderModel,
         midPrefixInjectEnabled: comboTokenSaver.midPrefixInjectEnabled,
+        epochMicroEnabled: comboTokenSaver.epochMicroEnabled,
+        epochAutoEnabled: comboTokenSaver.epochAutoEnabled,
         privacyEnabled: !!chatSettings.privacyFilterEnabled,
         privacyTerms: chatSettings.privacyFilterTerms || [],
         headroomEnabled: comboTokenSaver.headroomEnabled,

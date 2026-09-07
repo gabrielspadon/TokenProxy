@@ -20,6 +20,8 @@ const GLOBAL = {
   pairDropEnabled: false,
   embedReorderEnabled: false,
   midPrefixInjectEnabled: false,
+  epochMicroEnabled: false,
+  epochAutoEnabled: false,
 };
 
 const ALL_OFF = {
@@ -34,6 +36,8 @@ const ALL_OFF = {
   pairDropEnabled: false,
   embedReorderEnabled: false,
   midPrefixInjectEnabled: false,
+  epochMicroEnabled: false,
+  epochAutoEnabled: false,
 };
 
 function settings(comboStrategies) {

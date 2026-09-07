@@ -92,6 +92,13 @@ const DEFAULT_SETTINGS = {
   // Mid-prefix note: inject a boundary note summarizing what the prefix
   // stages optimized. Off by default.
   midPrefixInjectEnabled: false,
+  // Epoch-aligned compaction cascade (open-sse/utils/epochCompact.js):
+  // microcompact stubs old tool_result payloads; autocompact replaces the
+  // pre-tail history with one summary message at >= 75% of the context
+  // window. Both mutate only below the session's cache-epoch cut. Off by
+  // default.
+  epochMicroEnabled: false,
+  epochAutoEnabled: false,
   // Privacy filter (#2728): pseudonymise emails and the terms below in the
   // outbound body, restored before the client sees the answer. Off by
   // default — it walks every request, so it costs nothing until asked for.
