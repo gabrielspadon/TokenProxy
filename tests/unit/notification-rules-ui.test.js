@@ -94,11 +94,18 @@ describe('alert state', () => {
 });
 
 describe('evidence links', () => {
-  it('links a firing to the surface that renders the causing records', () => {
+  it('links a firing to a surface this build actually ships', () => {
     const event = { scopeKey: 'conn-1::session (5h)' };
-    expect(evidenceHref('quotaObservation', 'obs-1', event)).toContain('account=conn-1');
-    expect(evidenceHref('operationEvent', '42', event)).toContain('event=42');
-    expect(evidenceHref('accountSwitch', 's1', event)).toContain('account=conn-1');
+    // The earlier form asserted /dashboard/workspace and /dashboard/operations,
+    // neither of which is a route here, so the test passed while every link
+    // 404d. Assert the real Capacity route and the scope param the workspace
+    // reads (connectionId, not account).
+    expect(evidenceHref('quotaObservation', 'obs-1', event)).toBe(
+      '/dashboard?connectionId=conn-1'
+    );
+    expect(evidenceHref('accountSwitch', 's1', event)).toBe('/dashboard?connectionId=conn-1');
+    // Operation events have no operator surface yet; no link beats a broken one.
+    expect(evidenceHref('operationEvent', '42', event)).toBeNull();
   });
 
   it('returns no link rather than a broken one when there is nothing to point at', () => {
