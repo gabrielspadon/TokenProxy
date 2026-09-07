@@ -1,9 +1,19 @@
 import { Worker } from 'node:worker_threads';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { ShapingError } from './profile.js';
 let active = false;
+function workerPath() {
+  // Use the traced runtime source, as the analytics worker does. A static
+  // Worker URL becomes a webpack chunk that standalone tracing omits.
+  for (const root of [process.cwd(), resolve(process.cwd(), '..')]) {
+    const file = resolve(root, 'src/lib/shaping/worker.mjs');
+    if (existsSync(file)) return file;
+  }
+  throw new ShapingError('experiment_runtime_missing', 503);
+}
 export async function runExperiment(input, { signal } = {}) {
   if (signal?.aborted) throw new ShapingError('experiment_cancelled', 499);
   if (active) throw new ShapingError('experiment_busy', 409);
@@ -15,7 +25,7 @@ export async function runExperiment(input, { signal } = {}) {
       abort = () => reject(new ShapingError('experiment_cancelled', 499));
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener('abort', abort, { once: true });
-      worker = new Worker(new URL('./worker.mjs', import.meta.url), {
+      worker = new Worker(workerPath(), {
         workerData: input, env: { ...process.env, DATA_DIR: scratch },
         // Node 20.18.1 exposes syntax detection behind this flag. The stage
         // dependency dataDir.js is ESM in the root's mixed-module package.

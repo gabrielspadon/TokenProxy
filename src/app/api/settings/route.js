@@ -16,6 +16,7 @@ const SETTINGS_RESPONSE_HEADERS = {
 // Secrets must never be mass-assigned from request body (CWE-915)
 const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
 const DANGEROUS_STRATEGY_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const CONTEXT_CONTROL_BOOLEAN_KEYS = ["epochMicroEnabled", "epochAutoEnabled", "dietEnabled", "linguaEnabled", "adaptiveCacheTtlEnabled"];
 const NOAUTH_LEGACY_PROXY_KEYS = new Set([
   "connectionProxyMode",
   "connectionProxyEnabled",
@@ -28,6 +29,12 @@ function isPlainObject(value) {
     && typeof value === "object"
     && !Array.isArray(value)
     && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function invalidContextControlBoolean(body) {
+  return CONTEXT_CONTROL_BOOLEAN_KEYS.find((key) =>
+    Object.prototype.hasOwnProperty.call(body, key) && typeof body[key] !== "boolean",
+  );
 }
 
 function hasInvalidCodexFastMode(providerId, values, { allowNull = false } = {}) {
@@ -179,6 +186,14 @@ export async function PATCH(request) {
         && !isValidConnectTimeoutMs(body.connectTimeoutMs)) {
       return NextResponse.json(
         { error: "connectTimeoutMs must be an integer from 1000 through 120000" },
+        { status: 400 },
+      );
+    }
+
+    const invalidContextControl = invalidContextControlBoolean(body);
+    if (invalidContextControl) {
+      return NextResponse.json(
+        { error: `${invalidContextControl} must be a boolean` },
         { status: 400 },
       );
     }

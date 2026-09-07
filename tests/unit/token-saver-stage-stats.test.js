@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 // Per-stage savings: windows.<win>.stages.<saver> = { requests, applied,
-// bytesSaved }. Same ingestion path and storage seam as token-saver-events.test.js.
+// measuredRequests, bytesSaved }. `requests` is the measurement denominator.
 let TMP;
 let eventsMod;
 
@@ -41,15 +41,15 @@ describe("tokenSaver per-stage savings", () => {
 
     const s = mod.getTokenSaverStats();
 
-    expect(s.windows.today.stages.rtk).toEqual({ requests: 2, applied: 2, bytesSaved: -1000 });
-    expect(s.windows.today.stages.headroom).toEqual({ requests: 1, applied: 1, bytesSaved: -500 });
+    expect(s.windows.today.stages.rtk).toEqual({ requests: 2, applied: 2, measuredRequests: 1, bytesSaved: -1000 });
+    expect(s.windows.today.stages.headroom).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: -500 });
     // sparse stage map: savers with no rows in the window are absent
     expect(s.windows.today.stages.pxpipe).toBeUndefined();
-    expect(s.windows.yesterday.stages.pxpipe).toEqual({ requests: 1, applied: 1, bytesSaved: 200 });
+    expect(s.windows.yesterday.stages.pxpipe).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: 200 });
     expect(s.windows.yesterday.stages.rtk).toBeUndefined();
     expect(s.windows.last7d.stages.rtk.bytesSaved).toBe(-1000);
-    expect(s.windows.last30d.stages.rtk).toEqual({ requests: 3, applied: 2, bytesSaved: -1080 });
-    expect(s.windows.all.stages.rtk).toEqual({ requests: 3, applied: 2, bytesSaved: -1080 });
+    expect(s.windows.last30d.stages.rtk).toEqual({ requests: 3, applied: 2, measuredRequests: 2, bytesSaved: -1080 });
+    expect(s.windows.all.stages.rtk).toEqual({ requests: 3, applied: 2, measuredRequests: 2, bytesSaved: -1080 });
   });
 
   it("applies sinceMs filtering to stages exactly like the window totals", async () => {
@@ -62,7 +62,19 @@ describe("tokenSaver per-stage savings", () => {
     const s = mod.getTokenSaverStats({ sinceMs: cutoff });
 
     expect(s.windows.all.requests).toBe(1);
-    expect(s.windows.all.stages.rtk).toEqual({ requests: 1, applied: 1, bytesSaved: -300 });
+    expect(s.windows.all.stages.rtk).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: -300 });
+  });
+
+  it("distinguishes a measured zero from an absent measurement and retains signed growth", async () => {
+    const mod = await loadMod();
+    mod.__setTokenSaverEventsDirForTest(TMP);
+    mod.appendTokenSaverEvent({ ts: Date.now(), saver: "diet", applied: true, bytesSaved: 0 });
+    mod.appendTokenSaverEvent({ ts: Date.now(), saver: "diet", applied: false });
+    mod.appendTokenSaverEvent({ ts: Date.now(), saver: "diet", applied: true, bytesSaved: 25 });
+
+    expect(mod.getTokenSaverStats().windows.all.stages.diet).toEqual({
+      requests: 3, applied: 2, measuredRequests: 2, bytesSaved: 25,
+    });
   });
 
   it("aggregates the ledger-backed savers (inject, mem, schema, privacy)", async () => {
@@ -74,10 +86,10 @@ describe("tokenSaver per-stage savings", () => {
     mod.appendTokenSaverEvent({ ts: Date.now(), saver: "privacy", applied: false });
 
     const s = mod.getTokenSaverStats({});
-    expect(s.windows.all.stages.inject).toEqual({ requests: 1, applied: 1, bytesSaved: 3952 });
-    expect(s.windows.all.stages.mem).toEqual({ requests: 1, applied: 1, bytesSaved: -42400 });
-    expect(s.windows.all.stages.schema).toEqual({ requests: 1, applied: 1, bytesSaved: -1800 });
-    expect(s.windows.all.stages.privacy).toEqual({ requests: 1, applied: 0, bytesSaved: 0 });
+    expect(s.windows.all.stages.inject).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: 3952 });
+    expect(s.windows.all.stages.mem).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: -42400 });
+    expect(s.windows.all.stages.schema).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: -1800 });
+    expect(s.windows.all.stages.privacy).toEqual({ requests: 1, applied: 0, measuredRequests: 0, bytesSaved: 0 });
   });
 
   it("stages ride along through the /api/token-saver/stats route response", async () => {
@@ -89,7 +101,7 @@ describe("tokenSaver per-stage savings", () => {
     const res = await GET({ url: "http://localhost/api/token-saver/stats" });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.windows.all.stages.headroom).toEqual({ requests: 1, applied: 1, bytesSaved: -42 });
+    expect(body.windows.all.stages.headroom).toEqual({ requests: 1, applied: 1, measuredRequests: 1, bytesSaved: -42 });
     // no rtk row today: the sparse map has no rtk stage at all
     expect(body.windows.all.stages.rtk).toBeUndefined();
   });
@@ -128,7 +140,7 @@ describe("rid allowlist and (rid, saver) dedupe", () => {
 
     const s = mod.getTokenSaverStats();
     expect(s.windows.today.requests).toBe(2);
-    expect(s.windows.today.stages.rtk).toEqual({ requests: 2, applied: 2, bytesSaved: -600 });
+    expect(s.windows.today.stages.rtk).toEqual({ requests: 2, applied: 2, measuredRequests: 2, bytesSaved: -600 });
     expect(s.windows.today.charsReduced).toBe(150);
   });
 
@@ -142,6 +154,6 @@ describe("rid allowlist and (rid, saver) dedupe", () => {
     mod.appendTokenSaverEvent({ ts: Date.now(), saver: "headroom", applied: true, tokensSaved: 5, bytesSaved: -20 });
 
     const s = mod.getTokenSaverStats();
-    expect(s.windows.today.stages.headroom).toEqual({ requests: 3, applied: 3, bytesSaved: -80 });
+    expect(s.windows.today.stages.headroom).toEqual({ requests: 3, applied: 3, measuredRequests: 3, bytesSaved: -80 });
   });
 });

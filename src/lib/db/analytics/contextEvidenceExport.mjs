@@ -2,7 +2,7 @@ import { publicTurn } from './contextQueries.mjs';
 import { publicContextEvent } from './contextEvents.mjs';
 import { CONTEXT_STRUCTURE_DEFINITIONS, OWNED_EVENT_LINK, readContextRelated } from './contextRelated.mjs';
 
-const CONTROL_KEYS = ['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroom','headroomAllowLossy','pxpipe','pxpipeAllowLossy','thinking','privacy','memory','qac','pairs','reorder','midinject','caveman','ponytail','clientOptOut','contextStructure'];
+const CONTROL_KEYS = ['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroom','headroomAllowLossy','pxpipe','pxpipeAllowLossy','thinking','privacy','memory','qac','pairs','reorder','midinject','diet','lingua','epochMicro','epochAuto','adaptiveCacheTtl','caveman','ponytail','clientOptOut','contextStructure'];
 export function readContextEvidenceExport(db, definition, mode, limit) {
   const selection = mode === 'selected' ? definition.selection : null;
   const scope = definition.scope, clauses = ['r.contextSessionId IS NOT NULL'], args = [];

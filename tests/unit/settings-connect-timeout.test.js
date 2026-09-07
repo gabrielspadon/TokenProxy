@@ -188,6 +188,24 @@ describe("connect timeout settings route", () => {
     expect((await repository.exportSettings()).connectTimeoutMs).toBe(20000);
   });
 
+  it("persists context controls as exact booleans and refuses non-boolean literals", async () => {
+    const controls = {
+      epochMicroEnabled: true,
+      epochAutoEnabled: false,
+      dietEnabled: true,
+      linguaEnabled: false,
+      adaptiveCacheTtlEnabled: true,
+    };
+    const accepted = await PATCH(settingsRequest(controls));
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject(controls);
+    expect(await repository.exportSettings()).toMatchObject(controls);
+
+    for (const key of Object.keys(controls)) {
+      await expectRejectedWithoutWrite(settingsRequest({ [key]: "false" }));
+    }
+  });
+
   it.each([999, 120001, 15000.5, "15000", null, true])(
     "rejects invalid global literal %s",
     async (connectTimeoutMs) => {

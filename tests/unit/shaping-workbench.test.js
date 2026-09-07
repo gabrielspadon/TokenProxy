@@ -61,6 +61,48 @@ it('requires explicit content-change consent and refuses out-of-scope settings',
   expect((await save({ ...settings, pxpipeTimeoutMs: null })).status).toBe(400);
   expect((await call('GET', 'profiles?page=1&page=2')).status).toBe(400);
 });
+it('versions every context control with strict booleans and requires consent for content changes', async () => {
+  const current = (await call()).body.settings;
+  const controls = {
+    epochMicroEnabled: true,
+    epochAutoEnabled: true,
+    dietEnabled: true,
+    linguaEnabled: true,
+    adaptiveCacheTtlEnabled: true,
+  };
+  const required = ['dietEnabled', 'epochAutoEnabled', 'epochMicroEnabled', 'linguaEnabled'];
+  const consent = consentRequired({ ...current, ...controls });
+  expect(consent).toEqual(expect.arrayContaining(required));
+  expect(consent).not.toContain('adaptiveCacheTtlEnabled');
+  expect((await save({ ...current, ...controls }, { consent: [] })).status).toBe(422);
+  const saved = await save({ ...current, ...controls });
+  expect(saved.status).toBe(200);
+  expect(saved.body.version.settings).toMatchObject(controls);
+  expect((await save({ ...current, epochMicroEnabled: 'true' })).status).toBe(400);
+});
+it('runs and promotes a legacy profile without rewriting its stored version or hash', async () => {
+  const current = (await call()).body;
+  const legacy = { ...current.settings };
+  const omitted = ['epochMicroEnabled', 'epochAutoEnabled', 'dietEnabled', 'linguaEnabled', 'adaptiveCacheTtlEnabled'];
+  for (const key of omitted) delete legacy[key];
+  const inserted = fixture.db.run(
+    'INSERT INTO shapingProfileVersions(profileId,name,revision,settings,consent,contentHash,createdAt) VALUES(?,?,?,?,?,?,?)',
+    ['legacy-profile', 'Legacy profile', 1, JSON.stringify(legacy), JSON.stringify(consentRequired({ ...legacy, epochMicroEnabled: false, epochAutoEnabled: false, dietEnabled: false, linguaEnabled: false, adaptiveCacheTtlEnabled: false })), 'legacy-content-hash', new Date().toISOString()],
+  );
+  const versionId = inserted.lastInsertRowid;
+  const loaded = await call('GET', `profiles/${versionId}`);
+  expect(loaded.status).toBe(200);
+  expect(loaded.body.settings).toEqual(legacy);
+  const experiment = await call('POST', 'experiments', { baselineVersionId: versionId, candidateVersionId: versionId, fixtureSetId: 'context-integrity-v1' });
+  expect(experiment.status).toBe(200);
+  const promoted = await call('POST', 'promote', {
+    versionId, experimentId: experiment.body.id, expectedCurrent: current.currentHash,
+    consent: consentRequired({ ...legacy, epochMicroEnabled: false, epochAutoEnabled: false, dietEnabled: false, linguaEnabled: false, adaptiveCacheTtlEnabled: false }),
+  });
+  expect(promoted.status).toBe(200);
+  for (const key of omitted) expect((await call()).body.settings[key]).toBe(false);
+  expect(fixture.db.get('SELECT settings,contentHash FROM shapingProfileVersions WHERE id=?', [versionId])).toEqual({ settings: JSON.stringify(legacy), contentHash: 'legacy-content-hash' });
+});
 it('runs an actual bounded worker, persists results and atomically promotes then rolls back', async () => {
   const current = (await call()).body, before = fixture.db.get('SELECT data FROM settings').data;
   const baseline = (await save(current.settings)).body.version;

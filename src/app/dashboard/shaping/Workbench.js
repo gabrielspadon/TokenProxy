@@ -3,14 +3,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { call } from '@/shared/api';
 import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
+import { controlLabel } from './controlCatalog';
+import { normalizeProfileDefaults } from '@/lib/shaping/profileDefaults';
 
-const label = key => key.replace(/Enabled$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+const label = controlLabel;
 const signed = value => `${value > 0 ? '+' : ''}${value.toLocaleString()} B`;
 const acknowledged = settings => Object.keys(settings || {}).filter(key => settings[key] === true);
 const diff = (before, after) => Object.keys(after || {}).filter(key => JSON.stringify(before?.[key]) !== JSON.stringify(after[key]));
 const good = row => row.validity.toolTransactionsValid && row.validity.currentPreserved && row.validity.liveThinkingPreserved && row.validity.errorEvidencePreserved && !row.stages.some(s => s.status === 'error');
 
-export function ShapingWorkbench() {
+export function ShapingWorkbench({ onSettingsChanged }) {
   const [current, setCurrent] = useState(null), [profiles, setProfiles] = useState([]), [pagination, setPagination] = useState(null), [page, setPage] = useState(1);
   const [draft, setDraft] = useState(null), [name, setName] = useState(''), [editing, setEditing] = useState(null), [consent, setConsent] = useState(false);
   const [baseline, setBaseline] = useState(null), [candidate, setCandidate] = useState(null), [fixtureSetId, setFixtureSetId] = useState('');
@@ -36,7 +38,9 @@ export function ShapingWorkbench() {
       if (!response.ok) { setNotice({ tone: 'warn', title: 'Change refused', children: response.body?.code || 'The operation did not complete.' }); return; }
       if (response.status === 207) setNotice({ tone: 'warn', title: 'Persistence unconfirmed', children: response.body.recovery });
       else setNotice({ tone: 'ok', title: success });
-      await refresh(); return response.body;
+      await refresh();
+      if (path === 'promote' || path === 'rollback') onSettingsChanged?.();
+      return response.body;
     } finally { setBusy(false); }
   }
   async function save() {
@@ -61,7 +65,7 @@ export function ShapingWorkbench() {
     const result = await mutate(review.rollback ? 'rollback' : 'promote', body, review.rollback ? 'Previous Shaping settings restored.' : 'Profile promoted for new requests.');
     if (result) setReview(null);
   }
-  function openReview(settings, rollback) { setNotice(null); setReview({ settings, rollback, currentHash: current.currentHash, before: current.settings }); setReviewConsent(false); setUnsupportedConsent(false); }
+  function openReview(settings, rollback) { setNotice(null); setReview({ settings: normalizeProfileDefaults(settings), rollback, currentHash: current.currentHash, before: current.settings }); setReviewConsent(false); setUnsupportedConsent(false); }
   if (!current || !draft) return <section><h2>Profiles and offline experiments</h2>{notice ? <Notice {...notice} /> : <p>Reading saved profiles.</p>}</section>;
   return <section className="shaping-workbench" aria-labelledby="shaping-workbench-title">
     <div className="panel-head"><h2 id="shaping-workbench-title">Profiles and offline experiments</h2><button className="button quiet" onClick={refresh} disabled={busy}>Refresh records</button></div>
@@ -71,7 +75,7 @@ export function ShapingWorkbench() {
       <div className="shaping-library"><h3>Saved versions</h3><p className="caption">{pagination?.total || 0} versions. Selecting one does not change live traffic.</p>
         <div className="rows">{profiles.map(profile => <div className="shaping-profile-row" key={profile.id} data-selected={candidate?.id === profile.id || undefined}>
           <span><strong>{profile.name}</strong><span className="sub">Version {profile.revision} · record {profile.id}</span></span>
-          <div className="actions"><button className="button quiet" onClick={() => setBaseline(profile)}>Baseline</button><button className="button quiet" onClick={() => setCandidate(profile)}>Candidate</button><button className="button quiet" onClick={() => { setEditing(profile); setDraft(profile.settings); setName(profile.name); setConsent(false); }}>Revise</button></div>
+          <div className="actions"><button className="button quiet" onClick={() => setBaseline(profile)}>Baseline</button><button className="button quiet" onClick={() => setCandidate(profile)}>Candidate</button><button className="button quiet" onClick={() => { setEditing(profile); setDraft(normalizeProfileDefaults(profile.settings)); setName(profile.name); setConsent(false); }}>Revise</button></div>
         </div>)}</div>
         {!profiles.length ? <p>No saved profile yet. Name the settings on the right and save the first version.</p> : null}
         <div className="actions"><button className="button quiet" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page} of {pagination?.pages || 1}</span><button className="button quiet" disabled={page >= (pagination?.pages || 1)} onClick={() => setPage(page + 1)}>Next</button></div>
@@ -83,6 +87,7 @@ export function ShapingWorkbench() {
           <span>{label(key)}</span>{typeof value === 'boolean' ? <input type="checkbox" checked={value} onChange={e => { setDraft({ ...draft, [key]: e.target.checked }); setConsent(false); }} /> : Array.isArray(value) ? <textarea value={value.join('\n')} onChange={e => { setDraft({ ...draft, [key]: e.target.value ? e.target.value.split('\n') : [] }); setConsent(false); }} /> : key.endsWith('Level') ? <select value={value} onChange={e => { setDraft({ ...draft, [key]: e.target.value }); setConsent(false); }}>{['lite', 'full', 'ultra'].map(level => <option key={level}>{level}</option>)}</select> : <input type="number" value={value ?? ''} onChange={e => { setDraft({ ...draft, [key]: e.target.value === '' ? null : Number(e.target.value) }); setConsent(false); }} />}
         </label>)}</div></details>
         <p className="caption">History pruning, reasoning removal, disclosure, rewriting and prompt additions may alter content. Removed content is not recovered by later disabling a stage.</p>
+        <p className="caption">Later-added controls are off in older saved versions. Review shows those effective defaults without rewriting the stored version.</p>
         <label className="shaping-consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />I have reviewed these settings and consent to the selected content-changing transformations in this saved profile.</label>
         <button className="button" disabled={busy || !name.trim() || !consent} onClick={save}>Save profile version</button>
       </div>
