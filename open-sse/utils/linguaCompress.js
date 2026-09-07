@@ -15,6 +15,10 @@
  *   role         user text blocks, user tool_result payloads, and OpenAI
  *                role:"tool" string messages only; system messages and the
  *                latest assistant turn are never candidates
+ *   live tail    nothing at or after the last user message is a candidate —
+ *                the live instruction is never compressed (same tail
+ *                protection as pairDropper keepRecentTurns 6, qac 2,
+ *                epochCompact keepLastTurns 4, diet minAgeTurns)
  *   anchor       block carries no cache_control anchor
  *   size         payload >= minChars (default 5120)
  *   content      NOT code or structured data (skipCode): JSON (starts with
@@ -236,9 +240,19 @@ export async function compressBlobs(body, options = {}) {
   // null = whole-message (OpenAI role:"tool" string). field is the payload key
   // the compressed text replaces ("text" for text blocks, "content" for
   // tool_result payloads and OpenAI tool messages). Mirrors diet's shapes.
+  // The live tail is protected exactly like the sibling stages (pairDropper
+  // keepRecentTurns 6, qac 2, epochCompact keepLastTurns 4, diet minAgeTurns
+  // + reference scan): nothing at or after the last user message is ever a
+  // candidate, so the live instruction is never compressed.
+  const lastUserIndex = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === ROLE.USER) return i;
+    }
+    return messages.length;
+  })();
   const candidates = [];
   messages.forEach((msg, i) => {
-    if (i <= cut || !msg || typeof msg !== "object") return;
+    if (i <= cut || i >= lastUserIndex || !msg || typeof msg !== "object") return;
     if (msg.role === ROLE.TOOL && typeof msg.content === "string") {
       candidates.push({ i, blockIndex: null, text: msg.content, chars: msg.content.length, field: "content" });
       return;

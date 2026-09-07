@@ -239,6 +239,8 @@ describe("compressBlobs", () => {
         { role: "user", content: [{ type: "text", text: headBlob }] }, // index 2, at/below cut 2
         { role: "assistant", content: "a1" },
         { role: "user", content: [{ type: "text", text: tailBlob }] }, // index 4, past the cut
+        { role: "assistant", content: "a2" },
+        { role: "user", content: [{ type: "text", text: "live" }] }, // last user: live tail, never a candidate
       ];
       const res = await compressBlobs(
         { messages },
@@ -285,6 +287,7 @@ describe("compressBlobs", () => {
           ],
         },
         { role: "assistant", content: [{ type: "text", text: "ok" }] },
+        { role: "user", content: [{ type: "text", text: "live tail" }] },
       ];
       const before = JSON.stringify(messages);
       const res = await compressBlobs(
@@ -341,6 +344,73 @@ describe("compressBlobs", () => {
       expect(JSON.stringify(messages)).toBe(before);
     } finally {
       await stub.close();
+    }
+  });
+
+  it("never compresses the live tail: the latest user message is not a candidate", async () => {
+    const stub = await startSidecarStub();
+    try {
+      const liveBlob = nlChars(6000);
+      const olderBlob = nlChars(6000);
+      const messages = [
+        { role: "user", content: "head" },
+        { role: "assistant", content: "a0" },
+        { role: "user", content: [{ type: "text", text: olderBlob }] }, // eligible history
+        { role: "assistant", content: "a1" },
+        { role: "user", content: [{ type: "text", text: liveBlob }] }, // live turn: never touched
+      ];
+      const res = await compressBlobs(
+        { messages },
+        { epochCutIndex: 1, endpoint: stub.url, minChars: 5120 },
+      );
+      expect(res.applied).toBe(true);
+      expect(res.compressedBlocks).toBe(1);
+      expect(res.messages[4]).toBe(messages[4]);
+      expect(res.messages[4].content[0].text).toBe(liveBlob);
+      expect(res.messages[2].content[0].text).toBe("compressed summary");
+      expect(stub.seen).toHaveLength(1);
+      expect(stub.seen[0].body.text).toBe(olderBlob);
+    } finally {
+      await stub.close();
+    }
+  });
+
+  it("fails closed when the caller aborts mid-flight: applied:false, body unchanged", async () => {
+    // A sidecar that accepts the request but never answers: only the caller
+    // abort can release the stage, and it must leave the body untouched.
+    let received = 0;
+    const server = http.createServer((req, res) => {
+      received += 1;
+      req.on("data", () => {});
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        // Never res.end(): the socket stays open until closeAllConnections.
+      });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const controller = new AbortController();
+    try {
+      const messages = agedMessages(nlChars(6000));
+      const before = JSON.stringify(messages);
+      const promise = compressBlobs(
+        { messages },
+        {
+          epochCutIndex: 1,
+          endpoint: `http://127.0.0.1:${server.address().port}`,
+          minChars: 5120,
+          signal: controller.signal,
+        },
+      );
+      setTimeout(() => controller.abort(), 50);
+      const res = await promise;
+      expect(res.applied).toBe(false);
+      expect(res.skip).toBe("backend_error");
+      expect(res.messages).toBe(messages);
+      expect(JSON.stringify(messages)).toBe(before);
+      expect(received).toBe(1);
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(resolve));
     }
   });
 });
@@ -490,16 +560,30 @@ describe("chatCore lingua wiring", () => {
     return mocks.dispatchedBodies.at(-1);
   }
 
-  function history(divergentUser) {
+  function history(earlyDivergent, liveUser) {
+    // earlyDivergent sits right after the shared head and is large enough
+    // that the epoch cut lands inside it (the >50% shared-prefix stability
+    // rule requires real divergence); it is JSON-shaped so the content
+    // classifier skips it. liveUser is the LAST message, its real position —
+    // a large natural-language live instruction the stage must never touch.
     return claudeBody([
       { role: "assistant", content: "shared asst " + "s".repeat(900) },
-      divergentUser,
+      earlyDivergent,
       ...linguaTail().slice(1),
+      liveUser,
     ]);
   }
 
-  const first = () => history({ role: "user", content: "filler " + "f".repeat(13000) });
-  const second = () => history({ role: "user", content: "brand new " + "n".repeat(8000) });
+  const first = () =>
+    history(
+      { role: "user", content: JSON.stringify({ note: "f".repeat(13000) }) },
+      { role: "user", content: "live one " + "o".repeat(6000) },
+    );
+  const second = () =>
+    history(
+      { role: "user", content: JSON.stringify({ note: "y".repeat(8000) }) },
+      { role: "user", content: "live two " + "t".repeat(6000) },
+    );
 
   function findLinguaToolResult(dispatched) {
     for (const msg of dispatched.messages) {
@@ -514,7 +598,7 @@ describe("chatCore lingua wiring", () => {
     const stub = await startSidecarStub();
     try {
       process.env.TOKENPROXY_LINGUA_ENDPOINT = stub.url;
-      const dispatched = await runSession({ firstBody: first(), secondBody: second() });
+      const dispatched = await runSession({ firstBody: first(), secondBody: second(), sid: "11ngu4off" });
       const block = findLinguaToolResult(dispatched);
       expect(block).toBeTruthy();
       expect(block.content).toBe(nlChars(6000));
@@ -533,6 +617,7 @@ describe("chatCore lingua wiring", () => {
         firstBody: first(),
         secondBody: second(),
         overrides: { linguaEnabled: true },
+        sid: "11ngu4on1",
       });
       // The epoch region (the shared head) is byte-identical to the first
       // request's dispatched messages.
@@ -547,14 +632,26 @@ describe("chatCore lingua wiring", () => {
         .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
         .find((b) => b?.type === "tool_use" && b.id === "toolu_l");
       expect(toolUse).toBeTruthy();
-      // Two backend calls: the live divergent user message is itself a large
-      // natural-language blob and is a legitimate candidate alongside the
-      // tool_result payload.
-      expect(stub.seen).toHaveLength(2);
-      const toolResultCall = stub.seen.find((s) => s.body.text === nlChars(6000));
-      expect(toolResultCall).toBeTruthy();
-      expect(toolResultCall.url).toBe("/compress");
-      expect(toolResultCall.body.ratio).toBe(0.5);
+      // One backend call: the live divergent user message is the tail turn
+      // and must NOT be compressed; only the tool_result payload below it is.
+      expect(stub.seen).toHaveLength(1);
+      expect(stub.seen[0].url).toBe("/compress");
+      expect(stub.seen[0].body.text).toBe(nlChars(6000));
+      expect(stub.seen[0].body.ratio).toBe(0.5);
+      const liveUser = dispatched.messages.find((m) => {
+        if (m.role !== "user") return false;
+        const text = typeof m.content === "string"
+          ? m.content
+          : Array.isArray(m.content)
+            ? m.content.filter((b) => b?.type === "text").map((b) => b.text).join("")
+            : "";
+        return text.startsWith("live two");
+      });
+      expect(liveUser).toBeTruthy();
+      const liveText = typeof liveUser.content === "string"
+        ? liveUser.content
+        : liveUser.content.map((b) => (b?.type === "text" ? b.text : "")).join("");
+      expect(liveText).toBe("live two " + "t".repeat(6000));
     } finally {
       await stub.close();
     }
@@ -568,6 +665,7 @@ describe("chatCore lingua wiring", () => {
         firstBody: first(),
         secondBody: second(),
         overrides: { linguaEnabled: true },
+        sid: "11ngu4f41",
       });
       const block = findLinguaToolResult(dispatched);
       expect(block.content).toBe(nlChars(6000));
@@ -599,6 +697,7 @@ describe("chatCore lingua wiring", () => {
           firstBody: first(),
           secondBody: second(),
           overrides: { linguaEnabled: true },
+          sid: "11ngu4row",
         });
       });
       const applied = rows.find((r) => r.applied === true);
@@ -620,11 +719,12 @@ describe("chatCore lingua wiring", () => {
           firstBody: first(),
           secondBody: second(),
           overrides: { linguaEnabled: true },
+          sid: "11ngu4row",
         });
         // Third request identical to the second: fully stable epoch, so the
         // enabled stage must skip and say why.
         await handleChatCore(
-          baseArgs({ body: second(), sid: "11ngu4s1d", linguaEnabled: true }),
+          baseArgs({ body: second(), sid: "11ngu4b0u", linguaEnabled: true }),
         );
       });
       expect(rows.length).toBeGreaterThan(0);
@@ -642,12 +742,12 @@ describe("chatCore lingua wiring", () => {
         firstBody: first(),
         secondBody: second(),
         overrides: { linguaEnabled: true },
+        sid: "11ngu4n0b",
       });
     });
     expect(rows.length).toBeGreaterThan(0);
-    const skipped = rows.find((r) => r.applied === false);
+    const skipped = rows.find((r) => r.applied === false && r.reason === "no_backend");
     expect(skipped).toBeTruthy();
-    expect(skipped.reason).toBe("no_backend");
     // No backend was configured, so the body went out untouched.
     const block = findLinguaToolResult(mocks.dispatchedBodies.at(-1));
     expect(block.content).toBe(nlChars(6000));
@@ -660,6 +760,24 @@ describe("chatCore lingua wiring", () => {
     });
     expect(rows.find((r) => r.applied === false && r.reason === "no_backend")).toBeTruthy();
     expect(rows.find((r) => r.applied === true)).toBeTruthy();
+  });
+});
+
+// ---- stage name registry pins (1e80f568 drift class) -------------------------
+
+describe("stage name registries", () => {
+  it("contextRepo STAGE_NAMES contains the epoch-cascade saver names", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(
+      new URL("../../src/lib/db/repos/contextRepo.js", import.meta.url),
+      "utf8",
+    );
+    const match = src.match(/STAGE_NAMES = new Set\(\[([^\]]+)\]\)/);
+    expect(match).toBeTruthy();
+    const names = [...match[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    for (const name of ["diet", "lingua", "epochMicro", "epochAuto"]) {
+      expect(names, name).toContain(name);
+    }
   });
 });
 
