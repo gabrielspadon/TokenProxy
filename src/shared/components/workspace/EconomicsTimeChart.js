@@ -69,6 +69,7 @@ export function EconomicsTrend({ data, onTimeRangeChange }) {
           fontSize: 13,
           formatter: (value) => economicTick(value, (domain?.end || 0) - (domain?.start || 0)),
           hideOverlap: true,
+          textMargin: [0, 10],
         },
       })),
       yAxis: [0, 1].map((gridIndex) => ({
