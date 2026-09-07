@@ -109,7 +109,7 @@ export function AccountInspector({ conns, selectedId, onSelect, quota, usage, he
               {models.length ? (
                 <div className="model-tags">
                   {models.slice(0, 4).map((model) => (
-                    <span key={model} data-i18n-skip>
+                    <span key={model}>
                       {model}
                     </span>
                   ))}

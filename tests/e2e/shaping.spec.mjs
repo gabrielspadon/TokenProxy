@@ -48,7 +48,8 @@ test.beforeEach(async ({ page }) => { await signIn(page); });
 test('inventory exposes all new controls with separate configured and historical evidence', async ({ page }) => {
   await fixture(page);
   await page.goto('/dashboard/shaping');
-  await expect(page.getByRole('heading', { name: 'Optimization', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Token savings', exact: true })).toBeVisible();
   await expect(page.locator('.shaping-control-row')).toHaveCount(27);
   await select(page, 'dietEnabled');
   await expect(inspector(page).getByRole('heading', { name: 'Expired result pruning' })).toBeVisible();
@@ -65,6 +66,7 @@ test('inventory exposes all new controls with separate configured and historical
 test('signed bytes retain growth, measured zero and partial coverage', async ({ page }) => {
   await fixture(page);
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
   await expect(stageRow(page, 'rtk')).toContainText('-2,048 B');
   await expect(stageRow(page, 'rtk')).toContainText('1 / 2 records');
@@ -80,6 +82,7 @@ test('legacy aggregates cannot manufacture measurement coverage', async ({ page 
   await fixture(page);
   await page.route('**/api/token-saver/stats*', route => route.fulfill(json(200, { ...stats, windows: { all: { stages: { rtk: { bytesSaved: -2048, requests: 2, applied: 2 } } } } })));
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(inspector(page)).toContainText('Byte coverage unknown');
   await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
   await expect(stageRow(page, 'rtk')).toContainText('Not reported');
@@ -89,6 +92,7 @@ test('legacy aggregates cannot manufacture measurement coverage', async ({ page 
 test('selection survives moving between control and evidence depths', async ({ page }) => {
   await fixture(page);
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await select(page, 'epochMicroEnabled');
   await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
   await page.getByRole('button', { name: 'Controls', exact: true }).click();
@@ -99,6 +103,7 @@ test('selection survives moving between control and evidence depths', async ({ p
 test('desktop panels retain bounded scrolling and keyboard resizing', async ({ page }) => {
   await fixture(page);
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   const layout = page.locator('.shaping-resizable');
   await expect(layout).toBeVisible();
   expect((await layout.boundingBox()).height).toBeLessThanOrEqual(761);
@@ -113,6 +118,7 @@ test('desktop panels retain bounded scrolling and keyboard resizing', async ({ p
 test('confirmation sends only the selected setting and displays verified readback', async ({ page }) => {
   const patches = await fixture(page);
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await select(page, 'epochMicroEnabled');
   await inspector(page).getByRole('button', { name: 'Turn on', exact: true }).click();
   const dialog = page.locator('dialog[open]');
@@ -128,6 +134,7 @@ test('a refused save stays at the control with the gateway explanation', async (
   await fixture(page);
   await page.route('**/api/settings', route => route.request().method() === 'PATCH' ? route.fulfill(json(400, { error: 'epochMicroEnabled must be a boolean' })) : route.fallback());
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await select(page, 'epochMicroEnabled');
   await inspector(page).getByRole('button', { name: 'Turn on', exact: true }).click();
   await page.locator('dialog[open]').getByRole('button', { name: 'Turn on', exact: true }).click();
@@ -138,6 +145,7 @@ test('a refused save stays at the control with the gateway explanation', async (
 test('empty threshold input is not silently submitted as zero', async ({ page }) => {
   const patches = await fixture(page);
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await select(page, 'pxpipeEnabled');
   await inspector(page).getByText('Edit this stage’s thresholds', { exact: true }).click();
   await inspector(page).getByLabel('Transform timeout').fill('');
@@ -157,7 +165,8 @@ test('reading controls and service status never starts a health check', async ({
   await page.route('**/api/pxpipe/status', route => route.fulfill(json(200, { installed: false, running: false, enabled: false, npmAvailable: true, autoInstall: true })));
   await page.route('**/api/pxpipe/logs*', route => route.fulfill(json(200, {})));
   await page.goto('/dashboard/shaping');
-  await expect(page.getByRole('heading', { name: 'Optimization', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Token savings', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Service', exact: true }).click();
   await expect(page.getByText('Not run in this view', { exact: true })).toBeVisible();
   expect(healthCalls).toEqual([]);
@@ -171,6 +180,7 @@ test('forbidden settings stay unknown and disable mutation', async ({ page }) =>
   await fixture(page);
   await page.route('**/api/settings', route => route.fulfill(json(403, { error: 'Loopback only' })));
   await page.goto('/dashboard/shaping');
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(page.getByText('This action is not allowed from here.', { exact: true })).toBeVisible();
   await expect(page.getByText('Loopback only', { exact: true })).toBeVisible();
   await expect(inspector(page)).toContainText('Unknown globally');

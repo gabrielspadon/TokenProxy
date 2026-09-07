@@ -40,7 +40,6 @@ export async function hasValidCliToken(request) {
 const PUBLIC_API_PATHS = [
   "/api/health",
   "/api/init",
-  "/api/locale",
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/status",

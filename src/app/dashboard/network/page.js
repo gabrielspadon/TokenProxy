@@ -365,17 +365,17 @@ export default function NetworkPage() {
               {outboundEnabled ? (
                 <>
                   <dt>Proxy URL</dt>
-                  <dd data-i18n-skip>
+                  <dd>
                     {maskProxyUrl(outboundUrl) || <span className="unreported">Not set</span>}
                   </dd>
                   <dt>No-proxy list</dt>
-                  <dd data-i18n-skip>
+                  <dd>
                     {outboundNoProxy || <span className="unreported">None</span>}
                   </dd>
                 </>
               ) : null}
               <dt>Global connect-timeout default</dt>
-              <dd data-i18n-skip>
+              <dd>
                 {connectTimeoutMs != null ? (
                   `${fmtNum(connectTimeoutMs)} ms`
                 ) : (
@@ -487,17 +487,17 @@ export default function NetworkPage() {
             {nodeRows.map((n) => (
               <div className="row network-node-row" key={n.id}>
                 <span className="who">
-                  <span className="name" data-i18n-skip>
+                  <span className="name">
                     {n.name}
                   </span>
                   <span className="sub">
-                    <span className="id" data-i18n-skip>
+                    <span className="id">
                       {n.prefix}
                     </span>{' '}
-                    <span data-i18n-skip>{n.baseUrl}</span>
+                    <span>{n.baseUrl}</span>
                   </span>
                 </span>
-                <span data-i18n-skip>{NODE_TYPE_WORD[n.type] || n.type}</span>
+                <span>{NODE_TYPE_WORD[n.type] || n.type}</span>
                 <div className="actions">
                   <button
                     type="button"
@@ -566,11 +566,11 @@ export default function NetworkPage() {
               <Fragment key={p.id}>
               <div className="row network-pool-row">
                 <span className="who">
-                  <span className="name" data-i18n-skip>
+                  <span className="name">
                     {p.name}
                   </span>
                   <span className="sub">
-                    <span className="id" data-i18n-skip>
+                    <span className="id">
                       {maskProxyUrl(p.proxyUrl)}
                     </span>
                     {p.strictProxy ? (
@@ -583,7 +583,7 @@ export default function NetworkPage() {
                     ) : null}
                   </span>
                 </span>
-                <span data-i18n-skip>
+                <span>
                   {p.boundConnectionCount ? (
                     <Link href="/dashboard/connections" prefetch={false}>
                       {fmtNum(p.boundConnectionCount)}
@@ -597,7 +597,7 @@ export default function NetworkPage() {
                     {TEST_WORD[p.testStatus] || 'Not tested'}
                   </span>
                   {p.lastError ? (
-                    <span className="caption" data-i18n-skip>
+                    <span className="caption">
                       {p.lastError}
                     </span>
                   ) : null}
@@ -666,7 +666,7 @@ export default function NetworkPage() {
                 setStrategyPoolId(current.proxyPoolId || '');
                 setStrategyRotation(current.rotateStrategy || 'none');
               }}
-            ><option value="">Choose a provider without credentials</option>{NO_AUTH_PROVIDER_IDS.map(id => <option key={id} value={id} data-i18n-skip>{AI_PROVIDERS[id]?.name || id}</option>)}</select>
+            ><option value="">Choose a provider without credentials</option>{NO_AUTH_PROVIDER_IDS.map(id => <option key={id} value={id}>{AI_PROVIDERS[id]?.name || id}</option>)}</select>
           </label>
           <label className="field"><span>Pool selection mode</span><select className="select" value={strategyRotation} onChange={event => setStrategyRotation(event.target.value)}><option value="none">Fixed pool</option><option value="round-robin">Round-robin across active pools</option><option value="random">Random across active pools</option></select></label>
           <label className="field">
@@ -681,7 +681,7 @@ export default function NetworkPage() {
               {poolRows
                 .filter((p) => p.isActive)
                 .map((p) => (
-                  <option key={p.id} value={p.id} data-i18n-skip>
+                  <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
@@ -704,12 +704,12 @@ export default function NetworkPage() {
           <dl className="facts">
             {Object.entries(providerStrategies).map(([pid, st]) => (
               <Fragment key={pid}>
-                <dt data-i18n-skip>{pid}</dt>
+                <dt>{pid}</dt>
                 <dd>
                   {!isNoAuthProvider(pid) ? 'This network strategy does not affect credentialed accounts.' : st.rotateStrategy && st.rotateStrategy !== 'none' ? <span>{st.rotateStrategy === 'round-robin' ? 'Round-robin across active pools' : st.rotateStrategy === 'random' ? 'Random across active pools' : 'Unrecognized stored rotation mode'}</span> : st.proxyPoolId ? (
                     <>
                       {poolRows.find((p) => p.id === st.proxyPoolId)?.name || (
-                        <span className="id" data-i18n-skip>
+                        <span className="id">
                           {st.proxyPoolId}
                         </span>
                       )}
@@ -736,7 +736,7 @@ export default function NetworkPage() {
         changes="Changes pool selection on subsequent routing for this provider's virtual account. Rotation uses all active pools with addresses. Credentialed accounts retain their separate account policies."
         undo="Restore the previous mode and fixed pool. A saved strategy does not move in-flight responses."
         onConfirm={saveStrategy} onClose={() => { setStrategyReview(null); setRefused(null); setBusy(false); }}>
-        <dl className="facts"><dt>Provider</dt><dd><bdi data-i18n-skip>{strategyReview?.providerId}</bdi></dd><dt>Selection mode</dt><dd><bdi>{strategyReview?.rotation}</bdi></dd><dt>Fixed pool</dt><dd><bdi>{strategyReview?.poolId || 'No selection'}</bdi></dd></dl>
+        <dl className="facts"><dt>Provider</dt><dd><bdi>{strategyReview?.providerId}</bdi></dd><dt>Selection mode</dt><dd><bdi>{strategyReview?.rotation}</bdi></dd><dt>Fixed pool</dt><dd><bdi>{strategyReview?.poolId || 'No selection'}</bdi></dd></dl>
       </Confirm>
 
       <Confirm
@@ -810,7 +810,7 @@ export default function NetworkPage() {
               <input
                 className="input"
                 type="text"
-                data-i18n-skip
+
                 value={nodeForm.baseUrl}
                 onChange={(e) => setNodeForm((f) => ({ ...f, baseUrl: e.target.value }))}
               />

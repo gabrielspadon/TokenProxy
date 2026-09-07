@@ -1,10 +1,8 @@
-// Locale-aware formatting through Intl only, so no unit word needs a literal.
-function lang() {
-  return typeof document !== "undefined" ? document.documentElement.lang || "en" : "en";
-}
+// Product numbers, units and relative times use English Intl conventions.
+const UI_LOCALE = "en";
 
 export function fmtNum(value, options) {
-  return new Intl.NumberFormat(lang(), options).format(value);
+  return new Intl.NumberFormat(UI_LOCALE, options).format(value);
 }
 
 export function fmtUsd(value) {
@@ -42,12 +40,12 @@ export function fmtLatency(ms) {
 }
 
 export function fmtTime(iso) {
-  return new Intl.DateTimeFormat(lang(), { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(iso));
+  return new Intl.DateTimeFormat(UI_LOCALE, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(iso));
 }
 
 export function fmtRelative(iso, now = Date.now()) {
   const diff = new Date(iso).getTime() - now;
-  const rtf = new Intl.RelativeTimeFormat(lang(), { numeric: "always", style: "short" });
+  const rtf = new Intl.RelativeTimeFormat(UI_LOCALE, { numeric: "always", style: "short" });
   const abs = Math.abs(diff) / 1000;
   if (abs < 60) return rtf.format(Math.round(diff / 1000), "second");
   if (abs < 3600) return rtf.format(Math.round(diff / 60000), "minute");

@@ -121,7 +121,7 @@ POST validates by `type` (openai-compatible/multi-compatible/custom-embedding/an
 `shutdown` (top-level): dev-only (`NODE_ENV!==production` refused), requires `Authorization: Bearer ${SHUTDOWN_SECRET}`.
 
 `init`: trivial GET "Initialized" bootstrap ping, no auth logic.
-`locale`: sets `LOCALE_COOKIE` after `isSupportedLocale()` check.
+The former `locale` route was removed on 2026-09-07. The product interface is English only; legacy locale cookies have no effect.
 `pricing`: GET/PATCH/DELETE over settings-backed pricing table; PATCH strict nested-shape validation; DELETE resets all/provider/provider+model; contains dead `GET_DEFAULTS` export (invalid Next.js route export name, unreachable via HTTP, residual artifact).
 `tags`: CORS-open GET/OPTIONS, no auth at all, serves static Ollama-compatible `ollamaModels` config.
 `changelog`: reads `CHANGELOG.md` from `process.cwd()` at runtime, 404 on missing file.

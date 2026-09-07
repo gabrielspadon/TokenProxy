@@ -38,6 +38,7 @@ try {
   assert(windows.every((window) => window.percentage?.source === 'connection.lastQuotaSnapshot'));
   report.checks.push({ linkedQuotaWindows: 33, sourcedPercentages: 33 });
   await page.goto(`${base}/dashboard`);
+  await page.getByRole('radio', { name: 'Activity & analysis', exact: true }).check();
   const book = page.getByRole('table', { name: 'Configured account capacity' });
   await book.waitFor();
   await page.getByText('77,589', { exact: true }).first().waitFor();
@@ -119,6 +120,7 @@ try {
   await page.waitForTimeout(500);
   await page.screenshot({ path: path.join(output, 'context-real-coverage.png'), fullPage: true });
   await page.goto(`${base}/dashboard`);
+  await page.getByRole('radio', { name: 'Activity & analysis', exact: true }).check();
   await book.waitFor();
   await page.getByRole('button', { name: 'Find a control', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Find a control' });

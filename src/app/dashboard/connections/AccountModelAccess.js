@@ -57,7 +57,7 @@ export function AccountModelAccess({ connection }) {
       <div className="connections-form">
         <label className="field"><span>Model ID to exclude</span><input className="input" value={model} onChange={event => setModel(event.target.value)} /></label>
         <button type="button" className="button quiet" disabled={!model.trim() || !!policy.error || !policy.data || busy || uncertain} onClick={() => { setError(null); setPending({ kind: 'disable', model: model.trim() }); }}>Exclude from this account</button>
-        {ids.map(id => <div className="verb-row" key={id}><bdi data-i18n-skip>{id}</bdi><button type="button" className="button quiet" disabled={busy || uncertain || !!policy.error} onClick={() => { setError(null); setPending({ kind: 'enable', model: id }); }}>Allow {id}</button></div>)}
+        {ids.map(id => <div className="verb-row" key={id}><bdi>{id}</bdi><button type="button" className="button quiet" disabled={busy || uncertain || !!policy.error} onClick={() => { setError(null); setPending({ kind: 'enable', model: id }); }}>Allow {id}</button></div>)}
       </div>
     </details>
     {uncertain || policy.error ? <button type="button" className="button quiet" onClick={refresh}>Refresh model policy</button> : null}
@@ -66,7 +66,7 @@ export function AccountModelAccess({ connection }) {
       changes="Changes this account's exclusion list for subsequent routing selections. Its first edit copies the inherited list into an account-specific policy. Other accounts and in-flight responses are unchanged."
       undo="Apply the opposite action for this model. Removing the final exclusion leaves an explicitly empty account policy; it does not restore provider inheritance."
       onConfirm={apply} onClose={() => { if (!busy) setPending(null); }}>
-      <p><bdi data-i18n-skip>{connection.name || connection.id}</bdi> · <bdi data-i18n-skip>{connection.provider}/{pending?.model}</bdi></p>
+      <p><bdi>{connection.name || connection.id}</bdi> · <bdi>{connection.provider}/{pending?.model}</bdi></p>
     </Confirm>
   </section>;
 }

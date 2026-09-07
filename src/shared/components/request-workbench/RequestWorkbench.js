@@ -103,7 +103,7 @@ export function RequestWorkbench() {
     </div>
     <div className={styles.scope}>
       <NativeSelect label="Gateway operation" data={operationGroups} value={operation.id} onChange={event => selectOperation(event.currentTarget.value)} />
-      <div><Badge variant="light">{operation.method || 'POST'}</Badge><p className={styles.endpoint} data-i18n-skip>{operation.path}{operation.id === 'video-poll' ? '{request_id}' : operation.id === 'gemini' ? '{model}:generateContent' : ''}</p></div>
+      <div><Badge variant="light">{operation.method || 'POST'}</Badge><p className={styles.endpoint}>{operation.path}{operation.id === 'video-poll' ? '{request_id}' : operation.id === 'gemini' ? '{model}:generateContent' : ''}</p></div>
     </div>
     <div className={styles.layout}>
       <section className={styles.panel} aria-labelledby="request-input-title">
@@ -150,7 +150,7 @@ export function RequestWorkbench() {
             {result.blob && <><Text size="sm">Response retained in this page’s memory. No external media URL was fetched. Text responses have credential patterns redacted.</Text><Button variant="default" onClick={() => download(result.blob, `gateway-response.${result.text ? 'txt' : ({ 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'video/mp4': 'mp4' }[result.contentType.split(';')[0]] || 'bin')}`)}>Download response body</Button></>}
             <Button variant="default" onClick={() => download(new Blob([JSON.stringify(diagnosticExport(result), null, 2)], { type: 'application/json' }), 'request-diagnostic.json')}>Export redacted diagnostic</Button>
           </>}
-          {(result?.text || progress?.text) && <pre className={styles.code} tabIndex={0} aria-label="Bounded native response" data-i18n-skip>{result?.text || progress.text}</pre>}
+          {(result?.text || progress?.text) && <pre className={styles.code} tabIndex={0} aria-label="Bounded native response">{result?.text || progress.text}</pre>}
           <Accordion variant="contained"><Accordion.Item value="applicability"><Accordion.Control>Provider applicability and limits</Accordion.Control><Accordion.Panel><Text size="sm">{providers.length ? providers.join(', ') : 'Enter an exact supported provider/model; no bundled provider list is available for this action.'}</Text><Text size="sm" mt="sm">Catalogue declarations do not prove a connected account, authorization, model entitlement or supported native option. <Link href="/dashboard/connections">Inspect connections</Link> and <Link href="/dashboard/models">model policy</Link>.</Text></Accordion.Panel></Accordion.Item><Accordion.Item value="unavailable"><Accordion.Control>Unavailable standalone capabilities</Accordion.Control><Accordion.Panel><Stack gap="sm">{UNAVAILABLE.map(item => <div key={item.label}><strong>{item.label}</strong><p>{item.reason}</p></div>)}</Stack></Accordion.Panel></Accordion.Item></Accordion>
         </Stack>
       </section>

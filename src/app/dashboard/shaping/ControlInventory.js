@@ -8,13 +8,13 @@ import { fmtNum } from '@/shared/format';
 import { CONTROLS, CONTROL_GROUPS, configuredState, controlFailure, controlScope, stageEvidence } from './controlCatalog';
 
 export function SignedBytes({ value }) {
-  return <bdi dir="ltr" className="shaping-number" data-growth={value > 0 || undefined} data-i18n-skip>{value > 0 ? '+' : ''}{fmtNum(value)} B</bdi>;
+  return <bdi dir="ltr" className="shaping-number" data-growth={value > 0 || undefined}>{value > 0 ? '+' : ''}{fmtNum(value)} B</bdi>;
 }
 
-export function ControlInventory({ settings, stageMap, recent = [], onToggle, renderThresholds, onInvestigate }) {
+export function ControlInventory({ settings, stageMap, recent = [], onToggle, renderThresholds, onInvestigate, initialSelection = null }) {
   const [group, setGroup] = useState('All controls');
   const [query, setQuery] = useState('');
-  const [selection, setSelection] = useState(null);
+  const [selection, setSelection] = useState(initialSelection);
   const selected = CONTROLS.find(control => control.key === selection) || CONTROLS[0];
   const visible = CONTROLS.filter(control => (group === 'All controls' || group === control.group) && `${control.name} ${control.key} ${control.technical || ''}`.toLowerCase().includes(query.toLowerCase()));
   const evidence = stageEvidence(stageMap, selected.stage);
@@ -54,7 +54,7 @@ export function ControlInventory({ settings, stageMap, recent = [], onToggle, re
         <div><dt>Configured</dt><dd>{currentState} globally</dd></div>
         <div><dt>Applicable</dt><dd>{unavailable ? 'Runtime unavailable' : currentState === 'Unknown' ? 'Settings unavailable' : selected.dependsOn && settings?.[selected.dependsOn] === false ? 'Parent control is off globally; plan overrides may differ' : 'Depends on each request'}</dd></div>
         <div><dt>Executed</dt><dd>{evidence.applied === null ? 'No stage record' : `${fmtNum(evidence.applied)} applied stage records`}</dd></div>
-        <div><dt>Measured</dt><dd>{evidence.measured ? <><SignedBytes value={evidence.delta} /><span><bdi dir="ltr" data-i18n-skip>{fmtNum(evidence.measuredRecords)} / {fmtNum(evidence.records)}</bdi> records measured</span></> : evidence.measuredRecords === 0 ? 'No recorded byte measurement' : 'Byte coverage unknown'}</dd></div>
+        <div><dt>Measured</dt><dd>{evidence.measured ? <><SignedBytes value={evidence.delta} /><span><bdi dir="ltr">{fmtNum(evidence.measuredRecords)} / {fmtNum(evidence.records)}</bdi> records measured</span></> : evidence.measuredRecords === 0 ? 'No recorded byte measurement' : 'Byte coverage unknown'}</dd></div>
       </dl>
       <p className="shaping-caption">Historical stage records do not establish this control’s effective setting or execution on a particular request.{shared.length > 1 ? ` ${shared.length} controls share this stage.` : ''}</p>
       <dl className="shaping-control-facts">
@@ -66,7 +66,7 @@ export function ControlInventory({ settings, stageMap, recent = [], onToggle, re
       </dl>
       {renderThresholds(selected.stage)}
       <details className="shaping-technical"><summary>Technical source and recorded outcomes</summary>
-        <dl className="shaping-control-facts"><div><dt>Setting</dt><dd><code data-i18n-skip>{selected.key}</code></dd></div>{selected.technical ? <div><dt>Engine name</dt><dd data-i18n-skip>{selected.technical}</dd></div> : null}<div><dt>Source</dt><dd><code data-i18n-skip>{selected.source}</code></dd></div><div><dt>Stage</dt><dd>{selected.stage ? <code data-i18n-skip>{selected.stage}</code> : 'No dedicated byte-ledger stage'}</dd></div></dl>
+        <dl className="shaping-control-facts"><div><dt>Setting</dt><dd><code>{selected.key}</code></dd></div>{selected.technical ? <div><dt>Engine name</dt><dd>{selected.technical}</dd></div> : null}<div><dt>Source</dt><dd><code>{selected.source}</code></dd></div><div><dt>Stage</dt><dd>{selected.stage ? <code>{selected.stage}</code> : 'No dedicated byte-ledger stage'}</dd></div></dl>
         {observations.length ? <ul className="shaping-observations">{observations.map((row, index) => <li key={`${row.ts}-${index}`}><span>{row.applied ? 'Applied record' : 'Bypassed record'}</span><span>{reasons[row.reason] || 'Specific reason not retained'}</span>{Number.isFinite(row.bytesSaved) ? <SignedBytes value={row.bytesSaved} /> : <span>Bytes not recorded</span>}</li>)}</ul> : <p>No recent stage outcome is available in this bounded sample. Absence is not proof the stage never ran.</p>}
       </details>
       <div className="shaping-next"><Link href="/dashboard/context">Inspect request evidence</Link><button type="button" className="link-button" onClick={onInvestigate}>Compare saved profiles</button></div>

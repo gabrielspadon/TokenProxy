@@ -203,7 +203,7 @@ export default function AccessPage() {
             <dd>
               {a.authenticated ? (
                 <>
-                  <span data-i18n-skip>{a.displayName}</span>{' '}
+                  <span>{a.displayName}</span>{' '}
                   <span>{METHOD[a.loginMethod] || a.loginMethod}</span>
                 </>
               ) : (
@@ -312,7 +312,7 @@ export default function AccessPage() {
             <dt>Provider address</dt>
             <dd>
               {s?.oidcIssuerUrl ? (
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {s.oidcIssuerUrl}
                 </span>
               ) : (
@@ -322,7 +322,7 @@ export default function AccessPage() {
             <dt>Client identity</dt>
             <dd>
               {s?.oidcClientId ? (
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {s.oidcClientId}
                 </span>
               ) : (
@@ -336,7 +336,7 @@ export default function AccessPage() {
             <dt>Requested scopes</dt>
             <dd>
               {s?.oidcScopes ? (
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {s.oidcScopes}
                 </span>
               ) : (
@@ -344,7 +344,7 @@ export default function AccessPage() {
               )}
             </dd>
             <dt>Label on the sign-in action</dt>
-            <dd data-i18n-skip>{a?.oidcLoginLabel}</dd>
+            <dd>{a?.oidcLoginLabel}</dd>
           </dl>
         ) : (
           <dl className="facts access-facts">
@@ -361,7 +361,7 @@ export default function AccessPage() {
             <dt>Provider address</dt>
             <dd>
               {s?.samlEntryPoint ? (
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {s.samlEntryPoint}
                 </span>
               ) : (
@@ -371,7 +371,7 @@ export default function AccessPage() {
             <dt>Our identity to the provider</dt>
             <dd>
               {s?.samlIssuer ? (
-                <span className="id" data-i18n-skip>
+                <span className="id">
                   {s.samlIssuer}
                 </span>
               ) : (
@@ -386,10 +386,10 @@ export default function AccessPage() {
             <dd>
               {s ? (
                 <>
-                  <span className="id" data-i18n-skip>
+                  <span className="id">
                     {s.samlAttributeName}
                   </span>{' '}
-                  <span className="id" data-i18n-skip>
+                  <span className="id">
                     {s.samlAttributeEmail}
                   </span>
                 </>
@@ -398,7 +398,7 @@ export default function AccessPage() {
               )}
             </dd>
             <dt>Label on the sign-in action</dt>
-            <dd data-i18n-skip>{a?.samlLoginLabel}</dd>
+            <dd>{a?.samlLoginLabel}</dd>
             <dt>Document for the provider</dt>
             <dd>
               <a href="/api/auth/saml/metadata">Open the document this gateway publishes</a>
@@ -527,15 +527,15 @@ export default function AccessPage() {
         </p>
         <dl className="facts access-facts">
           <dt>First lockout</dt>
-          <dd data-i18n-skip>{fmtUnit(30, 'second')}</dd>
+          <dd>{fmtUnit(30, 'second')}</dd>
           <dt>Second</dt>
-          <dd data-i18n-skip>{fmtUnit(2, 'minute')}</dd>
+          <dd>{fmtUnit(2, 'minute')}</dd>
           <dt>Third</dt>
-          <dd data-i18n-skip>{fmtUnit(10, 'minute')}</dd>
+          <dd>{fmtUnit(10, 'minute')}</dd>
           <dt>Fourth and after</dt>
-          <dd data-i18n-skip>{fmtUnit(30, 'minute')}</dd>
+          <dd>{fmtUnit(30, 'minute')}</dd>
           <dt>Failures are forgotten after</dt>
-          <dd data-i18n-skip>{fmtUnit(1, 'hour')}</dd>
+          <dd>{fmtUnit(1, 'hour')}</dd>
           <dt>Attempts left, and time left on a lockout</dt>
           <dd>
             <Unreported why="Only the sign-in screen is told, and only the address that is failing. No route reports the counter to an operator." />

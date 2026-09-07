@@ -63,7 +63,7 @@ function Account({ id, names }) {
   if (!id) return <span className="unreported">Not reported</span>;
   return (
     <Link href={`/dashboard/connections/${id}`} prefetch={false}>
-      <span data-i18n-skip>{c?.displayName || c?.provider || id}</span>
+      <span>{c?.displayName || c?.provider || id}</span>
     </Link>
   );
 }
@@ -98,15 +98,15 @@ function Receipt({ r, names, now }) {
     <div className="row sessions-row">
       <div className="who">
         <Button variant="subtle" size="compact-sm" onClick={()=>setSelectedRecord({kind:'routing-switch',id:r.receiptId,model:r.model,connectionId:r.newConnectionId,fromConnectionId:r.oldConnectionId,...(Number.isFinite(Date.parse(r.timestamp))?{timestamp:new Date(r.timestamp).toISOString()}:{})})} aria-label={`Select routing receipt ${r.receiptId}`}>{recordTime(r.timestamp)}</Button>
-        <span className="sub" data-i18n-skip>
+        <span className="sub">
           {fmtRelative(r.timestamp, now)}
         </span>
       </div>
       <div className="who">
         <span className="status" data-tone={TRIGGER_TONE[r.trigger]}>
-          {TRIGGER[r.trigger] || <span data-i18n-skip>{r.trigger}</span>}
+          {TRIGGER[r.trigger] || <span>{r.trigger}</span>}
         </span>
-        <span className="sub id" data-i18n-skip>
+        <span className="sub id">
           {r.model}
         </span>
       </div>
@@ -142,7 +142,7 @@ function Receipt({ r, names, now }) {
               <Evidence id={r.newConnectionId} windows={r.windows?.new} names={names} now={now} />
             </dd>
             <dt>Receipt</dt>
-            <dd className="id" data-i18n-skip>
+            <dd className="id">
               {r.receiptId}
             </dd>
           </dl>
@@ -272,25 +272,25 @@ export default function SessionsPage() {
       <div className="measures sessions-summary">
         <div className="measure big">
           <span className="label">In flight</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {usage ? fmtNum(sessions.filter(row=>row.status === 'active').length) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Models in flight</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {usage ? fmtNum(new Set(sessions.map((s) => s.model).filter(Boolean)).size) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Switches shown</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {receipts.data ? fmtNum(rows.length) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Accounts known</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {detail.data ? fmtNum(names.size) : '—'}
           </span>
         </div>
@@ -334,19 +334,19 @@ export default function SessionsPage() {
                 className="row sessions-live"
               >
                 <span className="who">
-                  <span className="name" data-i18n-skip>
+                  <span className="name">
                     {s.account || s.provider}
                   </span>
                   <span className="sub">
-                    <span className="id" data-i18n-skip>
+                    <span className="id">
                       {s.model}
                     </span>{' '}
-                    <span data-i18n-skip>{s.provider}</span>
+                    <span>{s.provider}</span>
                   </span>
                 </span>
-                <span data-i18n-skip>{s.startedAt ? fmtRelative(s.startedAt, now) : ''}</span>
+                <span>{s.startedAt ? fmtRelative(s.startedAt, now) : ''}</span>
                 <span className="status" data-tone={TONE[s.status] || 'ok'}>
-                  {WORDS[s.status] || <span data-i18n-skip>{s.status}</span>}
+                  {WORDS[s.status] || <span>{s.status}</span>}
                 </span>
               </div>
             ))}
@@ -440,14 +440,14 @@ export default function SessionsPage() {
                 <summary className="sessions-ledger">
                   <span className="sessions-caret" aria-hidden="true" />
                   <span className="who">
-                    <span className="id" data-i18n-skip>{recordTime(r.timestamp)}</span>
-                    <span className="sub" data-i18n-skip>{fmtRelative(r.timestamp, now)}</span>
+                    <span className="id">{recordTime(r.timestamp)}</span>
+                    <span className="sub">{fmtRelative(r.timestamp, now)}</span>
                   </span>
                   <span className="status" data-tone={TRIGGER_TONE[r.trigger]}>
-                    {TRIGGER[r.trigger] || <span data-i18n-skip>{r.trigger}</span>}
+                    {TRIGGER[r.trigger] || <span>{r.trigger}</span>}
                   </span>
-                  <span className="id" data-i18n-skip>{r.model}</span>
-                  <span className="sessions-move" data-i18n-skip>
+                  <span className="id">{r.model}</span>
+                  <span className="sessions-move">
                     {r.oldConnectionId ? names.get(r.oldConnectionId)?.displayName || r.oldConnectionId : 'First pin'}
                     {' → '}
                     {names.get(r.newConnectionId)?.displayName || r.newConnectionId || 'Not reported'}

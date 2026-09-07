@@ -8,7 +8,7 @@ export const NAV = [
   { href: '/dashboard/models', label: 'Models', icon: 'i-models' },
   { href: '/dashboard/keys', label: 'Keys', icon: 'i-keys' },
   { href: '/dashboard/usage', label: 'Economics', icon: 'i-usage' },
-  { href: '/dashboard/shaping', label: 'Shaping', icon: 'i-shaping' },
+  { href: '/dashboard/shaping', label: 'Token savings', icon: 'i-shaping' },
   { href: '/dashboard/translation', label: 'Translation', icon: 'i-translation' },
   { href: '/dashboard/compatibility', label: 'Compatibility', icon: 'i-compatibility' },
   { href: '/dashboard/tools', label: 'Tools', icon: 'i-tools' },

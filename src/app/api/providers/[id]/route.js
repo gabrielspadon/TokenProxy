@@ -25,6 +25,24 @@ function hasOwn(data, key) {
   return Object.prototype.hasOwnProperty.call(data || {}, key);
 }
 
+const CONTROL_FIELDS = ["isActive", "priority", "quotaPauseThresholds"];
+
+function validControlField(key, value, expected = false) {
+  if (key === "isActive") return typeof value === "boolean";
+  if (key === "priority") return expected && value === null || Number.isInteger(value) && value >= 1;
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.values(value).every(threshold => typeof threshold === "number" && Number.isFinite(threshold) && threshold >= 0 && threshold <= 100);
+}
+
+function validControlWrite(body) {
+  const expected = body.expectedControls;
+  return expected !== null && typeof expected === "object" && !Array.isArray(expected)
+    && Object.keys(expected).length === CONTROL_FIELDS.length
+    && CONTROL_FIELDS.every(key => hasOwn(expected, key) && validControlField(key, expected[key], true))
+    && CONTROL_FIELDS.some(key => hasOwn(body, key))
+    && Object.keys(body).every(key => key === "expectedControls" || CONTROL_FIELDS.includes(key) && validControlField(key, body[key]));
+}
+
 function normalizeString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -212,7 +230,18 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Request body must be a JSON object" }, { status: 400 });
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Request body must be a JSON object" }, { status: 400 });
+    }
+    if (hasOwn(body, "expectedControls") && !validControlWrite(body)) {
+      return NextResponse.json({ error: "Expected controls and changes must contain valid account policy fields only" }, { status: 400 });
+    }
     const {
       name,
       priority,
@@ -285,8 +314,7 @@ export async function PUT(request, { params }) {
       updateData.quotaPauseThresholds = clean;
     }
 
-    if (existing.providerSpecificData !== undefined
-        || providerSpecificData !== undefined
+    if (providerSpecificData !== undefined
         || proxyConfig.mode !== "omit"
         || proxyPoolResult.hasProxyPoolField
         || hasEndpointOverride) {
@@ -315,10 +343,16 @@ export async function PUT(request, { params }) {
       }
     }
 
-    const updated = await updateProviderConnection(id, updateData);
+    const updated = await updateProviderConnection(id, updateData,
+      hasOwn(body, "expectedControls") ? { expectedControls: body.expectedControls } : undefined);
+
+    if (!updated) return NextResponse.json({ error: "Connection not found" }, { status: 404 });
 
     return NextResponse.json({ connection: redactConnectionSecrets(updated) });
   } catch (error) {
+    if (error.code === "CONTROL_CONFLICT") {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 });
+    }
     console.log("Error updating connection:", error);
     return NextResponse.json({ error: "Failed to update connection" }, { status: 500 });
   }

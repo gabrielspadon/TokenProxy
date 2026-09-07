@@ -48,7 +48,7 @@ export default function CallbackPage() {
   return (
     <main className="login">
       <div className="login-card">
-        <span className="brand" data-i18n-skip>TokenProxy</span>
+        <span className="brand">TokenProxy</span>
         {state === "relaying" ? <p>Signing in</p> : null}
         {state === "done" ? <Notice tone="ok" title="Signed in." next="You can close this window." /> : null}
         {state === "error" ? <Notice tone="bad" title="The provider refused the sign-in." next="Close this window and start again from the connection." detail={detail} /> : null}

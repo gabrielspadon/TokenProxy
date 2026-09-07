@@ -134,7 +134,7 @@ function ContextScope({ workspace, baseline, setBaseline }) {
   const recordingStart = utc(data?.recordingStartedAt);
   const dataTimestamp = utc(data?.freshness?.persistedAt || data?.freshness?.snapshotCompletedAt);
   return <div className={`${shared.lensViewport} ${styles.viewport}`}>
-    <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" aria-pressed={showReports} onClick={()=>setShowReports(!showReports)}>{showReports ? 'Return to session tracks' : 'Browse client reports'}</Button><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Shaping controls</Button></Group></div>
+    <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" aria-pressed={showReports} onClick={()=>setShowReports(!showReports)}>{showReports ? 'Return to session tracks' : 'Browse client reports'}</Button><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Token savings</Button></Group></div>
     <ScopeBar />
     <details className={styles.scopeActivity} onToggle={event => setShowActivity(event.currentTarget.open)}><summary>Activity across the shared scope</summary>{showActivity && <ActivityBand title="Retained request activity" />}</details>
     <div className={`${styles.workspace} ${shared.lensContent}`}>

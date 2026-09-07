@@ -1,6 +1,6 @@
 export function Brand({ compact = false }) {
   return (
-    <span className="brand-lockup" data-i18n-skip>
+    <span className="brand-lockup">
       <span className="brand-symbol" aria-hidden="true">
         <svg viewBox="0 0 32 32">
           <path

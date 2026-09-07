@@ -47,7 +47,7 @@ Read these, in this order. They are the whole of the input.
    surfaces, persistence, security, timers, and the provider registry
    shape, with `file:line` citations.
 3. `CLAUDE.md`, `open-sse/AGENTS.md`, `.env.example`, `next.config.mjs`,
-   `custom-server.js`, `src/dashboardGuard.js`, `src/i18n/*`. Server
+   `custom-server.js`, `src/dashboardGuard.js`. Server
    truth. Read them; do not modify them except where this brief says.
 4. `src/app/api/**`, `src/lib/**`, `src/sse/**`, `open-sse/**`. The
    backend. Read freely, through the `backend-reader` subagent for anything
@@ -72,8 +72,7 @@ OAuth provider redirects back to. You may organise anything you like below
 Root layout server duties, whatever else `src/app/layout.js` becomes:
 `import "@/lib/network/initOutboundProxy"`, `import "@/shared/services/bootstrap"`,
 a call to `initConsoleLogCapture()` from `@/lib/consoleLogBuffer`, and
-`<html lang={locale} dir={getLocaleDirection(locale)}>` from
-`@/i18n/server` and `@/i18n/config`, resolved before hydration. These boot
+`<html lang="en" dir="ltr">`, resolved before hydration. The imports boot
 the gateway's background jobs; dropping one silently turns a feature off.
 
 OAuth callback relay (`/callback`): the page receives `code`, `state`,
@@ -119,13 +118,11 @@ connections and aliases with it) and every irreversible action (delete,
 update, shutdown, database import which requires the password in an
 `x-tp-password` header) get a confirmation that names what is destroyed.
 
-Locale: thirty-five locales in `src/i18n/config.js` (English plus thirty-four translated files); `he`, `ar`, `fa`, `ur`
-are right-to-left. Literals live at `public/i18n/literals/<locale>.json`
-keyed by the English string. `POST /api/locale {locale}` sets the cookie.
-The existing runtime translator in `src/i18n/runtime.js` walks the DOM; you
-may keep it, wrap it, or replace it with something better, but every visible
-string ships in all thirty-four translated files and German, Vietnamese, Chinese and
-Persian are layout tests, not afterthoughts.
+Language: the product interface supports English only, as requested on
+2026-09-07. No runtime DOM translator, translated catalogs, locale selector
+or locale API remains. Legacy locale cookies do not affect the interface.
+Preserve arbitrary Unicode account names and provider-supplied content.
+Protocol translation and provider language capabilities remain independent.
 
 Stack: Next 16 app router, React 19.2, plain JavaScript ESM, `@/*` to
 `src/*`, `next build --webpack` to a standalone served by
@@ -192,12 +189,11 @@ resumable.
 | Exact field names, auth class, refusal shapes for a route | `contract-reader` |
 | Producing screenshots and running smoke, lint, e2e; returning counts | `evidence-runner` |
 | A second pair of eyes on the screenshots after you have looked | `screenshot-reviewer` |
-| Adding missing strings to the 34 literal files | `locale-writer` |
 | Writing `progress.md`, `tests.json`, committing a slice | `scribe` |
 
 You look at what you build. After every slice, open the screenshots under
 `docs/design/evidence/<slice>/` with the Read tool, at least one per width
-and one in `fa`, and critique them the way the skill asks: what reads as a
+with long Unicode account names, and critique them the way the skill asks: what reads as a
 default, what is the memorable thing, what would you remove. A picture is
 worth a thousand tokens, and it is the only way you will catch a clipped
 label, a baseline that drifts, or a screen that is merely correct. What you
@@ -223,16 +219,15 @@ Order of work:
 3. Then the rest, one slice at a time, each wired to its real routes, each
    with its loading, empty, error, forbidden, and stale states, each through
    the evidence loop before the next.
-4. Maintain `docs/design/strings.json`: a JSON array of every English string
-   the UI renders. Add to it as you write copy; the evidence script gates
-   literal coverage on it.
+4. Keep English interface labels consistent with navigation and controls.
+   Verify that arbitrary account and provider text survives unchanged.
 
 The evidence loop, after every slice:
 
 1. `evidence-runner` with the slice name and routes. It returns failing
    lines and writes the screenshots.
 2. Read the screenshots yourself. Fix what you see and what the numbers
-   say; send string gaps to `locale-writer`; rerun 1 until `PASS`.
+   say; correct unclear English labels; rerun 1 until `PASS`.
 3. `screenshot-reviewer` on the slice's evidence directory, for the
    defects a second look finds. Fix real defects; taste comments are not
    defects. Rerun 1 and look again if you changed anything.

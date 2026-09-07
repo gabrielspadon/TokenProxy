@@ -436,31 +436,31 @@ function CatalogControls() {
       <div className="measures">
         <div className="measure big">
           <span className="label">Catalog</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {models.data ? fmtNum(rows.length) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Combos</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {combos.data ? fmtNum(comboRows.length) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Custom</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {custom.data ? fmtNum(customRows.length) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Disabled aliases</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {disabled.data ? fmtNum(Object.keys(disabledByProvider).length) : '—'}
           </span>
         </div>
         <div className="measure big">
           <span className="label">Unacknowledged</span>
-          <span className="value" data-i18n-skip>
+          <span className="value">
             {news.data ? fmtNum(totalUnseen) : '—'}
           </span>
         </div>
@@ -500,14 +500,14 @@ function CatalogControls() {
             {shown.map((m) => (
               <div key={m.fullModel} className="row models-row">
                 <span className="who">
-                  <span className="name id" data-i18n-skip>
+                  <span className="name id">
                     {m.fullModel}
                   </span>
                   <span className="sub">
                     {m.alias !== m.model ? (
                       <>
                         alias{' '}
-                        <span className="id" data-i18n-skip>
+                        <span className="id">
                           {(m.aliases?.length ? m.aliases : [m.alias]).join(', ')}
                         </span>
                       </>
@@ -516,7 +516,7 @@ function CatalogControls() {
                     )}
                   </span>
                 </span>
-                <span data-i18n-skip>
+                <span>
                   {[
                     m.caps?.vision && 'Vision',
                     m.caps?.search && 'Search',
@@ -525,7 +525,7 @@ function CatalogControls() {
                     .filter(Boolean)
                     .join(', ') || '—'}
                 </span>
-                <span data-i18n-skip>
+                <span>
                   {m.caps?.contextWindow ? fmtNum(m.caps.contextWindow) : '?'} /{' '}
                   {m.caps?.maxOutput ? fmtNum(m.caps.maxOutput) : '?'}
                 </span>
@@ -555,8 +555,8 @@ function CatalogControls() {
             {shown.length < filtered.length ? (
               <div className="row models-row">
                 <span className="caption">
-                  Showing <span data-i18n-skip>{fmtNum(shown.length)}</span> of{' '}
-                  <span data-i18n-skip>{fmtNum(filtered.length)}</span> models. Search narrows the
+                  Showing <span>{fmtNum(shown.length)}</span> of{' '}
+                  <span>{fmtNum(filtered.length)}</span> models. Search narrows the
                   list.
                 </span>
                 <span />
@@ -592,10 +592,10 @@ function CatalogControls() {
                 style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
               >
                 <span className="who">
-                  <span className="name" data-i18n-skip>
+                  <span className="name">
                     {alias}
                   </span>
-                  <span className="sub id" data-i18n-skip>
+                  <span className="sub id">
                     {ids.join(', ')}
                   </span>
                 </span>
@@ -638,10 +638,10 @@ function CatalogControls() {
                 style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
               >
                 <span className="who">
-                  <span className="name id" data-i18n-skip>
+                  <span className="name id">
                     {m.providerAlias}/{m.id}
                   </span>
-                  <span className="sub" data-i18n-skip>
+                  <span className="sub">
                     {m.name || m.id}
                     {m.vision ? ' · vision' : ''}
                     {m.maxInputTokens ? ` · ${fmtNum(m.maxInputTokens)} in` : ''}
@@ -684,7 +684,7 @@ function CatalogControls() {
               {groups.map((g) => (
                 <div key={g.providerAlias} className="row" style={{ gridTemplateColumns: '1fr' }}>
                   <span className="who">
-                    <span className="name" data-i18n-skip>
+                    <span className="name">
                       {g.providerName}
                     </span>
                   </span>
@@ -695,7 +695,7 @@ function CatalogControls() {
                         className="row"
                         style={{ gridTemplateColumns: 'minmax(0,1fr) auto auto' }}
                       >
-                        <span className="id" data-i18n-skip>
+                        <span className="id">
                           {m.modelId}
                         </span>
                         <span className="status" data-tone={m.isNew ? 'warn' : undefined}>
@@ -735,7 +735,7 @@ function CatalogControls() {
                 <span className="status" data-tone={freeSync.data.config?.enabled ? 'ok' : 'warn'}>
                   {freeSync.data.config?.enabled ? 'On' : 'Off'}
                 </span>{' '}
-                <span data-i18n-skip>
+                <span>
                   every {fmtUnit(freeSync.data.config?.intervalHours, 'hour')}
                 </span>
               </dd>
@@ -746,12 +746,12 @@ function CatalogControls() {
                     Running now
                   </span>
                 ) : freeSync.data.lastRunAt ? (
-                  <span data-i18n-skip>{fmtRelative(freeSync.data.lastRunAt, now)}</span>
+                  <span>{fmtRelative(freeSync.data.lastRunAt, now)}</span>
                 ) : (
                   <span className="unreported">Not reported</span>
                 )}
                 {freeSync.data.lastError ? (
-                  <span className="caption" data-i18n-skip>
+                  <span className="caption">
                     {' '}
                     {freeSync.data.lastError}
                   </span>
@@ -766,10 +766,10 @@ function CatalogControls() {
                     className="row"
                     style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
                   >
-                    <span className="name" data-i18n-skip>
+                    <span className="name">
                       {id}
                     </span>
-                    <span data-i18n-skip>
+                    <span>
                       {fmtNum(p.count)} models
                       {p.updatedAt ? <> · {fmtRelative(p.updatedAt, now)}</> : null}
                     </span>
@@ -813,16 +813,16 @@ function CatalogControls() {
                   style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
                 >
                   <span className="who">
-                    <span className="name id" data-i18n-skip>
+                    <span className="name id">
                       {c.name}
                     </span>
-                    <span className="sub id" data-i18n-skip>
+                    <span className="sub id">
                       {(c.models || []).join(', ')}
                     </span>
                     <span className="sub">
                       {override?.fallbackStrategy ? (
                         <>
-                          override <span data-i18n-skip>{override.fallbackStrategy}</span>
+                          override <span>{override.fallbackStrategy}</span>
                         </>
                       ) : (
                         <>uses the default strategy</>
@@ -991,7 +991,7 @@ function CatalogControls() {
         onClose={close}
       >
         {pending?.label ? (
-          <p className="name id" data-i18n-skip>
+          <p className="name id">
             {pending.label}
           </p>
         ) : null}

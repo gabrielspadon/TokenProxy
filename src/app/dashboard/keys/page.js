@@ -522,16 +522,16 @@ export default function KeysPage() {
                             setPicked((p) => (on ? p.filter((id) => id !== k.id) : [...p, k.id]))
                           }
                         />
-                        <span className="name" data-i18n-skip>
+                        <span className="name">
                           {k.name}
                         </span>
                       </label>
                       <span className="sub">
-                        <span className="id" data-i18n-skip>
+                        <span className="id">
                           {k.id}
                         </span>
                         {k.keyPreview ? (
-                          <span className="id" data-i18n-skip>
+                          <span className="id">
                             {' '}
                             {k.keyPreview}
                           </span>
@@ -540,14 +540,14 @@ export default function KeysPage() {
                           <>
                             {' '}
                             <span>Created</span>{' '}
-                            <span data-i18n-skip>{fmtRelative(k.createdAt, now)}</span>
+                            <span>{fmtRelative(k.createdAt, now)}</span>
                           </>
                         ) : null}
                         {k.expiresAt ? (
                           <>
                             {' '}
                             <span>Expires</span>{' '}
-                            <span data-i18n-skip>{fmtRelative(k.expiresAt, now)}</span>
+                            <span>{fmtRelative(k.expiresAt, now)}</span>
                           </>
                         ) : (
                           <>
@@ -557,7 +557,7 @@ export default function KeysPage() {
                         )}
                       </span>
                     </span>
-                    <span data-i18n-skip>{fmtNum(k.deviceCount || 0)}</span>
+                    <span>{fmtNum(k.deviceCount || 0)}</span>
                     <span className="status" data-tone={budgetState.tone} data-state={st}>
                       {budgetState.label}
                     </span>
@@ -573,19 +573,19 @@ export default function KeysPage() {
                       <KeyBudget record={k} />
                       <dl className="facts">
                         <dt>Requests</dt>
-                        <dd data-i18n-skip>
+                        <dd>
                           {Number.isFinite(k.usage?.requests)
                             ? fmtNum(k.usage.requests)
                             : 'Unknown'}
                         </dd>
                         <dt>Machine</dt>
-                        <dd className="id" data-i18n-skip>
+                        <dd className="id">
                           {k.machineId}
                         </dd>
                         <dt>Models</dt>
                         <dd>
                           {k.allowedModels?.length ? (
-                            <span className="id" data-i18n-skip>
+                            <span className="id">
                               {k.allowedModels.join(', ')}
                             </span>
                           ) : (
@@ -664,7 +664,7 @@ export default function KeysPage() {
               {windowMinutes ? (
                 <>
                   {' '}
-                  <span>Window</span> <span data-i18n-skip>{fmtUnit(windowMinutes, 'minute')}</span>
+                  <span>Window</span> <span>{fmtUnit(windowMinutes, 'minute')}</span>
                   .
                 </>
               ) : null}
@@ -681,7 +681,7 @@ export default function KeysPage() {
               </button>
               {picked.length ? (
                 <span className="caption">
-                  <span data-i18n-skip>{fmtNum(picked.length)}</span> <span>selected</span>
+                  <span>{fmtNum(picked.length)}</span> <span>selected</span>
                 </span>
               ) : null}
             </div>
@@ -722,7 +722,7 @@ export default function KeysPage() {
                   {auth.displayName ? (
                     <>
                       {' '}
-                      <span data-i18n-skip>{auth.displayName}</span>
+                      <span>{auth.displayName}</span>
                     </>
                   ) : null}
                 </>
@@ -896,7 +896,7 @@ export default function KeysPage() {
             {action.key?.expiresAt ? (
               <p className="caption">
                 This key already expires{' '}
-                <span data-i18n-skip>{fmtRelative(action.key.expiresAt, now)}</span>. A longer
+                <span>{fmtRelative(action.key.expiresAt, now)}</span>. A longer
                 window does not extend it.
               </p>
             ) : null}
@@ -935,13 +935,13 @@ export default function KeysPage() {
             {created.rotation ? (
               <p className="caption">
                 This is the successor key. The previous one keeps working until{' '}
-                <span data-i18n-skip>{fmtRelative(created.rotation.overlapEndsAt, now)}</span>
+                <span>{fmtRelative(created.rotation.overlapEndsAt, now)}</span>
                 {created.rotation.overlapTruncatedByExistingExpiry
                   ? ', which is its own existing expiry rather than the window you chose.'
                   : '.'}
               </p>
             ) : null}
-            <code className="keys-secret" data-i18n-skip>
+            <code className="keys-secret">
               {created.key}
             </code>
             <div className="actions">

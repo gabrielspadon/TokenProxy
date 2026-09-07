@@ -38,7 +38,7 @@ function Probe({ state, at, now }) {
       {at ? (
         <span className="caption">
           {' '}
-          Status read <span data-i18n-skip>{fmtRelative(at, now)}</span>
+          Status read <span>{fmtRelative(at, now)}</span>
         </span>
       ) : null}
     </>
@@ -184,7 +184,7 @@ export default function RemotePage() {
               <dt>Public address</dt>
               <dd>
                 {relay.publicUrl ? (
-                  <span className="id" data-i18n-skip>
+                  <span className="id">
                     {relay.publicUrl}
                   </span>
                 ) : (
@@ -199,7 +199,7 @@ export default function RemotePage() {
               <dt>Direct address</dt>
               <dd>
                 {relay.tunnelUrl ? (
-                  <span className="id" data-i18n-skip>
+                  <span className="id">
                     {relay.tunnelUrl}
                   </span>
                 ) : (
@@ -210,7 +210,7 @@ export default function RemotePage() {
               <dd>
                 {relay.shortId ? (
                   <>
-                    <span className="id" data-i18n-skip>
+                    <span className="id">
                       {relay.shortId}
                     </span>{' '}
                     <span className="caption">
@@ -230,7 +230,7 @@ export default function RemotePage() {
                   <span className="used" style={{ width: `${download.progress}%` }} />
                 </div>
                 <div className="band-meta">
-                  <span data-i18n-skip>{fmtPct((download.progress || 0) / 100)}</span>
+                  <span>{fmtPct((download.progress || 0) / 100)}</span>
                 </div>
               </>
             ) : null}
@@ -408,7 +408,7 @@ export default function RemotePage() {
           <dt>Mesh address</dt>
           <dd>
             {funnel?.tunnelUrl ? (
-              <span className="id" data-i18n-skip>
+              <span className="id">
                 {funnel.tunnelUrl}
               </span>
             ) : (

@@ -88,7 +88,7 @@ function RouterNode({ data }) {
         </span>
         <div>
           <strong>{data.clientTool || 'Active request'}</strong>
-          <span data-i18n-skip>{data.model}</span>
+          <span>{data.model}</span>
           <small>{data.account || 'Account not reported'}</small>
         </div>
       </div>
@@ -108,7 +108,7 @@ function RouterNode({ data }) {
       <ProviderMark provider={data.provider} />
       <span>
         <strong>{providerIdentity(data.provider).name}</strong>
-        <small data-i18n-skip>{data.displayName || 'Account not reported'}</small>
+        <small>{data.displayName || 'Account not reported'}</small>
       </span>
       <span className="graph-provider-state">
         {data.active ? (
@@ -364,7 +364,7 @@ export function RouteMap({
           >
             <ProviderMark provider={s.provider} size="small" />
             <span>
-              <strong data-i18n-skip>{s.clientTool || s.model || 'Active request'}</strong>
+              <strong>{s.clientTool || s.model || 'Active request'}</strong>
               <small>{s.account || 'Account not reported'}</small>
             </span>
             <span className="flight-signal" aria-hidden="true" />
@@ -382,7 +382,7 @@ export function RouteMap({
       {picked ? (
         <div className="live-request-details">
           <ProviderMark provider={picked.provider} label />
-          <span data-i18n-skip>{picked.model}</span>
+          <span>{picked.model}</span>
           <span>
             Input {picked.promptTokens == null ? 'not yet reported' : fmtNum(picked.promptTokens)}
           </span>

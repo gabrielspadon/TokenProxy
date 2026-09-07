@@ -8,10 +8,8 @@ import '@mantine/notifications/styles.layer.css';
 import './workspace.css';
 import { UiProvider } from '@/shared/workspace/UiProvider';
 import { ColorSchemeScript } from '@mantine/core';
+import { connection } from 'next/server';
 import { initConsoleLogCapture } from '@/lib/consoleLogBuffer';
-import { getServerLocale } from '@/i18n/server';
-import { getLocaleDirection } from '@/i18n/config';
-import { RuntimeI18nProvider } from '@/i18n/RuntimeI18nProvider';
 
 initConsoleLogCapture();
 
@@ -21,17 +19,16 @@ export const metadata = {
 };
 
 export default async function RootLayout({ children }) {
-  const locale = await getServerLocale();
+  // Operator pages render per request, independently of display preferences.
+  await connection();
   return (
-    <html lang={locale} dir={getLocaleDirection(locale)} suppressHydrationWarning>
+    <html lang="en" dir="ltr" suppressHydrationWarning>
       <head>
         <ColorSchemeScript defaultColorScheme="light" />
         <link rel="preload" href="/fonts/manrope-variable.ttf" as="font" type="font/ttf" crossOrigin="anonymous" />
       </head>
       <body>
-        <UiProvider>
-          <RuntimeI18nProvider>{children}</RuntimeI18nProvider>
-        </UiProvider>
+        <UiProvider>{children}</UiProvider>
       </body>
     </html>
   );

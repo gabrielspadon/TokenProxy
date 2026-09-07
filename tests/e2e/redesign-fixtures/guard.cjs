@@ -234,7 +234,7 @@ http.Server.prototype.emit = function(event,...args) {
       || method === 'PATCH' && /^\/api\/admin\/compatibility\/fixtures\/[^/]+$/.test(pathname)
       || ['POST','DELETE'].includes(method) && pathname === '/api/models/disabled'
       || method === 'POST' && pathname === '/api/translator/translate';
-    const allowedMutation = method === 'POST' && ['/api/auth/login', '/api/locale'].includes(pathname)
+    const allowedMutation = method === 'POST' && pathname === '/api/auth/login'
       || method === 'POST' && /^\/api\/admin\/shaping\/(?:profiles|experiments|promote|rollback|controls|plans|runtime)$/.test(pathname)
       || method === 'PATCH' && pathname === '/api/settings'
       || ['POST', 'PUT', 'DELETE'].includes(method) && pathname === '/api/model-context'
