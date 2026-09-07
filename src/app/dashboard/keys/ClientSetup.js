@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { Icon } from '@/shared/components/Icon';
 import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
@@ -194,14 +194,19 @@ export function ClientSetup({ record }) {
               </button>
             ))}
           </div>
+          {/* dt and dd are direct children on purpose: globals.css sizes
+              dl.facts as a two-column grid, so wrapping each pair in a div
+              makes the div the grid item and the max-content column grows to
+              the longest sentence, which overflowed the page by 257px at
+              390px wide. */}
           <dl className="facts">
             {RUNNABLE.map((t) => (
-              <div key={t.tier}>
+              <Fragment key={t.tier}>
                 <dt>{t.label}</dt>
                 <dd>
                   {t.reaches} {t.proves}
                 </dd>
-              </div>
+              </Fragment>
             ))}
           </dl>
           <Outcome outcome={outcome} />

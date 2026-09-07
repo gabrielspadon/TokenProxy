@@ -307,9 +307,9 @@ function DryRun({ rule, conditions }) {
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Subject</Table.Th>
-                    <Table.Th>Records</Table.Th>
-                    <Table.Th>Measured</Table.Th>
-                    <Table.Th>Would alert</Table.Th>
+                    <Table.Th className={styles.numeric}>Records</Table.Th>
+                    <Table.Th className={styles.numeric}>Measured</Table.Th>
+                    <Table.Th className={styles.numeric}>Would alert</Table.Th>
                     <Table.Th>First firing (UTC)</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
@@ -319,11 +319,18 @@ function DryRun({ rule, conditions }) {
                       <Table.Td>
                         <code title={group.scopeKey}>{group.scopeKey}</code>
                       </Table.Td>
-                      <Table.Td>{ruleNumber(group.sampleCount)}</Table.Td>
-                      <Table.Td data-unknown={group.measuredCount === 0 || undefined}>
+                      <Table.Td className={styles.numeric}>
+                        {ruleNumber(group.sampleCount)}
+                      </Table.Td>
+                      <Table.Td
+                        className={styles.numeric}
+                        data-unknown={group.measuredCount === 0 || undefined}
+                      >
                         {ruleNumber(group.measuredCount)}
                       </Table.Td>
-                      <Table.Td>{ruleNumber(group.firings.length)}</Table.Td>
+                      <Table.Td className={styles.numeric}>
+                        {ruleNumber(group.firings.length)}
+                      </Table.Td>
                       <Table.Td>
                         {group.firings.length
                           ? ruleTimestamp(group.firings[0].firedAt)
@@ -400,7 +407,10 @@ function AlertRow({ event, conditions, rules, onChanged }) {
           </Text>
         )}
       </Table.Td>
-      <Table.Td>
+      {/* data-unknown carries the dim treatment in the module, so the cell
+          needs it whenever it falls back to UNKNOWN rather than the word
+          being emitted bare. */}
+      <Table.Td data-unknown={event.evidence?.refs?.length ? undefined : true}>
         {event.evidence?.refs?.length ? (
           href ? (
             <Link href={href}>

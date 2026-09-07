@@ -1,5 +1,6 @@
 import { Notice } from '@/shared/components/Notice';
 import { fmtNum, fmtRelative } from '@/shared/format';
+import { recordTime } from '@/shared/components/workspace/economics';
 
 // Which profile a key follows and how it has diverged. The two signals are
 // shown as separate sentences because they call for different actions: a
@@ -87,14 +88,19 @@ function Rotation({ record, now }) {
           <>
             This key replaced an earlier one{' '}
             <span data-i18n-skip>{fmtRelative(rotation.rotatedAt, now)}</span>. The earlier key
-            stays valid until
+            stays valid until{' '}
             {rotation.overlapEndsAt ? (
               <>
-                {' '}
-                <span data-i18n-skip>{fmtRelative(rotation.overlapEndsAt, now)}</span>
+                {/* The deadline traffic stops is a moment, not a relative
+                    phrase: "until in 48 hr." is unreadable and cannot be
+                    acted on. Absolute first, relative as the aside. */}
+                <span className="id" data-i18n-skip>
+                  {recordTime(rotation.overlapEndsAt, true)}
+                </span>{' '}
+                (<span data-i18n-skip>{fmtRelative(rotation.overlapEndsAt, now)}</span>)
               </>
             ) : (
-              <> its own expiry</>
+              <>its own expiry</>
             )}
             .
           </>
@@ -120,12 +126,16 @@ function Attribution({ record, now }) {
     <dl className="facts">
       <dt>Last client</dt>
       <dd>
+        {/* Two different facts, so they no longer open with the same word.
+            Absent means nothing is retained; unattributed means requests ARE
+            retained and none of them named a client, which is evidence rather
+            than absence. */}
         {!attribution ? (
-          <span>Unknown. No attributed request is retained for this key.</span>
+          <span className="caption">Unknown. No attributed request is retained for this key.</span>
         ) : attribution.attribution === 'unattributed' ? (
           <span>
-            Unknown. <span data-i18n-skip>{fmtNum(attribution.requests)}</span> retained requests
-            named no client.
+            Not reported by the client. <span data-i18n-skip>{fmtNum(attribution.requests)}</span>{' '}
+            retained requests named no client.
           </span>
         ) : (
           <>
