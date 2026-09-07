@@ -73,15 +73,15 @@ export const ALERT_STATE_LABEL = {
 export function evidenceHref(kind, ref, event) {
   if (!ref) return null;
   const connectionId = String(event?.scopeKey || '').split('::')[0];
-  if (kind === 'quotaObservation' && connectionId) {
-    return `/dashboard/workspace?account=${encodeURIComponent(connectionId)}`;
+  // Only routes that exist, with the scope param WorkspaceProvider reads.
+  // A link to a surface this build does not ship is worse than no link: it
+  // presents evidence as reachable and then 404s.
+  if ((kind === 'quotaObservation' || kind === 'accountSwitch') && connectionId) {
+    return `/dashboard?connectionId=${encodeURIComponent(connectionId)}`;
   }
-  if (kind === 'operationEvent') {
-    return `/dashboard/operations?event=${encodeURIComponent(ref)}`;
-  }
-  if (kind === 'accountSwitch' && connectionId) {
-    return `/dashboard/workspace?account=${encodeURIComponent(connectionId)}`;
-  }
+  if (kind === 'accountSwitch') return '/dashboard/sessions';
+  // Operation events have no operator surface yet, so say so by linking nowhere
+  // rather than inventing /dashboard/operations.
   return null;
 }
 

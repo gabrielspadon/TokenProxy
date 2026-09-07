@@ -64,7 +64,7 @@ function Facts({ rows }) {
   );
 }
 
-function RuleEditor({ rule, conditions, onCancel, onSaved }) {
+function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
   const [draft, setDraft] = useState(() => ({ ...DEFAULT_RULE, ...rule }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -97,8 +97,12 @@ function RuleEditor({ rule, conditions, onCancel, onSaved }) {
     } catch (caught) {
       // A revision conflict is shown as a conflict, with the live values, so
       // the operator decides. It is never resolved by overwriting.
-      if (caught.status === 409) setConflict(caught.payload);
-      else setError(caught.message);
+      if (caught.status === 409) {
+        setConflict(caught.payload);
+        // The table behind this editor is now showing a stale revision, so
+        // refresh it rather than leaving two disagreeing numbers on screen.
+        onStale?.();
+      } else setError(caught.message);
     } finally {
       setBusy(false);
     }
@@ -195,7 +199,7 @@ function RuleEditor({ rule, conditions, onCancel, onSaved }) {
       </Group>
       {condition && <p className={styles.sentence}>{ruleSentence(draft, condition)}</p>}
       {conflict && (
-        <Alert color="orange" title="This rule was changed by someone else">
+        <Alert color="indigo" title="This rule was changed by someone else">
           <p>
             You edited revision {ruleNumber(conflict.expectedRevision)}. The stored rule is now at
             revision {ruleNumber(conflict.current?.revision)}, with a threshold of{' '}
@@ -498,6 +502,7 @@ export function NotificationRules() {
               conditions={conditions}
               onCancel={() => setEditing(null)}
               onSaved={onSaved}
+              onStale={resource.refresh}
             />
           )}
 
@@ -516,10 +521,10 @@ export function NotificationRules() {
                     <Table.Th>Rule</Table.Th>
                     <Table.Th>Condition</Table.Th>
                     <Table.Th>Scope</Table.Th>
-                    <Table.Th>Threshold</Table.Th>
-                    <Table.Th>Duration</Table.Th>
-                    <Table.Th>Cooldown</Table.Th>
-                    <Table.Th>Rev</Table.Th>
+                    <Table.Th className={styles.numeric}>Threshold</Table.Th>
+                    <Table.Th className={styles.numeric}>Duration</Table.Th>
+                    <Table.Th className={styles.numeric}>Cooldown</Table.Th>
+                    <Table.Th className={styles.numeric}>Rev</Table.Th>
                     <Table.Th>State</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
@@ -541,10 +546,14 @@ export function NotificationRules() {
                         <Table.Td>
                           <code>{scopeLabel(rule)}</code>
                         </Table.Td>
-                        <Table.Td>{ruleNumber(rule.threshold)}</Table.Td>
-                        <Table.Td>{humanDuration(rule.durationSeconds)}</Table.Td>
-                        <Table.Td>{humanDuration(rule.cooldownSeconds)}</Table.Td>
-                        <Table.Td>{ruleNumber(rule.revision)}</Table.Td>
+                        <Table.Td className={styles.numeric}>{ruleNumber(rule.threshold)}</Table.Td>
+                        <Table.Td className={styles.numeric}>
+                          {humanDuration(rule.durationSeconds)}
+                        </Table.Td>
+                        <Table.Td className={styles.numeric}>
+                          {humanDuration(rule.cooldownSeconds)}
+                        </Table.Td>
+                        <Table.Td className={styles.numeric}>{ruleNumber(rule.revision)}</Table.Td>
                         <Table.Td>{rule.enabled ? 'Enabled' : 'Disabled'}</Table.Td>
                       </Table.Tr>
                     );
