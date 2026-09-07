@@ -34,6 +34,56 @@ Optimize successful, protocol-correct work per CPU, memory, network traffic and 
 13. Extend existing bounded analytics worker and identical-query coalescing. Share authorized projections by scope/filter/time/data version; use bounded events, incremental invalidation, pagination/downsampling with freshness/resolution. Prioritize cancellation/control/routing explanation over history/exports. Transparently lower analytics refresh under overload, preserve selection/navigation, distinguish queued/streaming/cancelling/depleted/degraded/unavailable and acknowledged/completed actions.
 14. Add maintained OpenTelemetry technical traces/metrics with bounded queues/cardinality and redaction. Authoritative accounting remains independent of sampling. Compare runtimes/native modules/algorithms in isolation; promote gradually with measured rollback criteria and complete compatibility/accounting/usability/operational gates.
 
+## Measured position, 2026-09-07
+
+Measured on `78a0063f` against the mocked controlled upstream, concurrency 1,
+five replicates of 1000 samples, pinned to P-cores on an i9-14900KS, host load
+1.4 to 3.1. Gateway-added latency is paired direct-versus-gateway with the
+provider-stamped residence time subtracted, and it includes the second HTTP
+hop, so it upper-bounds in-process cost. Full receipts and per-replicate
+numbers are retained privately outside the repository.
+
+| Quantity | Target | Measured | Status |
+|---|---|---|---|
+| No-translation p50 | 1 ms | 2.617 ms | FAIL |
+| No-translation p95 | 5 ms | 11.194 ms | FAIL |
+| Direct-translation p95 | 10 ms | 14.244 ms | FAIL |
+| Abort to upstream abort p95 | 100 ms | 0.621 ms | PASS |
+| Event-loop lag p99 | 50 ms | 18.7 to 23.9 ms | PASS |
+
+Large bodies at concurrency 8 still exceed the loop-lag target at 70.255 ms.
+Pooled small-body p50 is 2.612 ms, 95% CI [2.599, 2.624], n=5000.
+
+Two dependency-order items above have measured outcomes worth stating, because
+both closed a line of investigation rather than opening one.
+
+Item 5, reduce request work first. Component attribution on a 1.35 MB body
+found the digests own under 40% of per-call cost, and stubbing both still
+leaves roughly 7 ms, so no change to HMAC scope can reach the p50 target. A
+narrower scheme was also rejected on correctness: hashing length with the
+first and last 4 KiB collides on an equal-length mid-body edit, which would
+have stopped the evidence layer persisting real changes. The cost is UTF-8
+encoding and serialization, not SHA-256.
+
+The work that did land streams the digests through a bounded scratch buffer
+and skips the whole-body reserialize when no transformation mutated it.
+Measured end to end by rebuilding the prior commit and interleaving the arms,
+rather than comparing across sessions, because host load alone moves p50 by
+about 0.8 ms: large-body p50 improved 0.439 ms, 95% CI [0.468, 0.412], a 4.5%
+cut, with samples over 10 ms falling from 36.18% to 21.94%. Small bodies
+regressed 0.041 ms, 95% CI [0.024, 0.061], since a small body has no
+reserialize to skip. Every p95 and p99 interval spans zero.
+
+An earlier isolated-harness observation that the GC spike period widened from
+84 to 241 calls did NOT reproduce at the gateway level: the period is
+identical in both arms at a median gap of 14 requests. It is recorded here as
+withdrawn so it is not carried forward as a gateway-level result.
+
+No target changed status. The remaining floor is dominated by JS strings the
+fragment cache retains for the call, which the version-1 byte contract
+currently requires, so closing it is a contract question rather than a
+further optimization.
+
 ## Primary references and release observations
 
 Read on 2026-09-06. Registry metadata is a selection input, not an adoption decision.
@@ -47,4 +97,4 @@ Read on 2026-09-06. Registry metadata is a selection input, not an adoption deci
 
 ## Current status
 
-Exact attribution, retained quota history, configuration versions and explicit client evidence are being implemented in isolated parallel leaves. The existing bounded analytics worker has prior responsiveness receipts. Expanded performance targets and the full workload matrix have not yet been measured on the final integrated build. No infrastructure adoption or throughput improvement is certified by this document.
+Exact attribution, retained quota history, configuration versions and explicit client evidence are integrated on main. The existing bounded analytics worker has prior responsiveness receipts. The five acceptance targets above have now been measured on the integrated build, with three failing and two passing as recorded in "Measured position"; the full workload matrix in item 3 (tool transactions, multimodal, long streams, slow readers, every cancellation phase, retries, depletion, DB contention and concurrent dashboards) has not been measured. No infrastructure adoption or throughput improvement is certified by this document.
