@@ -196,6 +196,7 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
     });
     await check('Mobile limits modal fits, retains keyboard focus, and cancels without a write', async () => {
       await limits().click();
+      await expect(dialog).toBeVisible();
       await capture('accounts-limits-390');
       const beforeWrites = report.writes.length;
       await page.keyboard.press('Tab');
