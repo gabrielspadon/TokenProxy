@@ -10,9 +10,12 @@ import { refusal } from '@/shared/refusal';
 import { poolTestVerdict } from '@/shared/poolTestVerdict';
 import { OperationHistoryInspector } from '@/shared/workspace/OperationHistoryInspector';
 import { ProbeConsequence } from './ProbeConsequence';
+import { AccountPaths } from './AccountPaths';
 import { fmtNum } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
+import { AI_PROVIDERS, NO_AUTH_PROVIDER_IDS, isNoAuthProvider } from '@/shared/constants/providers';
 import './styles.css';
+import NetworkOptions from './NetworkOptions';
 
 const NODE_TYPE_WORD = {
   'openai-compatible': 'OpenAI compatible',
@@ -36,7 +39,7 @@ function maskProxyUrl(url) {
   const s = String(url || '');
   try {
     const u = new URL(s);
-    if (u.username || u.password) return s.replace(`${u.username}:${u.password}@`, '•••@');
+    if (u.username || u.password) return s.replace(/\/\/[^/@]+@/, '//•••@');
     return s;
   } catch {
     return s.replace(/\/\/[^/@]+@/, '//•••@');
@@ -49,6 +52,9 @@ const NODE_BLANK = {
   type: 'openai-compatible',
   apiType: 'chat',
   baseUrl: '',
+  openaiUrl: '',
+  anthropicUrl: '',
+  supportsResponses: false,
 };
 const POOL_BLANK = { name: '', proxyUrl: '', noProxy: '', type: 'http', strictProxy: false };
 
@@ -56,6 +62,7 @@ export default function NetworkPage() {
   const nodes = usePoll('/api/provider-nodes', 30000);
   const pools = usePoll('/api/proxy-pools?includeUsage=true', 15000);
   const settings = usePoll('/api/settings', 30000);
+  const connections = usePoll('/api/providers', 30000);
 
   const [action, setAction] = useState(null); // { kind, node? | pool? }
   const [nodeForm, setNodeForm] = useState(NODE_BLANK);
@@ -67,6 +74,8 @@ export default function NetworkPage() {
   const [outbound, setOutbound] = useState(null); // draft while editing, else null
   const [strategyProvider, setStrategyProvider] = useState('');
   const [strategyPoolId, setStrategyPoolId] = useState('');
+  const [strategyRotation, setStrategyRotation] = useState('none');
+  const [strategyReview, setStrategyReview] = useState(null);
   // Which pool's retained probe history is open. One at a time: the inspector
   // pages a bounded query, so opening every row at once would fan out reads.
   const [historyPoolId, setHistoryPoolId] = useState(null);
@@ -82,6 +91,8 @@ export default function NetworkPage() {
   const close = useCallback(() => {
     setAction(null);
     setRefused(null);
+    setBusy(false);
+    setPoolForm(POOL_BLANK);
   }, []);
   const openNode = (kind, node) => {
     setRefused(null);
@@ -94,6 +105,9 @@ export default function NetworkPage() {
             type: node.type,
             apiType: node.apiType || 'chat',
             baseUrl: node.baseUrl || '',
+            openaiUrl: node.transports?.find(transport => transport.format === 'openai')?.baseUrl || node.baseUrl || '',
+            anthropicUrl: node.transports?.find(transport => transport.format === 'claude')?.baseUrl || '',
+            supportsResponses: node.transports?.some(transport => transport.format === 'openai-responses') || false,
           }
         : NODE_BLANK
     );
@@ -157,15 +171,42 @@ export default function NetworkPage() {
     }
     setBusy(false);
     if (!res.ok) {
+      if (!res.status) {
+        setRefused({ tone: 'warn', title: 'The network configuration outcome is unknown.', next: 'Close and refresh the relevant inventory before taking another action. Do not repeat the interrupted mutation.' });
+        setBusy(true);
+        return;
+      }
       setRefused(refusal(res.status, res.body));
       return;
     }
+    setBusy(true);
+    const isNode = action.kind.endsWith('Node');
+    const isPool = action.kind.endsWith('Pool');
+    const deleting = action.kind.startsWith('delete');
+    let verified = false;
+    if (isNode || isPool) {
+      const readback = await call(isNode ? '/api/provider-nodes' : '/api/proxy-pools');
+      const records = isNode ? readback.body?.nodes : readback.body?.proxyPools;
+      const expected = isNode ? res.body?.node : res.body?.proxyPool;
+      const id = action.node?.id || action.pool?.id || expected?.id;
+      const record = records?.find(value => value.id === id);
+      const fields = isNode ? ['name', 'prefix', 'baseUrl', 'transports'] : ['name', 'type', 'proxyUrl', 'noProxy', 'strictProxy', 'isActive'];
+      verified = !!id && readback.ok && Array.isArray(records) && (deleting ? !record : record && expected && fields.every(field => JSON.stringify(record[field]) === JSON.stringify(expected[field])));
+    } else {
+      const readback = await call('/api/settings');
+      verified = readback.ok && readback.body?.outboundProxyEnabled === (action.kind === 'outboundOn');
+    }
+    if (!verified) {
+      setRefused({ tone: 'warn', title: 'The change was accepted; refreshed configuration was not verified.', next: 'Close and refresh before making another change. Do not repeat the mutation.' });
+      return;
+    }
+    setBusy(false);
     if (action.kind.startsWith('outbound')) {
       setOutbound(null);
       settings.refresh();
     } else if (action.kind.endsWith('Node')) nodes.refresh();
     else pools.refresh();
-    setResult({ tone: 'ok', title: 'Done.' });
+    setResult({ tone: 'ok', title: 'Configuration saved and verified.' });
     close();
   };
 
@@ -179,20 +220,33 @@ export default function NetworkPage() {
   };
 
   const saveStrategy = async () => {
+    if (!strategyReview || !isNoAuthProvider(strategyReview.providerId)) return;
+    setBusy(true);
+    setRefused(null);
     setResult(null);
     const res = await call('/api/settings', {
       method: 'PATCH',
       body: {
         providerStrategyPatch: {
-          providerId: strategyProvider.trim(),
-          values: { proxyPoolId: strategyPoolId || '__none__' },
+          providerId: strategyReview.providerId,
+          values: { proxyPoolId: strategyReview.poolId || '__none__', rotateStrategy: strategyReview.rotation },
         },
       },
     });
     if (!res.ok) {
-      setResult(refusal(res.status, res.body));
+      setRefused(refusal(res.status, res.body));
+      if (res.status) setBusy(false);
       return;
     }
+    const readback = await call('/api/settings');
+    const saved = readback.body?.providerStrategies?.[strategyReview.providerId] || {};
+    if (!readback.ok || (saved.proxyPoolId || '') !== strategyReview.poolId || (saved.rotateStrategy || 'none') !== strategyReview.rotation) {
+      setRefused({ tone: 'warn', title: 'The strategy was accepted; refreshed policy was not verified.', next: 'Close and refresh settings before making another change. Do not repeat the mutation.' });
+      return;
+    }
+    setBusy(false);
+    setStrategyReview(null);
+    setResult({ tone: 'ok', title: 'Virtual-account proxy strategy saved and verified.' });
     settings.refresh();
   };
 
@@ -277,32 +331,14 @@ export default function NetworkPage() {
       </div>
       {result ? <Notice {...result} /> : null}
 
-      <div className="measures">
-        <div className="measure big">
-          <span className="label">Provider nodes</span>
-          <span className="value" data-i18n-skip>
-            {nodes.data ? fmtNum(nodeRows.length) : '—'}
-          </span>
-        </div>
-        <div className="measure big">
-          <span className="label">Proxy pools</span>
-          <span className="value" data-i18n-skip>
-            {pools.data ? fmtNum(poolRows.length) : '—'}
-          </span>
-        </div>
-        <div className="measure big">
-          <span className="label">Provider strategies</span>
-          <span className="value" data-i18n-skip>
-            {settings.data ? fmtNum(Object.keys(providerStrategies).length) : '—'}
-          </span>
-        </div>
-        <div className="measure big network-onoff">
-          <span className="label">Outbound proxy</span>
-          <span className="value">
-            {settings.data ? outboundEnabled ? 'On' : 'Off' : <span data-i18n-skip>—</span>}
-          </span>
-        </div>
-      </div>
+      <dl className="network-summary" aria-label="Network configuration summary">
+        <div><dt>Provider nodes</dt><dd><bdi>{nodes.data ? fmtNum(nodeRows.length) : 'Unknown'}</bdi></dd></div>
+        <div><dt>Proxy pools</dt><dd><bdi>{pools.data ? fmtNum(poolRows.length) : 'Unknown'}</bdi></dd></div>
+        <div><dt>Provider strategies</dt><dd><bdi>{settings.data ? fmtNum(Object.keys(providerStrategies).length) : 'Unknown'}</bdi></dd></div>
+        <div><dt>Outbound proxy</dt><dd>{settings.data ? outboundEnabled ? 'On' : 'Off' : 'Unknown'}</dd></div>
+      </dl>
+      {connections.error ? <Notice {...refusal(connections.status, connections.error)} /> : null}
+      {connections.data && pools.data ? <AccountPaths connections={connections.data.connections || []} pools={poolRows} /> : <p className="caption">Account paths require both the account and pool inventories.</p>}
 
       <section aria-labelledby="h-outbound" className="panel">
         <div className="screen-head">
@@ -310,8 +346,9 @@ export default function NetworkPage() {
           <Freshness status={pollFresh(settings)} lastDataAt={settings.goodAt} />
         </div>
         <p>
-          The single path every upstream call takes when it is not routed through a specific pool
-          below.
+          The global proxy setting. Account-specific assignments and proxy pools can override
+          this path. Inspect an account above for its configured path; reachability requires a
+          separate observed test.
         </p>
         {settings.error && !settings.data ? (
           <Notice {...refusal(settings.status, settings.error)} />
@@ -322,7 +359,7 @@ export default function NetworkPage() {
               <dt>State</dt>
               <dd>
                 <span className="status" data-tone={outboundEnabled ? 'ok' : 'warn'}>
-                  {outboundEnabled ? 'On' : 'Off, so upstream calls go out directly'}
+                  {outboundEnabled ? 'On' : 'Off at the global level'}
                 </span>
               </dd>
               {outboundEnabled ? (
@@ -610,30 +647,37 @@ export default function NetworkPage() {
       </section>
 
       <section aria-labelledby="h-strategy" className="panel">
+        <NetworkOptions pools={poolRows} onSaved={() => { nodes.refresh(); pools.refresh(); settings.refresh(); }} />
         <h2 id="h-strategy">Per-provider proxy strategy</h2>
         <p>
-          Binds one proxy pool to a provider id, for every connection under that provider that has
-          no pool of its own.
+          Binds a proxy pool to the virtual account of a provider that uses no credentials.
+          Stored credentialed accounts use their own account policy and do not inherit this strategy.
         </p>
         <div className="network-form network-form-strategy">
           <label className="field">
             <span>Provider id</span>
-            <input
-              className="input"
-              type="text"
-              data-i18n-skip
+            <select
+              className="select"
               value={strategyProvider}
-              onChange={(e) => setStrategyProvider(e.target.value)}
-            />
+              onChange={event => {
+                const provider = event.target.value;
+                const current = providerStrategies[provider] || {};
+                setStrategyProvider(provider);
+                setStrategyPoolId(current.proxyPoolId || '');
+                setStrategyRotation(current.rotateStrategy || 'none');
+              }}
+            ><option value="">Choose a provider without credentials</option>{NO_AUTH_PROVIDER_IDS.map(id => <option key={id} value={id} data-i18n-skip>{AI_PROVIDERS[id]?.name || id}</option>)}</select>
           </label>
+          <label className="field"><span>Pool selection mode</span><select className="select" value={strategyRotation} onChange={event => setStrategyRotation(event.target.value)}><option value="none">Fixed pool</option><option value="round-robin">Round-robin across active pools</option><option value="random">Random across active pools</option></select></label>
           <label className="field">
             <span>Proxy pool</span>
             <select
               className="select"
               value={strategyPoolId}
+              disabled={strategyRotation !== 'none'}
               onChange={(e) => setStrategyPoolId(e.target.value)}
             >
-              <option value="">No pool, route directly</option>
+              <option value="">No selection; global/environment path</option>
               {poolRows
                 .filter((p) => p.isActive)
                 .map((p) => (
@@ -647,21 +691,22 @@ export default function NetworkPage() {
             <button
               type="button"
               className="button"
-              disabled={!strategyProvider.trim()}
-              onClick={saveStrategy}
+              disabled={!isNoAuthProvider(strategyProvider) || busy || !!settings.error}
+              onClick={() => { setRefused(null); setStrategyReview({ providerId: strategyProvider, poolId: strategyPoolId, rotation: strategyRotation }); }}
             >
               <Icon name="i-edit" />
               Save strategy
             </button>
           </div>
         </div>
+        <p className="caption">Round-robin and random choose among all active pools with an address at routing time, ignoring the fixed pool while rotation is selected. Each chosen pool supplies its own strictness. No fixed selection means global or environment routing may apply; it does not force a direct path.</p>
         {Object.keys(providerStrategies).length ? (
           <dl className="facts">
             {Object.entries(providerStrategies).map(([pid, st]) => (
               <Fragment key={pid}>
                 <dt data-i18n-skip>{pid}</dt>
                 <dd>
-                  {st.proxyPoolId ? (
+                  {!isNoAuthProvider(pid) ? 'This network strategy does not affect credentialed accounts.' : st.rotateStrategy && st.rotateStrategy !== 'none' ? <span>{st.rotateStrategy === 'round-robin' ? 'Round-robin across active pools' : st.rotateStrategy === 'random' ? 'Random across active pools' : 'Unrecognized stored rotation mode'}</span> : st.proxyPoolId ? (
                     <>
                       {poolRows.find((p) => p.id === st.proxyPoolId)?.name || (
                         <span className="id" data-i18n-skip>
@@ -678,7 +723,7 @@ export default function NetworkPage() {
                       ) : null}
                     </>
                   ) : (
-                    <span>Routes directly</span>
+                    <span>No fixed pool; global/environment path</span>
                   )}
                 </dd>
               </Fragment>
@@ -687,16 +732,12 @@ export default function NetworkPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-network-gap">
-        <h2 id="h-network-gap">Not reported</h2>
-        <ul className="bullets">
-          <li>
-            A rotation strategy across several proxy pools for one provider. Only a single pool
-            binding per provider exists in the settings schema, so this screen can bind or clear one
-            pool and nothing more.
-          </li>
-        </ul>
-      </section>
+      <Confirm open={!!strategyReview} busy={busy} refusal={refused} title="Review virtual-account proxy strategy" verb="Apply proxy strategy" requires="A local operator session and a provider that uses no credentials."
+        changes="Changes pool selection on subsequent routing for this provider's virtual account. Rotation uses all active pools with addresses. Credentialed accounts retain their separate account policies."
+        undo="Restore the previous mode and fixed pool. A saved strategy does not move in-flight responses."
+        onConfirm={saveStrategy} onClose={() => { setStrategyReview(null); setRefused(null); setBusy(false); }}>
+        <dl className="facts"><dt>Provider</dt><dd><bdi data-i18n-skip>{strategyReview?.providerId}</bdi></dd><dt>Selection mode</dt><dd><bdi>{strategyReview?.rotation}</bdi></dd><dt>Fixed pool</dt><dd><bdi>{strategyReview?.poolId || 'No selection'}</bdi></dd></dl>
+      </Confirm>
 
       <Confirm
         open={!!action}
@@ -759,7 +800,12 @@ export default function NetworkPage() {
                 </select>
               </label>
             ) : null}
-            <label className="field">
+            {nodeForm.type === 'multi-compatible' ? <>
+              <label className="field"><span>OpenAI endpoint URL</span><input className="input" type="url" required value={nodeForm.openaiUrl} onChange={event => setNodeForm(value => ({ ...value, openaiUrl: event.target.value }))} /></label>
+              <label className="field"><span>Anthropic endpoint URL</span><input className="input" type="url" required value={nodeForm.anthropicUrl} onChange={event => setNodeForm(value => ({ ...value, anthropicUrl: event.target.value }))} /></label>
+              <label className="network-check"><input type="checkbox" checked={nodeForm.supportsResponses} onChange={event => setNodeForm(value => ({ ...value, supportsResponses: event.target.checked }))} /><span>Register the OpenAI Responses transport</span></label>
+              <p className="caption">Stores both endpoint formats. This local configuration does not establish provider support or send a validation request.</p>
+            </> : <label className="field">
               <span>Base URL</span>
               <input
                 className="input"
@@ -768,7 +814,7 @@ export default function NetworkPage() {
                 value={nodeForm.baseUrl}
                 onChange={(e) => setNodeForm((f) => ({ ...f, baseUrl: e.target.value }))}
               />
-            </label>
+            </label>}
           </div>
         ) : null}
         {action?.kind === 'createPool' || action?.kind === 'editPool' ? (

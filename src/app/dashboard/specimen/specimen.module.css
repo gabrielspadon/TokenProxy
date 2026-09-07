@@ -1,0 +1,11 @@
+.page { max-width: 1480px; margin-inline: auto; }
+.page h1 { font-size: var(--type-title); line-height: 1.2; font-weight: 600; }
+.page h2 { font-size: var(--type-section); font-weight: 600; }
+.intro { font-size: var(--type-reading); line-height: 1.5; color: var(--slate); margin-block-start: 12px; max-width: 76ch; }
+.value { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.code { font-family: var(--mono); overflow-wrap: anywhere; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 24px; margin-top: 16px; }
+.row[data-selected] { background: var(--signal-wash); }
+.accountButton { border: 0; background: transparent; color: var(--signal); text-align: start; padding: 8px 0; min-height: 36px; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.accountButton[aria-pressed=true] { color: var(--ink); font-weight: 600; }
+.inspection { padding: 16px; }

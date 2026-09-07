@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { ActionIcon, Button, Group, Modal, Select, Stack, Text, Tooltip } from '@mantine/core';
 import { DateTimePicker } from '@mantine/dates';
+import { useMediaQuery } from '@mantine/hooks';
 import { Icon } from '@/shared/components/Icon';
 import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
@@ -21,6 +22,15 @@ export function ScopeBar({ analysisActions = true }) {
   const [start, setStart] = useState(null);
   const [end, setEnd] = useState(null);
   const [rangeError, setRangeError] = useState(null);
+  const compact = useMediaQuery('(max-width: 48em)');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const openRange = () => {
+    const fieldValue = (value) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString().slice(0, 19).replace('T', ' ') : null;
+    setStart(fieldValue(scope.start));
+    setEnd(fieldValue(scope.end));
+    setRangeError(null);
+    setCustomOpen(true);
+  };
   const providers = unique(accounts.map((account) => account.provider)).map((value) => ({
     value,
     label: providerIdentity(value).name,
@@ -41,7 +51,7 @@ export function ScopeBar({ analysisActions = true }) {
   if(scope.model && !modelOptions.includes(scope.model))modelOptions.push(scope.model);
   const changePeriod = (period) => {
     if (period === 'custom') {
-      setCustomOpen(true);
+      openRange();
       return;
     }
     const anchor = snapshot?.capturedAt ? new Date(snapshot.capturedAt).getTime() : Date.now();
@@ -69,6 +79,18 @@ export function ScopeBar({ analysisActions = true }) {
     setRangeError(null);
     setCustomOpen(false);
   };
+  const populationFilters = <>
+    <Select className={compact ? undefined : styles.scopeSelect} label={compact ? 'Provider' : undefined}
+      aria-label="Provider filter" placeholder="All providers" data={providers} value={scope.provider} searchable clearable
+      onChange={(provider) => setScope({ provider, connectionId: null, model: null })} />
+    <Select className={compact ? undefined : styles.scopeSelect} label={compact ? 'Account' : undefined}
+      aria-label="Account filter" placeholder="All accounts" data={accountOptions} value={scope.connectionId} searchable clearable
+      onChange={(connectionId) => setScope({ connectionId })} />
+    <Select className={compact ? undefined : styles.scopeSelect} label={compact ? 'Model' : undefined}
+      aria-label="Model filter" placeholder="All models" data={modelOptions} value={scope.model} searchable clearable
+      onChange={(model) => setScope({ model })} />
+  </>;
+  const filterCount = [scope.provider, scope.connectionId, scope.model].filter(Boolean).length;
   return (
     <><div className={styles.scope} aria-label="Shared analysis scope">
       <Select
@@ -79,37 +101,8 @@ export function ScopeBar({ analysisActions = true }) {
         onChange={changePeriod}
         allowDeselect={false}
       />
-      <span className={styles.scopeSeparator} />
-      <Select
-        className={styles.scopeSelect}
-        aria-label="Provider filter"
-        placeholder="All providers"
-        data={providers}
-        value={scope.provider}
-        searchable
-        clearable
-        onChange={(provider) => setScope({ provider, connectionId: null, model: null })}
-      />
-      <Select
-        className={styles.scopeSelect}
-        aria-label="Account filter"
-        placeholder="All accounts"
-        data={accountOptions}
-        value={scope.connectionId}
-        searchable
-        clearable
-        onChange={(connectionId) => setScope({ connectionId })}
-      />
-      <Select
-        className={styles.scopeSelect}
-        aria-label="Model filter"
-        placeholder="All models"
-        data={modelOptions}
-        value={scope.model}
-        searchable
-        clearable
-        onChange={(model) => setScope({ model })}
-      />
+      {scope.period === 'custom' && <Button variant="subtle" onClick={openRange}>Edit range</Button>}
+      {compact ? <Button variant="default" onClick={() => setFiltersOpen(true)}>Filters{filterCount ? ` · ${filterCount}` : ''}</Button> : <><span className={styles.scopeSeparator} />{populationFilters}</>}
       {(scope.start || scope.provider || scope.model || scope.connectionId) && (
         <Button
           variant="subtle"
@@ -129,17 +122,24 @@ export function ScopeBar({ analysisActions = true }) {
         </Button>
       )}
       {analysisActions && <Investigations />}
-      <span className={styles.scopeSummary}>Shared UTC scope</span>
+      {analysisActions && <SelectionEvidence />}
       <Tooltip label={snapshot ? 'Re-read the isolated snapshot' : 'Refresh observations'}>
         <ActionIcon
           variant="default"
-          size={30}
+          size={36}
           aria-label="Refresh workspace data"
           onClick={refresh}
         >
           <Icon name="i-refresh" />
         </ActionIcon>
       </Tooltip>
+      {compact && filterCount > 0 && <Text size="sm" c="dimmed" w="100%">
+        {[scope.provider && providerIdentity(scope.provider).name, scope.connectionId && (accountOptions.find(item => item.value === scope.connectionId)?.label || scope.connectionId), scope.model].filter(Boolean).join(' · ')}
+      </Text>}
+      <Modal opened={compact && filtersOpen} onClose={() => setFiltersOpen(false)} title="Analysis population filters" centered>
+        <Stack>{populationFilters}<Text size="sm" c="dimmed">Changes apply immediately to the shared analytical population. The selected record remains inspectable even when excluded.</Text>
+          <Button onClick={() => setFiltersOpen(false)}>Return to analysis</Button></Stack>
+      </Modal>
       <Modal
         opened={customOpen}
         onClose={() => setCustomOpen(false)}
@@ -175,6 +175,6 @@ export function ScopeBar({ analysisActions = true }) {
           </Group>
         </Stack>
       </Modal>
-    </div>{analysisActions && <SelectionEvidence />}</>
+    </div></>
   );
 }

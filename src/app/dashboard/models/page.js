@@ -10,6 +10,8 @@ import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
 import { Tabs } from '@mantine/core';
 import { ModelsPolicy } from '@/shared/models-policy/ModelsPolicy';
+import { CatalogTools } from './CatalogTools';
+import { AutoRouting } from '@/shared/models-policy/AutoRouting';
 import policyStyles from '@/shared/models-policy/policy.module.css';
 import './styles.css';
 
@@ -38,9 +40,11 @@ const NEXT_REQUEST =
 export default function ModelsPage() {
   const [view, setView] = useState('policy');
   return <Tabs value={view} onChange={setView} className={policyStyles.pageTabs}>
-    <Tabs.List><Tabs.Tab value="policy">Policy workbench</Tabs.Tab><Tabs.Tab value="catalog">Catalog controls</Tabs.Tab></Tabs.List>
+    <Tabs.List><Tabs.Tab value="policy">Policy workbench</Tabs.Tab><Tabs.Tab value="auto-routing">Automatic routing</Tabs.Tab><Tabs.Tab value="catalog">Catalog controls</Tabs.Tab><Tabs.Tab value="catalog-tools">Catalog tools</Tabs.Tab></Tabs.List>
     <Tabs.Panel value="policy"><ModelsPolicy /></Tabs.Panel>
     <Tabs.Panel value="catalog">{view === 'catalog' && <CatalogControls />}</Tabs.Panel>
+    <Tabs.Panel value="catalog-tools">{view === 'catalog-tools' && <CatalogTools />}</Tabs.Panel>
+    <Tabs.Panel value="auto-routing">{view === 'auto-routing' && <AutoRouting />}</Tabs.Panel>
   </Tabs>;
 }
 function CatalogControls() {
@@ -67,7 +71,7 @@ function CatalogControls() {
     const s = q.trim().toLowerCase();
     if (!s) return rows;
     return rows.filter(
-      (m) => m.fullModel.toLowerCase().includes(s) || (m.alias || '').toLowerCase().includes(s)
+      (m) => m.fullModel.toLowerCase().includes(s) || [m.alias,...(m.aliases || [])].some(alias=>typeof alias === 'string' && alias.toLowerCase().includes(s))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- rows is derived fresh each render from models.data, which is the real dependency
   }, [models.data, q]);
@@ -94,7 +98,7 @@ function CatalogControls() {
     if (!pending) return;
     setBusy(true);
     setFailed(null);
-    const res = await pending.request();
+    const res = await pending.request(form);
     setBusy(false);
     if (!res.ok) {
       setFailed(refusal(res.status, res.body));
@@ -119,7 +123,7 @@ function CatalogControls() {
       requires: OPERATOR,
       changes: `Lets a client address ${m.fullModel} by a short name instead of its full identifier. ${NEXT_REQUEST}`,
       undo: 'Delete the alias here. The model still routes by its full identifier.',
-      request: () =>
+      request: (form) =>
         call('/api/models/alias', {
           method: 'PUT',
           body: { model: m.fullModel, alias: form.alias?.trim() },
@@ -202,7 +206,7 @@ function CatalogControls() {
       requires: OPERATOR,
       changes: `Adds a model id to the catalog for a provider node by hand, so it is offered for routing without being auto-discovered first. ${NEXT_REQUEST}`,
       undo: 'Delete it here.',
-      request: () =>
+      request: (form) =>
         call('/api/models/custom', {
           method: 'POST',
           body: {
@@ -303,7 +307,7 @@ function CatalogControls() {
       requires: OPERATOR,
       changes: `Adds a named chain a client can route to as one model. ${NEXT_REQUEST}`,
       undo: 'Delete it here.',
-      request: () =>
+      request: (form) =>
         call('/api/combos', {
           method: 'POST',
           body: {
@@ -331,7 +335,7 @@ function CatalogControls() {
       requires: OPERATOR,
       changes: `Replaces this combo's member list and resets its rotation state, so the next request restarts from the first strategy step. ${NEXT_REQUEST}`,
       undo: 'Set the previous member list again here.',
-      request: () =>
+      request: (form) =>
         call(`/api/combos/${encodeURIComponent(c.id)}`, {
           method: 'PUT',
           body: {
@@ -374,7 +378,7 @@ function CatalogControls() {
       requires: OPERATOR,
       changes: `Every combo with no override of its own uses this strategy and stickiness from its next request.`,
       undo: 'Set the previous values again here.',
-      request: () =>
+      request: (form) =>
         call('/api/settings', {
           method: 'PATCH',
           body: {
@@ -409,7 +413,7 @@ function CatalogControls() {
       requires: OPERATOR,
       changes: `Replaces the whole auto-routing configuration (all four kinds), because the gateway only accepts it as one object. ${NEXT_REQUEST}`,
       undo: 'Set the previous values again here.',
-      request: () =>
+      request: (form) =>
         call('/api/settings', {
           method: 'PATCH',
           body: { capacityAdapter: buildCapacityBody(s?.capacityAdapter, key, form) },
@@ -504,7 +508,7 @@ function CatalogControls() {
                       <>
                         alias{' '}
                         <span className="id" data-i18n-skip>
-                          {m.alias}
+                          {(m.aliases?.length ? m.aliases : [m.alias]).join(', ')}
                         </span>
                       </>
                     ) : (
@@ -527,7 +531,7 @@ function CatalogControls() {
                 </span>
                 <span className="actions">
                   <button type="button" className="link-button" onClick={() => openAlias(m)}>
-                    {m.alias !== m.model ? 'Edit alias' : 'Set alias'}
+                    Set alias
                   </button>
                   {m.alias !== m.model ? (
                     <button

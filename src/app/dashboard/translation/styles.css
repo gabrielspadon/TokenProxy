@@ -47,5 +47,5 @@
   /* A .panel caps its inputs at 320px, which is right for a name or a number
      and wrong for a JSON body: at 1440 the editor read as a stamp inside a
      1160px panel. A code field takes the panel it was given. */
-  .panel .field .input.translation-code { max-width: none; }
+  .panel .field textarea.translation-code { max-width: none; }
 }

@@ -2,17 +2,18 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MantineProvider } from '@mantine/core';
 
-const fixture = vi.hoisted(() => ({ validation: null, calls: [], refresh: vi.fn() }));
+const fixture = vi.hoisted(() => ({ validation: null, calls: [], refresh: vi.fn(), providerSpecificData: {}, pools: [] }));
 vi.mock('react', async original => ({ ...await original(), use: () => ({ id: 'c-1' }) }));
 vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({
   loading: false, goodAt: 1, refresh: fixture.refresh,
   data: url === '/api/providers/c-1'
-    ? { connection: { id: 'c-1', provider: 'openai', authType: 'apikey', name: 'Fixture account', isActive: true, maxConcurrent: 3 } }
+    ? { connection: { id: 'c-1', provider: 'openai', authType: 'apikey', name: 'Fixture account', isActive: true, maxConcurrent: 3, providerSpecificData: fixture.providerSpecificData } }
     : url === '/api/admin/qualification/c-1'
       ? { status: 'healthy', validation: fixture.validation, generation: { ok: true, model: 'old-default' } }
       : url === '/api/settings' ? { providerStrategies: { openai: { maxConcurrent: 9, unrelated: 'preserve' } } }
-        : { connections: [], proxyPools: [] },
+        : { connections: [], proxyPools: fixture.pools },
 }) }));
 vi.mock('@/shared/api', () => ({ call: vi.fn(async (url, options) => {
   fixture.calls.push({ url, ...options });
@@ -22,16 +23,19 @@ const { default: ConnectionPage } = await import('../../src/app/dashboard/connec
 let root, container;
 beforeEach(async () => {
   fixture.calls = [];
+  fixture.providerSpecificData = {};
+  fixture.pools = [];
   fixture.validation = { ok: true, kind: 'provider-validation', model: null, latencyMs: 22,
     checkedAt: '2026-09-06T12:00:00.000Z', generationVerified: false, upstreamContact: 'not-recorded' };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
   container = document.createElement('div'); document.body.appendChild(container);
   root = createRoot(container);
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); });
-async function mount() { await act(async () => root.render(<ConnectionPage params={Promise.resolve({ id: 'c-1' })} />)); }
+async function mount() { await act(async () => root.render(<MantineProvider env="test"><ConnectionPage params={Promise.resolve({ id: 'c-1' })} /></MantineProvider>)); }
 function fact(label) { return [...container.querySelectorAll('dt')].find(e => e.textContent === label)?.nextElementSibling.textContent; }
 it('renders a check result separately from generation and independent capacity limits', async () => {
   await mount();
@@ -50,7 +54,7 @@ it('keeps missing canonical validation unknown despite an old legacy success fie
 it('clears only the selected provider ceiling through the supported field patch', async () => {
   await mount();
   await act(async () => [...container.querySelectorAll('button')].find(e => e.textContent.trim().endsWith('Concurrency ceiling')).click());
-  const dialog = container.querySelector('dialog');
+  const dialog = container.querySelector('dialog[open]');
   const input = dialog.querySelector('input[type="number"]');
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '');
@@ -60,4 +64,14 @@ it('clears only the selected provider ceiling through the supported field patch'
   expect(fixture.calls).toEqual([{ url: '/api/settings', method: 'PATCH',
     body: { providerStrategyPatch: { providerId: 'openai', values: { maxConcurrent: null } } } }]);
   expect(fixture.refresh).toHaveBeenCalled();
+});
+it('renders a selected pool ahead of a retained direct marker and restores direct after clearing it', async () => {
+  fixture.providerSpecificData = { connectionProxyMode: 'direct', proxyPoolId: 'pool-1', strictProxy: true };
+  fixture.pools = [{ id: 'pool-1', name: 'Selected fixture pool', isActive: true, strictProxy: true }];
+  await mount();
+  expect(fact('Proxy pool')).toContain('Selected fixture pool');
+  expect(fact('Proxy pool')).not.toContain('direct');
+  fixture.providerSpecificData = { connectionProxyMode: 'direct' };
+  await mount();
+  expect(fact('Proxy pool')).toContain('Explicit direct');
 });

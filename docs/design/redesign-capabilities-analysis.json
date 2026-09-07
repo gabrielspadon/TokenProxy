@@ -1,0 +1,3435 @@
+{
+  "format": "tokenproxy-redesign-capability-inventory",
+  "version": 1,
+  "preparedAt": "2026-09-07T16:21:50.069217+00:00",
+  "scope": [
+    "Capacity",
+    "Economics",
+    "shared investigations",
+    "observation modes",
+    "budget/pricing/quota settings consumers needed by these journeys"
+  ],
+  "source": {
+    "checkout": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current",
+    "branch": "audit/local-dev/operator-workspace-20260907",
+    "head": "4c5b584b6918d6e764a94a02e834ac76359eceec",
+    "state": "Shared dirty worktree; inventory follows current files, not HEAD alone. Other agents are active. No commit, build, browser, provider, runtime or DB operation executed in this inventory.",
+    "attachment": "/Users/gabrielspadon/.codex/attachments/1c0697cb-adf9-41c8-b957-2effcee783e9/pasted-text.txt",
+    "instructions": "No root or nested CLAUDE.md/AGENTS.md found in this source checkout during this inventory. User global directives and assigned file ownership apply.",
+    "sourceFileSha256": {
+      "next.config.mjs": "027667f9272dcf131fe0b45213923884dc0d0adfe24918f1b595ee45bbb39095",
+      "open-sse/handlers/chatCore.js": "baf47b91967db07fd61adf4b70c4004469f7f5d93929a89cd323ca56e17d5e22",
+      "open-sse/handlers/chatCore/requestDetail.js": "893421392683f68ab48406371f3a35bbc4b4aab9f7cf78a8168cf39508486ef8",
+      "src/app/api/admin/budgets/route.js": "83b72befac4eba2e002cddbd99979e67b809d28bf2e8a390040cf87752f8549c",
+      "src/app/api/admin/eligibility/route.js": "4b6ea17eab77588f2ac96f73ee6c7e4d1eb1b16013be90e0b0ec1a026100ed86",
+      "src/app/api/admin/investigations/export/route.js": "872e90273c5a806cc97b9410f6ff1d6d8d59ad86e4a567e6284f17e1c188f4e9",
+      "src/app/api/admin/quota/route.js": "007795a696f6b2bfb39c1c4bc6b857ce68b2d026e75b8794c5f03a2137c54a36",
+      "src/app/api/context-status/route.js": "988244f0fcd4b5ad4bfce99f9582181951d870186f8872fcf8f5259964862e81",
+      "src/app/api/pricing/route.js": "c9de57b3189856c94494912252ff24777c6a1830c63d7ba89a04e6af58b90857",
+      "src/app/api/providers/[id]/route.js": "23db2a724ea54f8701de994bd4712247f4543b38ee91de647378fc2c9c0c2a0d",
+      "src/app/api/settings/route.js": "cfaae6f43a0098865bc1a1ce9b2ab28cc9d812f82d5c2c32f453197ef99fcf83",
+      "src/app/api/usage/[connectionId]/route.js": "5e406cba1863b2ebdf2e4bf50729adda6791d7c486fa0ed970b940ceea58c87d",
+      "src/app/api/v1/mcp/route.js": "ef3245855af6cddc451eb02aa8ee082c9dc5e299678080a4c287aa65abe4f326",
+      "src/app/dashboard/AccountPolicyEvidence.js": "a3cbfbaa867c253e334ecf8890f8a0c70ff55f9ffe51a3d4471b6dd8aeb0dbd8",
+      "src/app/dashboard/CapacityControls.js": "31ffabfe1117b9c0541eff9e7d59af59f29f8ca72f293db8f93f2f6b049b6db4",
+      "src/app/dashboard/capacityControlsModel.js": "a7a949e226f764b5e3e379db2caebe3e3d6076c2b9e834d419fd559007c4db2d",
+      "src/app/dashboard/connections/[id]/page.js": "f506f2db32e40b8062e43f85798d70949f3467373b1bd2e4001b6fc5a794a106",
+      "src/app/dashboard/keys/KeyBudget.js": "c87ac5772ccefdd211e058722b911931f2e0072b8e0a37f2d170cdff2c336d3a",
+      "src/app/dashboard/keys/page.js": "480ee79f92ce64c9481ecc12957bd7f5b4e1d02160c81e620f8783688bbc3ce9",
+      "src/app/dashboard/page.js": "ec3ffb0032a6210b78191466800f0a8c58a0506219ada430d5e82be0061b6592",
+      "src/app/dashboard/usage/page.js": "03864269cac7243c0f50b81e1092b521b9f7aca0fa27901b54e5c5b0257ca7e0",
+      "src/lib/admin/eligibility.js": "872d82cd31a02f76d542431714ef8302191bd4f630f2aa626a08b9d6de11dd04",
+      "src/lib/admin/project.js": "ef9d92c92969e3a4960c7aa1a4ee1b42a23b0b3e54cc5089378eb6e1a732fad8",
+      "src/lib/admin/state.js": "0f4295a1020858f9e62d86e46475a3f9556dc27c31dc0ce53805d0d1b693d5e3",
+      "src/lib/db/analytics/activityQueries.mjs": "32aa1fd974a2ebf4855bbf1edd70b54dca65b1ad094ef51c55ce71b4ec9128af",
+      "src/lib/db/analytics/counterfactualEvidence.mjs": "369a48316ab98ab68444cf381b108f47f34f1cf32c6148a1286ade7011751ca4",
+      "src/lib/db/analytics/economicsDimensions.mjs": "c743bcca2ea7dcc631020aebcdccacc770cb4b66f05077f30e70511ae8d0e057",
+      "src/lib/db/analytics/economicsLinks.mjs": "723642dba27b150b6897f7561278eea290dcab3683fccce6396aa9a91d691076",
+      "src/lib/db/analytics/evidenceQueries.mjs": "e593f9da9d039bbe57248e8de032d2f4b4929983f2d11d09b4eb6d10630a94bd",
+      "src/lib/db/analytics/investigationModel.mjs": "e000d16c1a79668c2c426448d136b3290bb1b2880d1d8e06afde7005305e67ca",
+      "src/lib/db/analytics/quotaHistoryQueries.mjs": "63839ce7518578b6790289966299d2209c3ce0ec580c6154995b12f74d6d47ed",
+      "src/lib/db/analytics/quotaTrend.mjs": "9733913397ab915a95bb3bbfb54b08fc5d1ca9c862b7a97dfbd0cff898d34d22",
+      "src/lib/db/analytics/quotaWorkbenchQueries.mjs": "7600520e65d6c352b693e110b78eb695fe523ff4cb2e8b88720b3f1b77e55c33",
+      "src/lib/db/analytics/readOnly.mjs": "56f534c07f2f3a4d5f0e619836e9aa55899aecc757cb8e158c69f4cabd94fd86",
+      "src/lib/db/analytics/worker.mjs": "b362e76c72ee0b19bf8fd1a7fc079a1478002cceb5c6ca605b07d8db890aa1e5",
+      "src/lib/db/budgetSchema.js": "1f9efdfc5b0731a6841226d74ce8e11acd015e90faca0aeb8bebdb849159651d",
+      "src/lib/db/repos/budgetRepo.js": "ff78f9660a5928658d7d91e7b32bb76f635a9091e6500e675ac17af48812a9d8",
+      "src/lib/db/repos/costLedgerRepo.js": "98f3a3d1aa87b7669754fd3324ebc7765fcd4c69c14836c7a6687acb6b643c6b",
+      "src/lib/db/repos/investigationsRepo.js": "2edaa46884ae710b01fd0c55bf0c314c5015c2742779fe774b1cde2946c33053",
+      "src/lib/db/repos/pricingRepo.js": "41e8ae020fb45d2a03311055cbab47f97bbeb0b3ed02e9b7f0806345baa639a5",
+      "src/lib/db/repos/quotaHistoryRepo.js": "887b1e1051f333471ca3463ba04abbc9db779e6d102421dafa3461bcf73971b5",
+      "src/lib/db/repos/settingsRepo.js": "7365440a31006d96f7a15f4ef93e3993bf0b0fcb56611fd4f73495f3068aa9cf",
+      "src/lib/db/repos/usagePricing.js": "331ef50edb6dc89e204318b5ede6e9b9674409b6096819abaffa637d979bc95c",
+      "src/lib/db/repos/usageRepo.js": "c717c82803eee8f34546f4beeac76db1b8342cb278894d67d404db1f6a4ea183",
+      "src/shared/components/workspace/EconomicsEvidence.js": "c65fc73f6a6259f01b0e81d0479eb2ea496d895194269dbd975746838721a048",
+      "src/shared/components/workspace/EconomicsLens.js": "f240b93dc5f14644c8025924b9c89db93b2f2776def9d4141336531eb5be885d",
+      "src/shared/components/workspace/EconomicsTimeChart.js": "04b9cc0c7eac80e777ba4bdf07af7d3cec21f0766f53f0bda54b726e1f4ec756",
+      "src/shared/constants/config.js": "ce9e9556cc914c5887cdaa9d5c9ed33f93dce210eebd19cf41f2ec81bda41f13",
+      "src/shared/hooks/useEventStream.js": "09730e6686cbc63cc95142337f9c3e03c670785a8feadac1da3082c1888e9c99",
+      "src/shared/services/quotaAutoPing.js": "05266e30506a1608ceda5117deebc4b4b3c0130731a55172084827abb9b71a93",
+      "src/shared/utils/accountCapacity.js": "b7dfc16aee921458014c6df22c3e46c69ae8f51189a47d1b77dd8e799256a330",
+      "src/shared/utils/quotaPause.js": "95496ff92b8fa6595e377f1a3de429cb632f79cf40e2f8111912a37919282c28",
+      "src/shared/workspace/Investigations.js": "35e2f1a0afc1a9aa5044fd752f3db169423bd15d481573f56e4689c5b082bd31",
+      "src/shared/workspace/ObservationControls.js": "60d33b5f5546dfb6b883f2486f9f8778542d474fbc14a61c2635e466e42b15d6",
+      "src/shared/workspace/ObservationPolicy.js": "73ba9fb059e20da9dbc8918b23aa83c246e487a6e09bd4d9ea2e6b57e5c35367",
+      "src/shared/workspace/QuotaEvidence.js": "84ed7f400071b9664d8aaff79abec69bba75c3222c9dc92a2c7e472e8cada05b",
+      "src/shared/workspace/QuotaHistoryWorkbench.js": "8e622fdb7d0da572f404a0364175037c5cb3326a8e51a200c049c1e82aee80f5",
+      "src/shared/workspace/ScopeBar.js": "211e4bdd87e99f8447ac0a2d5b51604df03e9a4f4c2c6a3eaed859a7c75d8e33",
+      "src/shared/workspace/WorkspaceProvider.js": "fd3692bc6535906302ebc0b23ccdf77bd68da5b79250d2bbf2a56e21d95e85a5",
+      "src/shared/workspace/quotaWorkbenchModel.js": "96a9fff712c81822ddb8ab31f131bfe2fdd193f65899e5e3df208183e681395f",
+      "src/shared/workspace/useResource.js": "fe9013cfa3568eadf36b0c575c42f799c867704039ef5677aee1fe3a06111b9b",
+      "src/sse/services/budgetDispatch.js": "f63cf378bf5add471a5171f0b7984fcc47a4f3203d07d80f82106a3eb3ba7238",
+      "src/sse/services/quotaGuard.js": "6fc57044bd97635c812cb24dcf0447fc4718e55bfbb61146265a4ed5ef9e6651"
+    }
+  },
+  "classificationDefinitions": {
+    "supported/exposed": "Implemented execution/read contract and discoverable current UI; source verification does not establish redesign acceptance.",
+    "supported/unexposed": "Implemented backend capability without corresponding current dashboard control or complete saved-state projection.",
+    "partial": "Exposed or partly connected capability with a source mismatch, bounded parity gap or unresolved real verification result.",
+    "internal-only": "Execution mechanism or dormant declaration excluded from user parity with an explicit reason.",
+    "unavailable": "No underlying source/evidence supports the user-facing claim; require an honest unavailable state."
+  },
+  "counts": {
+    "supported/exposed": 56,
+    "partial": 5,
+    "unavailable": 5,
+    "internal-only": 2
+  },
+  "permissionContracts": {
+    "operator-read": {
+      "rule": "Analytics and quota admin routes require a valid dashboard session or CLI operator token regardless of requireLogin. Inference key alone is insufficient.",
+      "evidence": [
+        "src/lib/admin/guard.js:25",
+        "src/lib/admin/policy.js:75",
+        "src/app/api/analytics/route.js:11"
+      ]
+    },
+    "operator-loopback-mutation": {
+      "rule": "Operator credential plus loopback peer for state-changing /api/admin methods. 401 anonymous, 403 wrong credential class or remote mutation.",
+      "evidence": [
+        "src/lib/admin/policy.js:90",
+        "src/lib/admin/policy.js:114"
+      ]
+    },
+    "operator-loopback-export": {
+      "rule": "Export is read-only at the database, but its POST method still passes the operator/loopback mutation gate. Do not promise remote export without that current permission.",
+      "evidence": [
+        "src/app/api/admin/investigations/export/route.js:11",
+        "src/lib/admin/policy.js:46"
+      ]
+    },
+    "dashboard-configuration": {
+      "rule": "Non-admin API middleware applies route-specific current dashboard/CLI authentication. requireLogin=false can affect generic reads/configuration paths; /api/settings writes have an extra signed-session/CLI/local-origin precondition. These are not interchangeable with always-protected admin rules.",
+      "evidence": [
+        "src/dashboardGuard.js:335",
+        "src/dashboardGuard.js:341"
+      ]
+    },
+    "always-protected-key-configuration": {
+      "rule": "/api/keys and access-profile operations are always protected; do not infer anonymous access from requireLogin=false.",
+      "evidence": [
+        "src/dashboardGuard.js:81",
+        "src/dashboardGuard.js:301"
+      ]
+    },
+    "endpoint-specific-session-auth": {
+      "rule": "REST /api/context-status is an operator dashboard projection of retained session statuses under the existing generic dashboard middleware. MCP context_status resolves the relevant session through its bearer-credential contract. These are different projections; no new user-role model is implied.",
+      "evidence": [
+        "src/app/api/context-status/route.js:1",
+        "src/app/api/v1/mcp/route.js:33"
+      ]
+    }
+  },
+  "fixtureCatalog": {
+    "capacity-economics-v1": {
+      "source": "tests/e2e/capacity-economics-seed.mjs",
+      "capturedAt": "2026-09-07T12:00:00.000Z",
+      "accounts": [
+        "capacity-fixture-a",
+        "capacity-fixture-b"
+      ],
+      "provider": "codex",
+      "model": "gpt-5.2",
+      "boundary": "Synthetic-only disposable DATA_DIR, isolated authenticated preview, blocked provider traffic. This inventory did not start or mutate it."
+    }
+  },
+  "knownVerificationOracle": {
+    "id": "quota-physical-slider",
+    "state": "pending-failed-acceptance",
+    "lastActualRunCompletedAt": "2026-09-07T15:55:03.680Z",
+    "lastActualResult": "Physical point click and keyboard exact-row selection passed; attempted zoom retained 12 rows instead of expected 7. Clear restoration was not reached. Final test-only thumb targeting adjustment has not been browser-tested.",
+    "preservedEvidenceDirectory": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/implementation-evidence/operator-20260907/privatequota-chart-slider-first",
+    "test": "tests/e2e/quota-chart-interaction.spec.mjs",
+    "testSha256AtPause": "ff6c17d2a583e7a111e9f78e7e57b88bbb9eb3cede08c51ec80d3fcd367bf8b4",
+    "instruction": "Keep pending through redesign. Do not reset expected populations or call the unrun change a pass.",
+    "redesignCandidate": "Source placement and drag-update candidate implemented; no new real browser run. Original failed receipt remains authoritative."
+  },
+  "crossCuttingBoundaries": [
+    "Supported user-facing capabilities, including API-only implemented options, form the parity denominator. Internal implementation methods do not each create a new feature.",
+    "Accounting uses USD application estimates or explicitly labeled reports. Rates are USD per million tokens. Quota resource units remain separate; historical capture time and observation time are different fields.",
+    "usageHistory completion costs, requestStats attempts, costLedger modeled differences and API-key budget reservations overlap in coverage and must not be added as separate spend.",
+    "Exact request identity and server completion UUID have different owners and contracts. Client-controlled short rid and timestamps cannot repair missing completion evidence.",
+    "Shared URL preserves scope/selection/comparison only. Saved schema-v3 investigations additionally retain explicit Context and Economics state; temporary table/zoom/scenario/observation-mode choices are not implicitly persisted.",
+    "No new visual direction is defined here. Destination slots are functional mapping proposals for the lead to compose into the redesign."
+  ],
+  "capabilities": [
+    {
+      "id": "capacity.inventory",
+      "area": "Capacity",
+      "capability": "Inspect every configured account and its recorded state",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Configured accounts come from health/detail. Rows show provider/name, recorded health, local gates, active stream count, quota windows and scoped request activity; missing quota does not remove an account.",
+      "currentUiEntry": "/dashboard > Accounts",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect every configured account and its recorded state",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/health/detail; GET /api/admin/quota; GET /api/admin/drain?all=true; GET /api/analytics?view=activity",
+      "writeContract": "None",
+      "savedState": "Underlying connection/quota/drain records persist. View is reconstructed from read sources.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unavailable health has a retry; missing observations remain unknown. Historical-only request accounts are separated from current configuration.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect every configured account and its recorded state"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/admin-capacity-api.test.js",
+          "tests/e2e/capacity-snapshot.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 543
+        },
+        {
+          "path": "src/app/api/admin/quota/route.js",
+          "line": 21
+        },
+        {
+          "path": "src/lib/admin/project.js",
+          "line": 128
+        }
+      ]
+    },
+    {
+      "id": "capacity.inventory-filter",
+      "area": "Capacity",
+      "capability": "Search and filter account inventory",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Search matches account display name/provider; recorded status is a local inventory filter. Shared provider/account filters affect inventory, while the shared model filter constrains recorded activity and model evidence.",
+      "currentUiEntry": "/dashboard > Find an account / Any state",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Search and filter account inventory",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Client filtering of configured account rows plus shared analytics query",
+      "writeContract": "None",
+      "savedState": "Search and status are component state, not serialized in investigations. Shared scope is URL/saved-definition state.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unknown retained scope IDs remain visible in scope controls; current inventory can have no matches.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Search and filter account inventory"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/capacity-controls-ui.test.js",
+          "tests/unit/workspace-investigation-state.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 559
+        },
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 593
+        },
+        {
+          "path": "src/shared/workspace/ScopeBar.js",
+          "line": 40
+        }
+      ]
+    },
+    {
+      "id": "capacity.comparison",
+      "area": "Capacity",
+      "capability": "Compare selected accounts",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Checkbox selection permits up to four accounts in the interactive inventory. Saved definition validator accepts up to 100 distinct comparison IDs; that storage bound is not a promise that the four-account composition handles 100 equally well.",
+      "currentUiEntry": "/dashboard > account checkboxes > Compare",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Compare selected accounts",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Selected exact account IDs and their current retained evidence",
+      "writeContract": "None",
+      "savedState": "comparisonIds survive lens changes and URL reload; saved investigations persist them.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Missing/deleted or filtered comparison members require explicit explanation; comparisons do not pool incompatible quota units.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Compare selected accounts"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/capacity-controls-ui.test.js",
+          "tests/e2e/investigation-continuity-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 412
+        },
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 636
+        },
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 83
+        }
+      ]
+    },
+    {
+      "id": "capacity.activity",
+      "area": "Capacity",
+      "capability": "Inspect scoped account attempts and token activity",
+      "classification": "partial",
+      "sourceOwner": "src/app/dashboard/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Activity rows derive from requestStats, separate from usageHistory economics. Account display finds its group in the returned activity groups; when groups are truncated an account can show Outside returned groups. There is no complete all-account activity pagination in the Capacity composition.",
+      "currentUiEntry": "/dashboard > activity band / account inspector",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect scoped account attempts and token activity",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/analytics?view=activity&groupBy=account plus shared start/end/provider/model/connectionId",
+      "writeContract": "None",
+      "savedState": "requestStats retention controls available evidence; shared scope persists.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not display absent returned groups as measured zero. Recorded pending is not active execution.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect scoped account attempts and token activity"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-lens.test.js",
+          "tests/e2e/capacity-snapshot.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 577
+        },
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 586
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 267
+        }
+      ],
+      "implementation": {
+        "state": "partial; paginated inventory activity journey pending after first build freeze",
+        "paths": [
+          "src/app/dashboard/page.js"
+        ],
+        "detail": "Selected account now reads exact scoped summary independently of the first 100 inventory activity groups. Omitted population groups remain unknown, never zero."
+      }
+    },
+    {
+      "id": "capacity.windows",
+      "area": "Capacity",
+      "capability": "Inspect each retained quota window with age and reset semantics",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/QuotaEvidence.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Every stored window can be inspected. quotaWindows has no retained unit, so absolute scale and a denominator of 100 cannot establish entitlement. Derived percentages come separately from connection.lastQuotaSnapshot with their own timestamps. Age over 15 minutes or passed reset marks stale evidence.",
+      "currentUiEntry": "/dashboard > quota window control > account detail",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect each retained quota window with age and reset semantics",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/quota or /api/admin/quota/{connectionId}",
+      "writeContract": "None",
+      "savedState": "quotaWindows current snapshot and providerConnections.lastQuotaSnapshot",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unknown headroom, unknown units, missing reset and stale observations remain explicit. Deadline passage does not prove replenishment.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect each retained quota window with age and reset semantics"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-evidence.test.js",
+          "tests/unit/admin-quota-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaEvidence.js",
+          "line": 40
+        },
+        {
+          "path": "src/lib/admin/project.js",
+          "line": 35
+        },
+        {
+          "path": "src/lib/admin/project.js",
+          "line": 128
+        }
+      ]
+    },
+    {
+      "id": "capacity.binding-constraint",
+      "area": "Capacity",
+      "capability": "Identify the known constraint that blocks an account",
+      "classification": "partial",
+      "sourceOwner": "src/lib/admin/eligibility.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Model-specific eligibility projects blocking reasons from enablement, drain, concurrency, model restrictions and stored quota rules. The account summary orders windows by longest known duration; it does not identify one universal current binding constraint or forecast refreshed capacity.",
+      "currentUiEntry": "/dashboard > Model support or account inspector > Account policy and admission",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Identify the known constraint that blocks an account",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/eligibility?provider=...&model=...",
+      "writeContract": "None",
+      "savedState": "Derived on read from current configuration and retained evidence.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "No request-specific entitlement guarantee; unknown constraints remain unknown. Redesign must distinguish ordered windows from the actual blocker.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Identify the known constraint that blocks an account"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/admin-capacity-api.test.js",
+          "tests/unit/reconciliation/quota-ranking.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/admin/eligibility.js",
+          "line": 34
+        },
+        {
+          "path": "src/lib/admin/eligibility.js",
+          "line": 77
+        },
+        {
+          "path": "src/shared/workspace/QuotaEvidence.js",
+          "line": 5
+        },
+        {
+          "path": "src/app/dashboard/AccountPolicyEvidence.js",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "id": "capacity.reset-horizon",
+      "area": "Capacity",
+      "capability": "Navigate upcoming recorded reset deadlines",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Reset overview aligns retained deadlines and supports a selectable deadline list. A deadline opens the exact account/window detail.",
+      "currentUiEntry": "/dashboard > Reset horizon / Inspect a reset deadline",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Navigate upcoming recorded reset deadlines",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Current quota snapshot resetAt fields",
+      "writeContract": "None",
+      "savedState": "Account/window selection is retained; reset overview is derived.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Passed or unknown reset is labeled; no assumed renewed balance.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Navigate upcoming recorded reset deadlines"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-evidence.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 80
+        },
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 145
+        },
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 218
+        }
+      ]
+    },
+    {
+      "id": "capacity.policy-evidence",
+      "area": "Capacity",
+      "capability": "Inspect account policy, limits, qualification and pins",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/AccountPolicyEvidence.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Shows authentication type, priority, account concurrency, provider outer concurrency, explicit model allowlist, proxy binding, recorded validation, selected-model support and a five-pin page. Pin presence is not active streams.",
+      "currentUiEntry": "/dashboard > account inspector > Account policy and admission",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect account policy, limits, qualification and pins",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/providers/{id}; /api/settings; /api/admin/qualification/{id}; /api/admin/session-pins?connectionId=...&limit=5",
+      "writeContract": "None",
+      "savedState": "Connection policy and qualification/pins persist in their owner stores.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Each unavailable source remains unavailable; saved validation does not prove current upstream entitlement.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect account policy, limits, qualification and pins"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/capacity-controls-ui.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/AccountPolicyEvidence.js",
+          "line": 9
+        },
+        {
+          "path": "src/shared/utils/accountCapacity.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "id": "capacity.model-support",
+      "area": "Capacity",
+      "capability": "Inspect local account eligibility for a selected model",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Model support view combines catalog applicability, model support evidence and local admission reasons for configured accounts.",
+      "currentUiEntry": "/dashboard > Model support > Model to inspect",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect local account eligibility for a selected model",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/models and /api/admin/eligibility",
+      "writeContract": "None",
+      "savedState": "Model selection is component state unless applied through shared model scope.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Local eligibility is not a successful authenticated or upstream request.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect local account eligibility for a selected model"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/admin-capacity-api.test.js",
+          "tests/unit/model-quota-unknown-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/page.js",
+          "line": 451
+        },
+        {
+          "path": "src/app/api/admin/eligibility/route.js",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "id": "capacity.enable-disable",
+      "area": "Capacity",
+      "capability": "Enable or disable an exact account",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/AccountPolicyEvidence.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Capacity links to exact connection management, where enable/disable changes isActive.",
+      "currentUiEntry": "/dashboard > Manage this exact connection > Enable / Disable",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Enable or disable an exact account",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/providers/{id}",
+      "writeContract": "PUT /api/providers/{id} with isActive",
+      "savedState": "providerConnections.isActive",
+      "permissionContract": "dashboard-configuration",
+      "failureBehavior": "Mutation refusal keeps context; configured active is not healthy/eligible.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Enable or disable an exact account"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/e2e/connections-keys-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/AccountPolicyEvidence.js",
+          "line": 45
+        },
+        {
+          "path": "src/app/dashboard/connections/[id]/page.js",
+          "line": 102
+        }
+      ]
+    },
+    {
+      "id": "capacity.drain",
+      "area": "Capacity",
+      "capability": "Drain or resume new account selections",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/CapacityControls.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Review drain or stop-drain uses an optimistic version and confirms matching state through a readback. Existing streams are displayed separately.",
+      "currentUiEntry": "/dashboard > selected account > New account selections",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Drain or resume new account selections",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/drain?all=true",
+      "writeContract": "POST /api/admin/drain/{id} {ifMatch}; DELETE same path ?ifMatch=...",
+      "savedState": "kv scope admin.drain; active stream counts are process-local.",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "412 stale version, missing account, or unconfirmed readback remain distinct; do not repeat an uncertain mutation blindly.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Drain or resume new account selections"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/capacity-controls.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/CapacityControls.js",
+          "line": 7
+        },
+        {
+          "path": "src/app/dashboard/capacityControlsModel.js",
+          "line": 4
+        },
+        {
+          "path": "src/lib/admin/state.js",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "id": "capacity.bulk-drain",
+      "area": "Capacity",
+      "capability": "Apply drain changes to selected comparison accounts",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/CapacityControls.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Sequential per-account mutations preserve earlier successes; UI reports confirmed, refused, stale, unavailable or unconfirmed outcome for each account. This is not an atomic batch.",
+      "currentUiEntry": "/dashboard > Compare accounts > Review drain",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Apply drain changes to selected comparison accounts",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Current drain versions for each selected account",
+      "writeContract": "One versioned POST/DELETE per account, followed by readback",
+      "savedState": "Individual admin.drain documents",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "Partial success remains visible with exact account identity.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Apply drain changes to selected comparison accounts"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/capacity-controls.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/CapacityControls.js",
+          "line": 23
+        },
+        {
+          "path": "src/app/dashboard/capacityControlsModel.js",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "id": "capacity.pause-threshold",
+      "area": "Capacity",
+      "capability": "Configure per-window quota pause thresholds",
+      "classification": "partial",
+      "sourceOwner": "src/app/dashboard/connections/[id]/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Runtime pauses when remainingPercentage <= configured threshold; zero/missing disables that window. Current connection editor incorrectly describes percent used. Editor exposes known window names or one fallback 5h name, while backend accepts an arbitrary map of valid named thresholds.",
+      "currentUiEntry": "/dashboard/connections/{id} > Tuning > Pause thresholds",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Configure per-window quota pause thresholds",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET exact connection and quota evidence",
+      "writeContract": "PUT /api/providers/{id} {quotaPauseThresholds:{window:percent}}; values outside (0,100] are dropped",
+      "savedState": "providerConnections.quotaPauseThresholds",
+      "permissionContract": "dashboard-configuration",
+      "failureBehavior": "Correct wording is remaining percentage. Missing quota fails open; a passed reset releases the old pause gate without proving a replenished balance.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Configure per-window quota pause thresholds"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-pause.test.js",
+          "tests/unit/quota-pause-expired-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/connections/[id]/page.js",
+          "line": 272
+        },
+        {
+          "path": "src/app/api/providers/[id]/route.js",
+          "line": 271
+        },
+        {
+          "path": "src/shared/utils/quotaPause.js",
+          "line": 53
+        },
+        {
+          "path": "src/sse/services/quotaGuard.js",
+          "line": 139
+        }
+      ]
+    },
+    {
+      "id": "capacity.history",
+      "area": "Capacity",
+      "capability": "Choose and inspect a retained historical quota series",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Requires exact account. Series identity hashes account/provider/scope/source/kind/resource/unit/window duration/window type/measurement. Capture-time scope is start-inclusive/end-exclusive; plots use observedAt. Model filter is retained but does not attribute quota to a model.",
+      "currentUiEntry": "/dashboard > account inspector > Quota history > Reported quota window",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Choose and inspect a retained historical quota series",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/quota/workbench?connectionId=...&start=...&end=...",
+      "writeContract": "None from this view",
+      "savedState": "quotaObservations retained by existing acquisition paths. Selected account/windowId survives URL and saved investigation; historical data is not backfilled.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Refuses whole analysis beyond 5000 observations, 64 series or 8 MiB; no partial forecast. Exact missing series is not replaced.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Choose and inspect a retained historical quota series"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-workbench.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 430
+        },
+        {
+          "path": "src/lib/db/analytics/quotaWorkbenchQueries.mjs",
+          "line": 46
+        },
+        {
+          "path": "src/lib/db/repos/quotaHistoryRepo.js",
+          "line": 44
+        }
+      ]
+    },
+    {
+      "id": "capacity.observation-select",
+      "area": "Capacity",
+      "capability": "Select a plotted quota observation or its keyboard row equivalent",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Canvas marker click and table button select the exact observation ID and reveal value, observedAt/capturedAt and reset. Table selection finds its page.",
+      "currentUiEntry": "Quota history > plot or Contributing quota observations",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Select a plotted quota observation or its keyboard row equivalent",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Selected series.points by stable observation ID",
+      "writeContract": "None",
+      "savedState": "Selected observation is component state only; saved definition retains series, not individual point.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Out-of-zoom selected observation remains identified. Do not substitute nearest timestamp.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Select a plotted quota observation or its keyboard row equivalent"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/e2e/quota-chart-interaction.spec.mjs",
+          "tests/unit/quota-workbench-ui.test.js"
+        ],
+        "priorBoundedRun": "Physical marker click selected exact 11:30 observation and keyboard Enter selected exact 11:40 observation in the 2026-09-07T15:55:03Z failed overall run; no new browser run in this inventory."
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 163
+        },
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 256
+        }
+      ]
+    },
+    {
+      "id": "capacity.observation-zoom",
+      "area": "Capacity",
+      "capability": "Drag quota history zoom to filter exact contributing rows and clear it",
+      "classification": "partial",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Source handles datazoom and filters observed timestamps inclusively inside the chosen local interval. Clear resets only observation zoom/page. Last actual browser run retained 12 rows after attempted drag instead of expected 7. The final test-only thumb-target adjustment remains unrun.",
+      "currentUiEntry": "Quota history > slider > Clear observation zoom",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Drag quota history zoom to filter exact contributing rows and clear it",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Existing series; no new analytics or provider call",
+      "writeContract": "None",
+      "savedState": "Local component zoom/page state; not in saved definitions.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Known verification oracle remains pending. The previous pointer failure is not itself proof of an app defect because precise thumb targeting remains unverified.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Drag quota history zoom to filter exact contributing rows and clear it"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/e2e/quota-chart-interaction.spec.mjs"
+        ],
+        "priorBoundedRun": "FAIL at zoom on 2026-09-07T15:55:03.680Z; 12 contributing rows remained. Click/keyboard stages passed. No reset of this failure baseline."
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 167
+        },
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 210
+        },
+        {
+          "path": "src/shared/workspace/quotaWorkbenchModel.js",
+          "line": 1
+        }
+      ],
+      "implementation": {
+        "state": "implemented candidate; actual pointer oracle pending",
+        "paths": [
+          "src/shared/workspace/quotaWorkbenchModel.js",
+          "tests/e2e/quota-chart-interaction.spec.mjs"
+        ],
+        "detail": "Slider aligned explicitly to plotted bounds, top placeholder cleared, 32px slider, release-only update to avoid replacing ECharts model mid-drag. Oracle uses registry colors, unchanged exact 12/7/12 populations and physical pointers."
+      }
+    },
+    {
+      "id": "capacity.forecast",
+      "area": "Capacity",
+      "capability": "Explain a bounded observed-rate exhaustion forecast",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/quotaTrend.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Median interval consumption with minimum 5 distinct samples and 15 minutes, no large gap, fresh final observation, coherent units/limits, and no ambiguous timestamp. Rolling replenishment and passed reset refuse forecasting. Earliest/latest sensitivity uses observed min/max rates, not a confidence interval.",
+      "currentUiEntry": "Quota history > Exhaustion scenario",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Explain a bounded observed-rate exhaustion forecast",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "analyzeQuotaSeries over complete same-dimension series",
+      "writeContract": "None",
+      "savedState": "Computed on read; method version observed-interval-median-v1",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Explicit unavailable states for insufficient samples/span, stale/gapped/future/ambiguous evidence, missing/inconsistent amounts, rolling windows, elapsed reset, zero rate and unrepresentable horizon.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Explain a bounded observed-rate exhaustion forecast"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-trend.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/quotaTrend.mjs",
+          "line": 3
+        },
+        {
+          "path": "src/lib/db/analytics/quotaTrend.mjs",
+          "line": 89
+        },
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 84
+        }
+      ]
+    },
+    {
+      "id": "capacity.scenario-multiplier",
+      "area": "Capacity",
+      "capability": "Scale observed consumption by a workload multiplier",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Local 0.1 through 10 multiplier scales the observed rate under unchanged request mix/cache/provider charging. Shows dated projected zero and reset-first state without assuming replenishment.",
+      "currentUiEntry": "Quota history > Exhaustion scenario > Workload multiplier",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Scale observed consumption by a workload multiplier",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "projectQuotaScenario(analysis,{multiplier})",
+      "writeContract": "None; never changes routes or account policy",
+      "savedState": "Transient component state; neither scenarios nor multiplier are saved by investigation schema.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Invalid multiplier refused; unavailable evidence stays unavailable; passed scenario deadline is not proof quota exhausted.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Scale observed consumption by a workload multiplier"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-trend.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 45
+        },
+        {
+          "path": "src/lib/db/analytics/quotaTrend.mjs",
+          "line": 159
+        }
+      ]
+    },
+    {
+      "id": "capacity.scenario-exclusion",
+      "area": "Capacity",
+      "capability": "Exclude an account from a local exhaustion scenario",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Include this account changes local available flag. Exclusion explicitly performs no redistribution to peers.",
+      "currentUiEntry": "Quota history > Exhaustion scenario > Include this account",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Exclude an account from a local exhaustion scenario",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Existing analysis only",
+      "writeContract": "None",
+      "savedState": "Transient component state",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Excluded is not disabled/draining. Redistributed fleet capacity remains unavailable.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Exclude an account from a local exhaustion scenario"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-trend.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 70
+        },
+        {
+          "path": "src/lib/db/analytics/quotaTrend.mjs",
+          "line": 176
+        }
+      ]
+    },
+    {
+      "id": "capacity.balance-increases",
+      "area": "Capacity",
+      "capability": "Inspect observed balance increases without assuming resets",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/quotaTrend.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Retains before/after IDs and increase magnitude, splitting trend segments on increase/limit/reset change.",
+      "currentUiEntry": "Quota history > observed balance increases",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect observed balance increases without assuming resets",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "quotaObservations analysis.increases",
+      "writeContract": "None",
+      "savedState": "Retained observations; derived increases",
+      "permissionContract": "operator-read",
+      "failureBehavior": "An increase does not prove reset or warming success.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect observed balance increases without assuming resets"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-trend.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/quotaTrend.mjs",
+          "line": 107
+        },
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 300
+        }
+      ]
+    },
+    {
+      "id": "capacity.reset-events",
+      "area": "Capacity",
+      "capability": "Inspect reset scheduling, checks and execution outcomes",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Paginated events with recorded time, scheduled-for time, scope, code and check ID. Filter by scheduled, started, usage-read, failed, warm-response, warm-recorded, clock-running, still-cold or completed.",
+      "currentUiEntry": "Quota history > Reset planning and check history",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Inspect reset scheduling, checks and execution outcomes",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/quota/history?kind=checks with account/time/scope/eventType/page",
+      "writeContract": "None from view; scheduler records whitelist events",
+      "savedState": "quotaCheckEvents append/deduplicate per event identity",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Scheduling record is not proof of live queue; check events only retain scope, not complete resource/unit attribution. Empty and unavailable are distinct.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect reset scheduling, checks and execution outcomes"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-history-autoping.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 323
+        },
+        {
+          "path": "src/lib/db/repos/quotaHistoryRepo.js",
+          "line": 68
+        },
+        {
+          "path": "src/lib/db/analytics/quotaHistoryQueries.mjs",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "id": "capacity.warming-opt-in",
+      "area": "Capacity",
+      "capability": "Enable or disable automatic quota-window warming per account",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/constants/config.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Default-off per-account toggle with explicit quota-consuming effect review, atomic sibling-preserving settings merge and readback. Isolated fixtures disable provider actions.",
+      "currentUiEntry": "/dashboard > exact account > Quota windows > Acquire quota observations",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Enable or disable automatic quota-window warming per account",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/settings projection quotaAutoPingProviders",
+      "writeContract": "PATCH /api/settings with provider-specific connections map; configureQuotaAutoPing starts/stops scheduler",
+      "savedState": "settings.data and connection.autoPingWindows; scheduler queues are process-local",
+      "permissionContract": "dashboard-configuration",
+      "failureBehavior": "This opt-in can make real small requests and consume quota. Failed/still-cold/warm-recorded/check outcomes remain separate. Dedicated UI must validate booleans/account applicability, explain effect and preserve off default.",
+      "fixture": {
+        "catalog": "Need isolated no-egress settings fixture; never enable against provider traffic",
+        "requirement": "Enable or disable automatic quota-window warming per account"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/quota-warming-settings.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/shared/constants/config.js",
+          "line": 91
+        },
+        {
+          "path": "src/shared/services/quotaAutoPing.js",
+          "line": 916
+        },
+        {
+          "path": "src/app/api/settings/route.js",
+          "line": 327
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/workspace/QuotaAcquisitionControls.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/workspace/QuotaAcquisitionControls.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/quota-warming-settings.test.js"
+      }
+    },
+    {
+      "id": "capacity.explicit-quota-read",
+      "area": "Capacity",
+      "capability": "Explicitly acquire provider quota evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/api/usage/[connectionId]/route.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Explicit provider quota read after effect review; separate from passive refresh and disabled in isolated fixtures. Provider acquisition execution deliberately untested.",
+      "currentUiEntry": "/dashboard > exact account > Quota windows > Acquire quota observations",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Explicitly acquire provider quota evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Provider usage endpoint with configured proxy/auth contract",
+      "writeContract": "GET has acquisition/persistence side effects, including possible credential refresh and quota retention",
+      "savedState": "Connection credentials/snapshot and quotaObservations where usable",
+      "permissionContract": "dashboard-configuration",
+      "failureBehavior": "Must distinguish an authorized active usage read from passive workspace refresh; ineligible provider, auth, proxy and upstream failures remain visible.",
+      "fixture": {
+        "catalog": "Need deterministic local provider-adapter fixture; outbound forbidden",
+        "requirement": "Explicitly acquire provider quota evidence"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/quota-workbench-ui.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/app/api/usage/[connectionId]/route.js",
+          "line": 142
+        },
+        {
+          "path": "src/app/api/usage/[connectionId]/route.js",
+          "line": 242
+        },
+        {
+          "path": "src/lib/db/repos/quotaHistoryRepo.js",
+          "line": 63
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/workspace/QuotaAcquisitionControls.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/workspace/QuotaAcquisitionControls.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/quota-workbench-ui.test.js"
+      }
+    },
+    {
+      "id": "capacity.cross-account-forecast",
+      "area": "Capacity",
+      "capability": "Forecast workload redistribution across multiple accounts",
+      "classification": "unavailable",
+      "sourceOwner": "src/shared/workspace/QuotaHistoryWorkbench.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Only one-series constant-rate scaling exists; excluding an account does not simulate other accounts or route behavior.",
+      "currentUiEntry": "Honest unavailable explanation in scenario",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Forecast workload redistribution across multiple accounts",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "No supported cross-account solver or read contract",
+      "writeContract": "None",
+      "savedState": "None",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not present per-account exclusion as fleet optimization.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Forecast workload redistribution across multiple accounts"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/quota-trend.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 79
+        },
+        {
+          "path": "src/lib/db/analytics/quotaTrend.mjs",
+          "line": 159
+        }
+      ]
+    },
+    {
+      "id": "economics.ledger",
+      "area": "Economics",
+      "capability": "Inspect retained completion cost records",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/usage/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Paginated usageHistory records with exact ledger IDs, status, served/attempt model, token components, selected recorded USD source and cost samples. Chosen cost prefers explicit upstream USD over an application estimate; never add the two.",
+      "currentUiEntry": "/dashboard/usage > Recorded requests > Cost basis",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Inspect retained completion cost records",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/analytics?view=economics",
+      "writeContract": "No mutation from this view; saveRequestUsage owns writes",
+      "savedState": "usageHistory; surviving history remains when requestStats expires",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unknown cost, ambiguous historical zero and missing token samples remain distinct from measured zero/free usage.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect retained completion cost records"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/usage/page.js",
+          "line": 67
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 53
+        },
+        {
+          "path": "src/lib/db/repos/usagePricing.js",
+          "line": 44
+        },
+        {
+          "path": "src/lib/db/repos/usageRepo.js",
+          "line": 494
+        }
+      ]
+    },
+    {
+      "id": "economics.grouping",
+      "area": "Economics",
+      "capability": "Group cost by supported account and work identities",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/economicsDimensions.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Eight options: provider, model, account, explicit session, logical request, client project reference, client reference, task reference. Null identity cohorts are retained and safely filterable when expressible.",
+      "currentUiEntry": "/dashboard/usage > cohort grouping",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Group cost by supported account and work identities",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET economics groupBy with exact identity filters",
+      "writeContract": "None",
+      "savedState": "Grouping/cohort/global sorting/source/attempt-kind in schema-v3 investigations; UI group pagination is transient.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Client refs are installation/key/client-scoped hashes and do not establish people, cross-client projects or meaningful task outcomes.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Group cost by supported account and work identities"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/unit/investigations.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/economicsDimensions.mjs",
+          "line": 1
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsLens.js",
+          "line": 132
+        },
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 109
+        }
+      ]
+    },
+    {
+      "id": "economics.cohort-comparison",
+      "area": "Economics",
+      "capability": "Compare selected cohorts and drill into their records",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/components/workspace/EconomicsLens.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Compare record counts, recorded amount, amount per usable cost sample and per-token usable sample with explicit denominators. Identity columns can be pinned; groups and records have independent pagination/sorting.",
+      "currentUiEntry": "Economics > cohort checkboxes / Inspect / show contributing records",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Compare selected cohorts and drill into their records",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Complete scoped SQL aggregates before cohort pagination; selected cohort filters detailed ledger",
+      "writeContract": "None",
+      "savedState": "Cohort filter/sort can be saved; checkbox comparison and column pinning are local table state.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not compare means from different sample populations as paired metrics or sum non-additive distinct logical counts.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Compare selected cohorts and drill into their records"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-lens.test.js",
+          "tests/unit/economics-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/components/workspace/EconomicsLens.js",
+          "line": 132
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsLens.js",
+          "line": 199
+        },
+        {
+          "path": "src/app/dashboard/usage/page.js",
+          "line": 64
+        }
+      ]
+    },
+    {
+      "id": "economics.evidence-filters",
+      "area": "Economics",
+      "capability": "Filter cost source, attempt coverage and completion outcome",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/usage/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Cost source accepts all/application-estimate/provider-reported/unknown. Attempt kind accepts all/initial/additional/unknown. Succeeded/failed/pending filter is applied to the detailed ledger; aggregate overview remains the source/attempt population unless scoped differently.",
+      "currentUiEntry": "Economics > Cost evidence source / Physical attempt kind / record status",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Filter cost source, attempt coverage and completion outcome",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Validated economics query; known physical attempt requires logical ID, ordinal and physical-dispatch coverage",
+      "writeContract": "None",
+      "savedState": "Source/attempt/status are preserved in saved definitions, not general URL scope.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unknown coverage never becomes initial; pending never becomes active. Status scope must be explained beside overview versus records.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Filter cost source, attempt coverage and completion outcome"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/unit/investigations.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/usage/page.js",
+          "line": 25
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 63
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 106
+        }
+      ]
+    },
+    {
+      "id": "economics.advanced-attribution-filters",
+      "area": "Economics",
+      "capability": "Filter exact request-link state, authenticated key or client-session reference",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/activityQueries.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Exact request, logical request, Context session, key and opaque references; linkage and missing predicates. Strict v4 saved projection and consistent population/cohort/export filtering.",
+      "currentUiEntry": "/dashboard/usage > Identity filters",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Filter exact request-link state, authenticated key or client-session reference",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/analytics?view=economics with supported exact fields",
+      "writeContract": "None",
+      "savedState": "Backend query only; schema-v3 investigation does not retain clientKeyId/clientSessionRef/requestLink/requestId filters.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Keep this implemented API subset in parity; smallest integration needs validated controls and saved-definition projection, not invented dimensions.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Filter exact request-link state, authenticated key or client-session reference"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/investigations.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 7
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 48
+        },
+        {
+          "path": "src/shared/workspace/WorkspaceProvider.js",
+          "line": 34
+        },
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 94
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/components/workspace/EconomicsFilters.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/components/workspace/EconomicsFilters.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/investigations.test.js"
+      }
+    },
+    {
+      "id": "economics.tokens",
+      "area": "Economics",
+      "capability": "Inspect usable uncached, cache-read, cache-write, output and reasoning quantities",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/repos/usageRepo.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Canonical storage treats input as cache-inclusive. Unknown or inconsistent token detail is tracked per quantity, including cache sum > input and reasoning > output. Output includes reasoning.",
+      "currentUiEntry": "Economics > quantities and selected record Cost basis",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Inspect usable uncached, cache-read, cache-write, output and reasoning quantities",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "usageHistory token JSON and presence flags normalized at writer; analytics derives usable quantities/sample counts",
+      "writeContract": "No mutation from view",
+      "savedState": "Immutable recorded usage, subject to explicit provider-evidence reconciliation",
+      "permissionContract": "operator-read",
+      "failureBehavior": "No zero-filling missing quantities for comparisons; cache ratio only on usable paired cache/input samples.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect usable uncached, cache-read, cache-write, output and reasoning quantities"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/unit/economics-lens.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/repos/usageRepo.js",
+          "line": 500
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 119
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 53
+        }
+      ]
+    },
+    {
+      "id": "economics.rate-components",
+      "area": "Economics",
+      "capability": "Reconcile cost components against immutable captured rates",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/repos/usagePricing.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Displays uncached input, cache read/write, output, signed reasoning adjustment, total, estimate difference and cache-rate differential. Requires supported snapshot version, USD/million-token units and consistent complete token detail. Missing cached/cache_creation/reasoning rates use explicit calculator fallbacks and are labeled.",
+      "currentUiEntry": "Selected completion > Rate calculation",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Reconcile cost components against immutable captured rates",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "usageRateSnapshots exact ID; costComponents(row)",
+      "writeContract": "None",
+      "savedState": "Rate snapshot captured before dispatch where context exists, otherwise usage-recording boundary; old rows retain their captured rate references.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unknown or invalid rates/quantities make decomposition unavailable. Difference from stored estimate remains visible. Cache differential can be negative and is not verified savings.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Reconcile cost components against immutable captured rates"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/unit/cache-pricing.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/repos/usagePricing.js",
+          "line": 15
+        },
+        {
+          "path": "src/lib/db/analytics/economicsLinks.mjs",
+          "line": 33
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "id": "economics.pricing-edit",
+      "area": "Economics",
+      "capability": "Edit provider/model pricing used for future estimates",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/api/pricing/route.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Known USD-per-million-token rates, preserved unknown fields, exact provider/model review and separate stored readback; historical captured rates remain immutable.",
+      "currentUiEntry": "/dashboard/usage?tool=pricing",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Edit provider/model pricing used for future estimates",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/pricing",
+      "writeContract": "PATCH /api/pricing provider/model rate map",
+      "savedState": "kv pricing scope; immutable usageRateSnapshots for subsequent captures",
+      "permissionContract": "dashboard-configuration",
+      "failureBehavior": "Reject malformed provider/model/field/value. Partial unknown cards stay unknown. Existing counterfactual ledger uses a distinct pricing calculator and lacks immutable rate snapshot.",
+      "fixture": {
+        "catalog": "Need isolated pricing CRUD and unchanged historical snapshot fixture",
+        "requirement": "Edit provider/model pricing used for future estimates"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/pricing-controls-api.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/app/api/pricing/route.js",
+          "line": 25
+        },
+        {
+          "path": "src/lib/db/repos/pricingRepo.js",
+          "line": 47
+        },
+        {
+          "path": "src/lib/db/repos/pricingRepo.js",
+          "line": 67
+        },
+        {
+          "path": "src/lib/db/repos/usagePricing.js",
+          "line": 15
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/components/workspace/PricingEditor.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/components/workspace/PricingEditor.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/pricing-controls-api.test.js"
+      }
+    },
+    {
+      "id": "economics.pricing-reset",
+      "area": "Economics",
+      "capability": "Reset pricing override for model, provider or all pricing",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/api/pricing/route.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Explicit model/provider/all reset scope with review, invalid-scope refusal and stored merged readback.",
+      "currentUiEntry": "/dashboard/usage?tool=pricing",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Reset pricing override for model, provider or all pricing",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET current merged rates",
+      "writeContract": "DELETE /api/pricing with provider/model query where applicable",
+      "savedState": "kv pricing records",
+      "permissionContract": "dashboard-configuration",
+      "failureBehavior": "Review exact reset scope; existing captured rate evidence must remain unchanged.",
+      "fixture": {
+        "catalog": "Need isolated scoped reset fixture",
+        "requirement": "Reset pricing override for model, provider or all pricing"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/pricing-controls-api.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/app/api/pricing/route.js",
+          "line": 87
+        },
+        {
+          "path": "src/lib/db/repos/pricingRepo.js",
+          "line": 87
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/components/workspace/PricingEditor.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/components/workspace/PricingEditor.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/pricing-controls-api.test.js"
+      }
+    },
+    {
+      "id": "economics.exact-request",
+      "area": "Economics",
+      "capability": "Follow a completion to its exact request and Context attempt",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/economicsLinks.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "usageHistory.requestId joins requestStats.id only with compatible logical request/session/attempt/provider/model/account fields. Exact linked latency, first token, requested model and safe client references are projected. Context button requires exact link and explicit context session.",
+      "currentUiEntry": "Selected completion > Exact links / Open exact Context attempt",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Follow a completion to its exact request and Context attempt",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Exact requestStats identity; no timestamp join",
+      "writeContract": "None",
+      "savedState": "usageHistory link survives but joined request evidence may expire.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unattributed, unavailable, conflict and linked are distinct. Never replace expired evidence with nearest request.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Follow a completion to its exact request and Context attempt"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/economicsLinks.mjs",
+          "line": 6
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 45
+        },
+        {
+          "path": "src/app/dashboard/usage/page.js",
+          "line": 123
+        }
+      ]
+    },
+    {
+      "id": "economics.additional-attempts",
+      "area": "Economics",
+      "capability": "Inspect logical-request costs and additional physical attempts",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/activityQueries.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Additional attempt cost requires server logicalRequestId, attempt >1 and physical-dispatch coverage. Executor-invocation may hide wire retries and is never relabeled as exact physical coverage.",
+      "currentUiEntry": "Selected completion > Scoped logical attempts; physical attempt filter; coverage disclosure",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Inspect logical-request costs and additional physical attempts",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "usageHistory physical attempt fields and complete filtered aggregates",
+      "writeContract": "None",
+      "savedState": "Server request identity and ordinal persisted with usage",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Missing attempts/charges remain unknown; retry cost is not automatically avoidable. costLedger rid-upsert cannot establish sum of all attempts.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect logical-request costs and additional physical attempts"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js",
+          "tests/unit/budget-dispatch-pipeline.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 106
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 274
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "id": "economics.cost-latency",
+      "area": "Economics",
+      "capability": "Compare recorded cost and latency on the same exact samples",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/components/workspace/EconomicsLens.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Displays mean latency/sample count and cost per paired sample; coverage shows same-row usable cost+positive-latency totals.",
+      "currentUiEntry": "Economics > cohort mean latency / cost + latency; evidence coverage",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Compare recorded cost and latency on the same exact samples",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Exact joined request metrics and per-row USD",
+      "writeContract": "None",
+      "savedState": "Derived from retained linked rows",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Descriptive statistics only; sample coverage changes with request retention. No causal efficiency or task-success claim.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Compare recorded cost and latency on the same exact samples"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/components/workspace/EconomicsLens.js",
+          "line": 164
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 60
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 279
+        }
+      ]
+    },
+    {
+      "id": "economics.counterfactual",
+      "area": "Economics",
+      "capability": "Inspect modeled request baseline-minus-usage difference",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/counterfactualEvidence.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "A unique server completion UUID binds one usage completion to one counterfactual row. Provider/model and complete coherent cache/token agreement plus arithmetic reconciliation are required. Client rid collision, missing binding and failed best-effort write never authorize an old row join.",
+      "currentUiEntry": "Selected completion > Modeled difference",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Inspect modeled request baseline-minus-usage difference",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Bounded indexed completionId lookup of costLedger and usageHistory",
+      "writeContract": "None from view; best-effort writer uses server randomUUID per final completion",
+      "savedState": "costLedger keyed by rid upserts latest completion; completionId is nullable unique and never historically backfilled.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Explicit unavailable states for missing/ambiguous/conflicting identity, usage or arithmetic. Zero-input/zero-output and estimated usage are excluded from counterfactual computation.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect modeled request baseline-minus-usage difference"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/completion-identity-pipeline.test.js",
+          "tests/unit/completion-identity-migration.test.js",
+          "tests/unit/counterfactual-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/counterfactualEvidence.mjs",
+          "line": 12
+        },
+        {
+          "path": "open-sse/handlers/chatCore/requestDetail.js",
+          "line": 188
+        },
+        {
+          "path": "src/lib/db/repos/costLedgerRepo.js",
+          "line": 35
+        }
+      ]
+    },
+    {
+      "id": "economics.counterfactual-split",
+      "area": "Economics",
+      "capability": "Separate shaping estimate difference from cache-pricing difference",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/counterfactualEvidence.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Counterfactual saverSavedUsd + cacheSavedUsd must reconcile to savedUsd. Historical zero/zero decomposition remains unknown, including genuinely zero-looking rows with no stronger provenance. Negative differences are retained.",
+      "currentUiEntry": "Selected completion > Modeled difference > separate components",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Separate shaping estimate difference from cache-pricing difference",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Cost ledger signed components; stable completion identity",
+      "writeContract": "None",
+      "savedState": "Historical columns preserve unknown zero/zero convention; no invented decomposition.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Baseline UTF-16 string length/4 is a token estimate. Rates/calculator differ from usage ledger and baseline token estimate/rate snapshot are not retained. Never add modeled dollars to recorded completion cost.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Separate shaping estimate difference from cache-pricing difference"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/counterfactual-evidence.test.js",
+          "tests/unit/cost-ledger-pipeline.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/counterfactualEvidence.mjs",
+          "line": 25
+        },
+        {
+          "path": "src/lib/db/repos/costLedgerRepo.js",
+          "line": 64
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "id": "economics.session-saver-rollup",
+      "area": "Economics",
+      "capability": "Read the session shaping-dollar status rollup",
+      "classification": "partial",
+      "sourceOwner": "open-sse/handlers/chatCore.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "MCP and REST context-status expose dollarsSaved as the shaping component, not total savings. Current MCP projection does not return cacheSavedUsd either. The underlying rollup sums saver/cache columns without proving historical split completeness, so legacy zeros require caution.",
+      "currentUiEntry": "Context status API/MCP; no direct Economics session-status control",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Read the session shaping-dollar status rollup",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "REST /api/context-status and MCP context_status; session rollup since prior 24-hour boundary",
+      "writeContract": "Internal context status update after completed request",
+      "savedState": "costLedger session rows plus context status store",
+      "permissionContract": "endpoint-specific-session-auth",
+      "failureBehavior": "Do not infer total savings from dollarsSaved or backfill cache dollars into REST/MCP. Per-completion modeled evidence is stricter than this legacy sum.",
+      "fixture": {
+        "catalog": "Existing cost-ledger unit fixtures; dedicated legacy split coverage needed",
+        "requirement": "Read the session shaping-dollar status rollup"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/cost-ledger-repo.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "open-sse/handlers/chatCore.js",
+          "line": 279
+        },
+        {
+          "path": "src/app/api/context-status/route.js",
+          "line": 62
+        },
+        {
+          "path": "src/app/api/v1/mcp/route.js",
+          "line": 138
+        },
+        {
+          "path": "src/lib/db/repos/costLedgerRepo.js",
+          "line": 155
+        }
+      ]
+    },
+    {
+      "id": "economics.time-tracks",
+      "area": "Economics",
+      "capability": "Select an Economics time interval and inspect bucket data",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/components/workspace/EconomicsTimeChart.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Aligned UTC cost and four unstacked token tracks, gaps for missing samples, brush selection sets shared range, and table buttons provide a keyboard equivalent. Table shows counts and sample denominators and paginates 20 buckets.",
+      "currentUiEntry": "Economics > Select time interval / View bucket data / Focus recent activity",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Select an Economics time interval and inspect bucket data",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Bucketed usageHistory within fixed shared scope; maximum 720 buckets",
+      "writeContract": "None",
+      "savedState": "Shared selected range persists; legend/table page is transient.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Gaps are not smoothed into activity. Do not stack incompatible units; distinct logical counts across buckets are not additive.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Select an Economics time interval and inspect bucket data"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-trend.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/components/workspace/EconomicsTimeChart.js",
+          "line": 128
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsTimeChart.js",
+          "line": 186
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "id": "economics.invoice",
+      "area": "Economics",
+      "capability": "Confirm invoice charges or subscription spend",
+      "classification": "unavailable",
+      "sourceOwner": "src/shared/components/workspace/EconomicsEvidence.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Recorded cost is application estimate or upstream USD usage report. No invoice confirmation or subscription billing reconciliation exists in these records.",
+      "currentUiEntry": "Selected completion > Cost basis > Confirmed invoice charge: Unavailable",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Confirm invoice charges or subscription spend",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "No invoice source",
+      "writeContract": "None",
+      "savedState": "None",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not convert reported or modeled costs into confirmed charges.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Confirm invoice charges or subscription spend"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 53
+        },
+        {
+          "path": "src/lib/db/repos/usagePricing.js",
+          "line": 68
+        }
+      ]
+    },
+    {
+      "id": "economics.task-success",
+      "area": "Economics",
+      "capability": "Compute cost per completed meaningful user task",
+      "classification": "unavailable",
+      "sourceOwner": "src/shared/components/workspace/EconomicsEvidence.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Task refs can group reported work but no explicit meaningful task outcome or repair/verification-completeness contract exists. HTTP success does not establish task completion.",
+      "currentUiEntry": "Honest limitation in selected record cost evidence",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Compute cost per completed meaningful user task",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Client taskRef and status do not supply task-success denominator",
+      "writeContract": "None",
+      "savedState": "Task reference may persist; no task outcome record established here.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not fabricate task-success metric or causal savings.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Compute cost per completed meaningful user task"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 53
+        },
+        {
+          "path": "src/lib/db/analytics/economicsDimensions.mjs",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "id": "economics.application-project",
+      "area": "Economics",
+      "capability": "Attribute completion costs to an application project",
+      "classification": "unavailable",
+      "sourceOwner": "src/lib/db/repos/usageRepo.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "projectId is queryable and projected but current usage writer inserts null. Client projectRef is a distinct supported identity and must not be silently promoted into application project identity.",
+      "currentUiEntry": "Exact links shows application project unavailable",
+      "redesignedDestination": {
+        "journey": "Economics",
+        "slot": "Attribute completion costs to an application project",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Reserved projectId filter; no current completion writer supplies it",
+      "writeContract": "None",
+      "savedState": "usageHistory.projectId currently unpopulated by owning runtime writer",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Declaration alone is not support. Preserve client-project reference workflow separately.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Attribute completion costs to an application project"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/economics-evidence.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/repos/usageRepo.js",
+          "line": 545
+        },
+        {
+          "path": "src/lib/db/analytics/activityQueries.mjs",
+          "line": 90
+        },
+        {
+          "path": "src/shared/components/workspace/EconomicsEvidence.js",
+          "line": 56
+        }
+      ]
+    },
+    {
+      "id": "budgets.ceilings",
+      "area": "Economics / Keys",
+      "capability": "Configure key prompt-token, completion-token and USD ceilings",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/keys/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Keys and access profiles support ceilings. Budget accounting uses durable lifetime application ledger and held outstanding exposure; policy update applies to future requests and does not erase existing reservations.",
+      "currentUiEntry": "/dashboard/keys > key editor / access profile",
+      "redesignedDestination": {
+        "journey": "Economics / Keys",
+        "slot": "Configure key prompt-token, completion-token and USD ceilings",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/keys plus budget summary",
+      "writeContract": "Create/update key ceiling fields; profile lifecycle handled by Keys owner",
+      "savedState": "apiKeys limits; apiKeyBudgetAccounts survives credential rotation/revocation",
+      "permissionContract": "always-protected-key-configuration",
+      "failureBehavior": "Null is no ceiling; unknown recorded values are separate. Native durable SQLite is required for capped dispatch.",
+      "fixture": {
+        "catalog": "Keys persistence fixture plus budget unit fixtures",
+        "requirement": "Configure key prompt-token, completion-token and USD ceilings"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/budget-reservations.test.js",
+          "tests/unit/key-budget-presentation.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/keys/page.js",
+          "line": 23
+        },
+        {
+          "path": "src/app/dashboard/keys/page.js",
+          "line": 202
+        },
+        {
+          "path": "src/lib/db/repos/budgetRepo.js",
+          "line": 49
+        }
+      ]
+    },
+    {
+      "id": "budgets.policy",
+      "area": "Economics / Keys",
+      "capability": "Choose verified-bound or reserve-remaining budget policy",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/keys/page.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "UI offers strict and reserve-remaining. New form defaults strict; legacy/null policy resolves reserve-remaining. Strict requires verified bounds for capped dimensions and complete recorded accounting. Reserve-remaining holds remaining allowance on unknown bound, but usage may exceed it.",
+      "currentUiEntry": "/dashboard/keys > Budget protection",
+      "redesignedDestination": {
+        "journey": "Economics / Keys",
+        "slot": "Choose verified-bound or reserve-remaining budget policy",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Effective policy on key or applied access-profile copy",
+      "writeContract": "Key budgetPolicy validated strict/reserve-remaining/null",
+      "savedState": "apiKeys.budgetPolicy; reservation stores admission policy",
+      "permissionContract": "always-protected-key-configuration",
+      "failureBehavior": "402 refusal has no retry/replay hint; best-effort mode is not a hard provider bill guarantee.",
+      "fixture": {
+        "catalog": "Budget admission fixtures with local executor only",
+        "requirement": "Choose verified-bound or reserve-remaining budget policy"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/budget-reservations.test.js",
+          "tests/unit/budget-dispatch-pipeline.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/keys/page.js",
+          "line": 90
+        },
+        {
+          "path": "src/lib/db/repos/budgetRepo.js",
+          "line": 11
+        },
+        {
+          "path": "src/lib/db/repos/budgetRepo.js",
+          "line": 84
+        },
+        {
+          "path": "src/sse/services/budgetDispatch.js",
+          "line": 38
+        }
+      ]
+    },
+    {
+      "id": "budgets.exposure",
+      "area": "Economics / Keys",
+      "capability": "Inspect recorded amounts versus held reservations and uncertainty",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/dashboard/keys/KeyBudget.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Keys shows lifetime recorded amount, held allowance, ceilings, unknown counters, pre-dispatch/dispatched/uncertain counts and policy. Current-credential fallback history is labeled when a durable account has not initialized.",
+      "currentUiEntry": "/dashboard/keys > Key budget measurements",
+      "redesignedDestination": {
+        "journey": "Economics / Keys",
+        "slot": "Inspect recorded amounts versus held reservations and uncertainty",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/keys -> getApiKeyBudgetSummaries",
+      "writeContract": "None",
+      "savedState": "apiKeyBudgetAccounts and apiKeyBudgetReservations; not cleared by restart or key revocation.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Unknown or unresolved exposure remains held. Historical credential fallback cannot reconstruct prior rotation history.",
+      "fixture": {
+        "catalog": "Budget recovery fixture",
+        "requirement": "Inspect recorded amounts versus held reservations and uncertainty"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/key-budget-presentation.test.js",
+          "tests/unit/budget-crash-recovery.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/app/dashboard/keys/KeyBudget.js",
+          "line": 4
+        },
+        {
+          "path": "src/lib/db/repos/budgetRepo.js",
+          "line": 218
+        },
+        {
+          "path": "src/lib/db/budgetSchema.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "id": "budgets.reservation-detail",
+      "area": "Economics / Keys",
+      "capability": "Inspect exact budget reservation details and pages",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/api/admin/budgets/route.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Exact stable key ID including retained deleted/revoked IDs; cursor pages, original reservation quantities, recorded/held known amounts and unknown counters kept separate.",
+      "currentUiEntry": "/dashboard/usage?tool=budgets",
+      "redesignedDestination": {
+        "journey": "Economics / Keys",
+        "slot": "Inspect exact budget reservation details and pages",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "getBudgetStatus returns policy/account/outstanding/reservation records",
+      "writeContract": "None",
+      "savedState": "Durable reservation with bound evidence, pricing reference and resolution state",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Invalid/duplicate params refused; unknown key/account remains distinguishable. UI must avoid exposing raw credential material from other sources.",
+      "fixture": {
+        "catalog": "Budget admin API fixture",
+        "requirement": "Inspect exact budget reservation details and pages"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/economics-tools-ui.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/app/api/admin/budgets/route.js",
+          "line": 32
+        },
+        {
+          "path": "src/lib/db/repos/budgetRepo.js",
+          "line": 205
+        },
+        {
+          "path": "src/app/dashboard/keys/KeyBudget.js",
+          "line": 23
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/components/workspace/BudgetReservations.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/components/workspace/BudgetReservations.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/economics-tools-ui.test.js"
+      }
+    },
+    {
+      "id": "budgets.reconcile",
+      "area": "Economics / Keys",
+      "capability": "Resolve an uncertain reservation with provider usage evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/api/admin/budgets/route.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Provider evidence reference and only measured quantities, reviewed exact key/request write, draft retention on refusal and exact reservation readback. Successful persisted browser journey awaits a seeded accounting fixture.",
+      "currentUiEntry": "/dashboard/usage?tool=budgets > exact reservation",
+      "redesignedDestination": {
+        "journey": "Economics / Keys",
+        "slot": "Resolve an uncertain reservation with provider usage evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Read exact reservation/usage/pricing evidence before proposing reconciliation",
+      "writeContract": "POST evidence.kind=provider-usage with reference and tokens",
+      "savedState": "usageHistory reconciliation and durable budget settlement in owned transaction",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "Invalid evidence or inconsistent state refused; do not treat timeout as provider nonacceptance.",
+      "fixture": {
+        "catalog": "Budget provider-receipt fixture, no upstream",
+        "requirement": "Resolve an uncertain reservation with provider usage evidence"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/economics-tools-ui.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/app/api/admin/budgets/route.js",
+          "line": 47
+        },
+        {
+          "path": "src/lib/db/repos/usageRepo.js",
+          "line": 596
+        },
+        {
+          "path": "src/lib/db/repos/usageRepo.js",
+          "line": 642
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/components/workspace/BudgetReservations.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/components/workspace/BudgetReservations.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/economics-tools-ui.test.js"
+      }
+    },
+    {
+      "id": "budgets.release",
+      "area": "Economics / Keys",
+      "capability": "Release an unresolved reservation with no-dispatch or nonacceptance evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/app/api/admin/budgets/route.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "No-dispatch evidence only offered before dispatch; nonacceptance evidence for unresolved reservations. Explicit review, server refusal and exact state readback. Successful browser journey awaits a seeded accounting fixture.",
+      "currentUiEntry": "/dashboard/usage?tool=budgets > exact reservation",
+      "redesignedDestination": {
+        "journey": "Economics / Keys",
+        "slot": "Release an unresolved reservation with no-dispatch or nonacceptance evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Exact reservation state",
+      "writeContract": "Evidence-backed release via releaseBudgetReservation",
+      "savedState": "Reservation state released plus operator-attestation evidence; source records remain",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "Already released is idempotent. No elapsed-time or exception-only release.",
+      "fixture": {
+        "catalog": "Budget recovery fixture",
+        "requirement": "Release an unresolved reservation with no-dispatch or nonacceptance evidence"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/economics-tools-model.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/app/api/admin/budgets/route.js",
+          "line": 55
+        },
+        {
+          "path": "src/lib/db/repos/budgetRepo.js",
+          "line": 249
+        }
+      ],
+      "classificationBeforeRedesign": "supported/unexposed",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/shared/components/workspace/BudgetReservations.js"
+        ],
+        "evidence": [
+          {
+            "path": "src/shared/components/workspace/BudgetReservations.js",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/economics-tools-model.test.js"
+      }
+    },
+    {
+      "id": "shared.scope",
+      "area": "Shared investigations",
+      "capability": "Set the shared UTC time, provider, account and model scope",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/ScopeBar.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "All history, fixed 24h, fixed 7d and custom UTC ranges; provider/account/model are single select. Changing provider clears dependent account/model. Clear resets scope while retaining evidence selection.",
+      "currentUiEntry": "Shared scope bar across Capacity/Context/Economics",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Set the shared UTC time, provider, account and model scope",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Validated analytics and quota-specific projections of supported filters",
+      "writeContract": "None",
+      "savedState": "URL start/end/period/provider/model/connectionId; fixed boundaries in saved definitions",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Invalid range has inline error. Model does not attribute quota history. Unsupported fields are not silently applied across unlike records.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Set the shared UTC time, provider, account and model scope"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-investigation-state.test.js",
+          "tests/e2e/investigation-continuity-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/ScopeBar.js",
+          "line": 43
+        },
+        {
+          "path": "src/shared/workspace/ScopeBar.js",
+          "line": 84
+        },
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 31
+        }
+      ],
+      "implementation": {
+        "state": "deterministic checks pass; integrated browser pending",
+        "paths": [
+          "src/shared/workspace/WorkspaceProvider.js",
+          "src/lib/db/analytics/investigationModel.mjs"
+        ],
+        "detail": "Back/forward restores fixed scope and exact selection; v4 definitions retain advanced filters while v1-v3 remain valid. Restoring a filter set preserves selected evidence."
+      }
+    },
+    {
+      "id": "shared.selection",
+      "area": "Shared investigations",
+      "capability": "Retain exact selected evidence across lenses and reload",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/WorkspaceProvider.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Selection supports account with quota series, Context session/attempt, Economics record/cohort and routing switch. Banner states retained or excluded by current scope, opens record lens or clears selection. Exact records can be read independently of current filters.",
+      "currentUiEntry": "Shared retained-evidence banner and local inspectors",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Retain exact selected evidence across lenses and reload",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Exact selected identity queries",
+      "writeContract": "None",
+      "savedState": "Validated selected JSON and comparison IDs in URL; React shared state; saved definitions",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Malformed URL falls back to default scope; expired/deleted exact identity is retained with unavailable state, never substituted.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Retain exact selected evidence across lenses and reload"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-investigation-state.test.js",
+          "tests/e2e/investigation-continuity-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/WorkspaceProvider.js",
+          "line": 13
+        },
+        {
+          "path": "src/shared/workspace/WorkspaceProvider.js",
+          "line": 91
+        },
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 81
+        },
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 40
+        }
+      ],
+      "implementation": {
+        "state": "deterministic checks pass; integrated browser pending",
+        "paths": [
+          "src/shared/workspace/WorkspaceProvider.js",
+          "src/lib/db/analytics/investigationModel.mjs"
+        ],
+        "detail": "Back/forward restores fixed scope and exact selection; v4 definitions retain advanced filters while v1-v3 remain valid. Restoring a filter set preserves selected evidence."
+      }
+    },
+    {
+      "id": "shared.save-investigation",
+      "area": "Shared investigations",
+      "capability": "Save and restore a complete investigation",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/Investigations.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Stores named definition with lens, fixed shared scope, exact selection, comparison IDs, Context view/baseline and Economics schema-v3 fields. Maximum 200 entries per installation operator workspace. Restore navigates to stored lens.",
+      "currentUiEntry": "Scope bar > Saved investigations > Investigation",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Save and restore a complete investigation",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET /api/admin/investigations and /{id}",
+      "writeContract": "POST collection with kind=investigation,name,definition",
+      "savedState": "investigations table with installation-operator ownerScope and schema versions 1/2/3",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "Strict schema/size/identity validation; invalid ranges or full workspace refused. Saving does not snapshot evidence content.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Save and restore a complete investigation"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/investigation-continuity-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 26
+        },
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 79
+        },
+        {
+          "path": "src/lib/db/repos/investigationsRepo.js",
+          "line": 14
+        }
+      ],
+      "implementation": {
+        "state": "deterministic checks pass; integrated browser pending",
+        "paths": [
+          "src/shared/workspace/WorkspaceProvider.js",
+          "src/lib/db/analytics/investigationModel.mjs"
+        ],
+        "detail": "Back/forward restores fixed scope and exact selection; v4 definitions retain advanced filters while v1-v3 remain valid. Restoring a filter set preserves selected evidence."
+      }
+    },
+    {
+      "id": "shared.filter-set",
+      "area": "Shared investigations",
+      "capability": "Save and restore a named shared filter set",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/investigationModel.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Filter-set save strips selection/comparison/context baseline and cohort; restore changes shared scope while retaining current selection and other lens-specific state.",
+      "currentUiEntry": "Saved investigations > Shared filter set",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Save and restore a named shared filter set",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Saved definition",
+      "writeContract": "POST/PUT investigation kind=filter-set",
+      "savedState": "investigations table",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "Do not imply it restores all detailed Economics or table filters; source restore applies shared scope only.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Save and restore a named shared filter set"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/unit/workspace-investigation-state.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 119
+        },
+        {
+          "path": "src/shared/workspace/WorkspaceProvider.js",
+          "line": 131
+        },
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 35
+        }
+      ],
+      "implementation": {
+        "state": "deterministic checks pass; integrated browser pending",
+        "paths": [
+          "src/shared/workspace/WorkspaceProvider.js",
+          "src/lib/db/analytics/investigationModel.mjs"
+        ],
+        "detail": "Back/forward restores fixed scope and exact selection; v4 definitions retain advanced filters while v1-v3 remain valid. Restoring a filter set preserves selected evidence."
+      }
+    },
+    {
+      "id": "shared.bookmark",
+      "area": "Shared investigations",
+      "capability": "Bookmark exact evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/investigationModel.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Bookmark requires selected identity and derives the corresponding record lens. Quota bookmark can retain account plus historical window fingerprint.",
+      "currentUiEntry": "Saved investigations > Evidence bookmark",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Bookmark exact evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Exact selection and retained definition",
+      "writeContract": "POST/PUT kind=bookmark",
+      "savedState": "investigations table stores references only",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "No evidence copy; expired record or missing series remains unavailable after restore.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Bookmark exact evidence"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 113
+        },
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 68
+        },
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 496
+        }
+      ]
+    },
+    {
+      "id": "shared.update-conflict",
+      "area": "Shared investigations",
+      "capability": "Update saved investigations with conflict recovery",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/repos/investigationsRepo.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "PUT requires expected version. On conflict UI keeps current scope and offers Reload saved version or save a separate new entry. Reload refreshes version/name/kind without replacing current in-progress selection.",
+      "currentUiEntry": "Saved investigations > Update version / Reload saved version",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Update saved investigations with conflict recovery",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "GET latest exact saved entry",
+      "writeContract": "PUT /api/admin/investigations/{id} with version",
+      "savedState": "Version increments within transaction",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "409 conflict leaves stored data unchanged; API failure preserves entered context.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Update saved investigations with conflict recovery"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/repos/investigationsRepo.js",
+          "line": 23
+        },
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "id": "shared.delete",
+      "area": "Shared investigations",
+      "capability": "Delete a saved definition without deleting evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/Investigations.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Explicit deletion confirmation and expected version; only saved definition removed.",
+      "currentUiEntry": "Saved investigations > Delete > Delete saved entry",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Delete a saved definition without deleting evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Current entry/version",
+      "writeContract": "DELETE /api/admin/investigations/{id} {version}",
+      "savedState": "Deletes one investigations record only",
+      "permissionContract": "operator-loopback-mutation",
+      "failureBehavior": "Stale version returns conflict; record data untouched.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Delete a saved definition without deleting evidence"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 39
+        },
+        {
+          "path": "src/lib/db/repos/investigationsRepo.js",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "id": "shared.export-record",
+      "area": "Shared investigations",
+      "capability": "Export exact selected evidence with its completeness manifest",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/Investigations.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Exact record export ignores unrelated shared filters. Account export includes current persisted windows and exact selected historical quota series when a windowId is retained. Context exact attempt comparison additionally needs selected and baseline identities.",
+      "currentUiEntry": "Retained-evidence banner > Export evidence > Exact selected record",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Export exact selected evidence with its completeness manifest",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "POST /api/admin/investigations/export mode=selected or attempt-comparison; one committed readonly worker snapshot",
+      "writeContract": "Produces download only; POST still follows operator+loopback admin gate",
+      "savedState": "Downloaded JSON contains source/time/units/coverage/caveats; no server export record is created.",
+      "permissionContract": "operator-loopback-export",
+      "failureBehavior": "Refuses beyond 5000 records or 8 MiB without partial file. Missing exact identity is explicit; content, credentials, raw client identity and private affinity hashes excluded.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Export exact selected evidence with its completeness manifest"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/capacity-economics-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 92
+        },
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 31
+        },
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 65
+        },
+        {
+          "path": "src/app/api/admin/investigations/export/route.js",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "id": "shared.export-population",
+      "area": "Shared investigations",
+      "capability": "Export the complete filtered Economics or Context population",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/evidenceQueries.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Exports complete matching population, beyond UI page one, with fixed UTC scope and recorded lens filters. Capacity population mode is refused; select account/comparison instead.",
+      "currentUiEntry": "Export evidence > Complete filtered population",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Export the complete filtered Economics or Context population",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Read activity/context evidence with validated definition filters",
+      "writeContract": "Download JSON only",
+      "savedState": "Local downloaded artifact",
+      "permissionContract": "operator-loopback-export",
+      "failureBehavior": "All-or-nothing size limits and one committed snapshot. API response includes coverage, omissions and complete/missing markers.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Export the complete filtered Economics or Context population"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/investigation-continuity-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 9
+        },
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 38
+        },
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 92
+        }
+      ]
+    },
+    {
+      "id": "shared.export-cohort",
+      "area": "Shared investigations",
+      "capability": "Export the selected Economics cohort with active lens filters",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/Investigations.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Selected cohort applies the same fixed scope, outcome, cost source, attempt kind and v4 identities as its display. Conflicts are refused; exact record identity remains independent.",
+      "currentUiEntry": "/dashboard/usage > Export evidence > Selected cohort",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Export the selected Economics cohort with active lens filters",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "readEvidence selected economics-group plus fixed shared dimensions",
+      "writeContract": "Download only",
+      "savedState": "JSON export",
+      "permissionContract": "operator-loopback-export",
+      "failureBehavior": "Known source mismatch can widen selected-cohort export versus active source/attempt filters. Repair integration and verify exact IDs before parity acceptance.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Export the selected Economics cohort with active lens filters"
+      },
+      "verification": {
+        "state": "targeted deterministic checks pass; browser/provider execution not inferred",
+        "recipes": [
+          "tests/unit/investigations.test.js"
+        ],
+        "browser": "pending lead-owned production preview"
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 105
+        },
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 35
+        },
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 48
+        }
+      ],
+      "classificationBeforeRedesign": "partial",
+      "implementation": {
+        "state": "implemented; integrated rendered acceptance pending",
+        "paths": [
+          "src/lib/db/analytics/evidenceQueries.mjs"
+        ],
+        "evidence": [
+          {
+            "path": "src/lib/db/analytics/evidenceQueries.mjs",
+            "line": 1
+          }
+        ],
+        "deterministicRecipe": "tests/unit/investigations.test.js"
+      }
+    },
+    {
+      "id": "shared.export-comparison",
+      "area": "Shared investigations",
+      "capability": "Export selected comparison accounts",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/lib/db/analytics/evidenceQueries.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Exports exact comparison account IDs, current persisted configuration/windows and missing account list; current quota units remain unknown. This differs from a time-filtered completion population.",
+      "currentUiEntry": "Export evidence > Selected comparison accounts",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Export selected comparison accounts",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "readEvidence account selection/comparison",
+      "writeContract": "Download only",
+      "savedState": "JSON artifact; comparison definition saved separately",
+      "permissionContract": "operator-loopback-export",
+      "failureBehavior": "Deleted account IDs remain missingAccounts. History is not reconstructed; unsupported scope fields are disclosed.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Export selected comparison accounts"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js",
+          "tests/e2e/investigation-continuity-persistence.spec.mjs"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/evidenceQueries.mjs",
+          "line": 57
+        },
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 105
+        }
+      ]
+    },
+    {
+      "id": "shared.personal-permissions",
+      "area": "Shared investigations",
+      "capability": "Create private per-person investigations or sharing roles",
+      "classification": "unavailable",
+      "sourceOwner": "src/lib/db/analytics/investigationModel.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Backend provides one installation-operator scope, not per-user ownership or sharing ACLs. Operators share saved entries.",
+      "currentUiEntry": "Saved investigations explanatory text",
+      "redesignedDestination": {
+        "journey": "Shared investigations",
+        "slot": "Create private per-person investigations or sharing roles",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Installation-scoped list/get",
+      "writeContract": "No private ACL mutation exists",
+      "savedState": "ownerScope installation-operator",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not invent owner/editor/viewer roles or claim personal isolation.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Create private per-person investigations or sharing roles"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/investigations.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/investigationModel.mjs",
+          "line": 5
+        },
+        {
+          "path": "src/lib/db/repos/investigationsRepo.js",
+          "line": 9
+        },
+        {
+          "path": "src/shared/workspace/Investigations.js",
+          "line": 62
+        }
+      ]
+    },
+    {
+      "id": "observations.summary",
+      "area": "Observation modes",
+      "capability": "Read a summary once on navigation or explicit refresh",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/ObservationPolicy.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Summary is shell default. Visible resources read once, no automatic timer/stream. Selecting another record or explicit refresh still reads evidence.",
+      "currentUiEntry": "Shared Updates control > Summary",
+      "redesignedDestination": {
+        "journey": "Observation modes",
+        "slot": "Read a summary once on navigation or explicit refresh",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "useResource/usePoll one read per new resource/revision",
+      "writeContract": "None",
+      "savedState": "Mode is component state, not URL/localStorage/saved investigation.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Failure preserves last same-source data and error. Summary does not pause gateway work.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Read a summary once on navigation or explicit refresh"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-observation-policy.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/ObservationPolicy.js",
+          "line": 5
+        },
+        {
+          "path": "src/shared/workspace/useResource.js",
+          "line": 21
+        },
+        {
+          "path": "src/shared/workspace/ObservationControls.js",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "id": "observations.live",
+      "area": "Observation modes",
+      "capability": "Follow live retained evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/ObservationControls.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Live permits bounded visible-source polling, default 15 seconds (models 60 seconds), and supported streams. Entering live clears fixed UTC range while preserving provider/account/model/selection.",
+      "currentUiEntry": "Updates > Follow live",
+      "redesignedDestination": {
+        "journey": "Observation modes",
+        "slot": "Follow live retained evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "useResource/usePoll timers and existing useEventStream endpoints",
+      "writeContract": "None",
+      "savedState": "Transient mode; newly retained records are read, not fabricated.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Live unavailable in synthetic/historical snapshot; each source retains its own observation age. No provider authentication/inference from ordinary refresh.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Follow live retained evidence"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-observation-policy.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/ObservationControls.js",
+          "line": 11
+        },
+        {
+          "path": "src/shared/workspace/useResource.js",
+          "line": 10
+        },
+        {
+          "path": "src/shared/hooks/useEventStream.js",
+          "line": 14
+        },
+        {
+          "path": "src/shared/workspace/WorkspaceProvider.js",
+          "line": 82
+        }
+      ]
+    },
+    {
+      "id": "observations.pause",
+      "area": "Observation modes",
+      "capability": "Pause background reads and resume safely",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/useResource.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Pausing aborts in-flight background reads, clears timers and closes EventSource. Explicit navigation/selection/refresh remains usable. Resuming rereads current retained state; unretained events during pause cannot be reconstructed.",
+      "currentUiEntry": "Updates > Pause background updates",
+      "redesignedDestination": {
+        "journey": "Observation modes",
+        "slot": "Pause background reads and resume safely",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "No automatic reads while paused",
+      "writeContract": "None",
+      "savedState": "pausedAt timestamp and mode transient",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Cancelled request does not leave a permanent loading state. A paused view never stops gateway requests or backend schedulers.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Pause background reads and resume safely"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-observation-policy.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/useResource.js",
+          "line": 25
+        },
+        {
+          "path": "src/shared/hooks/useEventStream.js",
+          "line": 40
+        },
+        {
+          "path": "src/shared/workspace/ObservationControls.js",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "id": "observations.snapshot",
+      "area": "Observation modes",
+      "capability": "Inspect fixed historical or synthetic snapshot evidence",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/useResource.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Snapshot headers establish capturedAt/kind/isolation. Fixed range blocks background follow even if mode was live. Synthetic snapshot disables live UI, retaining explicit refresh for permitted local fixture mutations.",
+      "currentUiEntry": "Header snapshot marker and Updates dialog",
+      "redesignedDestination": {
+        "journey": "Observation modes",
+        "slot": "Inspect fixed historical or synthetic snapshot evidence",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Passive fixture-guarded read endpoints",
+      "writeContract": "None from observation policy",
+      "savedState": "Captured data belongs to isolated fixture; selection/scope can still save in disposable persistence mode.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not label snapshot transport as current live telemetry.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Inspect fixed historical or synthetic snapshot evidence"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-observation-policy.test.js",
+          "tests/unit/capacity-fixture-guard.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/useResource.js",
+          "line": 43
+        },
+        {
+          "path": "src/shared/workspace/ObservationPolicy.js",
+          "line": 13
+        },
+        {
+          "path": "src/shared/workspace/ObservationControls.js",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "id": "observations.refresh",
+      "area": "Observation modes",
+      "capability": "Refresh visible sources without triggering provider work",
+      "classification": "supported/exposed",
+      "sourceOwner": "src/shared/workspace/WorkspaceProvider.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Shared refresh increments revision; local Retry/Refresh history only reruns retained reads. Different sources expose their own received/captured/persisted times.",
+      "currentUiEntry": "Shared Refresh workspace data; local Retry / Refresh history",
+      "redesignedDestination": {
+        "journey": "Observation modes",
+        "slot": "Refresh visible sources without triggering provider work",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Health/quota/analytics readonly endpoint refresh",
+      "writeContract": "None",
+      "savedState": "Last successful same-URL response remains visible through refresh failure.",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Errors remain visible until successful replacement; active provider acquisition is a distinct capability.",
+      "fixture": {
+        "catalog": "capacity-economics-v1",
+        "requirement": "Refresh visible sources without triggering provider work"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/workspace-observation-policy.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/shared/workspace/WorkspaceProvider.js",
+          "line": 103
+        },
+        {
+          "path": "src/shared/workspace/useResource.js",
+          "line": 55
+        },
+        {
+          "path": "src/shared/workspace/QuotaHistoryWorkbench.js",
+          "line": 449
+        }
+      ]
+    },
+    {
+      "id": "internal.readonly-worker",
+      "area": "Observation modes",
+      "capability": "Analytics execution worker and package closure",
+      "classification": "internal-only",
+      "sourceOwner": "src/lib/db/analytics/worker.mjs",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Shared worker performs bounded read-only database snapshot queries, cancellation and busy handling. This is an execution mechanism, not a separate operator-facing job or control. Standalone output must include completionIdentity.mjs.",
+      "currentUiEntry": "Excluded from user navigation",
+      "redesignedDestination": {
+        "journey": "Observation modes",
+        "slot": "Analytics execution worker and package closure",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Analytics client -> packaged worker -> readonly adapter",
+      "writeContract": "None",
+      "savedState": "Worker lifecycle is runtime internal",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Worker import failure makes Capacity/Context/Economics unavailable; packaging test is required after affected build changes.",
+      "fixture": {
+        "catalog": "Relocated actual worker with disposable readonly synthetic SQLite",
+        "requirement": "Analytics execution worker and package closure"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": [
+          "tests/unit/analytics-worker-runtime.test.cjs",
+          "tests/unit/context-analytics-worker.test.js"
+        ]
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/analytics/worker.mjs",
+          "line": 1
+        },
+        {
+          "path": "src/lib/db/analytics/readOnly.mjs",
+          "line": 1
+        },
+        {
+          "path": "next.config.mjs",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "id": "internal.quota-visibility",
+      "area": "Capacity",
+      "capability": "Legacy quotaVisibility setting declaration",
+      "classification": "internal-only",
+      "sourceOwner": "src/lib/db/repos/settingsRepo.js",
+      "supportedScopeAndPrerequisite": "Authenticated installation operator; retained evidence for the selected scope.",
+      "currentBehavior": "Default quotaVisibility exists in settings but source search found no execution or dashboard consumer. It is not an implemented user-facing visibility capability.",
+      "currentUiEntry": "Excluded until an actual consumer/contract exists",
+      "redesignedDestination": {
+        "journey": "Capacity",
+        "slot": "Legacy quotaVisibility setting declaration",
+        "mappingStatus": "Functional destination proposal; final composition is lead-owned."
+      },
+      "readContract": "Settings declaration only",
+      "writeContract": "Generic setting persistence does not confer behavior",
+      "savedState": "settings.data can retain the unused value",
+      "permissionContract": "operator-read",
+      "failureBehavior": "Do not add a working-looking visibility switch for a dormant field.",
+      "fixture": {
+        "catalog": "None; no implemented behavior",
+        "requirement": "Legacy quotaVisibility setting declaration"
+      },
+      "verification": {
+        "state": "source-inspected; no tests or runtime calls executed in this inventory",
+        "recipes": []
+      },
+      "evidence": [
+        {
+          "path": "src/lib/db/repos/settingsRepo.js",
+          "line": 34
+        }
+      ]
+    }
+  ],
+  "implementationOwnershipProposal": [
+    {
+      "chunk": "Capacity evidence and interactions",
+      "proposedOwnedPaths": [
+        "src/app/dashboard/page.js",
+        "src/app/dashboard/CapacityControls.js",
+        "src/app/dashboard/capacityControlsModel.js",
+        "src/app/dashboard/AccountPolicyEvidence.js",
+        "src/shared/workspace/QuotaEvidence.js",
+        "src/shared/workspace/QuotaHistoryWorkbench.js",
+        "src/shared/workspace/quotaWorkbenchModel.js",
+        "src/app/dashboard/capacity.module.css",
+        "src/shared/workspace/quotaEvidence.module.css",
+        "src/shared/workspace/quotaHistoryWorkbench.module.css"
+      ],
+      "acceptance": "Complete inventory activity coverage, accurate blocker/observation hierarchy, linked exact evidence and physical point/zoom/clear acceptance. Preserve pending slider oracle until tested.",
+      "coordination": "Root owns global CSS/theme/Shell/nav/SelectionDock. Connections agent owns pause-threshold wording and connection management. Missing active quota read and warming controls need explicit effect labels and no-egress fixture; coordinate settings validation ownership before edits."
+    },
+    {
+      "chunk": "Economics and missing pricing/budget journeys",
+      "proposedOwnedPaths": [
+        "src/app/dashboard/usage/page.js",
+        "src/shared/components/workspace/EconomicsLens.js",
+        "src/shared/components/workspace/EconomicsEvidence.js",
+        "src/shared/components/workspace/EconomicsTimeChart.js",
+        "src/shared/components/workspace/economics.js",
+        "src/shared/components/workspace/EconomicsLens.module.css",
+        "src/shared/components/workspace/EconomicsEvidence.module.css"
+      ],
+      "newComponents": "Place compact captured-rate management and exact budget-reservation inspector beside relevant Economics evidence. Names and composition remain lead-owned.",
+      "acceptance": "Expose implemented pricing edit/reset and budget reservation detail/reconcile/release with exact identity, current permission constraints, reconciliation arithmetic and immutable historical-rate proof. No provider calls.",
+      "coordination": "Keys agent owns key/profile settings and contextual links. Route handlers /api/pricing and /api/admin/budgets are existing contracts; any edits require path coordination. Do not change global theme."
+    },
+    {
+      "chunk": "Shared saved state and export integration",
+      "proposedOwnedPaths": [
+        "src/shared/workspace/Investigations.js",
+        "src/shared/workspace/investigations.module.css",
+        "src/shared/workspace/WorkspaceProvider.js",
+        "src/lib/db/analytics/investigationModel.mjs",
+        "src/lib/db/analytics/evidenceQueries.mjs"
+      ],
+      "acceptance": "Correct selected-cohort export lens-filter mismatch; expose advanced supported attribution filters with strict saved-definition projection and migration compatibility. Distinguish URL-persisted scope from transient chart/scenario state.",
+      "coordination": "Root owns navigation, ScopeBar composition if assigned elsewhere, and SelectionDock. Coordinate WorkspaceProvider consumers and schema changes with Context owner before mutation."
+    }
+  ],
+  "implementationPass": {
+    "updatedAt": "2026-09-07T16:57:45.978806+00:00",
+    "state": "source frozen for first lead-owned production visual build",
+    "checks": [
+      {
+        "files": 7,
+        "tests": 73,
+        "result": "PASS",
+        "scope": "initial analysis contracts and UI"
+      },
+      {
+        "files": 3,
+        "tests": 68,
+        "result": "PASS",
+        "scope": "new Economics control UI and existing settings compatibility"
+      },
+      {
+        "files": 8,
+        "tests": 76,
+        "result": "PASS",
+        "scope": "latest changed analysis UI, filters, saved state and quota display"
+      }
+    ],
+    "lint": "explicit owned JavaScript paths pass without warnings",
+    "browser": "not run by this lane; physical chart oracle and integrated layout remain pending",
+    "dataSafety": "Only repository synthetic test databases; no runtime DB writes or provider calls. Auto-ping scheduler replaced by a no-effect stub for its settings route test."
+  }
+}

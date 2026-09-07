@@ -198,8 +198,9 @@ function emptyWindow() {
     estTokensSaved: 0,
     imagesGenerated: 0,
     avgMs: 0,
-    // per-stage (per-saver) savings: signed bytesSaved summed per saver;
-    // a row without bytesSaved still counts in requests/applied but adds 0
+    // Per-stage signed-byte savings and their measurement coverage. A row
+    // without bytesSaved still counts as a stage request, but must not read as
+    // a measured zero. `requests` remains the explicit coverage denominator.
     // Sparse per-stage map: created on first sight by addTo. Pre-populating
     // every saver left permanent all-zero rows and made the dashboard's
     // "No saver activity yet today." state unreachable.
@@ -214,10 +215,13 @@ function addTo(window, row) {
   // First sight of a known saver creates its stage object; unknown savers
   // (rows written by a newer build) are skipped, not hallucinated.
   if (SAVERS.has(row.saver)) {
-    const stage = (window.stages[row.saver] ||= { requests: 0, applied: 0, bytesSaved: 0 });
+    const stage = (window.stages[row.saver] ||= { requests: 0, applied: 0, measuredRequests: 0, bytesSaved: 0 });
     stage.requests++;
     if (row.applied) stage.applied++;
-    if (Number.isFinite(row.bytesSaved)) stage.bytesSaved += row.bytesSaved;
+    if (Number.isFinite(row.bytesSaved)) {
+      stage.measuredRequests++;
+      stage.bytesSaved += row.bytesSaved;
+    }
   }
   if (row.saver === "rtk") window.charsReduced += row.charsSaved || 0;
   if (row.saver === "headroom") {

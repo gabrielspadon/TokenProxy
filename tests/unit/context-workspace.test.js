@@ -34,7 +34,7 @@ async function clickText(text) { const element = button(text); expect(element).t
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-  Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) });
+  Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(query => ({ matches: query.includes('min-width: 90em'), addEventListener() {}, removeEventListener() {} })) });
   fixture = contextFixture(); state.chart = null;
   router = { pathname: '/dashboard/context', asPath: '/dashboard/context', push: vi.fn(), replace: vi.fn(), prefetch: vi.fn().mockResolvedValue(undefined) };
   state.workspace = { scope: { ...initialScope }, setScope: vi.fn(), accounts: [{ connectionId: 'synthetic-account', displayName: 'Synthetic account' }], snapshot: null, observeSnapshot: vi.fn() };
@@ -68,9 +68,26 @@ describe('Context projection contracts', () => {
     const option = trendOption(fixture.detail.trend, {}, initialScope);
     expect(option.xAxis[2].axisLabel.formatter(Date.parse('2026-09-07T10:02:00Z'))).toBe('09-07 10:02');
   });
+  it('uses the retained bucket extent for a single-bucket session without inventing a multi-day domain', () => {
+    const point = fixture.detail.trend.points[0];
+    const option = trendOption({ points: [point], bucketMs: 60000 }, {}, initialScope);
+    expect(option.xAxis.every(axis => axis.min === Date.parse(point.bucketStart) && axis.max === Date.parse(point.bucketStart) + 60000)).toBe(true);
+  });
 });
 
 describe('Context workspace', () => {
+  it('keeps the selected attempt trigger mounted and restores its focus after inspection', async () => {
+    await render();
+    const trigger = container.querySelector('[aria-label="Inspect attempt 101"]');
+    trigger.focus();
+    await act(async () => trigger.click()); await flush();
+    expect(trigger.isConnected).toBe(true);
+    expect(container.querySelector('[aria-label="Inspect attempt 101"]')).toBe(trigger);
+    expect(trigger.getAttribute('aria-pressed')).toBe('true');
+    await click('[aria-label="Close selection details"]');
+    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute('aria-pressed')).toBe('false');
+  });
   it('leaves the identity unselected until an operator chooses a session', async () => {
     state.workspace.initialSessionId=null;
     await render();
@@ -171,7 +188,7 @@ describe('Context workspace', () => {
     await render();
     expect(fetchMock.mock.calls.at(-1)[0]).toContain('/sessions/8?page=1');
     expect(container.textContent).toContain('Selected session #8 has no attempts in this scope');
-    expect(container.textContent).toContain('Selected request #101 is outside this page or scope');
+    expect(container.textContent).toContain('Exact attempt #101 is not retained. No neighboring attempt is substituted');
     expect(container.querySelector('table[aria-label="Session request attempts"]')).toBeNull();
     fixture.detail = { ...contextFixture().detail, session: chosen };
     state.workspace = { ...state.workspace, scope: { ...initialScope } };
@@ -194,6 +211,43 @@ describe('Context workspace', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/sessions/7?page=2'))).toBe(true);
     expect(container.querySelector('[aria-label="Selection details"]')?.textContent).toContain('Request #101');
   });
+  it('labels retained exact-attempt evidence after a failed refresh and retries only that identity', async () => {
+    const detail = { ...fixture.detail, turns: fixture.detail.turns.map(turn => ({ ...turn, contextSessionId: fixture.detail.session.id })) };
+    let exactFailed = false;
+    fetchMock.mockImplementation(async url => {
+      const parsed = new URL(url, 'http://test.local');
+      if (!parsed.pathname.includes('/sessions/')) return response(fixture.overview);
+      if (parsed.searchParams.get('requestId') === '101') return exactFailed
+        ? response({ error: 'Exact attempt reader is busy' }, 503)
+        : response({ ...detail, turns: detail.turns.filter(turn => String(turn.id) === '101') });
+      const secondPage = parsed.searchParams.get('page') === '2';
+      return response({ ...detail, turns: secondPage ? detail.turns.slice(2) : detail.turns,
+        pagination: { page: secondPage ? 2 : 1, pageSize: 25, totalItems: 26, totalPages: 2, hasPrev: secondPage, hasNext: !secondPage } });
+    });
+    await render(); await click('[aria-label="Inspect attempt 101"]');
+    await click('[aria-label="Next attempts page"]'); await flush();
+    expect(container.querySelector('[aria-label="Selection details"]')?.textContent).toContain('Request #101');
+    expect(container.textContent).toContain('inspected by its exact identity outside this page or scope');
+    exactFailed = true;
+    await clickText('Refresh context');
+    const dock = container.querySelector('[aria-label="Selection details"]');
+    expect(dock.textContent).toContain('Showing the last successful read');
+    expect(dock.textContent).toContain('Exact attempt reader is busy');
+    expect(dock.textContent).toContain('Request #101');
+    expect(dock.querySelectorAll('table[aria-label="Ordered shaping stages"] tbody tr')).toHaveLength(14);
+    expect(container.querySelector('[aria-label="Session request attempts"]').textContent).toContain('#103');
+    expect(container.textContent).not.toContain('Exact attempt #101 is not retained');
+    expect(container.textContent).not.toContain('inspected by its exact identity outside this page or scope');
+    exactFailed = false;
+    const beforeRetry = fetchMock.mock.calls.length;
+    const retry = [...dock.querySelectorAll('button')].find(item => item.textContent === 'Try again');
+    expect(retry).toBeTruthy();
+    await act(async () => retry.click()); await flush();
+    expect(fetchMock.mock.calls.slice(beforeRetry).map(([url]) => new URL(url, 'http://test.local').searchParams.get('requestId'))).toEqual(['101']);
+    expect(dock.textContent).not.toContain('Exact attempt reader is busy');
+    expect(dock.textContent).not.toContain('Showing the last successful read');
+    expect(dock.textContent).toContain('Request #101');
+  });
   it('saves an operator label with a PATCH and exposes an authorization refusal', async () => {
     await render(); await clickText('Edit project label');
     fetchMock.mockImplementation(async (url, options) => options?.method === 'PATCH' ? response({ error: 'Operator authorization required' }, 403) : response(String(url).includes('/sessions/') ? {...fixture.detail,turns:fixture.detail.turns.map(row=>({...row,contextSessionId:fixture.detail.session.id}))} : fixture.overview));
@@ -208,8 +262,18 @@ describe('Context workspace', () => {
     await clickText('Save label');
     const requests = fetchMock.mock.calls.slice(before);
     expect(requests.filter(([, options]) => options?.method === 'PATCH')).toHaveLength(1);
-    expect(requests.filter(([, options]) => options?.method !== 'PATCH')).toHaveLength(2);
+    expect(requests.filter(([, options]) => options?.method !== 'PATCH')).toHaveLength(3);
+    expect(requests[1]).toEqual(['/api/context/sessions/7', { cache: 'no-store' }]);
     expect(button('Edit project label')).toBeTruthy();
+  });
+  it('retains the project-label draft when an acknowledged write cannot be verified', async () => {
+    await render(); await clickText('Edit project label');
+    fetchMock.mockImplementation(async (url, options) => options?.method === 'PATCH' ? response({ updated: true }) : response({ ...fixture.detail, session: { ...fixture.detail.session, projectLabel: 'Concurrent edit' } }));
+    await clickText('Save label');
+    expect(container.textContent).toContain('stored value could not be verified');
+    expect(button('Save label')).toBeTruthy();
+    expect(container.querySelector('input[maxlength="80"]').value).toBe('Synthetic research');
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'PATCH')).toHaveLength(1);
   });
   it('shows recorded controls and routing receipt scope without claiming active pins', async () => {
     await render(); await click('[aria-label="Inspect attempt 101"]');
@@ -249,10 +313,10 @@ describe('Context workspace', () => {
   it('shows requested and served model evidence together', async () => {
     fixture.detail.turns[0].requestedModel = 'requested-alias';
     await render();
-    expect(container.querySelector('table[aria-label="Session request attempts"]').textContent).toContain('Served provider / model');
+    expect(container.querySelector('table[aria-label="Session request attempts"]').textContent).toContain('Selected provider / model');
     expect(container.querySelector('table[aria-label="Session request attempts"] tbody tr').textContent).toContain('Requested · requested-alias');
     await click('[aria-label="Inspect attempt 101"]');
-    expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('Served provider / model');
+    expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('Selected provider / model');
     expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('requested-alias');
   });
   it('keeps pagination available for an empty page of a nonempty cohort', async () => {

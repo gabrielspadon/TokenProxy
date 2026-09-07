@@ -56,15 +56,24 @@ export function scopeModel(scope, models = []) {
   return match?.fullModel || (scope.provider ? `${scope.provider}/${scope.model}` : scope.model);
 }
 export async function policyRequest(path, method = 'GET', body) {
-  const response = await fetch(path, {
-    method,
-    headers: { 'content-type': 'application/json' },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const value = await response.json();
+  let response, value;
+  try {
+    response = await fetch(path, {
+      method,
+      cache: 'no-store',
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    value = await response.json();
+  } catch {
+    const error = new Error(method === 'GET' ? 'The current state could not be read.' : 'The response was interrupted. The operation may have been recorded. Read current state and receipts before another mutation.');
+    error.code = method === 'GET' ? 'read_unavailable' : 'mutation_uncertain';
+    throw error;
+  }
   if (!response.ok) {
     const error = new Error(value.error || 'The policy operation could not complete.');
     error.code = value.code;
+    error.status = response.status;
     error.details = value;
     throw error;
   }

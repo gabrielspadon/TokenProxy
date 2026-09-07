@@ -34,6 +34,14 @@ async function persistRefreshedCredentials(connection, newCredentials) {
 }
 
 export async function POST(request) {
+  let connectionId = null;
+  let credentialRefreshed = false;
+  const diagnosticHeaders = () => ({
+    'x-tokenproxy-diagnostic-scope': 'direct-executor',
+    ...(connectionId ? { 'x-tokenproxy-connection-id': connectionId } : {}),
+    'x-tokenproxy-credential-refreshed': String(credentialRefreshed),
+    'Cache-Control': 'no-store',
+  });
   try {
     const { provider, model, body } = await request.json();
 
@@ -46,6 +54,7 @@ export async function POST(request) {
     if (!connection) {
       return Response.json({ success: false, error: `No active connection for provider: ${provider}` }, { status: 400 });
     }
+    connectionId = connection.id;
 
     const credentials = {
       apiKey: connection.apiKey,
@@ -84,6 +93,7 @@ export async function POST(request) {
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         Object.assign(credentials, newCredentials);
         await persistRefreshedCredentials(connection, newCredentials);
+        credentialRefreshed = true;
         ({ response } = await executor.execute({ ...executeOptions, credentials }));
       }
     }
@@ -91,13 +101,14 @@ export async function POST(request) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[Translator] Provider error ${response.status}:`, errorText.slice(0, 500));
-      return Response.json({ success: false, error: `Provider error: ${response.status}`, details: errorText }, { status: response.status });
+      return Response.json({ success: false, error: `Provider error: ${response.status}`, details: errorText }, { status: response.status, headers: diagnosticHeaders() });
     }
 
     return new Response(response.body, {
+      status: response.status,
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        ...diagnosticHeaders(),
+        "Content-Type": response.headers.get('content-type') || (stream ? 'text/event-stream' : 'application/json'),
         "Connection": "keep-alive"
       }
     });
@@ -108,6 +119,6 @@ export async function POST(request) {
       : isConnectTimeoutError(error)
         ? 502
         : 500;
-    return Response.json({ success: false, error: error.message }, { status });
+    return Response.json({ success: false, error: error.message }, { status, headers: diagnosticHeaders() });
   }
 }

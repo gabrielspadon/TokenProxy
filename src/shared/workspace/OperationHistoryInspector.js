@@ -13,6 +13,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useResource } from './useResource';
+import { SelectionDock } from './SelectionDock';
 import {
   NOT_RECORDED,
   OPERATION_CODES,
@@ -29,7 +30,7 @@ import styles from './operationHistoryInspector.module.css';
 function Freshness({ value }) {
   if (!value) return null;
   return (
-    <Text size="xs" c="dimmed">
+    <Text size="sm" c="dimmed">
       {value.source === 'last-persisted-snapshot'
         ? `Persisted file ${operationTimestamp(value.persistedAt)}`
         : `Committed snapshot ${operationTimestamp(value.snapshotCompletedAt)}`}{' '}
@@ -65,7 +66,14 @@ function Selected({ row }) {
       </p>
       <code className={styles.operationId}>{row.operationId}</code>
       <p>{presentation.meaning}</p>
-      <h5>Effect on activation</h5>
+      {row.terminalReceipt && (
+        <p>
+          Terminal receipt {row.terminalReceipt.id} recorded{' '}
+          <strong>{row.terminalReceipt.state}</strong> at{' '}
+          {operationTimestamp(row.terminalReceipt.capturedAt)} UTC.
+        </p>
+      )}
+      <h5>Recorded effect</h5>
       <p>{presentation.activation}</p>
       {row.code ? (
         <>
@@ -78,6 +86,12 @@ function Selected({ row }) {
       ) : null}
       <h5>Retained detail</h5>
       <dl className={styles.facts}>
+        <dt>Subject</dt><dd>{operationText(row.subjectKind)} · {operationText(row.subjectId)}</dd>
+        <dt>Provider</dt><dd>{operationText(row.provider)}</dd>
+        <dt>Connection</dt><dd>{operationText(row.connectionId)}</dd>
+        <dt>Request</dt><dd>{operationText(row.requestId)}</dd>
+        <dt>Reason</dt><dd>{operationText(details?.reason)}</dd>
+        <dt>Target host</dt><dd>{operationText(details?.targetHost)}</dd>
         <dt>Upstream status</dt>
         <dd>
           <Measured value={details?.status ?? null} />
@@ -120,11 +134,11 @@ function Selected({ row }) {
  * success nor a failure, and the copy says so instead of implying the probe
  * can simply be run again.
  */
-export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool', label }) {
-  const [page, setPage] = useState(1);
-  const [state, setState] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
-  const resource = useResource(operationHistoryUrl(subjectId, page, { subjectKind, state }));
+export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool', label, allSubjects = false, filters = {}, initialPage = 1, initialSelectedId = null, onViewChange }) {
+  const [page, setPage] = useState(initialPage);
+  const [state, setState] = useState(filters.state || null);
+  const [selectedId, setSelectedId] = useState(initialSelectedId);
+  const resource = useResource(operationHistoryUrl(subjectId, page, { subjectKind, state, allSubjects, filters }));
   // Page and selection are per-subject state. Rather than resetting them in an
   // effect when subjectId changes (a cascading render), the caller keys this
   // component on the subject so a different subject is a fresh mount.
@@ -132,14 +146,14 @@ export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool'
   const selected = rows.find((row) => row.id === selectedId);
   const unresolvedCount = rows.filter((row) => row.unresolved).length;
   return (
-    <section className={styles.inspector} aria-label="Probe operation history">
+    <section className={styles.inspector} aria-label={allSubjects ? "Operation history" : "Probe operation history"}>
       <Group justify="space-between" align="start" wrap="wrap">
         <div className={styles.head}>
-          <h3>Probe history</h3>
+          <h3>{allSubjects ? "Retained operation history" : "Probe history"}</h3>
           <p className={styles.note}>
-            Retained receipts for {label ? <strong>{label}</strong> : 'this pool'}, newest capture
+            Retained receipts for {allSubjects ? 'the selected scope' : label ? <strong>{label}</strong> : 'this pool'}, newest capture
             first. Each row is evidence that was written at the time; it is not re-derived from the
-            pool as it stands now.
+            subject as it stands now.
           </p>
         </div>
         <Group gap="sm" align="end">
@@ -152,13 +166,14 @@ export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool'
             value={state}
             onChange={(value) => {
               setState(value);
+              onViewChange?.({ state: value, page: 1, event: null });
               setPage(1);
               setSelectedId(null);
             }}
             data={OPERATION_STATES.map((value) => ({ value, label: value }))}
             className={styles.filter}
           />
-          <Button variant="subtle" size="compact-sm" onClick={resource.refresh}>
+          <Button variant="subtle" size="sm" onClick={resource.refresh}>
             Refresh history
           </Button>
         </Group>
@@ -167,39 +182,45 @@ export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool'
       {resource.loading ? (
         <Loader size="sm" mt="sm" />
       ) : resource.error ? (
-        <Alert color="orange" title="Probe history unavailable">
+        <Alert color="orange" title={allSubjects ? "Operation history unavailable" : "Probe history unavailable"}>
           {resource.error}
           <div>
-            <Button variant="subtle" size="compact-sm" onClick={resource.refresh}>
+            <Button variant="subtle" size="sm" onClick={resource.refresh}>
               Retry history
             </Button>
           </div>
         </Alert>
       ) : !rows.length ? (
         <p className={styles.empty}>
-          No probe event for this pool was captured in the read window. History cannot be
-          reconstructed for a probe that ran before events were retained; a probe run from now on
-          records its own receipt.
+          {allSubjects ? 'No operation event for this scope was captured' : 'No probe event for this pool was captured'} in the read window. History cannot be reconstructed for work that ran before events were retained. These records do not cover every application action.
         </p>
       ) : (
         <>
           {unresolvedCount > 0 ? (
             <p className={styles.unresolvedBanner} role="status">
               {operationNumber(unresolvedCount)} of these operations recorded a start with no
-              terminal receipt. Each one is unresolved after an interruption. That is neither a
+              terminal receipt. Each one is unresolved and may still be running. That is neither a
               success nor a failure, and it is not permission to resend the check.
             </p>
           ) : null}
-          <div className={styles.grid}>
+          <SelectionDock
+            open={Boolean(selected)}
+            title="Operation evidence"
+            subtitle={selected?.operationId}
+            onClose={() => { setSelectedId(null); onViewChange?.({ event: null }); }}
+            detail={selected ? <Selected row={selected} /> : null}
+            height="min(730px, calc(100dvh - 240px))"
+            closedMaxHeight="min(560px, calc(100dvh - 240px))"
+          >
             <div className={styles.tableColumn}>
               <ScrollArea
                 viewportProps={{
                   tabIndex: 0,
                   role: 'region',
-                  'aria-label': 'Scroll retained probe events',
+                  'aria-label': allSubjects ? 'Scroll retained operation events' : 'Scroll retained probe events',
                 }}
               >
-                <Table className={styles.table} aria-label="Retained probe events">
+                <Table className={styles.table} aria-label={allSubjects ? "Retained operation events" : "Retained probe events"}>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Operation</Table.Th>
@@ -224,7 +245,7 @@ export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool'
                             className={styles.rowButton}
                             aria-label={`Inspect operation ${row.operationId} ${row.phase}`}
                             aria-pressed={row.id === selectedId}
-                            onClick={() => setSelectedId(row.id)}
+                            onClick={() => { setSelectedId(row.id); onViewChange?.({ event: row.id }); }}
                           >
                             <code>{row.operationId}</code>
                           </UnstyledButton>
@@ -256,7 +277,7 @@ export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool'
                 </Table>
               </ScrollArea>
               <Group justify="space-between" mt="xs" wrap="wrap">
-                <Text size="xs" c="dimmed">
+                <Text size="sm" c="dimmed">
                   {operationNumber(resource.data?.total)} matching retained events, page{' '}
                   {operationNumber(resource.data?.page)} of {operationNumber(resource.data?.pages)}
                 </Text>
@@ -265,23 +286,22 @@ export function OperationHistoryInspector({ subjectId, subjectKind = 'proxyPool'
                   value={page}
                   onChange={(next) => {
                     setPage(next);
+                    onViewChange?.({ page: next, event: null });
                     setSelectedId(null);
                   }}
-                  size="xs"
+                  size="sm"
                   aria-label="Probe history pages"
                   getControlProps={(control) => ({ 'aria-label': `${control} probe history page` })}
                   getItemProps={(item) => ({ 'aria-label': `Probe history page ${item}` })}
                 />
               </Group>
             </div>
-            {selected ? (
-              <Selected row={selected} />
-            ) : (
+            {!selected && (
               <p className={styles.hint}>
-                Select an operation id to read what its state means and what it did to activation.
+                Select an operation id to inspect its exact subject, retained state and recorded effect.
               </p>
             )}
-          </div>
+          </SelectionDock>
         </>
       )}
 

@@ -11,11 +11,11 @@ export const CASCADE_ROUTE_KINDS = Object.freeze({
 
 // Exploration ceiling: estimated prompt tokens (chars/4 on the serialized
 // body) below this count as exploration-class.
-const EXPLORATION_PROMPT_TOKEN_CEILING = 64 * 1024;
-const CHARS_PER_TOKEN = 4;
+export const EXPLORATION_PROMPT_TOKEN_CEILING = 64 * 1024;
+export const CHARS_PER_TOKEN = 4;
 
 // A session that escalated keeps taking the strong model for this long.
-const SESSION_PIN_TTL_MS = 30 * 60 * 1000;
+export const SESSION_PIN_TTL_MS = 30 * 60 * 1000;
 
 // Edit/write tool names that disqualify exploration-class: they carry content
 // the cheap model must not be trusted to produce.

@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Table, UnstyledButton } from '@mantine/core';
+import Link from 'next/link';
 import { tableFeatures, useTable } from '@tanstack/react-table';
 import { call } from '@/shared/api';
 import { useOptionalWorkspace } from '@/shared/workspace/WorkspaceProvider';
@@ -13,6 +14,7 @@ import {
   timelineSummary,
   timelineUnavailable,
   timelineUrl,
+  pinAttemptSelection,
 } from '@/shared/workspace/pinTimelineModel';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import styles from './sessionPins.module.css';
@@ -58,6 +60,7 @@ export function receiptState(action) {
 // its own pages, so opening it never re-reads or reorders the pin list, and it
 // renders inside the dock so the comparison table above cannot shift.
 function Timeline({ pin, onReceipt }) {
+  const workspace = useOptionalWorkspace();
   const [filters, setFilters] = useState({ kind: '', connectionId: '' });
   const [paging, setPaging] = useState({ cursor: '', trail: [] });
   const [read, setRead] = useState({ key: null, body: null, error: '' });
@@ -182,6 +185,7 @@ function Timeline({ pin, onReceipt }) {
                       Open receipt <code>{item.actionId.slice(0, 8)}</code>
                     </button>
                   )}
+                  {item.kind === 'request' && <AttemptLink item={item} sessionId={pin.session?.id} workspace={workspace} />}
                 </li>
               ))}
             </ol>
@@ -221,6 +225,7 @@ function Timeline({ pin, onReceipt }) {
 }
 
 function History({ pin, bound, busy, onReceipt }) {
+  const workspace = useOptionalWorkspace();
   return (
     <>
       <h4>Recent history</h4>
@@ -235,6 +240,7 @@ function History({ pin, bound, busy, onReceipt }) {
               Requested {request.requestedModel || 'Unknown'} · served{' '}
               {request.servedModel || 'Not confirmed'} · {request.status} ·{' '}
               <code>{request.id}</code>
+              <AttemptLink item={request} sessionId={pin.session?.id} workspace={workspace} />
             </li>
           ))}
         </ul>
@@ -268,12 +274,31 @@ function History({ pin, bound, busy, onReceipt }) {
   );
 }
 
+function AttemptLink({ item, sessionId, workspace }) {
+  const selection = pinAttemptSelection(item, sessionId);
+  if (!selection || !workspace?.setSelectedRecord) return null;
+  return <Link className={styles.attemptLink} href="/dashboard/context" onClick={()=>{
+    workspace.setContextView({ sessionId, page: 1 });
+    workspace.setSelectedRecord(selection);
+  }}>Inspect exact attempt and ordered stages</Link>;
+}
+
+function ControlReceipt({ receipt, busy, onReceipt, uncertainId }) {
+  if (!receipt && !uncertainId) return null;
+  return <div role="status" className={styles.receipt} aria-label="Retained pin control receipt">
+    <strong>{uncertainId ? 'Application status unknown' : receiptState(receipt)}</strong>
+    <p>Control receipt <code>{receipt?.id || uncertainId}</code> · {receipt?.reason || 'Read the retained receipt before another change.'}</p>
+    <p>{receipt?.status === 'queued' ? 'Waiting for a subsequent request. No request has been moved.' : 'This receipt describes affinity control, not provider acceptance or a billing result.'}</p>
+    {receipt?.action === 'clear' && receipt.status === 'applied' && <p>Affinity was cleared. The receipt remains available after its pin leaves the list.</p>}
+    <Button variant="subtle" size="compact-sm" disabled={busy} onClick={()=>onReceipt(receipt?.id || uncertainId)}>Refresh receipt</Button>
+  </div>;
+}
+
 function Inspector({
   pin,
   busy,
   form,
   preview,
-  receipt,
   bound,
   expanded,
   onExpand,
@@ -412,27 +437,6 @@ function Inspector({
           </Button>
         </div>
       )}
-      {receipt && (
-        <div role="status" className={styles.receipt}>
-          <strong>{receiptState(receipt)}</strong>
-          <p>
-            Control receipt <code>{receipt.id}</code> · {receipt.reason || 'no reason recorded'}
-          </p>
-          <p>
-            {receipt.status === 'queued'
-              ? 'Waiting for a subsequent request. No request has been moved.'
-              : 'This receipt describes affinity control, not provider acceptance or a billing result.'}
-          </p>
-          <Button
-            variant="subtle"
-            size="compact-sm"
-            disabled={busy}
-            onClick={() => onReceipt(receipt.id)}
-          >
-            Refresh receipt
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
@@ -457,6 +461,7 @@ export default function SessionPins({ onChanged } = {}) {
   const [mutationError, setMutationError] = useState('');
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState(false);
+  const [uncertainId, setUncertainId] = useState(null);
   const generation = useRef(0);
   const url = pinsUrl(scope, cursor);
   const readKey = `${url}#${revision}`;
@@ -488,6 +493,7 @@ export default function SessionPins({ onChanged } = {}) {
     update();
   };
   const select = useCallback((id) => {
+    if (pending || uncertainId) return;
     setSelectedId(id);
     setPreview(null);
     setReceipt(null);
@@ -496,13 +502,13 @@ export default function SessionPins({ onChanged } = {}) {
     // The timeline is scoped to one binding, so a different pin collapses it
     // rather than showing the previous pin's history under a new heading.
     setExpanded(false);
-  }, []);
+  }, [pending, uncertainId]);
   const pins = page?.pins || [];
   const selected = pins.find((pin) => pin.id === selectedId) || null;
   const bound = page?.boundaries?.historyLimitPerPin ?? 8;
   async function inspect(event) {
     event.preventDefault();
-    if (!selected) return;
+    if (!selected || uncertainId) return;
     if (action === 'expire' && !Number.isFinite(Date.parse(deadline))) {
       setMutationError('Choose a valid expiry');
       return;
@@ -511,10 +517,11 @@ export default function SessionPins({ onChanged } = {}) {
     setPending(true);
     setMutationError('');
     setPreview(null);
+    const actionId = crypto.randomUUID();
     const response = await call(`${ROOT}/preview`, {
       method: 'POST',
       body: {
-        id: crypto.randomUUID(),
+        id: actionId,
         pinId: selected.id,
         expectedRevision: selected.revision,
         action,
@@ -524,11 +531,14 @@ export default function SessionPins({ onChanged } = {}) {
     });
     if (seq !== generation.current) return;
     if (response.ok) setPreview(response.body);
-    else setMutationError(response.body?.code || 'Preview was refused');
+    else {
+      setMutationError(response.body?.code || 'Preview was refused');
+      if (!response.status || response.status >= 500) setUncertainId(actionId);
+    }
     setPending(false);
   }
   async function apply() {
-    if (!preview) return;
+    if (!preview || uncertainId) return;
     const seq = ++generation.current;
     setPending(true);
     setMutationError('');
@@ -541,7 +551,8 @@ export default function SessionPins({ onChanged } = {}) {
     if (response.body?.id) setReceipt(response.body);
     if (!response.ok)
       setMutationError(response.body?.reason || response.body?.code || 'Change was refused');
-    else {
+    if (!response.ok && (!response.status || response.status >= 500)) setUncertainId(preview.id);
+    if (response.ok) {
       onChanged?.(response.body);
       setRevision((value) => value + 1);
     }
@@ -552,8 +563,11 @@ export default function SessionPins({ onChanged } = {}) {
     setPending(true);
     const response = await call(`${ROOT}/actions/${id}`);
     if (seq !== generation.current) return;
-    if (response.ok) setReceipt(response.body);
-    else setMutationError(response.body?.code || 'Receipt could not be read');
+    if (response.ok) { setReceipt(response.body); if (uncertainId) setRevision(value=>value+1); setUncertainId(null); setMutationError(''); }
+    else if (response.status === 404) {
+      setUncertainId(null); setReceipt(null); setPreview(null); setRevision(value=>value+1);
+      setMutationError('No retained receipt at this id. Current pins are being read; a new preview is required');
+    } else setMutationError(response.body?.code || 'Receipt could not be read');
     setPending(false);
   }
   const columns = useMemo(
@@ -637,7 +651,7 @@ export default function SessionPins({ onChanged } = {}) {
       )}
       {error && (
         <p role="alert" className={styles.alert}>
-          {error.replaceAll('_', ' ')}. Refresh and preview again before applying.
+          {error.replaceAll('_', ' ')}. {uncertainId ? 'Read the retained receipt before another change. No mutation is replayed.' : 'Refresh and preview again before applying.'}
         </p>
       )}
       {page ? (
@@ -648,6 +662,7 @@ export default function SessionPins({ onChanged } = {}) {
       {page && pins.length === 0 && (
         <p className={styles.empty}>No retained pins match this scope and page.</p>
       )}
+      <ControlReceipt receipt={receipt} uncertainId={uncertainId} busy={busy} onReceipt={readReceipt} />
       <SelectionDock
         open={Boolean(selectedId)}
         title={selected ? selected.model : 'Selected pin'}
@@ -657,13 +672,12 @@ export default function SessionPins({ onChanged } = {}) {
           selected ? (
             <Inspector
               pin={selected}
-              busy={busy}
+              busy={busy || Boolean(uncertainId)}
               bound={bound}
               expanded={expanded}
               onExpand={() => setExpanded((value) => !value)}
               form={{ action, target, deadline, setAction, setTarget, setDeadline }}
               preview={preview}
-              receipt={receipt}
               onSubmit={inspect}
               onApply={apply}
               onReceipt={readReceipt}
@@ -677,7 +691,7 @@ export default function SessionPins({ onChanged } = {}) {
           ) : null
         }
       >
-        <Table.ScrollContainer minWidth={780} type="native">
+        <Table.ScrollContainer minWidth={780} type="native" className={styles.scrollContainer} tabIndex={0} role="region" aria-label="Session pins table, scroll horizontally for all columns">
           <Table
             stickyHeader
             highlightOnHover

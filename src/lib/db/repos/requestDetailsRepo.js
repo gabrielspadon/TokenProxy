@@ -2,6 +2,7 @@ import { redactSecrets, stripSensitiveHeaders } from "../../../../open-sse/utils
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { saveRequestStats } from "./requestStatsRepo.js";
+import { registerShutdownFlusher } from "../../shutdown.js";
 
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
@@ -91,7 +92,7 @@ export async function isObservabilityEnabled() {
 
 let writeBuffer = [];
 let flushTimer = null;
-let isFlushing = false;
+let flushPromise = null;
 
 /**
  * Ceiling on the in-memory buffer, in multiples of one flush batch.
@@ -126,7 +127,10 @@ function capWriteBuffer(config) {
 // was in one and not the other), and drift in this direction is silent.
 const sanitizeHeaders = stripSensitiveHeaders;
 
-export const __test__ = { sanitizeHeaders, redactAndTruncate, bufferSize: () => writeBuffer.length };
+export const __test__ = {
+  sanitizeHeaders, redactAndTruncate, bufferSize: () => writeBuffer.length,
+  dispose: async () => { await _shutdownHandler(); unregisterShutdown(); },
+};
 
 function generateDetailId(model) {
   const timestamp = new Date().toISOString();
@@ -159,10 +163,14 @@ function redactAndTruncate(obj, maxSize) {
   return safe ?? {};
 }
 
-async function flushToDatabase() {
-  if (isFlushing) return;
-  if (writeBuffer.length === 0) return;
-  isFlushing = true;
+function flushToDatabase() {
+  if (flushPromise) return flushPromise;
+  if (writeBuffer.length === 0) return Promise.resolve();
+  flushPromise = writeBufferedDetails().finally(() => { flushPromise = null; });
+  return flushPromise;
+}
+
+async function writeBufferedDetails() {
   try {
     // Drain entire buffer (loop in case more pushed during await)
     while (writeBuffer.length > 0) {
@@ -211,8 +219,6 @@ async function flushToDatabase() {
     }
   } catch (e) {
     console.error("[requestDetailsRepo] Batch write failed:", e);
-  } finally {
-    isFlushing = false;
   }
 }
 
@@ -290,19 +296,8 @@ export async function getRequestDetailById(id) {
 
 const _shutdownHandler = async () => {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-  if (writeBuffer.length > 0) await flushToDatabase();
+  await flushToDatabase();
 };
 
-function ensureShutdownHandler() {
-  process.off("beforeExit", _shutdownHandler);
-  process.off("SIGINT", _shutdownHandler);
-  process.off("SIGTERM", _shutdownHandler);
-  process.off("exit", _shutdownHandler);
-
-  process.on("beforeExit", _shutdownHandler);
-  process.on("SIGINT", _shutdownHandler);
-  process.on("SIGTERM", _shutdownHandler);
-  process.on("exit", _shutdownHandler);
-}
-
-ensureShutdownHandler();
+// Each module instance owns its buffer; all flush before adapters close at priority 100.
+const unregisterShutdown = registerShutdownFlusher(_shutdownHandler, 0);

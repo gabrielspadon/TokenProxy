@@ -48,7 +48,7 @@ it('keeps both window constraints visible and selects the exact scope', () => {
   const inspect = vi.fn();
   render(<QuotaSummary windows={[session, weekly]} onInspect={inspect} />);
   const buttons = [...container.querySelectorAll('button')];
-  expect(buttons.map((button) => button.textContent)).toEqual(['Weekly (7d)9%', 'Session (5h)68%']);
+  expect(buttons.map((button) => button.textContent)).toEqual(['Weekly (7d)9%staleReset unknown', 'Session (5h)68%unknown ageReset unknown']);
   act(() => buttons[1].click());
   expect(inspect).toHaveBeenCalledWith('Session (5h)');
   expect(container.textContent).not.toContain('80%');

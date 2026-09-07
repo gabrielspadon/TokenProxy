@@ -18,6 +18,16 @@ export function ActivityBand({ resource: suppliedResource, title = 'Recorded att
   const pageKey = `${resource.url}:${points?.length || 0}`;
   const page = tablePage.key === pageKey ? tablePage.page : 1;
   const summary = resource.data?.summary;
+  const selectBucket = (point) => {
+    const start = point?.bucketStartMs, size = resource.data?.series?.bucketMs;
+    if (!Number.isFinite(start) || !Number.isFinite(size) || size <= 0) return;
+    const lower = Date.parse(workspace.scope.start), upper = Date.parse(workspace.scope.end);
+    const first = Math.max(start, Number.isFinite(lower) ? lower : start);
+    const last = Math.min(start + size, Number.isFinite(upper) ? upper : start + size);
+    if (first >= last) return;
+    workspace.setScope({ period: 'custom', start: new Date(first).toISOString(), end: new Date(last).toISOString() });
+    setTableOpen(false);
+  };
   const option = useMemo(
     () => ({
       grid: { top: 5, bottom: 22, left: 30, right: 7 },
@@ -52,7 +62,7 @@ export function ActivityBand({ resource: suppliedResource, title = 'Recorded att
         brushType: 'lineX',
         throttleType: 'debounce',
         throttleDelay: 300,
-        brushStyle: { color: 'rgba(69,91,202,0.12)', borderColor: '#7d90e2' },
+        brushStyle: { color: 'rgba(0,111,120,0.12)', borderColor: METRIC_COLORS.selected },
         toolbox: [],
       },
       series: [
@@ -62,7 +72,7 @@ export function ActivityBand({ resource: suppliedResource, title = 'Recorded att
           data: (points || []).map((point) => [point.bucketStartMs, point.records]),
           barMaxWidth: 6,
           itemStyle: { color: METRIC_COLORS.input },
-          emphasis: { itemStyle: { color: '#455bca' } },
+          emphasis: { itemStyle: { color: METRIC_COLORS.selected } },
         },
         {
           name: 'Failed attempts',
@@ -165,6 +175,7 @@ export function ActivityBand({ resource: suppliedResource, title = 'Recorded att
               }}
               label={`${number(summary.records)} recorded attempts across the selected UTC interval. Use the time range controls to change the interval.`}
               onEvents={{
+                click: (event) => selectBucket(points?.[event.dataIndex]),
                 brushEnd: (event) => {
                   const range = event.areas?.[0]?.coordRange;
                   if (range?.length === 2 && range[0] < range[1])
@@ -209,7 +220,7 @@ export function ActivityBand({ resource: suppliedResource, title = 'Recorded att
           <Table.Tbody>
             {(points || []).slice((page - 1) * 20, page * 20).map((point) => (
               <Table.Tr key={point.bucketStart}>
-                <Table.Td>{point.bucketStart}</Table.Td>
+                  <Table.Td><Button variant="subtle" size="compact-sm" onClick={() => selectBucket(point)} aria-label={`Filter activity to ${point.bucketStart} UTC`}>{point.bucketStart}</Button></Table.Td>
                 <Table.Td>{number(point.records)}</Table.Td>
                 <Table.Td>{number(point.failed)}</Table.Td>
                 <Table.Td>{number(point.inputTokens)}</Table.Td>

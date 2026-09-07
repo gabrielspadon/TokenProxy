@@ -221,7 +221,8 @@ describe('probe history rendering', () => {
     expect(text).toContain('Committed snapshot');
     expect(text).toContain('What this history does not tell you');
     expect(text).toContain('Nothing is joined onto the pool record');
-    expect(text).toContain('reading as unresolved here');
+    expect(text).toContain('matched by operation and phase across all retained events');
+    expect(text).toContain('does not establish whether the operation is still running or was interrupted');
     expect(text).toContain('an allowlist of structural fields');
   });
 
@@ -303,4 +304,18 @@ describe('resolution pairing', () => {
     expect(resolveOperationRows(undefined)).toEqual([]);
     expect(resolveOperationRows(null)).toEqual([]);
   });
+});
+
+it('reads an installation-wide filtered scope and preserves a key receipt without pool claims', async () => {
+  const key = event({ subjectKind: 'apiKey', subjectId: 'key-1', phase: 'rotation', source: 'key-rotate', details: { reason: 'operator-request' } });
+  pages.set('1', page([key]));
+  await render({ allSubjects: true, subjectId: undefined, filters: { provider: 'synthetic', actorClass: 'operator', start: '2026-09-01T00:00:00Z', end: '2026-09-07T00:00:00Z', pageSize: '25' } });
+  const url = new URL(fetchMock.mock.calls[0][0], 'http://localhost');
+  expect(Object.fromEntries(url.searchParams)).toMatchObject({ provider: 'synthetic', actorClass: 'operator', pageSize: '25' });
+  expect(url.searchParams.has('subjectKind')).toBe(false);
+  await clickLabel(`Inspect operation ${key.operationId} ${key.phase}`);
+  expect(container.textContent).toContain('key-1');
+  expect(container.textContent).not.toContain('This pool was set active');
+  expect(container.textContent).toContain('does not establish a proxy-pool activation change');
+  expect(fetchMock.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
 });

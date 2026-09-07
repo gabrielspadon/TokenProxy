@@ -17,10 +17,20 @@ describe("one rule for the provider badge (#1831)", () => {
     expect(getProviderFallbackInitials("anthropic-compatible-myhost")).toBe("AC");
   });
 
-  it("uses the shared OpenAI mark for a custom OpenAI-compatible node", () => {
+  it("keeps custom protocol compatibility separate from provider branding", () => {
     expect(
       getProviderIconSrc("openai-compatible-chat-7915e96f-9d42-4076-80d1-fb56e3358d75"),
-    ).toBe("/providers/openai.png");
+    ).toBeNull();
+    expect(getProviderIconSrc("anthropic-compatible-private")).toBeNull();
+    expect(getProviderIconSrc("custom-embedding-private")).toBeNull();
+  });
+
+  it("resolves registry marks locally without third-party asset requests", () => {
+    expect(getProviderIconSrc("devin")).toBe("/providers/devin-cli.png");
+    for (const id of Object.keys(AI_PROVIDERS)) {
+      const src = getProviderIconSrc(id);
+      expect(src === null || src.startsWith('/providers/'), id).toBe(true);
+    }
   });
 
   it("a custom embedding provider gets its own badge rather than a generic one", () => {

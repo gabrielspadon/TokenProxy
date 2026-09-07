@@ -1,12 +1,32 @@
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
-  gap: 26px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
   align-items: start;
 }
 .book,
 .inspector {
   min-width: 0;
+}
+.scopes {
+  padding: 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.scopes summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 500;
+}
+.scopes ul {
+  padding-inline-start: 18px;
+}
+.scopes li {
+  list-style: disc;
+  margin-block: 6px;
 }
 .fixtureRow {
   display: flex;
@@ -15,19 +35,19 @@
   align-items: baseline;
   gap: 6px 12px;
   padding: 8px 10px;
-  border-bottom: 1px solid #dce2ec;
+  border-bottom: 1px solid var(--rule);
   font-size: 13px;
 }
 .fixtureRow[data-selected] {
-  background: #edf1fd;
-  box-shadow: inset 3px 0 #455bca;
+  background: var(--signal-wash);
+  box-shadow: inset 3px 0 var(--signal);
 }
 .fixtureRow .sub {
   display: block;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
-  color: #596981;
+  color: var(--slate);
   overflow-wrap: anywhere;
 }
 .actions {
@@ -38,7 +58,7 @@
   margin-top: 10px;
 }
 .editor {
-  border-top: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
   margin-top: 18px;
   padding-top: 14px;
 }
@@ -50,8 +70,8 @@
 .editorGrid label,
 .editor > label {
   display: block;
-  font-size: 12px;
-  color: #596981;
+  font-size: 13px;
+  color: var(--slate);
   min-width: 0;
 }
 .editorGrid input,
@@ -60,12 +80,12 @@
   display: block;
   width: 100%;
   margin-top: 3px;
-  font-size: 13px;
-  color: #24324a;
+  font-size: 14px;
+  color: var(--ink);
 }
 .editor textarea {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
   min-height: 160px;
 }
@@ -73,20 +93,20 @@
   display: flex;
   gap: 8px;
   align-items: baseline;
-  font-size: 12px;
-  color: #24324a;
+  font-size: 13px;
+  color: var(--ink);
   margin: 10px 0;
 }
 .queue {
-  font-size: 12px;
-  color: #596981;
+  font-size: 13px;
+  color: var(--slate);
   font-variant-numeric: tabular-nums;
   margin: 6px 0 12px;
 }
 .queue b {
   font-family: var(--mono);
   font-weight: 500;
-  color: #24324a;
+  color: var(--ink);
 }
 .tableScroll {
   overflow-x: auto;
@@ -95,39 +115,39 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
 }
 .table th {
   text-align: start;
   font-weight: 500;
-  color: #596981;
+  color: var(--slate);
   white-space: nowrap;
   padding: 5px 10px 5px 0;
-  border-bottom: 1px solid #dce2ec;
+  border-bottom: 1px solid var(--rule);
 }
 .table td {
   padding: 5px 10px 5px 0;
-  border-bottom: 1px solid #eef1f7;
+  border-bottom: 1px solid var(--rule);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .table code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 .table tr[data-selected] {
-  background: #edf1fd;
-  box-shadow: inset 3px 0 #455bca;
+  background: var(--signal-wash);
+  box-shadow: inset 3px 0 var(--signal);
 }
 .table button {
   font: inherit;
   text-decoration: underline;
-  text-decoration-color: #bac6dd;
+  text-decoration-color: var(--control-edge);
   text-underline-offset: 3px;
 }
 .table button:focus-visible,
 .fixtureRow button:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 @media (max-width: 1100px) {
@@ -141,3 +161,6 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.editor summary { font-size: 18px; font-weight: 500; cursor: pointer; margin-bottom: 12px; }
+.book, .inspector { padding: 16px; background: var(--raised); border: 1px solid var(--rule); border-radius: 8px; }

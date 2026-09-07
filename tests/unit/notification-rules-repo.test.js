@@ -193,6 +193,8 @@ describe('alert state machine', () => {
     await repo.updateRule(rule.id, 1, { ...RULE, threshold: 2 });
     const [stored] = await repo.listRuleEvents({ ruleId: rule.id });
     expect(stored.ruleRevision).toBe(1);
+    expect(stored.ruleDefinition.threshold).toBe(10);
+    expect(stored.ruleDefinition.conditionKind).toBe('quota_risk');
     expect((await repo.getRule(rule.id)).revision).toBe(2);
   });
 
@@ -202,6 +204,7 @@ describe('alert state machine', () => {
     await repo.deleteRule(rule.id, 1);
     expect(await repo.getRule(rule.id)).toBeUndefined();
     expect(await repo.listRuleEvents({ ruleId: rule.id })).toHaveLength(1);
+    expect((await repo.listRuleEvents({ ruleId: rule.id }))[0].ruleDefinition.name).toBe(RULE.name);
     // The version log records the deletion too.
     const versions = await repo.getRuleVersions(rule.id);
     expect(versions[0].change).toBe('deleted');

@@ -65,7 +65,8 @@ export function compatibilityStore(db, ownerScope = OWNER_SCOPE) {
       const where = `ownerScope=?${fixtureId ? ' AND fixtureId=?' : ''}`, args = [ownerScope, ...(fixtureId ? [identifier(fixtureId)] : [])];
       const total = db.get(`SELECT COUNT(*) AS n FROM compatibilityRuns WHERE ${where}`, args).n;
       const items = db.all(`SELECT * FROM compatibilityRuns WHERE ${where} ORDER BY createdAt DESC,id LIMIT ? OFFSET ?`, [...args, pageSize, (page - 1) * pageSize]).map(projectRun);
-      return { items, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
+      const counts = db.get("SELECT SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running FROM compatibilityRuns WHERE ownerScope=?", [ownerScope]);
+      return { items, queue: { queued: counts.queued || 0, running: counts.running || 0, scope: 'installation-operator' }, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
     },
     evidence() {
       return db.all(`SELECT json_extract(f.definition,'$.sourceFormat') AS sourceFormat,
@@ -73,7 +74,8 @@ export function compatibilityStore(db, ownerScope = OWNER_SCOPE) {
         COUNT(*) AS runs,COUNT(DISTINCT r.fixtureHash) AS fixtureVersions,
         SUM(CASE WHEN r.status='succeeded' THEN 1 ELSE 0 END) AS passed,
         SUM(CASE WHEN r.status='failed' THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN r.status NOT IN ('succeeded','failed') THEN 1 ELSE 0 END) AS other,
+        SUM(CASE WHEN r.status IN ('cancelled','timed-out','interrupted') THEN 1 ELSE 0 END) AS other,
+        SUM(CASE WHEN r.status IN ('queued','running') THEN 1 ELSE 0 END) AS pending,
         MAX(r.createdAt) AS lastRunAt
         FROM compatibilityRuns r JOIN compatibilityFixtures f ON f.id=r.fixtureId AND f.revision=r.fixtureRevision AND f.ownerScope=r.ownerScope
         WHERE r.ownerScope=? GROUP BY sourceFormat,targetFormat,operation ORDER BY sourceFormat,targetFormat,operation`, [ownerScope]);

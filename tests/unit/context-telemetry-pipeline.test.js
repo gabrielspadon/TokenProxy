@@ -17,7 +17,22 @@ it("persists the actual nonstream provider usage at the shared attempt id",async
  expect(overview.summary).toMatchObject({attempts:1,requests:1,providerInputTokens:100,providerOutputTokens:4,cacheReadTokens:40,cacheHitRate:0.4});
  const {turns}=await getContextSession(overview.sessions[0].id);
  expect(turns[0].stages.length).toBeGreaterThan(5);
- expect(turns[0].stages.reduce((sum,s)=>sum+s.deltaBytes,0)).toBe(turns[0].bodyAfterBytes-turns[0].bodyBeforeBytes);
+  expect(turns[0].stages.reduce((sum,s)=>sum+s.deltaBytes,0)).toBe(turns[0].bodyAfterBytes-turns[0].bodyBeforeBytes);
+});
+it("records effective epoch and cache controls as explicit booleans",async()=>{
+ mocks.execute.mockImplementation(async()=>({response:Response.json({id:"fixture",type:"message",role:"assistant",content:[{type:"text",text:"answer"}],usage:{input_tokens:100,output_tokens:4}})}));
+ const args=base();args.body.model="claude-sonnet-4-5";args.modelInfo={provider:"anthropic",model:"claude-sonnet-4-5"};args.clientRawRequest.body={model:"claude-sonnet-4-5"};
+ Object.assign(args,{dietEnabled:true,linguaEnabled:true,epochMicroEnabled:true,epochAutoEnabled:true,adaptiveCacheTtlEnabled:true});
+ const events=[];args.onTokenSaverEvent=event=>events.push(event);
+ const result=await handleChatCore(args);expect(result.success).toBe(true);
+ const overview=await waitFor(async()=>{const r=await getContextOverview();return r.summary.succeeded?r:null;});
+ const {turns}=await getContextSession(overview.sessions[0].id);
+ expect(turns[0].controls).toMatchObject({diet:true,lingua:true,epochMicro:true,epochAuto:true,adaptiveCacheTtl:true});
+ for(const saver of ['diet','lingua','epochMicro','epochAuto']) {
+  const stageEvents=events.filter(event=>event.saver===saver);
+  expect(stageEvents).toHaveLength(1);
+  expect(stageEvents[0]).toMatchObject({applied:false,reason:'epoch_boundary',bytesSaved:0});
+ }
 });
 it("records transport failures without fabricated usage and forbids uncertain replay",async()=>{
  mocks.execute.mockRejectedValue(new Error("synthetic transport failure"));

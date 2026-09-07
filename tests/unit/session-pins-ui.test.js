@@ -77,7 +77,7 @@ beforeEach(async () => {
   );
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
-    value: vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })),
+    value: vi.fn(query => ({ matches: query.includes('min-width: 90em'), addEventListener() {}, removeEventListener() {} })),
   });
   state.calls = [];
   state.scope = null;
@@ -155,11 +155,47 @@ it('selection survives a refresh and live reorder without moving off the selecte
   );
 });
 
+it('places keyboard focus on the actual native horizontal inventory scroller', async () => {
+  await render();
+  const scroller = container.querySelector('[aria-label="Session pins table, scroll horizontally for all columns"]');
+  expect(scroller.tagName).toBe('DIV');
+  expect(scroller.tabIndex).toBe(0);
+  expect(scroller.style.getPropertyValue('--table-overflow')).toBe('auto');
+  expect(scroller.style.getPropertyValue('--table-min-width')).toContain('48.75rem');
+  scroller.focus();
+  expect(document.activeElement).toBe(scroller);
+  expect(scroller.querySelector('table')).not.toBeNull();
+});
+
 it('a selected pin missing from the refreshed page keeps its selection and says so', async () => {
   await select();
   state.pages.root = { ...state.pages.root, pins: [] };
   await click('Refresh pins');
   expect(container.textContent).toContain('The selected pin is not in the current page or scope');
+});
+
+it('keeps an applied clear receipt visible after the pin is absent',async()=>{
+  await select(); await submit();
+  state.applied={ok:true,status:200,body:{...preview,action:'clear',status:'applied',reason:'operator-applied'}};
+  state.pages.root={...state.pages.root,pins:[]};
+  await click('Apply this change');
+  expect(container.querySelector('[aria-label="Retained pin control receipt"]').textContent).toContain('Affinity was cleared');
+  expect(container.textContent).toContain('action-id');
+  expect(button('Refresh receipt')).toBeTruthy();
+});
+
+it('retains the exact uncertain action id and reads its receipt without replaying apply',async()=>{
+  await select(); await submit();
+  state.applied={ok:false,status:0,body:{code:'network'}};
+  await click('Apply this change');
+  expect(container.textContent).toContain('Application status unknown');
+  expect(container.textContent).toContain('action-id');
+  expect(button('Preview change').disabled).toBe(true);
+  state.applied={ok:true,status:200,body:{...preview,status:'queued',reason:'awaiting-subsequent-selection'}};
+  await click('Refresh receipt');
+  expect(state.calls.filter(call=>call.url.endsWith('/apply'))).toHaveLength(1);
+  expect(state.calls.some(call=>call.url.endsWith('/actions/action-id'))).toBe(true);
+  expect(container.textContent).not.toContain('Application status unknown');
 });
 
 it('wires shared workspace scope into the backend list filters', () => {

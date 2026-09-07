@@ -19,10 +19,7 @@ const ICON_ALIASES = {
   "glm-cn": "glm",
   // Search rides the same brand as the chat provider whose key it borrows.
   "ollama-search": "ollama",
-};
-
-const ICON_URLS = {
-  devin: "https://app.devin.ai/assets/pwa/apple-touch-icon.png",
+  "devin": "devin-cli",
 };
 
 // These providers deliberately use their declared text badge. Requesting a
@@ -58,11 +55,11 @@ export function resolveProviderIconId(providerId) {
 export function getProviderIconSrc(providerId) {
   const normalized = normalizeId(providerId);
   if (NO_BRAND_MARK.has(normalized)) return null;
-  if (ICON_URLS[normalized]) return ICON_URLS[normalized];
-  // A custom OpenAI-compatible node carries a generated persistence id, not a
-  // brand asset. Show the protocol's shared mark instead of requesting it as a
-  // nonexistent filename.
-  if (isOpenAICompatibleProvider(normalized)) return "/providers/openai.png";
+  // Protocol compatibility does not establish the identity of the operator's
+  // upstream. Custom nodes use the neutral compatibility badge.
+  if (isOpenAICompatibleProvider(normalized)
+      || isAnthropicCompatibleProvider(normalized)
+      || isCustomEmbeddingProvider(normalized)) return null;
   const id = resolveProviderIconId(providerId);
   return id ? `/providers/${id}.png` : null;
 }

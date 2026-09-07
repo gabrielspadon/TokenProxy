@@ -3,10 +3,18 @@ process.env.DATA_DIR = process.env.DATA_DIR || "/tmp/tokenproxy-test-data-2519";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const active = vi.hoisted(() => ({ rows: [] }));
+const active = vi.hoisted(() => ({ rows: [], recent: [], error: null }));
 
 vi.mock("@/lib/usageDb.js", () => ({
-  getActiveRequests: async () => active.rows,
+  getActiveRequests: async () => {
+    if (active.error) throw active.error;
+    return {
+      activeRequests: active.rows,
+      recentRequests: active.recent,
+      errorProvider: "",
+      activeSessions: [],
+    };
+  },
   trackPendingRequest: () => {},
   appendRequestLog: async () => {},
   saveRequestDetail: async () => {},
@@ -32,6 +40,8 @@ const settingsWith = (values) => ({ providerStrategies: { kiro: values } });
 describe("per-provider concurrency cap (#2519)", () => {
   beforeEach(() => {
     active.rows = [];
+    active.recent = [];
+    active.error = null;
   });
 
   it("is off when nothing is configured", async () => {
@@ -57,6 +67,17 @@ describe("per-provider concurrency cap (#2519)", () => {
       { provider: "codex", model: "gpt-5.6-sol", count: 9 },
       { provider: "kiro", model: "claude-sonnet-5", count: 1 },
     ];
+    expect(await providerConcurrencyOverflow("kiro", settingsWith({ maxConcurrent: 2 }))).toBeNull();
+  });
+
+  it("does not count completed requests from the snapshot", async () => {
+    active.rows = [{ provider: "kiro", model: "claude-sonnet-5", count: 1 }];
+    active.recent = [{ provider: "kiro", model: "claude-sonnet-5", count: 9 }];
+    expect(await providerConcurrencyOverflow("kiro", settingsWith({ maxConcurrent: 2 }))).toBeNull();
+  });
+
+  it("fails open when the active snapshot cannot be read", async () => {
+    active.error = new Error("snapshot unavailable");
     expect(await providerConcurrencyOverflow("kiro", settingsWith({ maxConcurrent: 2 }))).toBeNull();
   });
 

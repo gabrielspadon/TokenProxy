@@ -11,6 +11,7 @@
 // never guessed.
 
 import { getAdapter } from "../driver.js";
+import { isCompletionId } from "../completionIdentity.mjs";
 import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
 import { cacheMultiplierFor, costForUsage } from "../../../../open-sse/providers/cachePricing.js";
 import { getPricingForModel } from "./pricingRepo.js";
@@ -31,13 +32,16 @@ export function estimateBaselineTokens(serialized) {
  * provider-reported usage (estimated usage is not actual), provider-reported
  * usage with zero input AND zero output (unmeasurable), or no rate card.
  */
-export async function computeCostLedgerEntry({ rid, sid, provider, model, preSaverSerialized, usage, now } = {}) {
+export async function computeCostLedgerEntry({ rid, completionId, sid, provider, model, preSaverSerialized, usage, now } = {}) {
   if (typeof rid !== "string" || !rid) return null;
   if (!model || typeof model !== "string") return null;
   if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
   if (usage.estimated === true) return null; // only provider-reported usage is "actual"
   const canonical = canonicalizeUsage(usage);
   if (!canonical) return null;
+  if ([canonical.prompt_tokens, canonical.completion_tokens, canonical.cached_tokens, canonical.cache_creation_input_tokens]
+    .some(value => !Number.isSafeInteger(value) || value < 0)
+    || canonical.cached_tokens + canonical.cache_creation_input_tokens > canonical.prompt_tokens) return null;
   // Reported zeros in both directions are not a measurement, they are an
   // absent one: costed against a priced baseline the row would claim the whole
   // prompt as savings. Same skip as the estimated-usage path.
@@ -66,6 +70,7 @@ export async function computeCostLedgerEntry({ rid, sid, provider, model, preSav
 
   return {
     id: rid,
+    completionId: isCompletionId(completionId) ? completionId : null,
     ts: typeof now === "string" && now ? now : new Date().toISOString(),
     sid: typeof sid === "string" && sid ? sid : null,
     provider: typeof provider === "string" && provider ? provider : null,
@@ -89,14 +94,14 @@ export async function recordCostLedger(entry) {
     if (!entry || typeof entry.id !== "string" || !entry.id) return false;
     const db = await getAdapter();
     db.run(
-      `INSERT INTO costLedger(id, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, saverSavedUsd, cacheSavedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(id) DO UPDATE SET ts=excluded.ts, sid=excluded.sid, provider=excluded.provider,
+      `INSERT INTO costLedger(id, completionId, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, saverSavedUsd, cacheSavedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET completionId=excluded.completionId, ts=excluded.ts, sid=excluded.sid, provider=excluded.provider,
          model=excluded.model, baselineUsd=excluded.baselineUsd, actualUsd=excluded.actualUsd,
          savedUsd=excluded.savedUsd, saverSavedUsd=excluded.saverSavedUsd, cacheSavedUsd=excluded.cacheSavedUsd,
          inputTokens=excluded.inputTokens, cacheReadTokens=excluded.cacheReadTokens,
          cacheWriteTokens=excluded.cacheWriteTokens, outputTokens=excluded.outputTokens`,
-      [entry.id, entry.ts, entry.sid, entry.provider, entry.model, entry.baselineUsd, entry.actualUsd,
+      [entry.id, isCompletionId(entry.completionId) ? entry.completionId : null, entry.ts, entry.sid, entry.provider, entry.model, entry.baselineUsd, entry.actualUsd,
         // A caller omitting the split columns stores 0/0, the same "unknown
         // decomposition" marker pre-split rows carry.
         entry.savedUsd, entry.saverSavedUsd ?? 0, entry.cacheSavedUsd ?? 0, entry.inputTokens,

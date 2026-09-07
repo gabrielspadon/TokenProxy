@@ -13,17 +13,20 @@ import {
   Modal,
   NavLink,
   ScrollArea,
+  SegmentedControl,
   Stack,
   Text,
   TextInput,
   Tooltip,
+  useMantineColorScheme,
 } from '@mantine/core';
-import { useHotkeys } from '@mantine/hooks';
+import { useHotkeys, useMediaQuery } from '@mantine/hooks';
 import { NAV, NAV_GROUPS } from '@/shared/nav';
 import { useAuthStatus } from '@/store/authStatus';
 import { LocaleSelect } from './LocaleSelect';
 import { Icon } from './Icon';
 import { WorkspaceProvider, useWorkspace } from '@/shared/workspace/WorkspaceProvider';
+import { ObservationControls } from '@/shared/workspace/ObservationControls';
 import styles from '@/shared/workspace/workspace.module.css';
 
 const SEARCH_TERMS = {
@@ -38,6 +41,11 @@ const SEARCH_TERMS = {
 };
 const LABELS = { '/dashboard': 'Capacity', '/dashboard/usage': 'Economics' };
 const lensName = (item) => LABELS[item.href] || item.label;
+const SEARCH_DESTINATIONS = [
+  ...NAV,
+  { href: '/dashboard/usage?tool=pricing', label: 'Model pricing', icon: 'i-usage', terms: 'rates cache input output reset price' },
+  { href: '/dashboard/usage?tool=budgets', label: 'Budget reservations', icon: 'i-usage', terms: 'exposure reconciliation release cost ceilings' },
+];
 
 export function SnapshotNotice() {
   const { snapshot } = useWorkspace();
@@ -62,9 +70,10 @@ export function SnapshotNotice() {
     >
       <span className={styles.snapshot}>
         <span className={styles.snapshotDot} />
-        {synthetic
-          ? 'Synthetic fixture'
-          : `Snapshot ${captured}${snapshot.capturedAt ? ' UTC' : ''}`}
+        <span className={styles.snapshotIdentity}>
+          <span>{synthetic ? 'Synthetic fixture' : 'Snapshot'}</span>
+          {snapshot.capturedAt && <time dateTime={snapshot.capturedAt} dir="ltr" data-i18n-skip>{captured} UTC</time>}
+        </span>
         <span className={styles.isolation}>Isolated</span>
       </span>
     </Tooltip>
@@ -77,42 +86,60 @@ function WorkspaceShell({ children }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const desktopNavigation = useMediaQuery('(min-width: 62em)');
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const { colorScheme, setColorScheme } = useMantineColorScheme();
   const auth = useAuthStatus((state) => state.status);
   const load = useAuthStatus((state) => state.load);
-  const { snapshot } = useWorkspace();
+  const { snapshot, accounts } = useWorkspace();
   useEffect(() => {
     load();
   }, [load]);
   useHotkeys([['mod+k', () => setSearchOpen(true)]]);
   const signOut = async () => {
-    const response = await fetch('/api/auth/logout', { method: 'POST' });
-    if (response.ok) window.location.assign('/login');
+    setSigningOut(true);
+    setSignOutError('');
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok) throw new Error('Sign-out was not confirmed. You can retry.');
+      window.location.assign('/login');
+    } catch {
+      setSignOutError('Sign-out was not confirmed. Your current workspace remains open.');
+      setSigningOut(false);
+    }
   };
+  const normalizedQuery = query.trim().toLowerCase();
+  const destinations = SEARCH_DESTINATIONS.filter((item) =>
+    `${lensName(item)} ${item.terms || ''} ${SEARCH_TERMS[item.href] || ''}`.toLowerCase().includes(normalizedQuery)
+  );
+  const accountResults = normalizedQuery ? (accounts || []).filter((account) =>
+    `${account.displayName || account.name || ''} ${account.provider || ''} ${account.connectionId || ''}`.toLowerCase().includes(normalizedQuery)
+  ).slice(0, 12) : [];
   const isCapacity = ['/dashboard', '/dashboard/context', '/dashboard/usage'].includes(pathname);
   return (
     <AppShell
       padding={0}
       header={{ height: 52 }}
-      navbar={{ width: 194, breakpoint: 'md', collapsed: { mobile: !mobileOpen } }}
+      navbar={{ width: 208, breakpoint: 'md', collapsed: { mobile: !mobileOpen } }}
       className={styles.shell}
     >
       <a href="#main" className="skip-link">
         Skip to content
       </a>
       <AppShell.Header className={styles.header}>
-        <Group gap="sm" h="100%" px={18} wrap="nowrap" className={styles.headerContent}>
+        <Group h="100%" wrap="nowrap" className={styles.headerContent}>
           <Burger
             opened={mobileOpen}
             onClick={() => setMobileOpen(!mobileOpen)}
             hiddenFrom="md"
             size="sm"
-            aria-label="Open navigation"
+            aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           />
           <Link href="/dashboard" className={styles.wordmark} data-i18n-skip>
             TokenProxy<span className={styles.wordmarkPoint}>.</span>
           </Link>
-          <span className={styles.headerDivider} />
-          <Text className={styles.workspaceLabel}>Workspace</Text>
+          <Text className={styles.workspaceLabel}>AI gateway</Text>
           <div className={styles.headerSpacer} />
           <SnapshotNotice />
           <Tooltip label="Find a page or control">
@@ -140,7 +167,7 @@ function WorkspaceShell({ children }) {
           </Tooltip>
         </Group>
       </AppShell.Header>
-      <AppShell.Navbar className={styles.navbar}>
+      <AppShell.Navbar className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
         <Button
           hiddenFrom="md"
           variant="subtle"
@@ -154,11 +181,8 @@ function WorkspaceShell({ children }) {
           Workspace account and language
         </Button>
         <div className={styles.navIntro}>
-          <span className={styles.workspaceOrb}>
-            <Icon name="i-models" />
-          </span>
           <div>
-            <strong>Gateway workspace</strong>
+            <strong>Workspace</strong>
             <span>
               {snapshot?.kind === 'synthetic-fixture'
                 ? 'Synthetic environment'
@@ -186,7 +210,7 @@ function WorkspaceShell({ children }) {
                       prefetch={false}
                       label={lensName(item)}
                       leftSection={<Icon name={item.icon} />}
-                      active={pathname === item.href}
+                      active={pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`))}
                       aria-current={pathname === item.href ? 'page' : undefined}
                       onClick={() => setMobileOpen(false)}
                       className={styles.navItem}
@@ -197,6 +221,7 @@ function WorkspaceShell({ children }) {
           </nav>
         </ScrollArea>
         <div className={styles.navBottom}>
+          <ObservationControls />
           <Button
             fullWidth
             variant="transparent"
@@ -217,9 +242,9 @@ function WorkspaceShell({ children }) {
         </div>
       </AppShell.Navbar>
       <AppShell.Main className={styles.main}>
-        <main id="main" tabIndex={-1} className={isCapacity ? styles.lensMain : styles.legacyMain}>
+        <div id="main" tabIndex={-1} className={isCapacity ? styles.lensMain : styles.legacyMain}>
           {children}
-        </main>
+        </div>
       </AppShell.Main>
       <Modal
         opened={searchOpen}
@@ -237,21 +262,29 @@ function WorkspaceShell({ children }) {
           leftSection={<Icon name="i-search" />}
           size="md"
         />
+        <Text size="sm" c="dimmed" mt="sm">Find workspace destinations, settings, and observed accounts. Opening a result does not run a provider test.</Text>
         <Stack gap={4} mt="md">
-          {NAV.filter((item) =>
-            `${lensName(item)} ${SEARCH_TERMS[item.href] || ''}`
-              .toLowerCase()
-              .includes(query.toLowerCase())
-          ).map((item) => (
+          {destinations.length > 0 && <Text className={styles.searchSection}>Destinations and settings</Text>}
+          {destinations.map((item) => (
             <NavLink
               component={Link}
               href={item.href}
               label={lensName(item)}
               leftSection={<Icon name={item.icon} />}
               key={item.href}
-              onClick={() => setSearchOpen(false)}
+              onClick={() => { setSearchOpen(false); setMobileOpen(false); }}
             />
           ))}
+          {accountResults.length > 0 && <Text className={styles.searchSection}>Observed accounts</Text>}
+          {accountResults.map((account) => <NavLink
+            key={account.connectionId} component={Link}
+            href={`/dashboard/connections/${encodeURIComponent(account.connectionId)}`}
+            label={account.displayName || account.name || account.connectionId} description={account.provider}
+            leftSection={<Icon name="i-connections" />} onClick={() => { setSearchOpen(false); setMobileOpen(false); }}
+          />)}
+          {!destinations.length && !accountResults.length && <div className={styles.searchEmpty} role="status">
+            No matching destination or observed account. Try a provider name, quota, pricing, routing, or a shorter search.
+          </div>}
         </Stack>
       </Modal>
       <Modal
@@ -269,10 +302,17 @@ function WorkspaceShell({ children }) {
                 : 'Operator account'}
           </Text>
           <LocaleSelect />
+          <div>
+            <Text id="appearance-label" fw={500} mb={8}>Appearance</Text>
+            <SegmentedControl fullWidth aria-labelledby="appearance-label" value={colorScheme} onChange={setColorScheme}
+              data={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'auto', label: 'System' }]} />
+            <Text size="sm" c="dimmed" mt={8}>Saved for this browser. System follows your device appearance.</Text>
+          </div>
           <Divider />
           {auth?.authenticated && (
             <Button
               variant="light"
+              loading={signingOut}
               disabled={snapshot?.isolated}
               onClick={signOut}
               leftSection={<Icon name="i-signout" />}
@@ -280,9 +320,12 @@ function WorkspaceShell({ children }) {
               Sign out
             </Button>
           )}
+          {signOutError && <Text role="alert" c="red">{signOutError}</Text>}
           {snapshot && (
             <Text size="sm" c="dimmed">
-              Operational changes are disabled in this private snapshot.
+              {snapshot.kind === 'synthetic-fixture'
+                ? 'Only fixture-scoped changes are available in this isolated runtime.'
+                : 'Operational changes are disabled in this private snapshot.'}
             </Text>
           )}
         </Stack>

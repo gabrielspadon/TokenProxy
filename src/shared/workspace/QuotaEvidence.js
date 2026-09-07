@@ -31,6 +31,12 @@ function evidenceLabel(window) {
   }`;
 }
 
+export function quotaObservationAge(window) {
+  const evidence = window?.percentage?.freshness || window?.freshness;
+  const age = evidence?.ageMs;
+  return `${evidence?.state || 'unknown age'}${typeof age === 'number' && Number.isFinite(age) && age >= 0 ? ` · ${Math.floor(age / 60000)} min old` : ''}`;
+}
+
 export function WindowEvidence({ window }) {
   if (!window) return <span className={styles.unknown}>Not recorded</span>;
   const percentage = quotaPercentage(window);
@@ -49,6 +55,7 @@ export function WindowEvidence({ window }) {
             radius={0}
           />
         )}
+        <span className={styles.age}>{quotaObservationAge(window)}</span>
       </div>
     </Tooltip>
   );
@@ -74,6 +81,8 @@ export function QuotaSummary({ windows, onInspect }) {
               >
                 {percentage === null ? 'Unknown' : `${percentage}%`}
               </span>
+              <span className={styles.age}>{quotaObservationAge(window)}</span>
+              <span className={styles.age}>Reset {observation(window.percentage?.resetAt || window.resetAt)}</span>
             </UnstyledButton>
           </Tooltip>
         );

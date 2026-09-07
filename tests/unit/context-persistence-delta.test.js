@@ -8,6 +8,7 @@ import { createNodeSqliteAdapter } from '../../src/lib/db/adapters/nodeSqliteAda
 import { createSqlJsAdapter } from '../../src/lib/db/adapters/sqljsAdapter.js';
 import { TABLES, buildCreateTableSql } from '../../src/lib/db/schema.js';
 import { saveRequestStats } from '../../src/lib/db/repos/requestStatsRepo.js';
+import { readContextEvidenceExport } from '../../src/lib/db/analytics/contextEvidenceExport.mjs';
 import { measureContextStructure } from '../../open-sse/utils/contextStructure.js';
 
 const factories = [['better-sqlite3', createBetterSqliteAdapter], ['node:sqlite', createNodeSqliteAdapter], ['sql.js', createSqlJsAdapter]];
@@ -50,6 +51,22 @@ for (const [driver, create] of factories) describe(driver, () => {
     expect(db.all('SELECT * FROM _testLedgerWrites')).toEqual([]);
     expect(db.get('SELECT status,timestamp,promptTokens,completionTokens,cachedTokens,cacheCreationTokens,latencyTotal,latencyTtft,usageSource,usageInputPresent,usageOutputPresent,rateSnapshotId FROM requestStats')).toEqual({ status: 'success', timestamp: finalAt, promptTokens: 35, completionTokens: 3, cachedTokens: 20, cacheCreationTokens: 5, latencyTotal: 31, latencyTtft: 7, usageSource: 'provider', usageInputPresent: 1, usageOutputPresent: 1, rateSnapshotId: 'b'.repeat(64) });
     expect(db.get('SELECT firstSeenAt,lastSeenAt FROM contextSessions')).toEqual({ firstSeenAt: stamp, lastSeenAt: finalAt });
+  });
+  it('persists and exports every effective context control, including false values', async () => {
+    const detail = entry();
+    detail.contextTelemetry.controls = {
+      rtk: true, contextStructure: true,
+      diet: true, lingua: false, epochMicro: true, epochAuto: false, adaptiveCacheTtl: true,
+      ignored: true,
+    };
+    await saveRequestStats(detail);
+    const expected = {
+      rtk: true, contextStructure: true,
+      diet: true, lingua: false, epochMicro: true, epochAuto: false, adaptiveCacheTtl: true,
+    };
+    expect(JSON.parse(db.get('SELECT contextControls FROM requestStats WHERE id=?', ['request']).contextControls)).toEqual(expected);
+    const exported = readContextEvidenceExport(db, { selection: { id: 'request', sessionId: 1 }, scope: {}, context: {} }, 'selected', 10);
+    expect(exported.items[0].controls).toEqual(expected);
   });
   it('keeps each changed intermediate boundary, shrinking stage order and growing structural evidence', async () => {
     const detail = entry(); await saveRequestStats(detail);

@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { getAdapter } from "../driver.js";
+import { isCompletionId } from "../completionIdentity.mjs";
 import { captureUsagePricing, persistUsagePricing, priceUsage, usageQuantityPresence } from "./usagePricing.js";
 import { prepareBudgetUsage, recordBudgetUsage } from "./budgetRepo.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
@@ -274,35 +275,38 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   const modelKey = provider ? `${model} (${provider})` : model;
   const timerKey = `${connectionId}|${modelKey}`;
 
-  if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
-  pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
-  if (pendingRequests.byModel[modelKey] === 0) delete pendingRequests.byModel[modelKey];
-
-  if (connectionId) {
-    if (!pendingRequests.byAccount[connectionId]) pendingRequests.byAccount[connectionId] = {};
-    if (!pendingRequests.byAccount[connectionId][modelKey]) pendingRequests.byAccount[connectionId][modelKey] = 0;
-    pendingRequests.byAccount[connectionId][modelKey] = Math.max(0, pendingRequests.byAccount[connectionId][modelKey] + (started ? 1 : -1));
-    if (pendingRequests.byAccount[connectionId][modelKey] === 0) {
-      delete pendingRequests.byAccount[connectionId][modelKey];
-      if (Object.keys(pendingRequests.byAccount[connectionId]).length === 0) {
-        delete pendingRequests.byAccount[connectionId];
-      }
-    }
-  }
-
   if (started) {
-    clearTimeout(pendingTimers[timerKey]);
-    pendingTimers[timerKey] = setTimeout(() => {
-      delete pendingTimers[timerKey];
-      if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-      if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-        pendingRequests.byAccount[connectionId][modelKey] = 0;
+    pendingRequests.byModel[modelKey] = (pendingRequests.byModel[modelKey] || 0) + 1;
+    if (connectionId) {
+      pendingRequests.byAccount[connectionId] ||= {};
+      pendingRequests.byAccount[connectionId][modelKey] = (pendingRequests.byAccount[connectionId][modelKey] || 0) + 1;
+    }
+
+    const requests = pendingTimers[timerKey] ||= new Set();
+    const pending = {
+      timer: null,
+      finish() {
+        if (!requests.delete(pending)) return;
+        clearTimeout(pending.timer);
+        if (requests.size === 0) delete pendingTimers[timerKey];
+        pendingRequests.byModel[modelKey] = Math.max(0, (pendingRequests.byModel[modelKey] || 0) - 1);
+        if (pendingRequests.byModel[modelKey] === 0) delete pendingRequests.byModel[modelKey];
+        if (connectionId && pendingRequests.byAccount[connectionId]) {
+          const account = pendingRequests.byAccount[connectionId];
+          account[modelKey] = Math.max(0, (account[modelKey] || 0) - 1);
+          if (account[modelKey] === 0) delete account[modelKey];
+          if (Object.keys(account).length === 0) delete pendingRequests.byAccount[connectionId];
+        }
+        scheduleStatsEvent("pending");
       }
-      scheduleStatsEvent("pending");
-    }, PENDING_TIMEOUT_MS);
+    };
+    requests.add(pending);
+    pending.timer = setTimeout(pending.finish, PENDING_TIMEOUT_MS);
+    pending.timer?.unref?.();
   } else {
-    clearTimeout(pendingTimers[timerKey]);
-    delete pendingTimers[timerKey];
+    // The legacy API has no request id; match stops FIFO within the exact
+    // account/model bucket without cancelling another request's expiry.
+    pendingTimers[timerKey]?.values().next().value?.finish();
   }
 
   if (!started && error && provider) {
@@ -436,6 +440,7 @@ export async function getActiveSessions() {
       sessionId: entry.sessionId,
       model: entry.model,
       provider: entry.provider,
+      connectionId: entry.connectionId ?? null,
       account: entry.connectionId
         ? (connectionMap[entry.connectionId] || `Account ${String(entry.connectionId).slice(0, 8)}...`)
         : null,
@@ -540,14 +545,15 @@ export async function saveRequestUsage(entry) {
         JOIN contextSessions s ON s.id=r.contextSessionId WHERE r.id=? AND s.identitySource='explicit' AND s.sessionHash=?`, [requestId, context.sessionHash]) : null;
       const insertedUsage = db.run(
         `INSERT INTO usageHistory(timestamp,provider,model,connectionId,apiKey,endpoint,promptTokens,completionTokens,cost,status,tokens,meta,
-          requestId,logicalRequestId,attempt,contextSessionId,projectId,rateSnapshotId,pricingCapturedAt,costSource,costEvidence,usageSource,estimatedCostUsd,reportedCostUsd,dispatchCoverage)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          requestId,logicalRequestId,attempt,contextSessionId,projectId,rateSnapshotId,pricingCapturedAt,costSource,costEvidence,usageSource,estimatedCostUsd,reportedCostUsd,dispatchCoverage,completionId)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [entry.timestamp, entry.provider || null, entry.model || null, entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost, entry.status || "ok", stringifyJson(tokens),
           stringifyJson({ requestedModel: entry.requestedModel || null, reasoningEffort: entry.reasoningEffort || null,
             ...(entry.receiptEvidence ? { reconciliation: entry.receiptEvidence } : {}) }),
           requestId, logicalRequestId, attempt, session?.contextSessionId ?? null, null, rateSnapshotId, snapshot.capturedAt,
-          entry.costSource, entry.costEvidence ? stringifyJson(entry.costEvidence) : null, usageSource, entry.estimatedCostUsd, entry.reportedCostUsd, ["physical-dispatch", "executor-invocation"].includes(context?.dispatchCoverage) ? context.dispatchCoverage : null]
+          entry.costSource, entry.costEvidence ? stringifyJson(entry.costEvidence) : null, usageSource, entry.estimatedCostUsd, entry.reportedCostUsd, ["physical-dispatch", "executor-invocation"].includes(context?.dispatchCoverage) ? context.dispatchCoverage : null,
+          isCompletionId(entry.completionId) ? entry.completionId : null]
       );
 
       recordBudgetUsage(db, { apiKeyId: budgetKeyId, requestId, usageRowId: insertedUsage.lastInsertRowid,

@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Confirm } from '@/shared/components/Confirm';
@@ -20,7 +20,7 @@ const EMPTY_OIDC = {
   oidcScopes: '',
   oidcLoginLabel: '',
 };
-const EMPTY_SAML = { samlEntryPoint: '', samlIssuer: '', samlCert: '', samlLoginLabel: '' };
+const EMPTY_SAML = { samlEntryPoint: '', samlIssuer: '', samlCert: '', samlLoginLabel: '', samlAttributeName: '', samlAttributeEmail: '' };
 
 function pollFresh(p) {
   if (p.loading) return 'connecting';
@@ -86,12 +86,18 @@ export default function AccessPage() {
   // a submit is answered, refused or not. Nothing typed here survives the reply.
   const forget = () => {
     setPw(EMPTY_PASSWORD);
-    setOidc(EMPTY_OIDC);
-    setSaml(EMPTY_SAML);
+    setOidc(current => ({ ...current, oidcClientSecret: '' }));
+    setSaml(current => ({ ...current, samlCert: '' }));
   };
+  useEffect(() => {
+    const clear = () => { if (document.hidden) { setPw(EMPTY_PASSWORD); setOidc(current => ({ ...current, oidcClientSecret: '' })); setSaml(current => ({ ...current, samlCert: '' })); } };
+    document.addEventListener('visibilitychange', clear);
+    return () => document.removeEventListener('visibilitychange', clear);
+  }, []);
   const close = () => {
     setOpen(null);
     setFailure(null);
+    setBusy(false);
     forget();
   };
 
@@ -106,6 +112,16 @@ export default function AccessPage() {
         body.newPassword ? passwordRefusal(res.status, res.body) : refusal(res.status, res.body)
       );
       return;
+    }
+    if (url === '/api/settings' && !body.newPassword) {
+      setBusy(true);
+      const readback = await call('/api/settings');
+      const comparable = Object.entries(body).filter(([key]) => key !== 'oidcClientSecret');
+      if (!readback.ok || !comparable.every(([key, value]) => readback.body?.[key] === value)) {
+        setFailure({ tone: 'warn', title: 'The setting was accepted; refreshed state was not verified.', next: 'Close and refresh before making another change. Do not repeat the mutation.' });
+        return;
+      }
+      setBusy(false);
     }
     setOpen(null);
     setDone(after);
@@ -159,6 +175,10 @@ export default function AccessPage() {
         <h1>Access</h1>
         <Freshness status={pollFresh(auth)} lastDataAt={auth.goodAt} />
       </div>
+
+      <nav className="access-summary" aria-label="Access control investigation">
+        <a href="#h-now">Current sign-in</a><a href="#h-password">Password</a><a href="#h-sso">Identity provider</a><Link href="/dashboard/keys">Client keys and access profiles</Link>
+      </nav>
 
       {done ? <Notice tone="ok" title={done} /> : null}
 
@@ -393,8 +413,8 @@ export default function AccessPage() {
                 type="button"
                 className="button"
                 onClick={() => {
-                  setOidc(EMPTY_OIDC);
-                  setSaml(EMPTY_SAML);
+                  setOidc(Object.fromEntries(Object.keys(EMPTY_OIDC).map(key => [key, key === 'oidcClientSecret' ? '' : s?.[key] || ''])));
+                  setSaml(Object.fromEntries(Object.keys(EMPTY_SAML).map(key => [key, key === 'samlCert' ? '' : s?.[key] || ''])));
                   setOpen('sso');
                 }}
               >
@@ -682,12 +702,12 @@ export default function AccessPage() {
         busy={busy}
         refusal={failure}
         requires="A session, and the values the identity provider issued for this gateway."
-        changes="The gateway trusts that provider for sign-in. A secret or certificate you type here is stored and never shown again."
+        changes="Stores the identity-provider configuration for subsequent sign-ins. Empty secret and certificate fields preserve stored values. This does not test sign-in completion."
         undo="Clear the configuration here, or type new values over it."
         irreversible={false}
         onClose={close}
         onConfirm={() =>
-          run('/api/settings', chosen === 'saml' ? saml : oidc, 'PATCH', 'Single sign-on saved.')
+          run('/api/settings', chosen === 'saml' ? Object.fromEntries(Object.entries(saml).filter(([key, value]) => key !== 'samlCert' || value.trim())) : oidc, 'PATCH', 'Single sign-on configuration saved and read back. Sign-in has not been tested.')
         }
       >
         <div className="access-fields">
@@ -711,6 +731,7 @@ export default function AccessPage() {
                   onChange={(e) => setSaml({ ...saml, samlIssuer: e.target.value })}
                 />
               </label>
+              {['samlAttributeName', 'samlAttributeEmail'].map(key => <label className="field" key={key}><span>{key === 'samlAttributeName' ? 'Display-name attribute' : 'Email attribute'}</span><input className="input" value={saml[key]} onChange={event => { const value = event.currentTarget.value; setSaml(current => ({ ...current, [key]: value })); }} /></label>)}
               <label className="field">
                 <span>Signing certificate</span>
                 <input

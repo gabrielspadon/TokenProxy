@@ -1,6 +1,6 @@
 # Shared design contract
 
-Provided by the operator on 2026-09-06. This contract governs the current analytical workspace and its visual and behavioral acceptance alongside WORKSPACE.md and WORKSPACE-COMPONENTS.md. Earlier rejected compositions remain rejected.
+Provided by the operator on 2026-09-06. Its measurement, investigation and control semantics remain applicable. The newer [corrective redesign mandate](REDESIGN-20260907.md) supersedes its visual choices, including IBM Plex Sans and indigo selection, with Manrope and petrol-teal. Earlier rejected compositions remain rejected. The original text below is retained as historical intent, not the current visual specification.
 
 Design TokenProxy as a precise analytical workspace for an operator supervising their AI gateway. Make it immediately clear which accounts can accept work, where sessions are routed, what consumes context and quota, and what the recorded usage costs. Organize the main experience around three connected views, Capacity, Context, and Economics. Give each a distinct analytical purpose while preserving the same navigation, scope controls, selection behavior, and inspection pattern. Prioritize the information that explains a constraint, reveals an unexpected outcome, or supports a decision.
 

@@ -1,10 +1,10 @@
 .workbench {
   margin-top: 24px;
   padding-top: 18px;
-  border-top: 1px solid var(--border, #dce2ec);
-  color: #24324a;
+  border-top: 1px solid var(--rule);
+  color: var(--ink);
   min-width: 0;
-  --mantine-color-dimmed: #596981;
+  --mantine-color-dimmed: var(--slate);
 }
 .workbench h3 {
   font-size: 17px;
@@ -17,9 +17,9 @@
   margin: 0 0 8px;
 }
 .note {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
-  color: #596981;
+  color: var(--ink);
   max-width: 80ch;
   margin: 4px 0 10px;
 }
@@ -27,8 +27,8 @@
   font-size: 13px;
   line-height: 1.5;
   padding: 9px 12px;
-  border-inline-start: 3px solid #a4b1cd;
-  background: #f3f6fb;
+  border-inline-start: 3px solid var(--slate);
+  background: var(--paper);
 }
 .windowSelect {
   max-width: 640px;
@@ -36,7 +36,7 @@
 }
 .analysisGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 26px;
   align-items: start;
 }
@@ -44,11 +44,11 @@
   min-width: 0;
 }
 .scenario {
-  border-inline-start: 1px solid #dce2ec;
-  padding-inline-start: 24px;
+  border-top: 1px solid var(--rule);
+  padding-top: 16px;
 }
 .scenario p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
 }
 .controls {
@@ -56,8 +56,8 @@
   margin-bottom: 14px;
 }
 .result {
-  border-top: 1px solid #dce2ec;
-  border-bottom: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
   padding: 12px 0;
   margin-bottom: 14px;
 }
@@ -68,14 +68,14 @@
 }
 .result p {
   margin: 6px 0 0;
-  color: #596981;
+  color: var(--ink);
 }
 .value {
   display: block;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 17px;
   font-variant-numeric: tabular-nums;
-  color: #283f76;
+  color: var(--ink);
   margin-top: 6px;
 }
 .facts {
@@ -83,63 +83,63 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
   column-gap: 14px;
   row-gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   margin: 0 0 14px;
 }
 .facts dt {
-  color: #596981;
+  color: var(--ink);
 }
 .facts dd {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--sans);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .table {
-  font-size: 12px;
+  font-size: 13px;
 }
 .table th {
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   font-weight: 500;
-  color: #596981;
+  color: var(--ink);
 }
 .table td {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 .table td:nth-child(2) {
-  font-family: var(--mono);
+  font-family: var(--sans);
 }
 .table button {
   font-size: inherit;
   text-decoration: underline;
-  text-decoration-color: #bac6dd;
+  text-decoration-color: var(--slate);
   text-underline-offset: 3px;
 }
 .table button:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 .table tr[data-selected] {
-  background: #edf1fd;
-  box-shadow: inset 3px 0 #455bca;
+  background: var(--paper);
+  box-shadow: inset 3px 0 var(--signal);
 }
 .table code {
   display: block;
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 11px;
+  font-size: 13px;
 }
 .selected {
   margin-top: 14px;
   padding: 10px 12px;
-  border-inline-start: 3px solid #455bca;
-  background: #f5f7fc;
-  font-size: 12px;
+  border-inline-start: 3px solid var(--signal);
+  background: var(--paper);
+  font-size: 13px;
   line-height: 1.5;
 }
 .selected strong,
@@ -147,10 +147,10 @@
   display: block;
 }
 .selected code {
-  font-family: var(--mono);
-  font-size: 11px;
+  font-family: var(--sans);
+  font-size: 13px;
   overflow-wrap: anywhere;
-  color: #596981;
+  color: var(--ink);
   margin: 4px 0;
 }
 .selected p {
@@ -158,7 +158,7 @@
 }
 .increases {
   margin-top: 14px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .increases summary {
   cursor: pointer;
@@ -169,11 +169,11 @@
 }
 .checks {
   margin-top: 24px;
-  border-top: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
   padding-top: 18px;
 }
 .empty {
-  color: #596981;
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.6;
   padding: 14px 0;
@@ -185,7 +185,7 @@
   }
   .scenario {
     border-inline-start: 0;
-    border-top: 1px solid #dce2ec;
+    border-top: 1px solid var(--rule);
     padding-inline-start: 0;
     padding-top: 18px;
   }

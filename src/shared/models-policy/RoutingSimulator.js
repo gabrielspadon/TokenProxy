@@ -119,7 +119,7 @@ export function RoutingSimulator({ draft }) {
             No upstream request
           </Badge>
         </div>
-        <Text size="sm" c="#5b6980">
+        <Text size="sm" c="var(--slate)">
           Capture the local inputs for one physical model, then replay them unchanged. The history
           range does not reconstruct an earlier state. No session identifier is supplied here, so
           affinity is explicitly assumed new.
@@ -267,7 +267,7 @@ export function RoutingSimulator({ draft }) {
         {validation && (
           <Alert
             color={validation.draftPreview?.valid === false ? 'orange' : 'teal'}
-            styles={{ title: { color: validation.draftPreview?.valid === false ? '#804000' : '#076449' } }}
+            styles={{ title: { color: validation.draftPreview?.valid === false ? 'var(--ember)' : 'var(--positive)' } }}
             title="Capture shape validated"
             mt="sm"
           >
@@ -354,7 +354,7 @@ export function RoutingSimulator({ draft }) {
               </Table>
             </Table.ScrollContainer>
             {result.candidates.length === 0 && (
-              <Text c="#5b6980" py="sm">
+              <Text c="var(--slate)" py="sm">
                 No candidate order was produced on this capture.
               </Text>
             )}

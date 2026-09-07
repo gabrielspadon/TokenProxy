@@ -13,6 +13,13 @@ import { fmtNum, fmtRelative, fmtTime } from "@/shared/format";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { ProviderMark } from '@/shared/components/ProviderMark';
 import { Icon } from "@/shared/components/Icon";
+import { SelectionDock } from '@/shared/workspace/SelectionDock';
+import { useOptionalWorkspace } from '@/shared/workspace/WorkspaceProvider';
+import { accountPath } from '../network/accountPath';
+import ProviderImports from './ProviderImports';
+import ProviderControls from './ProviderControls';
+import KiroSocial from './KiroSocial';
+import { ProviderOptionInputs, accountOptionFields, buildAccountOptions } from './AccountOptions';
 import "./styles.css";
 
 function pollFresh(p) {
@@ -34,6 +41,7 @@ const CAUSE_WORD = {
 
 // How a provider entry can be credentialed, derived from the registry entry.
 function modesOf(entry) {
+  if (Array.isArray(entry.authModes) && entry.authModes.length) return entry.authModes;
   const modes = [];
   if (entry.hasOAuth) modes.push("oauth");
   if (entry.noAuth) modes.push("none");
@@ -44,7 +52,22 @@ function modesOf(entry) {
 
 const MODE_WORD = { oauth: "OAuth grant", apikey: "API key", cookie: "Cookie", none: "No credential", paste: "Pasted token" };
 
+function accountInvestigationHref(path, account, workspace) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(workspace?.scope || {})) {
+    if (value !== null && value !== undefined && value !== '') query.set(key, value);
+  }
+  query.set('provider', account.provider);
+  query.set('connectionId', account.id);
+  query.set('selected', JSON.stringify({ kind: 'account', id: account.id, connectionId: account.id, provider: account.provider }));
+  if (workspace?.comparisonIds?.length) query.set('compare', workspace.comparisonIds.join(','));
+  return `${path}?${query}`;
+}
+
 export default function ConnectionsPage() {
+  const workspace = useOptionalWorkspace();
+  const scopedProvider = workspace?.scope.provider;
+  const scopedAccountId = workspace?.scope.connectionId;
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15000);
@@ -56,6 +79,16 @@ export default function ConnectionsPage() {
   const drain = usePoll("/api/admin/drain?all=true", 10000);
   const sys = usePoll("/api/system/state?windowSeconds=3600", 30000);
   const activation = usePoll("/api/admin/activation", 30000);
+  const pools = usePoll('/api/proxy-pools', 30000);
+  const nodes = usePoll('/api/provider-nodes', 30000);
+  const [localSelectedId, setLocalSelectedId] = useState(null);
+  const selectedId = workspace ? workspace.selectedRecord?.kind === 'account' ? workspace.selectedRecord.id : null : localSelectedId;
+  const setSelectedId = (id) => {
+    if (workspace) {
+      const account = providers.data?.connections?.find(connection => connection.id === id);
+      workspace.setSelectedRecord(id ? { kind: 'account', id, connectionId: id, ...(account?.provider ? { provider: account.provider } : {}) } : null);
+    } else setLocalSelectedId(id);
+  };
 
   const [q, setQ] = useState("");
   const [only, setOnly] = useState("all");
@@ -82,7 +115,7 @@ export default function ConnectionsPage() {
         authType: c.authType,
         priority: c.priority,
         isActive: c.isActive !== false,
-        status: s?.status || (c.isActive === false ? "unqualified" : "healthy"),
+        status: s?.status || null,
         isDraining: byDrain.get(c.id)?.isDraining === true,
         lastQualifiedAt: s?.lastQualifiedAt || null,
         lastError: s?.lastError || null,
@@ -90,12 +123,16 @@ export default function ConnectionsPage() {
     });
     const needle = q.trim().toLowerCase();
     return list
-      .filter((r) => !needle || r.provider.toLowerCase().includes(needle) || r.name.toLowerCase().includes(needle))
-      .filter((r) => only === "all" || (only === "degraded" ? r.status !== "healthy" : r.status === only))
+      .filter((r) => (!scopedProvider || r.provider === scopedProvider) && (!scopedAccountId || r.id === scopedAccountId))
+      .filter((r) => !needle || [r.provider, r.name, r.email, r.id].some(value => value?.toLowerCase().includes(needle)))
+      .filter((r) => only === 'all' || (only === 'degraded' ? ['degraded', 'cooldown', 'error', 'unavailable'].includes(r.status) : only === 'unknown' ? !r.status : only === 'drained' ? r.isDraining : only === 'disabled' ? !r.isActive : r.status === only))
       .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999) || a.provider.localeCompare(b.provider));
-  }, [providers.data, byQual, byDrain, q, only]);
+  }, [providers.data, byQual, byDrain, q, only, scopedProvider, scopedAccountId]);
 
   const all = providers.data?.connections || [];
+  const selected = all.find(connection => connection.id === selectedId);
+  const selectedQualification = selected ? byQual.get(selected.id) : null;
+  const selectedPath = selected ? accountPath(selected, pools.data?.proxyPools || []) : null;
   const enabled = all.filter((c) => c.isActive !== false).length;
   const draining = all.filter((c) => byDrain.get(c.id)?.isDraining === true).length;
   const health = sys.data?.providerHealth || null;
@@ -108,43 +145,60 @@ export default function ConnectionsPage() {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState(null);
   const abortRef = useRef(null);
+  const providerChoice = useRef(0);
+
+  useEffect(() => { const clear = () => { if (document.hidden) setForm(current => ({ ...current, secret: '', clientSecret: '', customHeaders: '', managementKey: '' })); }; document.addEventListener('visibilitychange', clear); return () => { abortRef.current?.abort(); document.removeEventListener('visibilitychange', clear); }; }, []);
 
   const entries = useMemo(
-    () => Object.values(AI_PROVIDERS).filter((p) => !p.hidden).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
-    [],
+    () => [...Object.values(AI_PROVIDERS), ...(nodes.data?.nodes || []).map(node => ({ ...node, authModes: ['apikey'], acceptsEmptyKey: node.type !== 'custom-embedding' }))]
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+    [nodes.data],
   );
-  const entry = form.providerId ? AI_PROVIDERS[form.providerId] : null;
+  const entry = entries.find(candidate => candidate.id === form.providerId);
   const modes = entry ? modesOf(entry) : [];
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   async function pickProvider(id) {
+    const choice = ++providerChoice.current;
     setForm({ providerId: id, mode: "", name: "", secret: "", machineId: "" });
     setFlow(null);
     setRefused(null);
-    const e = AI_PROVIDERS[id];
+    const e = entries.find(candidate => candidate.id === id);
     if (!e) return;
     const m = modesOf(e);
     set("mode", m[0]);
     if (e.hasOAuth) {
       const r = await call(`/api/oauth/${id}/authorize?redirect_uri=${encodeURIComponent(`${window.location.origin}/callback`)}`);
+      if (choice !== providerChoice.current) return;
       if (r.ok) setFlow(r.body);
       else setFlow({ failed: refusal(r.status, r.body) });
     }
   }
 
   function closeAdd() {
+    providerChoice.current++;
     abortRef.current?.abort();
     setAdding(false);
     setGrant(null);
     setRefused(null);
     setBusy(false);
+    setForm({ providerId: '', mode: '', name: '', secret: '', machineId: '' });
   }
 
   async function runAdd() {
+    const choice = providerChoice.current;
     if (grant?.connection) { closeAdd(); return; }
     setBusy(true);
     setRefused(null);
+    if (!entry || !modes.includes(form.mode)) {
+      setRefused({ tone: 'bad', title: 'Choose a supported provider and authentication method.' });
+      setBusy(false); return;
+    }
+    if (form.mode === 'none') {
+      setRefused({ tone: 'info', title: 'This provider uses a virtual account.', next: 'No credential is stored. Use its provider controls below to enable it, or Network to choose its outbound path.' });
+      setBusy(false); return;
+    }
     let out;
     if (form.mode === "oauth") {
       if (flow?.failed) { setRefused(flow.failed); setBusy(false); return; }
@@ -155,24 +209,36 @@ export default function ConnectionsPage() {
         const ac = new AbortController();
         abortRef.current = ac;
         out = await runGrant(form.providerId, kind, {
+          deviceOptions: form,
+          meta: { baseUrl: form.baseUrl, clientId: form.clientId, clientSecret: form.clientSecret },
           signal: ac.signal,
-          report: (step) => setGrant((g) => ({ ...(g || {}), step })),
-          deviceHook: (device) => setGrant((g) => ({ ...(g || {}), device })),
+          report: (step) => { if (choice === providerChoice.current) setGrant((g) => ({ ...(g || {}), step })); },
+          deviceHook: (device) => { if (choice === providerChoice.current) setGrant((g) => ({ ...(g || {}), device })); },
         });
       }
     } else {
+      let options; try { options = buildAccountOptions({ ...form, name: form.name || entry.name || entry.id, defaultModel: form.defaultModel || '', globalPriority: '', maxConcurrent: '' }, accountOptionFields(form.providerId)); }
+      catch (error) { setBusy(false); setRefused({ tone: 'bad', title: error.message }); return; }
       out = await call("/api/providers", {
         method: "POST",
         body: {
           provider: form.providerId,
-          name: form.name,
+          name: options.name,
+          defaultModel: options.defaultModel,
+          ...(options.providerSpecificData ? { providerSpecificData: options.providerSpecificData } : {}),
           ...(form.mode === "none" ? {} : { apiKey: form.secret }),
         },
       });
       out = out.ok ? { ok: true, connection: out.body.connection } : { ok: false, status: out.status, body: out.body };
     }
+    if (choice !== providerChoice.current) return;
+    setForm(current => ({ ...current, secret: '', clientSecret: '', customHeaders: '', managementKey: '' }));
     setBusy(false);
     if (out.ok) {
+      const savedId = out.connection?.id;
+      const read = savedId ? await call(`/api/providers/${encodeURIComponent(savedId)}`) : null;
+      if (choice !== providerChoice.current) return;
+      if (!read?.ok || read.body?.connection?.id !== savedId) { setBusy(true); setRefused({ tone: 'warn', title: 'The account write was accepted, but the saved account was not confirmed.', next: 'Close and refresh the account list before another import.' }); providers.refresh(); return; }
       setGrant({ connection: out.connection });
       providers.refresh();
       qual.refresh();
@@ -194,25 +260,28 @@ export default function ConnectionsPage() {
     const ifMatch = active?.concurrencyVersion;
     const r = releaseAct.kind === "activate"
       ? await call("/api/admin/activation", { method: "POST", body: { releaseId: releaseAct.release.releaseId, ...(ifMatch ? { ifMatch } : {}) } })
-      : await call("/api/admin/rollback", { method: "POST", body: ifMatch ? { ifMatch } : {} });
-    setRelBusy(false);
+      : await call("/api/admin/rollback", { method: "POST", body: { ...(ifMatch ? { ifMatch } : {}), ...(releaseAct.toReleaseId ? { toReleaseId: releaseAct.toReleaseId } : {}) } });
     if (r.ok) {
+      const read = await call('/api/admin/activation');
+      const verified = read.ok && read.body?.active?.releaseId === r.body?.releaseId && read.body?.active?.concurrencyVersion === r.body?.concurrencyVersion;
+      if (!verified) { setRelRefused({ tone: 'warn', title: 'The release record was accepted, but its saved state was not confirmed.', next: 'Close and refresh before another change. This does not activate software or switch traffic.' }); return; }
+      setRelBusy(false);
       setReleaseAct(null);
       activation.refresh();
     } else {
+      setRelBusy(false);
       setRelRefused(refusal(r.status, r.body));
     }
   }
 
   const firstError = providers.error || qual.error;
-  const forbidden = firstError && (qual.status === 401 || qual.status === 403 || providers.status === 401);
 
   return (
     <div className="screen">
       <header className="screen-head">
         <div>
           <h1>Connections</h1>
-          <p className="caption">Every stored account, its standing in the fallback order, and the releases that route them.</p>
+          <p className="caption">Stored accounts, routing eligibility and recorded release history.</p>
         </div>
         <div className="actions">
           <Freshness status={pollFresh(qual)} lastDataAt={qual.goodAt} />
@@ -220,17 +289,19 @@ export default function ConnectionsPage() {
         </div>
       </header>
 
-      {forbidden ? <Notice {...refusal(qual.status || providers.status, qual.error || providers.error)} /> : null}
+      {[['Account inventory', providers], ['Qualification evidence', qual], ['Drain state', drain]].map(([label, resource]) => resource.error ? <div key={label}>
+        <Notice {...(resource.status === 0 || resource.error.code === 'network'
+          ? { tone: 'warn', title: `${label} could not be refreshed.`, next: resource.data ? 'Showing the last successful observation. Other account evidence is read independently.' : 'This evidence is unavailable. Retry this read; no provider probe will run.' }
+          : refusal(resource.status, resource.error))} />
+        <button type="button" className="button quiet" onClick={resource.refresh} disabled={resource.loading}>Retry {label.toLowerCase()}</button>
+      </div> : null)}
 
-      <div className="measures">
-        <div className="measure big"><span className="label">Configured</span><span className="value" data-i18n-skip>{fmtNum(all.length)}</span></div>
-        <div className="measure big"><span className="label">Enabled</span><span className="value" data-i18n-skip>{fmtNum(enabled)}</span></div>
-        <div className="measure big"><span className="label">Draining</span><span className="value" data-i18n-skip>{fmtNum(draining)}</span></div>
-        <div className="measure big">
-          <span className="label">Degraded providers</span>
-          {health && health.unavailable === null ? <span className="value" data-i18n-skip>{fmtNum(health.degradedProviderCount)}</span> : <span className="value unreported">Not reported</span>}
-        </div>
-      </div>
+      <dl className="connections-summary" aria-label="Connection status summary">
+        <div><dt>Configured</dt><dd><bdi>{providers.data ? fmtNum(all.length) : 'Unknown'}</bdi></dd></div>
+        <div><dt>Enabled</dt><dd><bdi>{providers.data ? fmtNum(enabled) : 'Unknown'}</bdi></dd></div>
+        <div><dt>Draining</dt><dd><bdi>{drain.data ? fmtNum(draining) : 'Unknown'}</bdi></dd></div>
+        <div><dt>Degraded providers</dt><dd><bdi>{health && health.unavailable === null ? fmtNum(health.degradedProviderCount) : 'Unknown'}</bdi></dd></div>
+      </dl>
 
       {health?.degradedProviders?.length ? (
         <Notice tone="warn" title="Some providers are degraded.">
@@ -250,13 +321,16 @@ export default function ConnectionsPage() {
           <select className="select" value={only} onChange={(e) => setOnly(e.target.value)}>
             <option value="all">Everything</option>
             <option value="healthy">Healthy</option>
-            <option value="degraded">Not healthy</option>
+            <option value="degraded">Observed unhealthy</option>
+            <option value="unknown">Qualification unknown</option>
             <option value="cooldown">Cooling down</option>
             <option value="drained">Drained</option>
+            <option value="disabled">Disabled</option>
             <option value="unqualified">Unqualified</option>
           </select>
         </label>
       </div>
+      {workspace?.scope.provider || workspace?.scope.connectionId ? <p className="caption">Showing current accounts in the retained provider/account scope. <button type="button" className="link-button" onClick={() => workspace.setScope({ provider: null, connectionId: null })}>Show all accounts</button> The historical interval and model remain available when you return to analysis.</p> : null}
 
       {providers.loading ? <div className="skeleton" aria-hidden="true" /> : null}
       {!providers.loading && all.length === 0 && !firstError ? (
@@ -264,44 +338,61 @@ export default function ConnectionsPage() {
           <p>No connections yet. Add one and the gateway can start routing.</p>
         </div>
       ) : null}
+      {all.length > 0 && rows.length === 0 ? <div className="empty"><p>No accounts match these filters.</p><button type="button" className="button quiet" onClick={() => { setQ(''); setOnly('all'); workspace?.setScope({ provider: null, connectionId: null }); }}>Clear account filters</button></div> : null}
+      {selected && !rows.some(row => row.id === selected.id) ? <p className="caption">The selected account is outside the displayed filters. Its evidence remains open.</p> : null}
 
-      <div className="rows">
+      <SelectionDock open={!!selected} title={selected?.name || selected?.id} subtitle={selected?.provider} mark={selected ? <ProviderMark provider={selected.provider} /> : null} onClose={() => setSelectedId(null)} height="min(660px, calc(100dvh - 280px))" closedMaxHeight="min(660px, calc(100dvh - 280px))" detail={selected ? <div className="connections-inspector">
+        <dl className="facts"><dt>Account ID</dt><dd><bdi data-i18n-skip>{selected.id}</bdi></dd><dt>Authentication</dt><dd>{AUTH[selected.authType] || selected.authType || 'Unknown'}</dd><dt>Qualification status</dt><dd>{WORDS[selectedQualification?.status] || selectedQualification?.status || 'Unknown'}<p className="caption">Qualification combines recorded validation with drain, active state and cooldown. It does not establish model eligibility.</p></dd><dt>Local participation</dt><dd>{selected.isActive === false ? 'Disabled' : byDrain.get(selected.id)?.isDraining ? 'Draining; no new work' : 'Enabled; model, quota and capacity restrictions still apply'}</dd><dt>Upstream model entitlement</dt><dd>Unknown. A stored account or health result does not establish model access.</dd><dt>Network path</dt><dd>{pools.data ? <><bdi data-i18n-skip>{selectedPath.label}</bdi>. {selectedPath.policy}</> : 'Pool inventory unavailable; path not verified.'}</dd></dl>
+        <Link href={`/dashboard/connections/${encodeURIComponent(selected.id)}`} prefetch={false}>Investigate account controls and evidence</Link>
+        <h3>Investigate this account</h3>
+        <p className="caption">Open the account’s recorded activity with the retained time range and model. Current configuration and historical activity remain separate.</p>
+        <div className="verb-row">
+          {[['Capacity', '/dashboard'], ['Context', '/dashboard/context'], ['Economics', '/dashboard/usage']].map(([label, path]) => <Link key={path} href={accountInvestigationHref(path, selected, workspace)} onClick={() => workspace?.setScope({ provider: selected.provider, connectionId: selected.id })}>{label}</Link>)}
+        </div>
+      </div> : null}>
+      <div className="rows connections-inventory">
         {rows.length ? (
           <div className="row head connections-row" aria-hidden="true">
-            <span>Account</span><span>Standing</span><span>Last qualified</span>
+            <span>Account</span><span>Qualification</span><span>Last observed</span><span>Details</span>
           </div>
         ) : null}
         {rows.map((r) => (
-          <div className="row connections-row" key={r.id}>
+          <div className="row connections-row" key={r.id} data-selected={selectedId === r.id}>
             <div className="who">
-              <Link prefetch={false} href={`/dashboard/connections/${r.id}`} className="name connection-name" data-i18n-skip><ProviderMark provider={r.provider}/>{r.name}</Link>
-              <span className="sub"><span data-i18n-skip>{r.provider}</span> · {AUTH[r.authType] || r.authType} · priority <span data-i18n-skip>{fmtNum(r.priority ?? 0)}</span></span>
+              <ProviderMark provider={r.provider}/>
+              <div className="connection-copy">
+                <Link prefetch={false} href={`/dashboard/connections/${r.id}`} className="name" data-i18n-skip>{r.name}</Link>
+                <span className="sub"><span data-i18n-skip>{r.provider}</span> · {AUTH[r.authType] || r.authType} · priority <span data-i18n-skip>{fmtNum(r.priority ?? 0)}</span></span>
+              </div>
             </div>
-            <div>
-              <span className="status" data-tone={TONE[r.status] || "warn"}>{WORDS[r.status] || r.status}</span>
+            <div className="connection-standing">
+              <span className="status" data-tone={TONE[r.status] || "neutral"}>{WORDS[r.status] || r.status || 'Qualification unknown'}</span>
               {r.isDraining ? <span className="status" data-tone="warn">Draining</span> : null}
               {!r.isActive ? <span className="caption">Disabled</span> : null}
             </div>
             <div>
-              {r.lastQualifiedAt ? <span data-i18n-skip>{fmtRelative(r.lastQualifiedAt, now)}</span> : <span className="unreported">Never</span>}
+              {r.lastQualifiedAt ? <span data-i18n-skip>{fmtRelative(r.lastQualifiedAt, now)}</span> : <span className="unreported">Not recorded</span>}
               {r.lastError ? <p className="caption" data-i18n-skip>{r.lastError}</p> : null}
             </div>
+            <button type="button" className="button quiet" aria-label={`Inspect account ${r.name}`} aria-pressed={selectedId === r.id} onClick={() => setSelectedId(r.id)}>Inspect account</button>
           </div>
         ))}
       </div>
+      </SelectionDock>
 
+      <section aria-label="Account setup options"><div className="verb-row"><ProviderImports onSaved={() => providers.refresh()} /><KiroSocial onSaved={() => providers.refresh()} /><ProviderControls nodes={nodes.data?.nodes || []} onSaved={() => providers.refresh()} /></div></section>
       <section className="connections-releases">
-        <h2>Releases</h2>
-        <p className="caption">Which build of the routing table is live. Activating another one changes how every request routes.</p>
+        <h2>Release records</h2>
+        <p className="caption">The recorded active release and its history. These controls update metadata; they do not deploy software or switch request routing.</p>
         {activation.error ? <Notice {...refusal(activation.status, activation.error)} /> : null}
         {active ? (
           <dl className="facts">
-            <dt>Active release</dt><dd data-i18n-skip>{active.releaseId}</dd>
+            <dt>Recorded active release</dt><dd data-i18n-skip>{active.releaseId}</dd>
             <dt>Version</dt><dd data-i18n-skip>{active.version}</dd>
-            <dt>Activated</dt><dd>{active.activatedAt ? <span data-i18n-skip>{fmtTime(active.activatedAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
+            <dt>Recorded at</dt><dd>{active.activatedAt ? <span data-i18n-skip>{fmtTime(active.activatedAt)}</span> : <span className="unreported">Not recorded</span>}</dd>
             <dt>Rolls back to</dt><dd>{active.previousReleaseId ? <span data-i18n-skip>{active.previousReleaseId}</span> : <span>Nothing on file</span>}</dd>
           </dl>
-        ) : activation.data ? <p className="empty">No release is active.</p> : null}
+        ) : activation.data ? <p className="empty">No active release is recorded.</p> : null}
         <div className="rows">
           {history.filter((h) => h.releaseId !== active?.releaseId).map((h) => (
             <div className="row" key={h.releaseId}>
@@ -311,14 +402,14 @@ export default function ConnectionsPage() {
               </div>
               <span className="status" data-tone={RELEASE_TONE[h.status] || "warn"}>{RELEASE_WORD[h.status] || h.status}</span>
               <div className="actions">
-                <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "activate", release: h }); }}><Icon name="i-play" />Activate</button>
+                <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "activate", release: h }); }}><Icon name="i-play" />Record as active</button>
               </div>
             </div>
           ))}
         </div>
-        {active?.previousReleaseId ? (
+        {active && history.some(item => item.releaseId !== active.releaseId) ? (
           <div className="actions">
-            <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "rollback" }); }}><Icon name="i-refresh" mirror />Roll back</button>
+            <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "rollback" }); }}><Icon name="i-refresh" mirror />Restore a record</button>
           </div>
         ) : null}
       </section>
@@ -332,7 +423,7 @@ export default function ConnectionsPage() {
         </ul>
       </section>
 
-      <Confirm open={adding} busy={busy} refusal={refused}
+      <Confirm open={adding} busy={busy || (form.mode === 'oauth' && !flow)} refusal={refused}
         title={grant?.connection ? "Connected" : "Add a connection"}
         verb={grant?.connection ? "Done" : form.mode === "oauth" ? "Sign in" : "Add"}
         requires={form.mode === "oauth" ? "An operator session, and finishing the provider's own sign-in." : "An operator session, and the credential to store."}
@@ -347,7 +438,7 @@ export default function ConnectionsPage() {
           <div className="connections-form">
             <label className="field">
               <span>Provider</span>
-              <select className="select" value={form.providerId} onChange={(e) => pickProvider(e.target.value)}>
+              <select className="select" disabled={busy} value={form.providerId} onChange={(e) => pickProvider(e.target.value)}>
                 <option value="">Pick one</option>
                 {entries.map((p) => <option key={p.id} value={p.id} data-i18n-skip>{p.name || p.id}</option>)}
               </select>
@@ -356,7 +447,7 @@ export default function ConnectionsPage() {
               <fieldset className="segmented">
                 <legend>Credential</legend>
                 {modes.map((m) => (
-                  <label key={m}><input type="radio" name="mode" checked={form.mode === m} onChange={() => set("mode", m)} /><span>{MODE_WORD[m]}</span></label>
+                  <label key={m}><input type="radio" name="mode" disabled={busy} checked={form.mode === m} onChange={() => set("mode", m)} /><span>{MODE_WORD[m]}</span></label>
                 ))}
               </fieldset>
             ) : null}
@@ -365,13 +456,26 @@ export default function ConnectionsPage() {
                 <label className="field"><span>Name</span><input className="input" type="text" value={form.name} onChange={(e) => set("name", e.target.value)} /></label>
                 {form.mode !== "none" ? (
                   <label className="field">
-                    <span>{form.mode === "cookie" ? "Cookie value" : "API key"}</span>
+                    <span>{form.mode === "cookie" ? "Cookie value" : entry.acceptsEmptyKey || entry.id === 'ollama-local' ? 'API key (optional)' : "API key"}</span>
                     <input className="input" type="password" autoComplete="off" value={form.secret} onChange={(e) => set("secret", e.target.value)} />
                   </label>
                 ) : null}
+                {form.providerId === 'vertex' ? <p className="caption">The credential field accepts a Vertex API key, service-account JSON, or authorized-user ADC JSON. Project and location are available under Provider options.</p> : null}
               </>
             ) : null}
+            {entry && form.mode !== 'oauth' && form.mode !== 'none' ? <details><summary>Provider options</summary><ProviderOptionInputs provider={form.providerId} values={form} onChange={set} disabled={busy} /></details> : null}
             {entry && form.mode === "oauth" && flow?.failed ? <Notice {...flow.failed} /> : null}
+            {entry && form.mode === 'none' ? <Notice tone="info" title="No saved credential is needed." next="This provider uses a virtual account. Its availability and outbound path are managed in provider controls and Network." /> : null}
+            {form.mode === 'oauth' && form.providerId === 'kiro' ? <div className="connections-form">
+              <label className="field"><span>Sign-in type</span><select className="select" value={form.authMethod || 'builder-id'} onChange={event => set('authMethod', event.target.value)}><option value="builder-id">AWS Builder ID</option><option value="idc">IAM Identity Center</option></select></label>
+              <label className="field"><span>AWS region</span><input className="input" value={form.region || ''} placeholder="us-east-1" onChange={event => set('region', event.target.value)} /></label>
+              {form.authMethod === 'idc' ? <label className="field"><span>Identity Center start URL</span><input className="input" type="url" value={form.startUrl || ''} onChange={event => set('startUrl', event.target.value)} /></label> : null}
+            </div> : null}
+            {form.mode === 'oauth' && form.providerId === 'gitlab' ? <div className="connections-form">
+              <label className="field"><span>GitLab instance URL</span><input className="input" type="url" value={form.baseUrl || ''} placeholder="https://gitlab.com" onChange={event => set('baseUrl', event.target.value)} /></label>
+              <label className="field"><span>Application client ID</span><input className="input" value={form.clientId || ''} onChange={event => set('clientId', event.target.value)} /></label>
+              <label className="field"><span>Application secret (optional)</span><input className="input" type="password" autoComplete="off" value={form.clientSecret || ''} onChange={event => set('clientSecret', event.target.value)} /></label>
+            </div> : null}
             {entry && form.mode === "oauth" && (flow?.flowType === "browser_token" || flow?.flowType === "import_token") ? (
               <>
                 <label className="field"><span>Pasted token</span><input className="input" type="password" autoComplete="off" value={form.secret} onChange={(e) => set("secret", e.target.value)} /></label>
@@ -391,15 +495,16 @@ export default function ConnectionsPage() {
       </Confirm>
 
       <Confirm open={!!releaseAct} busy={relBusy} refusal={relRefused}
-        title={releaseAct?.kind === "activate" ? "Activate a release" : "Roll back"}
-        verb={releaseAct?.kind === "activate" ? "Activate" : "Roll back"}
+        title={releaseAct?.kind === "activate" ? "Record an active release" : "Restore a release record"}
+        verb={releaseAct?.kind === "activate" ? "Record release" : "Restore record"}
         requires="An operator session from this machine, and the release record unchanged since this screen read it."
         changes={releaseAct?.kind === "activate"
-          ? "Routing switches to the chosen release for every request from that moment."
-          : "Routing returns to the previous release for every request from that moment."}
-        undo="Activate the other release again. Requests already routed stay routed."
+          ? "Updates the recorded active release and its history. This does not deploy software or change request routing."
+          : "Updates the recorded release pointer to the selected history entry. This does not restore software or change request routing."}
+        undo="Record another known release. The history of this change remains."
         onConfirm={runRelease} onClose={() => setReleaseAct(null)}>
         {releaseAct?.kind === "activate" ? <p className="caption" data-i18n-skip>{releaseAct.release.releaseId}</p> : null}
+        {releaseAct?.kind === 'rollback' ? <label className="field"><span>Release record</span><select className="select" value={releaseAct.toReleaseId || ''} onChange={event => setReleaseAct(value => ({ ...value, toReleaseId: event.target.value }))}><option value="">Previous recorded release</option>{history.filter(item => item.releaseId !== active?.releaseId).map(item => <option key={item.releaseId} value={item.releaseId}>{item.version || item.releaseId}</option>)}</select></label> : null}
       </Confirm>
     </div>
   );

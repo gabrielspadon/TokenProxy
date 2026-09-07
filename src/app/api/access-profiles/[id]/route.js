@@ -32,11 +32,15 @@ export async function DELETE(request, { params }) {
   if (denied) return denied;
   try {
     const { id } = await params;
-    if (!(await deleteAccessProfile(id))) return store({ error: 'Profile not found' }, 404);
+    const expected = new URL(request.url).searchParams.get('expectedVersion');
+    const expectedName = new URL(request.url).searchParams.get('expectedName');
+    if (!(await deleteAccessProfile(id, expected === null ? undefined : Number(expected), expectedName === null ? undefined : expectedName)))
+      return store({ error: 'Profile not found' }, 404);
     // Keys that followed it keep every setting they adopted and become
     // hand-managed. Deleting a bundle is not a way to revoke access.
     return store({ deleted: true, keysReleased: true });
   } catch (error) {
+    if (error instanceof AccessProfileError) return store({ error: error.message }, error.status);
     console.log('Error deleting access profile:', error);
     return store({ error: 'Failed to delete access profile' }, 500);
   }

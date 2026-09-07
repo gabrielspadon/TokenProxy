@@ -38,10 +38,11 @@ test('bridge status reflects actual running and stopped snapshots without claimi
   page,
 }) => {
   await page.goto('/dashboard/tools');
-  await expect(page.locator('.tool-card').first()).toContainText('Running');
-  await expect(page.locator('.tool-card').first()).toContainText('2 clients');
-  await expect(page.locator('.tool-card').nth(1)).toContainText('Stopped');
-  await expect(page.locator('.kpi').first()).toContainText('2');
+  const rows = page.getByRole('region', { name: 'Extension comparison', exact: true }).getByRole('row');
+  await expect(rows.nth(1)).toContainText('Running');
+  await expect(rows.nth(1).getByRole('cell').nth(3)).toHaveText('2');
+  await expect(rows.nth(2)).toContainText('Stopped');
+  await expect(page.getByLabel('Observed extension summary')).toContainText('Bridge presets2');
   await expect(page.getByText(/Installation is not probed here/)).toBeVisible();
 });
 test('refresh re-reads bridge state and never starts a process', async ({ page }) => {
@@ -50,7 +51,7 @@ test('refresh re-reads bridge state and never starts a process', async ({ page }
     if (r.url().includes('/api/tools') && r.method() !== 'GET') writes.push(r.method());
   });
   await page.goto('/dashboard/tools');
-  await expect(page.locator('.screen-head .fresh').first()).toHaveAttribute('data-state', 'live');
+  await expect(page.getByRole('region', { name: 'Extension comparison', exact: true }).getByRole('row')).toHaveCount(3);
   await page.route('**/api/tools', (r) =>
     r.fulfill(
       json(200, { ...snapshot, presets: [], summary: { presets: 0, running: 0, clients: 0 } })

@@ -1,4 +1,5 @@
 'use client';
+import { Button, Input } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import './styles.css';
@@ -47,7 +48,7 @@ function systemRefusal(status, body, password = false) {
 }
 
 const BACKUP_HOLDS =
-  'Nothing on the gateway. It writes one file holding every connection credential and every client key in readable form.';
+  'Writes a configuration file with readable connection credentials and client keys. Retained usage, operations, investigations, rules, compatibility and routing-version history are excluded. The gateway is unchanged.';
 
 export default function SystemPage() {
   const health = usePoll('/api/admin/health', 15000);
@@ -116,14 +117,14 @@ export default function SystemPage() {
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement('a');
       a.href = url;
-      a.download = `tokenproxy-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `tokenproxy-configuration-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
       setFile(null);
       finish(
         'export',
-        'The backup file was written.',
-        'It holds every credential in readable form, so keep it where you would keep a password.'
+        'The backup download was requested.',
+        'Confirm it in your browser downloads. It holds every credential in readable form, so keep it where you would keep a password.'
       );
     } catch (e) {
       setRefuse(systemRefusal(0, { error: e.message, code: 'network' }));
@@ -165,11 +166,17 @@ export default function SystemPage() {
         setRefuse(systemRefusal(res.status, body, true));
         return;
       }
+      if (res.status === 207 || body?.outcome === 'partial') {
+        setOpen(null);
+        setDone({ at: 'import', tone: 'warn', title: 'Database imported; runtime refresh incomplete.', next: body.message || 'Read the restored configuration and resolve the reported runtime refresh failure. Do not automatically repeat the import.' });
+        detail.refresh(); policy.refresh();
+        return;
+      }
       setFile(null);
       finish(
         'import',
-        'The database was replaced.',
-        'Reload the dashboard to read the restored connections, keys and settings.'
+        'The database import returned successfully.',
+        'Read the restored connections, keys and settings before another mutation. This response does not independently verify every imported record.'
       );
     } catch (e) {
       setRefuse(systemRefusal(0, { error: e.message, code: 'network' }));
@@ -201,11 +208,12 @@ export default function SystemPage() {
     <>
       <div className="screen-head">
         <h1>System</h1>
+        <Button component={Link} href="/dashboard/operations" variant="default">Operation history</Button>
         <Freshness status={pollFresh(health)} lastDataAt={health.goodAt} />
       </div>
 
       {health.data || detail.data ? (
-        <div className="measures">
+        <div className="measures system-summary" aria-label="System observation summary">
           {health.data ? (
             <div className="measure">
               <span className="label">Uptime</span>
@@ -244,13 +252,20 @@ export default function SystemPage() {
           <Icon name="i-system" />
           Runtime
         </h2>
-        {health.error && !health.data ? <Notice {...refusal(health.status, health.error)} /> : null}
+        {health.error ? <>
+          <Notice {...(health.data && (health.status === 0 || health.error.code === 'network')
+            ? { tone: 'warn', title: 'Process health could not be refreshed.', next: 'Showing the last successful observation. Current liveness is unknown until the next successful read.' }
+            : refusal(health.status, health.error))} />
+          <Button type="button" variant="default" onClick={health.refresh} disabled={health.loading}>Retry process health read</Button>
+        </> : null}
         {version.error ? (
           <>
-            <Notice {...systemRefusal(version.status, version.error)} />
-            <button type="button" className="button quiet" onClick={version.refresh} disabled={version.loading}>
+            <Notice {...(version.status === 0 || version.error.code === 'network'
+              ? { tone: 'bad', title: 'Version information could not be read.', next: 'Retry this read. Process health is reported separately below.' }
+              : systemRefusal(version.status, version.error))} />
+            <Button type="button" variant="default" onClick={version.refresh} disabled={version.loading}>
               Retry version read
-            </button>
+            </Button>
           </>
         ) : null}
         <dl className="facts system-facts">
@@ -362,7 +377,12 @@ export default function SystemPage() {
           </h2>
           <Freshness status={pollFresh(detail)} lastDataAt={detail.goodAt} />
         </div>
-        {detail.error && !detail.data ? <Notice {...refusal(detail.status, detail.error)} /> : null}
+        {detail.error ? <>
+          <Notice {...(detail.status === 0 || detail.error.code === 'network'
+            ? { tone: 'warn', title: 'Readiness checks could not be refreshed.', next: detail.data ? 'Showing the last successful checks. Current database and connection readiness remain unverified.' : 'Retry these checks. Process liveness is reported separately.' }
+            : refusal(detail.status, detail.error))} />
+          <Button type="button" variant="default" onClick={detail.refresh} disabled={detail.loading}>Retry readiness read</Button>
+        </> : null}
         {rollup ? (
           <p className="caption">
             Overall{' '}
@@ -451,14 +471,23 @@ export default function SystemPage() {
         ) : null}
       </section>
 
+      <section aria-labelledby="h-configuration-workflows">
+        <h2 id="h-configuration-workflows">Configuration and evidence workflows</h2>
+        <p>Each workflow retains or changes a different scope. Review its diff, expected version and receipt before applying another change.</p>
+        <ul className="bullets">
+          <li><Link href="/dashboard/models">Save draft, validate, activate configuration or roll back a configuration version</Link>. Covers routing plans, direct aliases and selected plan strategies. Credentials, account policy, proxy settings, context processing and cascade policy remain outside this version history. Activation affects subsequent request selection.</li>
+          <li><Link href="/dashboard/connections">Activate a release</Link>. Uses the release activation record and its own expected version. A configuration draft is not a release.</li>
+          <li><Link href="/dashboard/compatibility">Export local compatibility evidence</Link>. Retains an exact fixture revision, diagnostic checks and run receipt. It changes no routing or release state.</li>
+        </ul>
+      </section>
+
       <section aria-labelledby="h-backup">
-        <h2 id="h-backup">Backup</h2>
+        <h2 id="h-backup">Export configuration</h2>
         <p>
-          A backup is one JSON file holding every setting, connection, client key and combo this
-          gateway stores.
+          Export a configuration file containing settings, provider connections and nodes, proxy pools, client keys, routing plans, aliases, custom models and pricing.
         </p>
         <p className="caption">
-          Credentials are inside it in readable form, so treat the file as a password.
+          Credentials are readable in this file. Usage and attempt history, operation receipts, investigations, notification-rule records, compatibility runs and routing-version history are not included.
         </p>
         {done?.at === 'export' ? (
           <Notice tone={done.tone} title={done.title} next={done.next} />
@@ -466,24 +495,24 @@ export default function SystemPage() {
         <div className="panel">
           <h3>Controls</h3>
           <div className="verb-row">
-            <button
+            <Button
               type="button"
-              className="button"
+
               onClick={() => {
                 setDone(null);
                 setOpen('export');
               }}
             >
-              Export a backup
-            </button>
+              Export configuration
+            </Button>
           </div>
         </div>
       </section>
 
       <section aria-labelledby="h-import">
-        <h2 id="h-import">Database</h2>
+        <h2 id="h-import">Import configuration</h2>
         <p>
-          Importing a backup replaces the whole database. Everything stored now is destroyed first.
+          Import replaces the configuration tables and scopes included in an export. Existing usage, operation receipts, investigations, rule history and compatibility evidence are not restored from this file and remain separate.
         </p>
         {policy.data?.requireLogin === false ? (
           <p className="caption">
@@ -497,16 +526,16 @@ export default function SystemPage() {
         <div className="panel" data-tone="danger">
           <h3>Controls</h3>
           <div className="verb-row">
-            <button
+            <Button
               type="button"
-              className="button danger"
+              color="red"
               onClick={() => {
                 setDone(null);
                 setOpen('import');
               }}
             >
-              Import a database
-            </button>
+              Import configuration
+            </Button>
           </div>
         </div>
       </section>
@@ -534,16 +563,16 @@ export default function SystemPage() {
         <div className="panel" data-tone="danger">
           <h3>Controls</h3>
           <div className="verb-row">
-            <button
+            <Button
               type="button"
-              className="button danger"
+              color="red"
               onClick={() => {
                 setDone(null);
                 setOpen('update');
               }}
             >
               Update now
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -560,16 +589,16 @@ export default function SystemPage() {
         <div className="panel" data-tone="danger">
           <h3>Controls</h3>
           <div className="verb-row">
-            <button
+            <Button
               type="button"
-              className="button danger"
+              color="red"
               onClick={() => {
                 setDone(null);
                 setOpen('shutdown');
               }}
             >
               Shut down
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -597,8 +626,8 @@ export default function SystemPage() {
 
       <Confirm
         open={open === 'export'}
-        title="Export a backup"
-        verb="Export a backup"
+        title="Export configuration"
+        verb="Export configuration"
         requires="The dashboard password."
         changes={BACKUP_HOLDS}
         undo="Delete the file. The gateway itself is unchanged either way."
@@ -609,8 +638,7 @@ export default function SystemPage() {
       >
         <label className="field">
           <span>Dashboard password</span>
-          <input
-            className="input"
+          <Input
             type="password"
             name="password"
             autoComplete="current-password"
@@ -623,12 +651,12 @@ export default function SystemPage() {
 
       <Confirm
         open={open === 'import'}
-        title="Import a database"
-        verb="Import a database"
+        title="Import configuration"
+        verb="Import configuration"
         irreversible
         requires="The dashboard password, and a backup file written by an export."
-        changes="Replaces the whole database. Every connection, client key, combo and setting stored now is destroyed and replaced by the file's."
-        undo="Nothing. Export a backup first if what is stored now still matters."
+        changes="Replaces settings, provider connections and nodes, proxy pools, client keys, routing plans, aliases, custom models and pricing with the file contents. Usage, operation, investigation, notification-rule and compatibility history are outside this import scope."
+        undo="Export the current configuration first if you may need to restore it. Retained history is outside this export."
         busy={busy}
         refusal={refuse}
         onConfirm={doImport}
@@ -636,8 +664,7 @@ export default function SystemPage() {
       >
         <label className="field">
           <span>Backup file</span>
-          <input
-            className="input"
+          <Input
             type="file"
             accept="application/json,.json"
             required
@@ -646,8 +673,7 @@ export default function SystemPage() {
         </label>
         <label className="field">
           <span>Dashboard password</span>
-          <input
-            className="input"
+          <Input
             type="password"
             name="password"
             autoComplete="current-password"

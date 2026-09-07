@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MantineProvider } from '@mantine/core';
 import AccessPage from '../../src/app/dashboard/access/page.js';
 import SystemPage from '../../src/app/dashboard/system/page.js';
 import { Confirm } from '../../src/shared/components/Confirm.js';
@@ -10,7 +11,7 @@ let container, root, auth, probe, version, requests;
 const settings = { authMode: 'oidc', oidcIssuerUrl: 'https://identity.example', oidcClientId: 'test-client', oidcScopes: 'openid', requireLogin: true };
 const versionOk = { currentVersion: '1.0.0', latestVersion: '1.0.1', hasUpdate: true, isTrayMode: false, buildSha: null };
 const json = (body, status = 200) => Response.json(body, { status });
-async function mount(component) { await act(async () => root.render(component)); }
+async function mount(component) { await act(async () => root.render(<MantineProvider env="test">{component}</MantineProvider>)); }
 async function click(text) {
   const button = [...container.querySelectorAll('button')].find(e => e.textContent.trim() === text);
   expect(button, `Missing button ${text}`).toBeDefined();
@@ -21,6 +22,8 @@ function probeNotice() { return [...container.querySelectorAll('.notice')].at(-1
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   requests = [];
   auth = { authenticated: true, requireLogin: true, authMode: 'oidc', ssoType: 'oidc', hasPassword: false, passwordSource: 'environment', oidcConfigured: true, samlConfigured: false, displayName: 'Test operator', loginMethod: 'Password' };
   probe = { ok: true, discoveryOk: true, clientSecretTested: true, clientSecretValid: true, message: 'Client secret was accepted by the token endpoint.' };
@@ -96,7 +99,9 @@ describe('System version read failures', () => {
   });
   it('ends loading and exposes a retry after an interrupted version read', async () => {
     version = () => Promise.reject(new Error('connection ended'));await mount(<SystemPage />);
-    expect(fact('Published version')).not.toContain('Reading');expect(container.textContent).toContain('The gateway did not answer.');
+    expect(fact('Published version')).not.toContain('Reading');
+    expect(container.textContent).toContain('Version information could not be read.');
+    expect(container.textContent).toContain('Process health is reported separately below.');
     expect([...container.querySelectorAll('button')].some(e => e.textContent === 'Retry version read')).toBe(true);
   });
 });

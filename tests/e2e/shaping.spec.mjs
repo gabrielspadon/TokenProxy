@@ -1,100 +1,178 @@
-import { test, expect } from "playwright/test";
-import { signIn, json } from "./helpers.mjs";
+import { test, expect } from 'playwright/test';
+import { signIn, json } from './helpers.mjs';
+import { shapingControlFixture } from './shaping-control-fixture.mjs';
+import { CONTROLS } from '../../src/app/dashboard/shaping/controlCatalog.js';
 
-// Shapes below are the real ones: /api/token-saver/stats returns
-// {windows,timeline,recent,pxpipe,sources} with per-saver `stages`
-// (src/lib/tokenSaver/events.js), /api/pxpipe/status the library-mode status,
-// /api/pxpipe/health {healthy,checks,error}. Written against the contract in
-// docs/contract/05-shaping-translator.md; not yet run, the page reaches 20143
-// only after the lead rebuilds.
+// Browser interception establishes presentation and intended requests only.
+// Actual persistence is verified separately against the disposable application.
+const settingsFixture = () => ({
+  ...Object.fromEntries(CONTROLS.map(control => [control.key, control.defaultOn === true])),
+  pxpipeMinChars: 25000, pxpipeTimeoutMs: 15000,
+  memoryMaxToolTurnsKeepFull: 2, memoryMaxHistoricalToolChars: 800,
+  memoryRecentTurnsToKeep: 8, memoryCompactionThresholdTokens: 32000,
+  toolDisclosureMaxTools: 20, comboStrategies: {},
+});
+const stages = shapingControlFixture.events.reduce((map, event) => {
+  const stage = map[event.saver] ||= { requests: 0, applied: 0, bytesSaved: 0, measuredRequests: 0 };
+  stage.requests++;
+  if (event.applied) stage.applied++;
+  if (Number.isFinite(event.bytesSaved)) { stage.bytesSaved += event.bytesSaved; stage.measuredRequests++; }
+  return map;
+}, {});
+const stats = {
+  windows: { all: { requests: 8, applied: 4, stages }, today: { requests: 8, applied: 4, stages } },
+  recent: shapingControlFixture.events,
+  timeline: [], pxpipe: { timeline: [], recent: [] },
+};
 
-const WINDOW = { requests: 0, applied: 0, bypassed: 0, errors: 0, charsReduced: 0, proxyTokensSaved: 0, bodyBytesReduced: 0, headroomRequests: 0, estTokensSaved: 0, imagesGenerated: 0, avgMs: 0, stages: {} };
-const windows = (over = {}) => ({ all: { ...WINDOW, ...over }, today: { ...WINDOW }, yesterday: { ...WINDOW }, last7d: { ...WINDOW }, last30d: { ...WINDOW } });
-const stats = (over = {}) => ({ windows: windows(over), timeline: [], recent: [], pxpipe: { windows: { all: {} }, timeline: [], recent: [] }, sources: {} });
+async function fixture(page) {
+  let settings = settingsFixture();
+  const patches = [];
+  await page.route('**/api/settings', async route => {
+    if (route.request().method() === 'PATCH') {
+      const patch = route.request().postDataJSON(); patches.push(patch);
+      settings = { ...settings, ...patch };
+    }
+    await route.fulfill(json(200, settings));
+  });
+  await page.route('**/api/token-saver/stats*', route => route.fulfill(json(200, stats)));
+  await page.route('**/api/tool-disclosure/stats', route => route.fulfill(json(200, [])));
+  return patches;
+}
+const inspector = page => page.locator('#shaping-control-inspector');
+const select = (page, key) => page.locator(`[data-control="${key}"]`).click();
+const stageRow = (page, key) => page.locator('.shaping-evidence-table tbody tr').filter({ has: page.locator('code').filter({ hasText: new RegExp(`^${key}$`) }) });
 
 test.beforeEach(async ({ page }) => { await signIn(page); });
 
-test("a stale poll keeps the last good numbers on screen", async ({ page }) => {
-  let served = 0;
-  await page.route("**/api/token-saver/stats*", (r) => {
-    served += 1;
-    return served === 1
-      ? r.fulfill(json(200, stats({ requests: 41, applied: 30, stages: { rtk: { requests: 41, applied: 30, bytesSaved: -8192 } } })))
-      : r.fulfill(json(503, { error: "token saver statistics unavailable" }));
-  });
-  await page.goto("/dashboard/shaping");
-  await expect(page.locator(".measure", { hasText: "Requests shaped, all time" })).toContainText("41");
-  const fresh = page.locator("#h-bytes").locator("xpath=..").locator(".fresh");
-  await expect(fresh).toHaveAttribute("data-state", "stale", { timeout: 25000 });
-  await expect(page.locator(".measure", { hasText: "Requests shaped, all time" })).toContainText("41");
+test('inventory exposes all new controls with separate configured and historical evidence', async ({ page }) => {
+  await fixture(page);
+  await page.goto('/dashboard/shaping');
+  await expect(page.getByRole('heading', { name: 'Optimization', exact: true })).toBeVisible();
+  await expect(page.locator('.shaping-control-row')).toHaveCount(27);
+  await select(page, 'dietEnabled');
+  await expect(inspector(page).getByRole('heading', { name: 'Expired result pruning' })).toBeVisible();
+  await expect(inspector(page)).toContainText('Off globally');
+  await expect(inspector(page)).toContainText('1 applied stage records');
+  await expect(inspector(page)).toContainText('2 / 2 records measured');
+  await expect(inspector(page)).toContainText('eight assistant turns');
+  await select(page, 'adaptiveCacheTtlEnabled');
+  await expect(inspector(page)).toContainText('Global only');
+  await expect(inspector(page)).toContainText('p90 strictly greater than 20 minutes');
+  await expect(inspector(page)).toContainText('Explicit client lifetimes');
 });
 
-test("a ledger that never fired says what makes a number appear", async ({ page }) => {
-  await page.route("**/api/token-saver/stats*", (r) => r.fulfill(json(200, stats())));
-  await page.goto("/dashboard/shaping");
-  await expect(page.getByText("No stage has saved a byte yet. Numbers appear after the first request that a layer rewrites.")).toBeVisible();
+test('signed bytes retain growth, measured zero and partial coverage', async ({ page }) => {
+  await fixture(page);
+  await page.goto('/dashboard/shaping');
+  await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
+  await expect(stageRow(page, 'rtk')).toContainText('-2,048 B');
+  await expect(stageRow(page, 'rtk')).toContainText('1 / 2 records');
+  await expect(stageRow(page, 'epochMicro')).toContainText('0 B');
+  await expect(stageRow(page, 'epochMicro')).toContainText('1 / 1 records');
+  await expect(stageRow(page, 'epochAuto')).toContainText('Not measured');
+  await expect(stageRow(page, 'epochAuto')).not.toContainText('0 B');
+  await expect(stageRow(page, 'inject')).toContainText('+384 B');
+  await expect(page.getByText('Stage deltas are not added', { exact: false })).toBeVisible();
 });
 
-test("a forbidden settings read renders its own refusal sentence", async ({ page }) => {
-  await page.route("**/api/settings", (r) => r.fulfill(json(403, { error: "Loopback only" })));
-  await page.goto("/dashboard/shaping");
-  await expect(page.getByText("This action is not allowed from here.")).toBeVisible();
-  await expect(page.getByText("Loopback only")).toBeVisible();
+test('legacy aggregates cannot manufacture measurement coverage', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/api/token-saver/stats*', route => route.fulfill(json(200, { ...stats, windows: { all: { stages: { rtk: { bytesSaved: -2048, requests: 2, applied: 2 } } } } })));
+  await page.goto('/dashboard/shaping');
+  await expect(inspector(page)).toContainText('Byte coverage unknown');
+  await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
+  await expect(stageRow(page, 'rtk')).toContainText('Not reported');
+  await expect(stageRow(page, 'rtk')).not.toContainText('-2,048 B');
 });
 
-test("a stage with no record reads as not reported, never zero", async ({ page }) => {
-  await page.route("**/api/token-saver/stats*", (r) => r.fulfill(json(200, stats({ requests: 4, applied: 4, stages: { rtk: { requests: 4, applied: 4, bytesSaved: -400 } } }))));
-  await page.goto("/dashboard/shaping");
-  const px = page.locator(".shaping-stage", { hasText: "pxpipe" });
-  await expect(px.locator(".unreported")).toHaveText("Not reported");
-  await expect(px).not.toContainText(/\b0\b/);
-  await expect(px.locator(".why")).not.toHaveText("");
+test('selection survives moving between control and evidence depths', async ({ page }) => {
+  await fixture(page);
+  await page.goto('/dashboard/shaping');
+  await select(page, 'epochMicroEnabled');
+  await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
+  await page.getByRole('button', { name: 'Controls', exact: true }).click();
+  await expect(page.locator('[data-control="epochMicroEnabled"]')).toHaveAttribute('aria-current', 'true');
+  await expect(inspector(page).getByRole('heading', { name: 'Boundary-aware clearing' })).toBeVisible();
 });
 
-test("the errored counter is unreported with the fail-open reason, not zero", async ({ page }) => {
-  await page.route("**/api/token-saver/stats*", (r) => r.fulfill(json(200, stats({ requests: 9, applied: 9 }))));
-  await page.goto("/dashboard/shaping");
-  const errored = page.locator(".measure", { hasText: "Errored" });
-  await expect(errored.locator(".unreported")).toHaveText("Not reported");
-  await expect(errored).not.toContainText(/\b0\b/);
+test('desktop panels retain bounded scrolling and keyboard resizing', async ({ page }) => {
+  await fixture(page);
+  await page.goto('/dashboard/shaping');
+  const layout = page.locator('.shaping-resizable');
+  await expect(layout).toBeVisible();
+  expect((await layout.boundingBox()).height).toBeLessThanOrEqual(761);
+  const separator = page.getByRole('separator', { name: 'Resize control inspector' });
+  const before = Number(await separator.getAttribute('aria-valuenow'));
+  await separator.focus();
+  await separator.press('ArrowRight');
+  expect(Number(await separator.getAttribute('aria-valuenow'))).toBeGreaterThan(before);
+  expect(await page.locator('.shaping-control-list').evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
 });
 
-test("turning a layer off keeps one verb and names what in-flight requests do", async ({ page }) => {
-  await page.goto("/dashboard/shaping");
-  const row = page.locator(".shaping-layer", { hasText: "Tool result reducer" });
-  await row.getByRole("button", { name: "Turn off" }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog.getByRole("heading", { name: "Turn off a layer" })).toBeVisible();
-  await expect(dialog).toContainText("Tool result reducer");
-  await expect(dialog).toContainText("New requests skip this layer. New requests take the change. A request already in flight keeps the stack it started with.");
-  await expect(dialog).toContainText("Turn it back on here. Numbers already recorded stay.");
-  await expect(dialog.getByRole("button", { name: "Turn off" })).toBeVisible();
+test('confirmation sends only the selected setting and displays verified readback', async ({ page }) => {
+  const patches = await fixture(page);
+  await page.goto('/dashboard/shaping');
+  await select(page, 'epochMicroEnabled');
+  await inspector(page).getByRole('button', { name: 'Turn on', exact: true }).click();
+  const dialog = page.locator('dialog[open]');
+  await expect(dialog).toContainText('a request already in flight retains its settings');
+  expect(patches).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Turn on', exact: true }).click();
+  await expect(page.getByText('Boundary-aware clearing saved and verified after refresh.', { exact: true })).toBeVisible();
+  await expect(inspector(page)).toContainText('On globally');
+  expect(patches).toEqual([{ epochMicroEnabled: true }]);
 });
 
-test("a 400 from a threshold save shows the gateway's own words in the dialog", async ({ page }) => {
-  await page.route("**/api/settings", async (r) => {
-    if (r.request().method() !== "PATCH") return r.fallback();
-    return r.fulfill(json(400, { error: "connectTimeoutMs must be an integer from 1000 through 120000" }));
-  });
-  await page.goto("/dashboard/shaping");
-  await page.locator(".field", { hasText: "Time to wait before abandoning" }).locator("input").fill("1");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(dialog.getByText("The gateway refused the input.")).toBeVisible();
-  await expect(dialog.getByText("connectTimeoutMs must be an integer from 1000 through 120000")).toBeVisible();
+test('a refused save stays at the control with the gateway explanation', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/api/settings', route => route.request().method() === 'PATCH' ? route.fulfill(json(400, { error: 'epochMicroEnabled must be a boolean' })) : route.fallback());
+  await page.goto('/dashboard/shaping');
+  await select(page, 'epochMicroEnabled');
+  await inspector(page).getByRole('button', { name: 'Turn on', exact: true }).click();
+  await page.locator('dialog[open]').getByRole('button', { name: 'Turn on', exact: true }).click();
+  await expect(page.locator('dialog[open]')).toContainText('The gateway refused the input.');
+  await expect(page.locator('dialog[open]')).toContainText('epochMicroEnabled must be a boolean');
 });
 
-test("install is marked irreversible and the four service facts stay separate", async ({ page }) => {
-  await page.route("**/api/pxpipe/status", (r) => r.fulfill(json(200, { installed: true, installing: false, version: "1.2.3", path: null, running: false, loadedAt: null, uptimeMs: 0, npmAvailable: true, mode: "library", enabled: true, autoInstall: true, minChars: 25000, timeoutMs: 15000 })));
-  await page.route("**/api/pxpipe/health", (r) => r.fulfill(json(200, { healthy: false, checks: [{ id: "module", label: "Transform module loads", ok: false, detail: "boom" }], error: "Cannot load module: boom" })));
-  await page.goto("/dashboard/shaping");
-  await expect(page.getByText("Installed", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Not loaded")).toBeVisible();
-  await expect(page.getByText("Allowed").first()).toBeVisible();
-  await expect(page.getByText("The self-test did not pass.")).toBeVisible();
-  await page.getByRole("button", { name: "Install", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("None. The previous installation is gone. Install again to replace it.");
-  await expect(dialog.locator("button.danger")).toHaveText("Install");
+test('empty threshold input is not silently submitted as zero', async ({ page }) => {
+  const patches = await fixture(page);
+  await page.goto('/dashboard/shaping');
+  await select(page, 'pxpipeEnabled');
+  await inspector(page).getByText('Edit this stage’s thresholds', { exact: true }).click();
+  await inspector(page).getByLabel('Transform timeout').fill('');
+  await expect(page.getByRole('button', { name: 'Review threshold changes' })).toBeDisabled();
+  await inspector(page).getByLabel('Transform timeout').fill('12000');
+  await page.getByRole('button', { name: 'Review threshold changes' }).click();
+  await expect(page.locator('dialog[open]')).toContainText('15,000 → 12,000 milliseconds');
+  await page.locator('dialog[open]').getByRole('button', { name: 'Save thresholds', exact: true }).click();
+  await expect(page.getByText('Thresholds saved and verified after refresh.', { exact: true })).toBeVisible();
+  expect(patches).toEqual([{ pxpipeTimeoutMs: 12000 }]);
+});
+
+test('reading controls and service status never starts a health check', async ({ page }) => {
+  await fixture(page);
+  const healthCalls = [];
+  await page.route('**/api/pxpipe/health', route => { healthCalls.push(route.request().method()); return route.fulfill(json(200, { healthy: true, checks: [] })); });
+  await page.route('**/api/pxpipe/status', route => route.fulfill(json(200, { installed: false, running: false, enabled: false, npmAvailable: true, autoInstall: true })));
+  await page.route('**/api/pxpipe/logs*', route => route.fulfill(json(200, {})));
+  await page.goto('/dashboard/shaping');
+  await expect(page.getByRole('heading', { name: 'Optimization', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Service', exact: true }).click();
+  await expect(page.getByText('Not run in this view', { exact: true })).toBeVisible();
+  expect(healthCalls).toEqual([]);
+  await page.getByRole('button', { name: 'Run local check', exact: true }).click();
+  await expect(page.locator('dialog[open]')).toContainText('This can change the loaded state.');
+  expect(healthCalls).toEqual([]);
+  await page.locator('dialog[open]').getByRole('button', { name: 'Cancel', exact: true }).click();
+});
+
+test('forbidden settings stay unknown and disable mutation', async ({ page }) => {
+  await fixture(page);
+  await page.route('**/api/settings', route => route.fulfill(json(403, { error: 'Loopback only' })));
+  await page.goto('/dashboard/shaping');
+  await expect(page.getByText('This action is not allowed from here.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Loopback only', { exact: true })).toBeVisible();
+  await expect(inspector(page)).toContainText('Unknown globally');
+  await expect(inspector(page).getByRole('button', { name: 'Turn on', exact: true })).toBeDisabled();
 });

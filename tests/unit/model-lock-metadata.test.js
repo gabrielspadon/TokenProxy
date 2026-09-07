@@ -12,7 +12,8 @@ vi.mock("@/lib/network/connectionProxy", () => ({
   pickProxyPoolId: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(async () => ({})),
 }));
-vi.mock("@/shared/constants/providers.js", () => ({
+vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   FREE_PROVIDERS: {},
   FREE_TIER_PROVIDERS: {},
   // Both shapes auth.js reads: the id list for the reachable set and the

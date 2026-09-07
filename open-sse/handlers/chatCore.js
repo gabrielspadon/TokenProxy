@@ -1724,7 +1724,9 @@ export async function handleChatCore({
       caveman: Boolean(tokenSaverEnabled && cavemanEnabled), ponytail: Boolean(tokenSaverEnabled && ponytailEnabled),
       pxpipe: Boolean(tokenSaverEnabled && pxpipeEnabled), pxpipeAllowLossy,
       memory: Boolean(tokenSaverEnabled && memorySettings), headroom: Boolean(tokenSaverEnabled && headroomEnabled), headroomAllowLossy,
-      qac: Boolean(qacWillRun), pairs: Boolean(pairsWillRun), reorder: Boolean(reorderWillRun), midinject: Boolean(tokenSaverEnabled && midPrefixInjectEnabled), clientOptOut: !tokenSaverEnabled,
+      qac: Boolean(qacWillRun), pairs: Boolean(pairsWillRun), reorder: Boolean(reorderWillRun), midinject: Boolean(tokenSaverEnabled && midPrefixInjectEnabled),
+      diet: Boolean(dietWillRun), lingua: Boolean(linguaWillRun), epochMicro: Boolean(epochMicroWillRun), epochAuto: Boolean(epochAutoWillRun),
+      adaptiveCacheTtl: Boolean(adaptiveCacheTtlEnabled && finalFormat === FORMATS.CLAUDE), clientOptOut: !tokenSaverEnabled,
     },
     stages: contextStages.map((stage) => ({ ...stage, ...(stage.stage === "rtk" ? { semanticPreserving: rtkStats?.semanticPreserving === true } : {}) })),
   });
@@ -1912,6 +1914,7 @@ export async function handleChatCore({
         saver: "diet",
         rid,
         applied: false,
+        bytesSaved: contextStages.find((stage) => stage.stage === "diet")?.delta,
         ce: saverFields.ce,
       };
       if (epochCutIndex === 0) row.reason = "epoch_boundary";
@@ -1922,6 +1925,7 @@ export async function handleChatCore({
         saver: "lingua",
         rid,
         applied: false,
+        bytesSaved: contextStages.find((stage) => stage.stage === "lingua")?.delta,
         ce: saverFields.ce,
       };
       if (epochCutIndex === 0) row.reason = "epoch_boundary";
@@ -1933,6 +1937,7 @@ export async function handleChatCore({
         saver: "epochMicro",
         rid,
         applied: false,
+        bytesSaved: contextStages.find((stage) => stage.stage === "epochMicro")?.delta,
         ce: saverFields.ce,
       };
       if (epochCutIndex === 0) row.reason = "epoch_boundary";
@@ -1943,6 +1948,7 @@ export async function handleChatCore({
         saver: "epochAuto",
         rid,
         applied: false,
+        bytesSaved: contextStages.find((stage) => stage.stage === "epochAuto")?.delta,
         ce: saverFields.ce,
       };
       if (epochAutoSkipReason) row.reason = epochAutoSkipReason;

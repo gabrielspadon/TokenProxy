@@ -1,6 +1,6 @@
 # Operator surface plan
 
-The one place a decision is explained. Code carries none of this.
+Historical implementation plan. Current visual and interaction decisions are owned by [the corrective redesign mandate](REDESIGN-20260907.md); the earlier typography, palette and composition below are not acceptance authority.
 
 ## Subject and audience
 

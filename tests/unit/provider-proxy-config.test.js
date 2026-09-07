@@ -45,6 +45,20 @@ async function patch(connection, payload) {
   });
 }
 
+it('persists an account concurrency ceiling, rejects invalid values and clears only that ceiling', async () => {
+  const connection = await createExisting({ baseUrl: 'https://fixture.invalid/v1' });
+  expect((await patch(connection, { maxConcurrent: 3 })).status).toBe(200);
+  expect((await models.getProviderConnectionById(connection.id)).maxConcurrent).toBe(3);
+  for (const invalid of [0, -1, 1.5, '3']) {
+    expect((await patch(connection, { maxConcurrent: invalid })).status).toBe(400);
+    expect((await models.getProviderConnectionById(connection.id)).maxConcurrent).toBe(3);
+  }
+  expect((await patch(connection, { maxConcurrent: null })).status).toBe(200);
+  expect(await models.getProviderConnectionById(connection.id)).toMatchObject({
+    id: connection.id, maxConcurrent: null, providerSpecificData: { baseUrl: 'https://fixture.invalid/v1' },
+  });
+});
+
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "tokenproxy-provider-proxy-"));
   listenerBaseline = Object.fromEntries(
@@ -208,6 +222,28 @@ describe("provider proxy write ownership", () => {
     expect(response.status).toBe(200);
     expect((await models.getProviderConnectionById(connection.id)).providerSpecificData)
       .toEqual({ keep: "safe", connectionProxyMode: "direct" });
+  });
+
+  it("selected pools override a retained direct policy until the binding is cleared", async () => {
+    const pool = await models.createProxyPool({
+      name: "Direct transition pool", proxyUrl: "http://127.0.0.1:9", strictProxy: true, isActive: true,
+    });
+    const connection = await createExisting({ keep: "safe", connectionProxyMode: "direct" });
+    const selected = await patch(connection, { proxyPoolId: pool.id });
+    expect(selected.status).toBe(200);
+    const stored = (await models.getProviderConnectionById(connection.id)).providerSpecificData;
+    expect(stored).toEqual({ keep: "safe", connectionProxyMode: "direct", proxyPoolId: pool.id, strictProxy: true });
+    const { resolveConnectionProxyConfig } = await import("../../src/lib/network/connectionProxy.js");
+    const { accountPath } = await import("../../src/app/dashboard/network/accountPath.js");
+    expect(await resolveConnectionProxyConfig(stored)).toMatchObject({ resolutionKind: "selected-proxy", proxyPoolId: pool.id, strictProxy: true });
+    expect(accountPath({ providerSpecificData: stored }, [pool])).toMatchObject({ kind: "pool", poolId: pool.id, label: pool.name });
+
+    const cleared = await patch(connection, { proxyPoolId: null });
+    expect(cleared.status).toBe(200);
+    const restored = (await models.getProviderConnectionById(connection.id)).providerSpecificData;
+    expect(restored).toEqual({ keep: "safe", connectionProxyMode: "direct" });
+    expect(await resolveConnectionProxyConfig(restored)).toMatchObject({ resolutionKind: "intentional-direct", proxyPoolId: null });
+    expect(accountPath({ providerSpecificData: restored }, [pool])).toMatchObject({ kind: "direct", poolId: null });
   });
 
   it("PATCH lazily clears only the exact historical default tuple", async () => {

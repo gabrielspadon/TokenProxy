@@ -1,22 +1,15 @@
-/* Workspace language: white surface on the cool gray canvas, restrained indigo
-   for selection only, mono and right-aligned tabular numerals for identifiers
-   and measured values, dimmed words for unknowns. No gradients, no stat cards.
-
-   Every grid track that can hold a bounded inspector uses minmax(0, …). A bare
-   1fr resolves to the content's min-content width, which is what put a 550px
-   table inside a 390px viewport once already. */
 .inspector {
   margin-top: 20px;
   padding: 16px 18px;
-  background: #fff;
-  border: 1px solid #dce2ec;
+  background: var(--raised);
+  border: 1px solid var(--rule);
   border-radius: 6px;
-  color: #24324a;
+  color: var(--ink);
   min-width: 0;
-  --mantine-color-dimmed: #596981;
+  --mantine-color-dimmed: var(--slate);
 }
 .inspector h3 {
-  font-size: 15px;
+  font-size: 18px;
   font-weight: 600;
   margin: 0 0 4px;
 }
@@ -26,7 +19,7 @@
   margin: 0 0 6px;
 }
 .inspector h5 {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   margin: 12px 0 3px;
 }
@@ -35,9 +28,9 @@
   flex: 1 1 260px;
 }
 .note {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
-  color: #596981;
+  color: var(--slate);
   max-width: 80ch;
   margin: 0;
 }
@@ -49,7 +42,7 @@
    all while the page's own native selects kept their ring. Measured at 1440px:
    focused and blurred computed styles were byte-identical before this rule. */
 .filter input:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 1px;
 }
 .grid {
@@ -63,13 +56,13 @@
   min-width: 0;
 }
 .table {
-  font-size: 12px;
+  font-size: 13px;
 }
 .table th {
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
   font-weight: 500;
-  color: #596981;
+  color: var(--slate);
 }
 .table td {
   white-space: nowrap;
@@ -86,20 +79,20 @@
 /* A start with no terminal receipt is marked structurally, not only by colour:
    the dashed leading rule survives greyscale and colour-vision deficiency. */
 .table tr[data-kind='unresolved'] {
-  box-shadow: inset 3px 0 #98a6c2;
-  background: #f7f8fb;
+  box-shadow: inset 3px 0 var(--slate);
+  background: var(--paper);
 }
 .table tr[data-kind='unresolved'] td {
   border-block-end-style: dashed;
 }
 .table tr[data-selected] {
-  background: #edf1fd;
-  box-shadow: inset 3px 0 #455bca;
+  background: var(--signal-wash);
+  box-shadow: inset 3px 0 var(--signal);
 }
 .rowButton {
   font-size: inherit;
   text-decoration: underline;
-  text-decoration-color: #bac6dd;
+  text-decoration-color: var(--control-edge);
   text-underline-offset: 3px;
   max-width: 190px;
   overflow: hidden;
@@ -108,65 +101,63 @@
   display: block;
 }
 .rowButton:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 .rowButton code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 .state {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   white-space: normal;
   display: inline-block;
   min-width: 0;
 }
 .state[data-tone='ok'] {
-  color: #146c58;
+  color: var(--positive);
 }
 .state[data-tone='bad'] {
-  color: #9c2a35;
+  color: var(--refusal);
 }
 .state[data-tone='warn'] {
-  color: #8a5410;
+  color: var(--ember);
 }
 /* Neither success nor failure. It reads as unfinished, not as a verdict. */
 .state[data-tone='open'] {
-  color: #4a5875;
+  color: var(--slate);
   font-style: italic;
 }
 .code {
   font-family: var(--mono);
-  font-size: 11px;
-  color: #4a5875;
+  font-size: 13px;
+  color: var(--slate);
 }
 .unknown {
   font-family: var(--sans);
-  font-size: 12px;
-  color: #6a7891;
+  font-size: 13px;
+  color: var(--slate);
 }
 .measure {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .unresolvedBanner {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   margin: 12px 0 0;
   padding: 9px 12px;
-  border-inline-start: 3px solid #98a6c2;
-  background: #f3f6fb;
+  border-inline-start: 3px solid var(--slate);
+  background: var(--paper);
   max-width: 90ch;
 }
 .selected {
-  border-inline-start: 1px solid #dce2ec;
-  padding-inline-start: 20px;
   min-width: 0;
 }
 .selected p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   margin: 4px 0 0;
 }
@@ -176,63 +167,63 @@
 .operationId {
   display: block;
   font-family: var(--mono);
-  font-size: 11px;
-  color: #596981;
+  font-size: 13px;
+  color: var(--slate);
   overflow-wrap: anywhere;
   margin: 4px 0 8px;
 }
 .facts {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   column-gap: 14px;
   row-gap: 7px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   margin: 6px 0 0;
 }
 .facts dt {
-  color: #596981;
+  color: var(--slate);
 }
 .facts dd {
   margin: 0;
-  text-align: end;
+  text-align: start;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .hint {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
-  color: #596981;
-  border-inline-start: 1px solid #dce2ec;
+  color: var(--slate);
+  border-inline-start: 1px solid var(--rule);
   padding-inline-start: 20px;
   margin: 0;
 }
 .empty {
-  color: #596981;
-  font-size: 12px;
+  color: var(--slate);
+  font-size: 13px;
   line-height: 1.6;
   padding: 14px 0;
   max-width: 80ch;
 }
 .limits {
   margin-top: 16px;
-  border-top: 1px solid #dce2ec;
+  border-top: 1px solid var(--rule);
   padding-top: 12px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .limits summary {
   cursor: pointer;
   font-weight: 500;
 }
 .limits summary:focus-visible {
-  outline: 2px solid #455bca;
+  outline: 2px solid var(--signal);
   outline-offset: 3px;
 }
 .limits ul {
   padding-inline-start: 18px;
   margin: 8px 0 0;
   line-height: 1.6;
-  color: #596981;
+  color: var(--slate);
   max-width: 90ch;
 }
 .limits li {
@@ -248,7 +239,7 @@
   .selected,
   .hint {
     border-inline-start: 0;
-    border-top: 1px solid #dce2ec;
+    border-top: 1px solid var(--rule);
     padding-inline-start: 0;
     padding-top: 14px;
   }

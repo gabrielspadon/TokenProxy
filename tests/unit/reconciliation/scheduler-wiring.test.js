@@ -62,7 +62,8 @@ const proxyMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/localDb', () => dbMocks);
 vi.mock('@/lib/network/connectionProxy', () => proxyMocks);
-vi.mock('@/shared/constants/providers.js', () => ({
+vi.mock('@/shared/constants/providers.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   FREE_PROVIDERS: {},
   FREE_TIER_PROVIDERS: {},
   NO_AUTH_PROVIDER_IDS: [],

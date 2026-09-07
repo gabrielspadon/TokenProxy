@@ -1,0 +1,13 @@
+.tools { padding-block: 20px; min-width: 0; }
+.tools h2 { margin: 0 0 8px; font-size: var(--type-section); font-weight: 600; }
+.tools h3 { margin: 8px 0; font-size: var(--type-ui); font-weight: 600; }
+.tools p { margin-block: 8px; overflow-wrap: anywhere; }
+.tools code { font-family: var(--mono); overflow-wrap: anywhere; }
+.code { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.code textarea { font-family: var(--mono); font-size: var(--type-ui); }
+.records { max-height: 440px; overflow: auto; display: grid; gap: 12px; padding: 4px; }
+.records article { border-block-end: 1px solid var(--rule); padding-block-end: 16px; }
+.facts { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr); gap: 8px 16px; margin: 0; }
+.facts dt { color: var(--slate); }
+.facts dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+@media (max-width: 40em) { .facts { grid-template-columns: minmax(0, 1fr); gap: 4px; } .facts dd { margin-block-end: 8px; } }

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MantineProvider } from '@mantine/core';
 
 // The probe is mocked at `@/shared/api`, so pressing Test issues no request of
 // any kind. `fetch` is stubbed as a failing spy: if the page or the inspector
@@ -58,6 +59,8 @@ const button = (text) =>
 beforeEach(async () => {
   fixture.calls = [];
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   fetchMock = vi.fn(async () => {
     throw new Error('unexpected network call');
   });
@@ -71,7 +74,7 @@ beforeEach(async () => {
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => root.render(<NetworkPage />));
+  await act(async () => root.render(<MantineProvider env="test"><NetworkPage /></MantineProvider>));
 });
 afterEach(() => {
   act(() => root.unmount());

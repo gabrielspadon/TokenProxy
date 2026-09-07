@@ -676,7 +676,8 @@ export async function providerConcurrencyOverflow(provider, settings = null) {
   if (!Number.isInteger(limit) || limit <= 0) return null;
   let inFlight = 0;
   try {
-    for (const r of await getActiveRequests()) {
+    const { activeRequests } = await getActiveRequests();
+    for (const r of activeRequests) {
       if (r.provider === provider) inFlight += r.count;
     }
   } catch {

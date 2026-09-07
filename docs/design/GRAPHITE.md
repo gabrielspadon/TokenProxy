@@ -1,7 +1,7 @@
 # Graphite operator workspace
 
 The user rejected this composition. It remains a historical design record.
-The replacement direction and stack are recorded in `WORKSPACE.md`.
+The current replacement direction is `REDESIGN-20260907.md`; the maintained stack is recorded in `WORKSPACE.md`. The historical values below must not be copied into current components.
 
 This interface follows observed work across a routing gateway. It uses a
 continuous graphite surface, a compact labeled navigation rail, a persistent

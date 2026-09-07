@@ -1,4 +1,18 @@
 @layer components {
+  .keys-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; padding-block: 14px; border-block: 1px solid var(--rule); }
+  .keys-summary .measure { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 0; border: 0; background: transparent; }
+  .keys-summary .measure .value { font-size: 18px; font-weight: 600; font-family: inherit; font-variant-numeric: tabular-nums; }
+  .keys-summary .measure .label { font-size: 13px; }
+  .keys-profiles-disclosure { margin-block: 14px; }
+  .access-profiles { padding: 14px; }
+  .profile-workspace { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.3fr); border: 1px solid var(--rule); background: var(--paper); }
+  .profile-list { max-height: 440px; overflow: auto; }
+  .profile-row { display: grid; gap: 5px; width: 100%; text-align: start; border: 0; border-block-end: 1px solid var(--rule); border-inline-start: 3px solid transparent; padding: 12px; font: inherit; font-size: 13px; background: transparent; overflow-wrap: anywhere; cursor: pointer; }
+  .profile-row[aria-pressed='true'] { background: var(--signal-wash); border-inline-start-color: var(--signal); }
+  .profile-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+  .profile-inspector { padding: 16px; border-inline-start: 1px solid var(--rule); overflow-wrap: anywhere; min-width: 0; }
+  .profile-inspector .facts { margin-block: 12px; }
+  @media (max-width: 767px) { .profile-workspace { grid-template-columns: minmax(0, 1fr); } .profile-inspector { border-inline-start: 0; border-block-start: 1px solid var(--rule); } .profile-inspector .facts { grid-template-columns: minmax(0, 1fr); } }
   /* The key row: who, how many clients, what state, then its own disclosure
      spanning the full width so a ceiling band has room to be read. */
   .keys-row { grid-template-columns: minmax(0, 1fr) auto auto; }

@@ -271,7 +271,7 @@ describe('Policy workbench controls', () => {
     expect(document.body.textContent).toContain('Receipt 8');
     expect(calls.filter((call) => call.url.endsWith('/activate')).length).toBe(1);
   });
-  it('keeps an activation conflict visible inside its open confirmation dialog', async () => {
+  it('closes a failed activation confirmation and requires current-state reconciliation before another publication', async () => {
     const normal = handler;
     handler = async (url, method, body) =>
       url.endsWith('/activate')
@@ -289,8 +289,11 @@ describe('Policy workbench controls', () => {
     await click('Validate locally');
     await click('Review activation');
     await click('Activate revision 1');
-    expect(document.querySelector('[role="dialog"]').textContent).toContain('Active hash changed');
-    expect(document.querySelector('[role="dialog"]').textContent).toContain('receipt 9');
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.textContent).toContain('Active hash changed');
+    expect(button('Review activation').disabled).toBe(true);
+    expect(calls.filter(call=>call.url.endsWith('/activate'))).toHaveLength(1);
+    expect(document.body.textContent).toContain('Receipt 9');
   });
   it('restores a prior version only after an explicit fresh review', async () => {
     const normal = handler;

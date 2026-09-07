@@ -67,6 +67,9 @@ describe("translator connect timeout propagation", () => {
     const response = await POST(translatorRequest);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('x-tokenproxy-connection-id')).toBe('connection-1');
+    expect(response.headers.get('x-tokenproxy-diagnostic-scope')).toBe('direct-executor');
+    expect(response.headers.get('x-tokenproxy-credential-refreshed')).toBe('true');
     expect(mocks.getSettings).toHaveBeenCalledTimes(1);
     expect(mocks.execute.mock.calls.map(([options]) => options.connectTimeout)).toEqual([
       { providerOverride: 8000, globalTimeout: 15000 },

@@ -70,13 +70,14 @@ function Rotation({ record, now }) {
   const rotation = record.rotation;
   if (!rotation) return null;
   const superseded = rotation.role === 'superseded';
+  const expiryChanged = superseded && Object.hasOwn(record, 'expiresAt') && record.expiresAt !== rotation.overlapEndsAt;
   return (
     <>
       {superseded ? (
         <Notice
           tone="warn"
           title="A successor has been issued for this key."
-          next={`This key keeps working until its overlap window ends ${fmtRelative(rotation.overlapEndsAt, now)}, then stops on its next use. Move every client to the successor before then.`}
+          next={expiryChanged ? `Its expiry changed after rotation. Current expiry is ${record.expiresAt ? recordTime(record.expiresAt, true) : 'not set'}. The original overlap deadline below is retained history.` : `This key keeps working until its overlap window ends ${fmtRelative(rotation.overlapEndsAt, now)}, then stops on its next use. Move every client to the successor before then.`}
         />
       ) : null}
       <p className="caption">
@@ -87,8 +88,7 @@ function Rotation({ record, now }) {
         ) : (
           <>
             This key replaced an earlier one{' '}
-            <span data-i18n-skip>{fmtRelative(rotation.rotatedAt, now)}</span>. The earlier key
-            stays valid until{' '}
+            <span data-i18n-skip>{fmtRelative(rotation.rotatedAt, now)}</span>. The recorded overlap deadline was{' '}
             {rotation.overlapEndsAt ? (
               <>
                 {/* The deadline traffic stops is a moment, not a relative

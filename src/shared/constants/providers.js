@@ -12,6 +12,10 @@ const MEDIA_ENTRY_KEYS = [
 
 // Build provider UI object from registry entry
 function buildProviderEntry(r) {
+  const hasOAuth = Boolean(r.hasOAuth || r.oauth || r.category === 'oauth');
+  const authModes = r.authModes || (r.noAuth ? ['none']
+    : r.authType === 'cookie' || r.category === 'webCookie' ? ['cookie']
+      : hasOAuth ? ['oauth'] : ['apikey']);
   const mediaFields = {};
   if (r.media) Object.assign(mediaFields, r.media);
   for (const k of MEDIA_ENTRY_KEYS) {
@@ -39,8 +43,8 @@ function buildProviderEntry(r) {
     ...(r.transport?.format ? { defaultApiType: r.transport.format } : {}),
     ...(r.noAuth ? { noAuth: true } : {}),
     ...(r.passthroughModels ? { passthroughModels: true } : {}),
-    ...(r.hasOAuth ? { hasOAuth: true } : {}),
-    ...(r.authModes ? { authModes: r.authModes } : {}),
+    ...(hasOAuth ? { hasOAuth: true } : {}),
+    authModes,
     ...(r.authType ? { authType: r.authType } : {}),
     ...(r.authHint ? { authHint: r.authHint } : {}),
   };

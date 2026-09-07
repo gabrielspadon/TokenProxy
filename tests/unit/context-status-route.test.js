@@ -41,6 +41,7 @@ describe("context-status route", () => {
 
     const res = await GET({ url: "http://localhost/api/context-status" });
     expect(res.status).toBe(200);
+    expect(storeMocks.readAllContextStatuses).toHaveBeenCalledWith({ strict: true });
     const body = await res.json();
     expect(body.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(body.entries.map((e) => e.sid)).toEqual(["new", "mid", "old"]);
@@ -48,6 +49,7 @@ describe("context-status route", () => {
       sid: "new",
       rid: "req-1",
       ctxTokens: 12000,
+      ctxTokensActual: null,
       saveBytes: -3456,
       ceBytes: 789,
       dollarsSaved: 0.0042,
@@ -68,6 +70,14 @@ describe("context-status route", () => {
     expect(body.entries).toHaveLength(100);
     expect(body.entries[0].sid).toBe("s149");
     expect(body.entries.at(-1).sid).toBe("s50");
+  });
+
+  it.each([0, 18000, null, undefined, -1, Infinity, '18000'])("keeps observed input distinct from estimates for %s", async (value) => {
+    storeMocks.readAllContextStatuses.mockReturnValue([makeEntry({ ctxTokens: 12000, ctxTokensActual: value })]);
+    const body = await (await GET()).json();
+    expect(body.entries[0].ctxTokens).toBe(12000);
+    expect(body.entries[0].ctxTokensActual).toBe(typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null);
+    expect(body.entries[0]).not.toHaveProperty('cacheSavedUsd');
   });
 
   it("null-sanitizes garbage fields and caps strings at 64 chars", async () => {
@@ -93,6 +103,7 @@ describe("context-status route", () => {
       sid: null,
       rid: "r".repeat(64),
       ctxTokens: null,
+      ctxTokensActual: null,
       saveBytes: null,
       ceBytes: null,
       dollarsSaved: null,

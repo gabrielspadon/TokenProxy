@@ -49,14 +49,14 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
                       <strong>
                         {row.action} · {row.outcome}
                       </strong>
-                      <Text size="sm" c="#5b6980">
+                      <Text size="sm" c="var(--slate)">
                         {row.details?.code ||
                           row.details?.effect ||
                           row.details?.recovery ||
                           'Recorded operation state'}
                       </Text>
                       {row.outcome === 'staged' && (
-                        <Text size="sm" c="#91430f">
+                        <Text size="sm" c="var(--ember)">
                           Completion is unknown. Do not replay automatically.
                         </Text>
                       )}
@@ -94,7 +94,7 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
                       Review restoration
                     </Button>
                   ) : row.provenance ? (
-                    <Text size="sm" c="#5b6980">
+                    <Text size="sm" c="var(--slate)">
                       {row.provenance.source} · {row.provenance.actorClass}
                     </Text>
                   ) : null}
@@ -105,12 +105,12 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
         </Table>
       </Table.ScrollContainer>
       {!result.loading && !result.error && rows.length === 0 && (
-        <Text c="#5b6980" py="md">
+        <Text c="var(--slate)" py="md">
           No records on this history page.
         </Text>
       )}
       <Group justify="space-between" mt="md">
-        <Text size="sm" c="#5b6980">
+        <Text size="sm" c="var(--slate)">
           Page {cursors.length} · up to 20 records. History is append-only.
         </Text>
         <Group gap="xs">
@@ -135,9 +135,9 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
     </div>
   );
 }
-export function PolicyHistory(props) {
+export function PolicyHistory({initialKind = 'drafts', ...props}) {
   return (
-    <Tabs defaultValue="drafts" keepMounted={false}>
+    <Tabs defaultValue={initialKind} keepMounted={false}>
       <Tabs.List>
         <Tabs.Tab value="drafts">Stored drafts</Tabs.Tab>
         <Tabs.Tab value="versions">Immutable versions</Tabs.Tab>

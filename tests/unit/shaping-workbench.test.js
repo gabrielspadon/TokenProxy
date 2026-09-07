@@ -4,6 +4,7 @@ import { createNodeSqliteAdapter } from '../../src/lib/db/adapters/nodeSqliteAda
 import { TABLES, buildCreateTableSql } from '../../src/lib/db/schema.js';
 import { GET, POST } from '../../src/app/api/admin/shaping/[[...path]]/route.js';
 import { consentRequired } from '../../src/lib/shaping/profile.js';
+import { resolveComboTokenSaver } from '../../open-sse/services/combo.js';
 import { evaluateSettings, STAGE_ORDER } from '../../src/lib/shaping/evaluate.mjs';
 import { readFileSync } from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -34,7 +35,138 @@ it('refuses an anonymous read and mutation before state access', async () => {
   fixture.operator = false;
   expect((await call()).status).toBe(401);
   expect((await call('POST', 'profiles', {})).status).toBe(401);
+  expect((await call('POST', 'controls', {})).status).toBe(401);
+  expect((await call('POST', 'plans', {})).status).toBe(401);
+  expect((await call('POST', 'runtime', {})).status).toBe(401);
   expect(fixture.reads).toBe(0);
+});
+
+it('validates runtime settings and redacts legacy URL credentials without replacing untouched values', async () => {
+  const initial = JSON.parse(fixture.db.get('SELECT data FROM settings').data);
+  fixture.db.run('UPDATE settings SET data=?', [JSON.stringify({ ...initial, headroomUrl: 'http://local-user:local-secret@127.0.0.1:8787/private?secret=fixture#hidden', memoryHandoffEnabled: true })]);
+  const current = (await call('GET', 'runtime')).body;
+  expect(current.redactedFields).toEqual(['headroomUrl']);
+  expect(current.settings.headroomUrl).toBe('http://127.0.0.1:8787/private');
+  expect(JSON.stringify(current)).not.toMatch(/local-user|local-secret|secret=fixture|never-return-this/);
+  const request = { patch: { contextStructureEnabled: false, pxpipeAutoInstall: false }, expectedCurrent: current.currentHash, acknowledgeRequestData: true };
+  expect((await call('POST', 'runtime', { ...request, acknowledgeRequestData: false })).status).toBe(422);
+  for (const patch of [{ headroomUrl: 'file:///private/local' }, { embedReorderUrl: 'http://u:p@localhost' }, { embedReorderUrl: 'http://localhost/?credential=sample' }, { contextStructureEnabled: 'false' }, { pxpipeAutoInstall: 0 }, { embedReorderModel: '' }, { password: 'new-secret' }]) {
+    expect((await call('POST', 'runtime', { ...request, patch })).status, JSON.stringify(patch)).toBe(400);
+  }
+  const changed = await call('POST', 'runtime', request);
+  expect(changed.status).toBe(200);
+  expect(changed.body.persistence).toBe('confirmed');
+  expect((await call('GET', 'runtime')).body.currentHash).toBe(changed.body.afterHash);
+  expect((await call('GET', `runtime-receipts/${changed.body.receipt.id}`)).body).toEqual(changed.body.receipt);
+  expect((await call('GET', 'runtime-receipts?page=1&pageSize=1')).body.pagination).toEqual({ page: 1, pageSize: 1, total: 1, pages: 1 });
+  const raw = JSON.parse(fixture.db.get('SELECT data FROM settings').data);
+  expect(raw.headroomUrl).toBe('http://local-user:local-secret@127.0.0.1:8787/private?secret=fixture#hidden');
+  expect(raw.memoryHandoffEnabled).toBe(true);
+  expect(raw.password).toBe('never-return-this');
+  expect(JSON.stringify(changed.body)).not.toMatch(/local-user|local-secret|secret=fixture|never-return-this/);
+  expect((await call('POST', 'runtime', request)).status).toBe(409);
+});
+
+it('persists control versions, plan overrides and runtime receipts across a complete disk reopen', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'shaping-controls-roundtrip-')), file = join(directory, 'data.sqlite');
+  fixture.db.close(); fixture.db = await createSqlJsAdapter(file);
+  for (const [table, def] of Object.entries(TABLES)) { fixture.db.exec(buildCreateTableSql(table, def)); for (const sql of def.indexes || []) fixture.db.exec(sql); }
+  try {
+    fixture.db.run('INSERT INTO combos(id,name,models,createdAt,updatedAt) VALUES(?,?,?,?,?)', ['plan-a', 'PlanA', '[]', '2026-09-07', '2026-09-07']);
+    const current = (await call()).body;
+    const controls = await call('POST', 'controls', { patch: { cavemanEnabled: true }, expectedCurrent: current.currentHash, consent: Object.keys(current.settings) });
+    const plans = (await call('GET', 'plans')).body;
+    const plan = await call('POST', 'plans', { name: 'PlanA', patch: { caveman: false }, expectedCurrent: plans.plans[0].currentHash, expectedSettings: plans.settingsHash, consent: Object.keys(current.settings) });
+    const runtime = (await call('GET', 'runtime')).body;
+    const settings = await call('POST', 'runtime', { patch: { pxpipeAutoInstall: false }, expectedCurrent: runtime.currentHash, acknowledgeRequestData: true });
+    expect([controls.status, plan.status, settings.status]).toEqual([200, 200, 200]);
+    fixture.db.close(); fixture.db = await createSqlJsAdapter(file);
+    expect((await call()).body.settings.cavemanEnabled).toBe(true);
+    expect((await call('GET', `profiles/${controls.body.versionId}`)).body.settings.cavemanEnabled).toBe(true);
+    expect((await call('GET', 'plans')).body.plans[0].effective.cavemanEnabled).toBe(false);
+    expect((await call('GET', `plan-receipts/${plan.body.receipt.id}`)).body).toEqual(plan.body.receipt);
+    expect((await call('GET', 'runtime')).body.settings.pxpipeAutoInstall).toBe(false);
+    expect((await call('GET', `runtime-receipts/${settings.body.receipt.id}`)).body).toEqual(settings.body.receipt);
+  } finally { fixture.db.close(); fixture.db = await createNodeSqliteAdapter(':memory:'); rmSync(directory, { recursive: true, force: true }); }
+});
+
+it.each(['plans', 'runtime'])('rolls back %s settings when its retained receipt fails', async resource => {
+  fixture.db.run('INSERT INTO combos(id,name,models,createdAt,updatedAt) VALUES(?,?,?,?,?)', ['plan-a', 'protected', '[]', '2026-09-07', '2026-09-07']);
+  const controls = (await call()).body, snapshot = (await call('GET', resource)).body;
+  const before = fixture.db.get('SELECT data FROM settings').data, run = fixture.db.run.bind(fixture.db);
+  vi.spyOn(fixture.db, 'run').mockImplementation((sql, values) => { if (sql.startsWith('INSERT INTO kv')) throw new Error('private fixture error'); return run(sql, values); });
+  const request = resource === 'plans' ? { name: 'protected', patch: { caveman: true }, expectedCurrent: snapshot.plans[0].currentHash, expectedSettings: snapshot.settingsHash, consent: Object.keys(controls.settings) } : { patch: { pxpipeAutoInstall: false }, expectedCurrent: snapshot.currentHash, acknowledgeRequestData: true };
+  expect((await call('POST', resource, request)).status).toBe(500);
+  expect(fixture.db.get('SELECT data FROM settings').data).toBe(before);
+});
+
+it('changes only a named plan with validated inheritance, real runtime resolution and retained receipts', async () => {
+  fixture.db.run('INSERT INTO combos(id,name,models,createdAt,updatedAt) VALUES(?,?,?,?,?)', ['plan-a', 'protected', '[]', '2026-09-07', '2026-09-07']);
+  const settings = (await call()).body, plans = (await call('GET', 'plans')).body;
+  const patch = { enabled: false, caveman: true, epochAuto: true, schema: null };
+  const request = { name: 'protected', patch, expectedCurrent: plans.plans[0].currentHash, expectedSettings: plans.settingsHash, consent: Object.keys(settings.settings) };
+  expect((await call('POST', 'plans', { ...request, consent: [] })).status).toBe(422);
+  expect((await call('POST', 'plans', { ...request, patch: { cavemanEnabled: true } })).status).toBe(400);
+  expect((await call('POST', 'plans', { ...request, patch: { caveman: 'true' } })).status).toBe(400);
+  expect((await call('POST', 'plans', { ...request, name: 'absent' })).status).toBe(404);
+  const changed = await call('POST', 'plans', request);
+  expect(changed.status).toBe(200);
+  expect(changed.body.persistence).toBe('confirmed');
+  expect(changed.body.effective).toMatchObject({ rtkEnabled: false, cavemanEnabled: true, epochAutoEnabled: true, schemaDistillEnabled: false });
+  const raw = JSON.parse(fixture.db.get('SELECT data FROM settings').data);
+  expect(raw.password).toBe('never-return-this');
+  expect(raw.comboStrategy).toBe('round-robin');
+  expect(raw.comboStrategies.protected.tokenSaver.rtkEnabled).toBe(false);
+  expect(changed.body.effective).toEqual(resolveComboTokenSaver(['protected'], { ...raw, ...settings.settings }));
+  expect((await call()).body.currentHash).toBe(settings.currentHash);
+  expect((await call('GET', `plan-receipts/${changed.body.receipt.id}`)).body).toEqual(changed.body.receipt);
+  expect((await call('GET', 'plan-receipts?pageSize=1')).body.rows).toEqual([changed.body.receipt]);
+  expect(JSON.stringify(changed.body)).not.toContain('never-return-this');
+  expect((await call('POST', 'plans', request)).status).toBe(409);
+  const reread = (await call('GET', 'plans')).body;
+  const restored = await call('POST', 'plans', { ...request, patch: { enabled: null, caveman: null, epochAuto: null }, expectedCurrent: reread.plans[0].currentHash });
+  expect(restored.status).toBe(200);
+  expect(restored.body.receipt.after).toEqual({});
+  expect((await call('GET', 'plans')).body.plans[0].currentHash).toBe(plans.plans[0].currentHash);
+});
+
+it('refuses a plan write if the reviewed global permission state changed', async () => {
+  fixture.db.run('INSERT INTO combos(id,name,models,createdAt,updatedAt) VALUES(?,?,?,?,?)', ['plan-a', 'protected', '[]', '2026-09-07', '2026-09-07']);
+  const settings = (await call()).body, plans = (await call('GET', 'plans')).body;
+  await call('POST', 'controls', { patch: { rtkAllowLossy: true }, expectedCurrent: settings.currentHash, consent: Object.keys(settings.settings) });
+  expect((await call('POST', 'plans', { name: 'protected', patch: { caveman: true }, expectedCurrent: plans.plans[0].currentHash, expectedSettings: plans.settingsHash, consent: Object.keys(settings.settings) })).status).toBe(409);
+  expect(fixture.db.get('SELECT COUNT(*) AS count FROM kv WHERE scope=?', ['shapingPlanReceipts']).count).toBe(0);
+});
+
+it('validates control changes, records an immutable version and refuses stale replay', async () => {
+  const current = (await call()).body;
+  const patch = { cavemanEnabled: true, memoryRecentTurnsToKeep: 9 };
+  const request = { patch, expectedCurrent: current.currentHash, consent: consentRequired({ ...current.settings, ...patch }) };
+  expect((await call('POST', 'controls', { ...request, consent: [] })).status).toBe(422);
+  expect((await call('POST', 'controls', { ...request, patch: { pxpipeTimeoutMs: 600000 } })).status).toBe(400);
+  expect((await call('POST', 'controls', { ...request, patch: { password: 'not-allowed' } })).status).toBe(400);
+  const changed = await call('POST', 'controls', request);
+  expect(changed.status).toBe(200);
+  expect(changed.body.persistence).toBe('confirmed');
+  expect(changed.body.diff.map(item => item.key)).toEqual(['cavemanEnabled', 'memoryRecentTurnsToKeep']);
+  expect((await call()).body.currentHash).toBe(changed.body.afterHash);
+  expect((await call('GET', `profiles/${changed.body.versionId}`)).body.settings).toEqual({ ...current.settings, ...patch });
+  const stored = JSON.parse(fixture.db.get('SELECT data FROM settings').data);
+  expect(stored.password).toBe('never-return-this');
+  expect(stored.comboStrategies.protected.tokenSaver.rtkEnabled).toBe(false);
+  expect((await call('POST', 'controls', request)).status).toBe(409);
+});
+
+it.each(['memoryHandoffEnabled', 'headroomLossless'])('preserves unavailable saved %s without offering an execution change', async key => {
+  const current = (await call()).body;
+  expect(current.unavailableControls[key]).toBeTruthy();
+  expect((await call('POST', 'controls', { patch: { [key]: true }, expectedCurrent: current.currentHash, consent: consentRequired({ ...current.settings, [key]: true }) })).status).toBe(422);
+  const raw = JSON.parse(fixture.db.get('SELECT data FROM settings').data);
+  fixture.db.run('UPDATE settings SET data=?', [JSON.stringify({ ...raw, [key]: true })]);
+  const legacy = (await call()).body;
+  const changed = await call('POST', 'controls', { patch: { pxpipeMinChars: 26000 }, expectedCurrent: legacy.currentHash, consent: consentRequired(legacy.settings) });
+  expect(changed.status).toBe(200);
+  expect((await call()).body.settings[key]).toBe(true);
 });
 it('projects actual defaults without credentials, routing overrides or endpoint settings', async () => {
   const result = await call();
@@ -60,6 +192,48 @@ it('requires explicit content-change consent and refuses out-of-scope settings',
   expect((await save({ ...settings, password: 'injected' })).status).toBe(400);
   expect((await save({ ...settings, pxpipeTimeoutMs: null })).status).toBe(400);
   expect((await call('GET', 'profiles?page=1&page=2')).status).toBe(400);
+});
+it('versions every context control with strict booleans and requires consent for content changes', async () => {
+  const current = (await call()).body.settings;
+  const controls = {
+    epochMicroEnabled: true,
+    epochAutoEnabled: true,
+    dietEnabled: true,
+    linguaEnabled: true,
+    adaptiveCacheTtlEnabled: true,
+  };
+  const required = ['dietEnabled', 'epochAutoEnabled', 'epochMicroEnabled', 'linguaEnabled'];
+  const consent = consentRequired({ ...current, ...controls });
+  expect(consent).toEqual(expect.arrayContaining(required));
+  expect(consent).not.toContain('adaptiveCacheTtlEnabled');
+  expect((await save({ ...current, ...controls }, { consent: [] })).status).toBe(422);
+  const saved = await save({ ...current, ...controls });
+  expect(saved.status).toBe(200);
+  expect(saved.body.version.settings).toMatchObject(controls);
+  expect((await save({ ...current, epochMicroEnabled: 'true' })).status).toBe(400);
+});
+it('runs and promotes a legacy profile without rewriting its stored version or hash', async () => {
+  const current = (await call()).body;
+  const legacy = { ...current.settings };
+  const omitted = ['epochMicroEnabled', 'epochAutoEnabled', 'dietEnabled', 'linguaEnabled', 'adaptiveCacheTtlEnabled'];
+  for (const key of omitted) delete legacy[key];
+  const inserted = fixture.db.run(
+    'INSERT INTO shapingProfileVersions(profileId,name,revision,settings,consent,contentHash,createdAt) VALUES(?,?,?,?,?,?,?)',
+    ['legacy-profile', 'Legacy profile', 1, JSON.stringify(legacy), JSON.stringify(consentRequired({ ...legacy, epochMicroEnabled: false, epochAutoEnabled: false, dietEnabled: false, linguaEnabled: false, adaptiveCacheTtlEnabled: false })), 'legacy-content-hash', new Date().toISOString()],
+  );
+  const versionId = inserted.lastInsertRowid;
+  const loaded = await call('GET', `profiles/${versionId}`);
+  expect(loaded.status).toBe(200);
+  expect(loaded.body.settings).toEqual(legacy);
+  const experiment = await call('POST', 'experiments', { baselineVersionId: versionId, candidateVersionId: versionId, fixtureSetId: 'context-integrity-v1' });
+  expect(experiment.status).toBe(200);
+  const promoted = await call('POST', 'promote', {
+    versionId, experimentId: experiment.body.id, expectedCurrent: current.currentHash,
+    consent: consentRequired({ ...legacy, epochMicroEnabled: false, epochAutoEnabled: false, dietEnabled: false, linguaEnabled: false, adaptiveCacheTtlEnabled: false }),
+  });
+  expect(promoted.status).toBe(200);
+  for (const key of omitted) expect((await call()).body.settings[key]).toBe(false);
+  expect(fixture.db.get('SELECT settings,contentHash FROM shapingProfileVersions WHERE id=?', [versionId])).toEqual({ settings: JSON.stringify(legacy), contentHash: 'legacy-content-hash' });
 });
 it('runs an actual bounded worker, persists results and atomically promotes then rolls back', async () => {
   const current = (await call()).body, before = fixture.db.get('SELECT data FROM settings').data;

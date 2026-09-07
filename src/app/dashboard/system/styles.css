@@ -1,6 +1,10 @@
 /* System screen only. Every selector is prefixed .system-; no global class is
    redefined and every value comes from the tokens in globals.css. */
 @layer components {
+  .system-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; padding-block: 14px; border-block: 1px solid var(--rule); }
+  .system-summary .measure { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 0; border: 0; background: transparent; }
+  .system-summary .measure .value { font-size: 18px; font-weight: 600; font-family: inherit; font-variant-numeric: tabular-nums; }
+  .system-summary .measure .label { font-size: 13px; }
   /* The null contract outside .measures: a "Not reported" fact carries its
      reason in the same .why disclosure the measures use. */
   .system-facts .why { font-size: var(--t-12); color: var(--slate); }

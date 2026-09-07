@@ -100,6 +100,8 @@ describe("POST /api/v1/mcp JSON-RPC", () => {
     const tool = body.result.tools[0];
     expect(tool.name).toBe("context_status");
     expect(tool.description).toContain("ctxTokens");
+    expect(tool.description).toContain('provider-reported');
+    expect(tool.description).not.toContain('provider billed');
     expect(tool.inputSchema).toEqual({
       type: "object",
       properties: {
@@ -142,6 +144,14 @@ describe("POST /api/v1/mcp JSON-RPC", () => {
       updatedAt: "2026-09-04T12:00:00.000Z",
     });
     expect(body.result.structuredContent).toEqual(parsed);
+  });
+
+  it('keeps the same null and signed measurement contract as the REST projection', async () => {
+    mcpMocks.readContextStatus.mockReturnValue({ ...SAMPLE_ENTRY, ctxTokensActual: '1200', compactHint: undefined, saveBytes: -250, dollarsSaved: -0.03, ceBytes: -1, epochHitRate: Infinity });
+    const res = await POST(rpcRequest({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'context_status', arguments: { sid: 'deadbeef' } } }));
+    const body = await res.json();
+    expect(body.result.structuredContent).toMatchObject({ ctxTokens: 51234, ctxTokensActual: null, compactHint: null, saveBytes: -250, dollarsSaved: -0.03, ceBytes: null, epochHitRate: null });
+    expect(body.result.structuredContent).not.toHaveProperty('cacheSavedUsd');
   });
 
   it("tools/call picks the freshest entry across provider candidates", async () => {

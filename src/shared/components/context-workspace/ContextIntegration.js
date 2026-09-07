@@ -1,0 +1,12 @@
+export function ContextIntegration() {
+  return <details><summary>Client integration and reporting boundaries</summary>
+    <p>The originating client reports its own compaction, handoff and task events. This operator view does not create client evidence or infer an agent hierarchy.</p>
+    <p>Send <code>POST /api/v1/context/events</code> with an active client API key in the Authorization bearer header. Each report needs its own UUID eventId, timezone-qualified occurredAt, type and clientId. Retry an identical payload with the same eventId; a changed payload with that ID is refused. Bodies are limited to 16 KiB.</p>
+    <ul><li><code>compaction</code> may include beforeTokens and afterTokens only with tokenMeasurementMethod set to client-tokenizer, client-estimate or unknown.</li><li><code>handoff</code> requires the actual targetClientId; targetTaskId is optional.</li><li><code>task_start</code> and <code>task_outcome</code> require the actual taskId. An outcome is success, failure, cancelled or unknown.</li></ul>
+    <p>Optional projectId, clientSessionId and taskId come from the client. To join a report to an attempt, use that client key’s exact requestId. Fields logicalRequestId and sessionId require that exact request link; unmatched or conflicting links are refused. Reports without a link remain unlinked.</p>
+    <p>Requests can declare <code>x-tokenproxy-client-id</code>, <code>x-tokenproxy-session-id</code>, <code>x-tokenproxy-task-id</code> and <code>x-tokenproxy-project-id</code>. Saved references are installation-keyed digests; they do not verify a person or application project.</p>
+    <p>The client-facing MCP endpoint <code>/v1/mcp</code> exposes <code>context_status</code> through tools/call with the client credential and the same routing-session headers. It returns matched telemetry or unknown state. The operator REST projection is <code>GET /api/context-status</code>.</p>
+    <p>Both projections separate the byte-based ctxTokens estimate from non-estimated provider-reported ctxTokensActual. DollarsSaved excludes cache discounts and is not a charge. CompactHint describes a large prefix discontinuity, not proof of compaction.</p>
+    <p>For one inference request, <code>x-tokenproxy-token-saver: off</code> bypasses the token-saving path, including memory and disclosure. Privacy filtering and adaptive cache lifetime have independent global gates.</p>
+  </details>;
+}

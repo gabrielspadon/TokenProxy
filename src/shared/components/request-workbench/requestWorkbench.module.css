@@ -1,0 +1,26 @@
+.workbench { min-width: 0; color: var(--ink); }
+.scope { display: grid; grid-template-columns: minmax(220px, 360px) minmax(0, 1fr); gap: 24px; align-items: end; padding: 16px 0 24px; }
+.endpoint { margin: 8px 0 0; font: 500 13px/1.5 var(--mono); overflow-wrap: anywhere; }
+.layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.panel { min-width: 0; background: var(--raised); border: 1px solid var(--rule); border-radius: 8px; }
+.panelHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 16px; border-bottom: 1px solid var(--rule); }
+.panel h2 { margin: 0; font: 600 20px/1.4 var(--sans); }
+.panel h3 { font: 600 18px/1.4 var(--sans); }
+.secondary { color: var(--slate); font-size: 13px; }
+.metadata { display: grid; gap: 4px; padding: 12px; background: var(--signal-wash); border-radius: 8px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.native textarea { font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+.code { margin: 0; padding: 12px; max-height: 440px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; font: 400 13px/1.5 var(--mono); }
+.effect { display: flex; gap: 8px; align-items: flex-start; border-inline-start: 3px solid var(--ember); padding: 8px 12px; }
+.effect p { margin: 0; font-size: 13px; line-height: 1.5; }
+.effect svg { flex: 0 0 18px; }
+.empty { padding: 24px 8px; }
+.empty p { color: var(--slate); font-size: 14px; line-height: 1.5; }
+.facts { display: grid; gap: 8px; margin: 0; }
+.facts div { display: grid; grid-template-columns: minmax(110px, .65fr) minmax(0, 1fr); gap: 12px; }
+.facts dt { color: var(--slate); font-size: 13px; }
+.facts dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.workbench summary { cursor: pointer; font-size: 14px; line-height: 1.5; padding: 8px 0; }
+.workbench :is(summary, pre):focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.workbench a { color: var(--signal); text-underline-offset: 3px; }
+@media (max-width: 1050px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .scope { grid-template-columns: minmax(0, 1fr); gap: 12px; } .facts div { grid-template-columns: minmax(0, 1fr); gap: 2px; } .workbench :global(.mantine-Button-root) { min-height: 44px; height: auto; } .workbench :global(.mantine-Button-label) { white-space: normal; } }

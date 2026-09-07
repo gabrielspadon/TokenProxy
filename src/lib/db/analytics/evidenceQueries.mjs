@@ -1,8 +1,9 @@
-import { InvestigationError, OWNER_SCOPE, object, validateDefinition } from './investigationModel.mjs';
+import { InvestigationError, OWNER_SCOPE, object, validateDefinition, mergeEconomicsFilters } from './investigationModel.mjs';
 import { readActivityEvidence } from './activityQueries.mjs';
 import { readContextEvidenceExport } from './contextEvidenceExport.mjs';
 import { economicsGroupFilters } from './economicsDimensions.mjs';
 import { EXPORT_LIMITS } from './evidenceFormat.mjs';
+import { parseQuotaWorkbenchQuery, readQuotaWorkbench } from './quotaWorkbenchQueries.mjs';
 
 export { EXPORT_LIMITS } from './evidenceFormat.mjs';
 export function validateEvidenceQuery(query) {
@@ -21,7 +22,7 @@ export function validateEvidenceQuery(query) {
   return { operation: 'evidence', mode: query.mode, definition };
 }
 function selectFields(row,keys) { return Object.fromEntries(keys.map((key) => [key,row[key] ?? null])); }
-const ACTIVITY_FIELDS = ['id','timestamp','provider','model','requestedModel','connectionId','status','requestId','requestLink','logicalRequestId','attempt','contextSessionId','projectId','clientKeyId','clientIdentitySource','clientRef','clientSessionRef','projectRef','taskRef','dispatchCoverage','usageSource','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','reasoningTokens','recordedCostUsd','estimatedCostUsd','reportedCostUsd','costSource','rateSnapshotId','pricingCapturedAt','rateSnapshot','costComponents','latencyMs','ttftMs','invalidTokens','inconsistentCache','missingTokenDetail'];
+const ACTIVITY_FIELDS = ['id','timestamp','provider','model','requestedModel','connectionId','status','requestId','requestLink','logicalRequestId','attempt','contextSessionId','projectId','clientKeyId','clientIdentitySource','clientRef','clientSessionRef','projectRef','taskRef','dispatchCoverage','usageSource','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','reasoningTokens','recordedCostUsd','estimatedCostUsd','reportedCostUsd','costSource','rateSnapshotId','pricingCapturedAt','rateSnapshot','costComponents','completionId','counterfactual','latencyMs','ttftMs','invalidTokens','inconsistentCache','missingTokenDetail'];
 function limited(db,sql,args) {
   const total = db.get(`SELECT COUNT(*) AS n FROM (${sql})`,args).n;
   if (total > EXPORT_LIMITS.records) return { exceeded: true, totalRecords: total };
@@ -35,18 +36,12 @@ export function readEvidence(db,input) {
   const kind = selection?.kind || (mode === 'comparison' ? (d.lens === 'context' ? 'context-session' : 'account') : ({ capacity:'account',context:'context-session',economics:'economics-group',routing:'routing-switch' }[d.lens]));
   let result, source, coverage;
   if (kind.startsWith('economics')) {
-    const filters = { ...scope };
+    let filters = { ...scope };
     delete filters.period;
     if (selection?.kind === 'economics-record') filters.recordId = selection.id;
     const cohort=selectedCohort ? economicsGroupFilters(selection,selection.groupBy) : !selection ? d.economics.cohort : null;
-    if (cohort) for (const key of ['provider','model','connectionId','sessionId','logicalRequestId','clientRef','projectRef','taskRef','missing']) if (cohort[key]!=null) {
-      if (filters[key] && filters[key]!==cohort[key]) throw new InvestigationError('The retained cohort conflicts with the shared scope. Clear the cohort or restore its matching scope before exporting.');
-      filters[key]=cohort[key];
-    }
-    result = readActivityEvidence(db,{operation:'activity',view:'economics',...filters,groupBy:d.economics.groupBy,
-      ...(!selection && d.economics.status !== 'all' ? {status:d.economics.status} : {}),
-      ...(!selection && d.economics.costSource && d.economics.costSource!=='all' ? {costSource:d.economics.costSource} : {}),
-      ...(!selection && d.economics.attemptKind && d.economics.attemptKind!=='all' ? {attemptKind:d.economics.attemptKind} : {})});
+    if (!selection || selectedCohort) filters=mergeEconomicsFilters(scope,d.economics,cohort);
+    result = readActivityEvidence(db,{operation:'activity',view:'economics',...filters,groupBy:d.economics.groupBy});
     if (result.items) result.items = result.items.map((row) => selectFields(row,ACTIVITY_FIELDS));
     source = 'usageHistory'; coverage = result.coverage;
   } else if (kind.startsWith('context')) {
@@ -61,6 +56,20 @@ export function readEvidence(db,input) {
     result = limited(db,`SELECT id,provider,name,isActive FROM providerConnections ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''} ORDER BY provider,id`,args);
     if (result.items) result.items = result.items.map((row) => ({...row,windows:db.all('SELECT scope,remaining,"limit" AS capacity,resetAt,observedAt,confidence FROM quotaWindows WHERE connectionId=? ORDER BY scope',[row.id])}));
     source = 'providerConnections + quotaWindows'; coverage = { currentPersistedConfiguration: true, quotaHistory: false, quotaUnits: 'unknown', unsupportedScopeFields: ['start','end','model'].filter((key)=>scope[key]), requestedAccounts: ids, missingAccounts: ids?.filter((id)=>!result.items?.some((row)=>row.id===id)) || [] };
+    if (selection?.windowId) {
+      const params = new URLSearchParams({ connectionId: selection.id,
+        ...(selection.windowScope ? { scope: selection.windowScope } : {}),
+        ...(d.scope.start ? { start: d.scope.start } : {}), ...(d.scope.end ? { end: d.scope.end } : {}) });
+      const history = readQuotaWorkbench(db, parseQuotaWorkbenchQuery(params));
+      if (!history.complete) return { refused: true, code: 'quota_history_incomplete', message: history.instruction, totalRecords: history.total, limits: EXPORT_LIMITS };
+      const selectedSeries = history.series.find(series => series.id === selection.windowId);
+      result.quotaHistory = selectedSeries ? [selectedSeries] : [];
+      coverage.quotaHistory = Boolean(selectedSeries);
+      coverage.selectedQuotaHistory = { windowId: selection.windowId, available: Boolean(selectedSeries),
+        timeRange: history.timeRange, source: 'quotaObservations', modelAttribution: 'unavailable',
+        reason: selectedSeries ? null : 'Exact selected series is not retained in the shared capture period. No other series was substituted.' };
+      source += ' + exact selected quotaObservations series';
+    }
   } else {
     const clauses = [], args = [];
     if (selection) { clauses.push('id=?'); args.push(selection.id); }
@@ -84,7 +93,7 @@ export function readEvidence(db,input) {
     ...(mode==='attempt-comparison' ? {requestedAttempts:result.requestedAttempts,missingAttempts:result.missingAttempts,comparisonComplete:result.missingAttempts.length===0} : {}),
     limits: EXPORT_LIMITS, coverage, omissions: ['credentials','request/response content','raw client identifiers and private session affinity hashes','freeform error/reason content','unverified cost linkage'],
     units: { tokens:'tokens',bytes:'bytes',latency:'ms',cost:'USD estimate or separately labeled report',quota:'unknown' },
-    caveat: 'Historical pending is not active work. Cost estimates are not subscription spend. Records from different sources are never joined by timestamp.' }, items: result.items, ...(result.clientEvents ? {clientEvents:result.clientEvents} : {}) };
+    caveat: 'Historical pending is not active work. Cost estimates are not subscription spend. Records from different sources are never joined by timestamp.' }, items: result.items, ...(result.clientEvents ? {clientEvents:result.clientEvents} : {}), ...(result.quotaHistory ? {quotaHistory:result.quotaHistory} : {}) };
   if (Buffer.byteLength(JSON.stringify(payload)) > EXPORT_LIMITS.bytes) return { refused:true,code:'export_too_large',limits:EXPORT_LIMITS,message:'This evidence exceeds the 8 MiB export limit. Narrow the scope; no partial export was produced.' };
   return payload;
 }

@@ -6,6 +6,7 @@ import {
 } from "../../../../open-sse/config/connectTimeout.js";
 
 import { CONFIG_SETTINGS_KEYS, readRoutingConfig, recordConfigMutation } from "../helpers/configHistory.js";
+import { QUOTA_AUTOPING_SETTINGS_KEYS } from "../../../shared/constants/config.js";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL =
@@ -271,6 +272,9 @@ export async function updateSettings(updates) {
     // (raw current may not have the key yet).
     const seeded = mergeWithDefaults(current);
     const mergedCurrent = { ...current };
+    for (const key of QUOTA_AUTOPING_SETTINGS_KEYS) {
+      if (updates[key]?.connections) updates = {...updates,[key]:{...seeded[key],...updates[key],connections:{...seeded[key]?.connections,...updates[key].connections}}};
+    }
     // claudeCompat arrives as a partial PATCH (e.g. only { keywords }) and
     // needs merging to keep sibling keys like enabled. contextWindowOverrides
     // is deliberately excluded: the model-context API sends the WHOLE map
@@ -299,6 +303,55 @@ export async function updateSettings(updates) {
     if (tracked) recordConfigMutation(db, before, "repo.settings.update");
   });
   return mergeWithDefaults(next);
+}
+
+// Model-context edits operate on independent override keys. Reading that map in
+// a route and then replacing it through updateSettings loses a sibling when two
+// requests overlap, even though each whole-settings write is transactional.
+// Keep the ordinary updateSettings replacement contract unchanged and perform
+// these per-key mutations against the current row inside one adapter transaction.
+export async function mutateContextWindowOverrides({ set = [], deleteKeys = [], expectedOverrides }) {
+  const db = await getAdapter();
+  let result;
+  db.transaction(() => {
+    const row = db.get(`SELECT data FROM settings WHERE id = 1`);
+    const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
+    // Override keys are model literals and can coincide with Object.prototype
+    // names. A null-prototype target retains every supplied key as data.
+    const overrides = Object.assign(Object.create(null), current.contextWindowOverrides || {});
+    if (expectedOverrides !== undefined) {
+      const keys = new Set([...set.map(item => item.key), ...deleteKeys]);
+      if (!expectedOverrides || typeof expectedOverrides !== 'object' || Array.isArray(expectedOverrides) || Object.keys(expectedOverrides).length !== keys.size || [...keys].some(key => !Object.hasOwn(expectedOverrides, key) || (expectedOverrides[key] !== null && (!Number.isSafeInteger(expectedOverrides[key]) || expectedOverrides[key] <= 0)))) {
+        const error = new Error('Reviewed values must cover every changed override key.'); error.code = 'invalid_context_expectations'; throw error;
+      }
+      for (const key of keys) if ((Object.hasOwn(overrides, key) ? overrides[key] : null) !== expectedOverrides[key]) {
+        const error = new Error('A reviewed context override changed. Refresh and review the retained draft again.'); error.code = 'context_window_conflict'; throw error;
+      }
+    }
+    let nSet = 0;
+    let nDel = 0;
+
+    for (const { key, contextWindow } of set) {
+      overrides[key] = contextWindow;
+      nSet++;
+    }
+    for (const key of deleteKeys) {
+      if (Object.hasOwn(overrides, key)) nDel++;
+      delete overrides[key];
+    }
+
+    const next = { ...current, contextWindowOverrides: overrides };
+    db.run(
+      `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+      [stringifyJson(next)],
+    );
+    result = { overrides, nSet, nDel };
+  });
+  if (expectedOverrides !== undefined) {
+    try { db.flush?.(); result.persistence = 'confirmed'; }
+    catch { result.persistence = 'unconfirmed'; }
+  }
+  return result;
 }
 
 export async function updateProviderStrategy(providerId, values) {

@@ -2,7 +2,7 @@ export const TREND_METRICS = [
   {
     key: 'recordedCostUsd',
     samples: 'costSamples',
-    name: 'Recorded estimate',
+    name: 'Recorded amount',
     unit: 'USD',
     color: 'selected',
     axis: 0,

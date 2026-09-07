@@ -281,3 +281,43 @@ it('unknown identity fields render unknown, never a guessed value', async () => 
   expect(row.textContent).toContain('unknown');
   expect(row.textContent).toContain('interrupted');
 });
+
+it('a disconnected submission reports unknown acceptance and never replays the run', async () => {
+  state.routes['POST /api/admin/compatibility/runs'] = () => ({ ok: false, status: 0, body: { code: 'network' } });
+  await render();
+  await click('Run revision 3');
+  expect(container.textContent).toContain('Run acceptance is unknown');
+  expect(container.textContent).toContain('may have been accepted');
+  expect(state.calls.filter((entry) => entry.method === 'POST')).toHaveLength(1);
+});
+
+it('missing retained measurements remain unknown and do not crash the result inspector', async () => {
+  runsBody = { items: [{ ...baseRun, status: 'succeeded', result: { sourceFormat: 'openai', targetFormat: 'claude', route: { mode: 'direct' }, checks: [], quantities: { inputBytes: 0, outputBytes: null, translatorDurationMs: null } } }], pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 } };
+  await render();
+  await act(async () => container.querySelector(`[aria-label="Inspect run ${baseRun.id}"]`).click());
+  expect(container.textContent).toContain('Input 0 B');
+  expect(container.textContent).toContain('Output Unknown B');
+  expect(container.textContent).toContain('Translator Unknown ms');
+});
+
+it('archives an exact fixture revision with confirmation and readback without running it', async () => {
+  let stored = { ...fixture };
+  state.routes['GET /api/admin/compatibility'] = () => ({ ok: true, status: 200, body: { ...catalog, fixtures: [stored] } });
+  state.routes[`PATCH /api/admin/compatibility/fixtures/${fixture.id}`] = options => {
+    expect(options.body).toMatchObject({ revision: 3, archived: true, definition: fixture.definition });
+    stored = { ...stored, revision: 4, archived: true };
+    return { ok: true, status: 200, body: stored };
+  };
+  state.routes[`GET /api/admin/compatibility/fixtures/${fixture.id}`] = () => ({ ok: true, status: 200, body: stored });
+  await render();
+  await click('Archive fixture');
+  expect(state.calls.some(call => call.method === 'PATCH')).toBe(false);
+  const confirm = [...document.querySelectorAll('button')].find(button => button.textContent === 'Confirm archive');
+  expect(confirm).toBeTruthy();
+  await act(async () => confirm.click());
+  expect(container.textContent).toContain('Fixture archived and read back.');
+  expect(button('Run revision 4').disabled).toBe(true);
+  expect(button('Restore fixture')).toBeTruthy();
+  expect(state.calls.filter(call => call.method === 'PATCH')).toHaveLength(1);
+  expect(state.calls.some(call => call.url === '/api/admin/compatibility/runs' && call.method === 'POST')).toBe(false);
+});

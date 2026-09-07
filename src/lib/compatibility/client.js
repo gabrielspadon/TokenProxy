@@ -1,38 +1,11 @@
-import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { LIMITS, CompatibilityError, TERMINAL } from './model.mjs';
 import { getCompatibilityStore } from '../db/repos/compatibilityRepo.js';
+import { createCompatibilityWorker } from './runtime.mjs';
 
-function runtime() {
-  for (const base of [process.cwd(), resolve(process.cwd(), '..')]) {
-    const file = resolve(base, 'src/lib/compatibility/worker.mjs');
-    if (existsSync(file)) return { file, base };
-  }
-  throw new CompatibilityError(
-    'The packaged local compatibility runtime is unavailable.',
-    503,
-    'runtime_unavailable'
-  );
-}
-function workerFor(definition) {
-  const { file, base } = runtime();
-  const readRoots = [base];
-  if (existsSync(resolve(base, 'node_modules')))
-    readRoots.push(realpathSync(resolve(base, 'node_modules')));
-  return new Worker(file, {
-    workerData: { definition },
-    env: { NODE_ENV: 'production' },
-    execArgv: ['--permission', ...[...new Set(readRoots)].map((root) => `--allow-fs-read=${root}`)],
-    resourceLimits: { maxOldGenerationSizeMb: 192 },
-    stdout: true,
-    stderr: true,
-  });
-}
 export function createCompatibilityManager(
   store,
-  { workerFactory = workerFor, timeoutMs = LIMITS.timeoutMs } = {}
+  { workerFactory = createCompatibilityWorker, timeoutMs = LIMITS.timeoutMs } = {}
 ) {
   const owner = randomUUID(),
     queue = [];

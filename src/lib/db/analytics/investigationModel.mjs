@@ -7,6 +7,34 @@ export const LENS_PATHS = { capacity: '/dashboard', context: '/dashboard/context
 export const INITIAL_SCOPE = { period: 'all', start: null, end: null, provider: null, model: null, connectionId: null };
 const kinds = ['account', 'context-session', 'context-attempt', 'economics-record', 'economics-group', 'routing-switch'];
 const sorts = ['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs'];
+export const ECONOMICS_IDENTITY_FIELDS = ['requestId','logicalRequestId','sessionId','clientKeyId','clientRef','clientSessionRef','projectRef','taskRef'];
+export const ECONOMICS_MISSING_FIELDS = ['provider','model','connectionId',...ECONOMICS_IDENTITY_FIELDS.filter(key=>key!=='requestId')];
+export function validateEconomicsFilters(input = {}) {
+  object(input, [...ECONOMICS_IDENTITY_FIELDS,'requestLink','missing']);
+  const result = {};
+  for (const key of ECONOMICS_IDENTITY_FIELDS) if (input[key] != null && input[key] !== '') {
+    if (key==='sessionId' && typeof input[key]!=='number' && !(typeof input[key]==='string' && /^[1-9]\d*$/.test(input[key]))) throw new InvestigationError('Invalid exact session ID.');
+    result[key] = key==='sessionId' ? Number(input[key]) : text(input[key],key,128,false);
+    if (key==='sessionId' && (!Number.isSafeInteger(result[key]) || result[key]<1)) throw new InvestigationError('Invalid exact session ID.');
+    if (key.endsWith('Ref') && !/^ctx1_[a-f0-9]{64}$/.test(result[key])) throw new InvestigationError('Invalid explicit identity reference.');
+    if (key==='clientKeyId' && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(result[key])) throw new InvestigationError('Invalid client key ID.');
+  }
+  if (input.requestLink) result.requestLink=choice(input.requestLink,['linked','unattributed','unavailable','conflict']);
+  if (input.missing) result.missing=choice(input.missing,ECONOMICS_MISSING_FIELDS);
+  if (result.missing && result[result.missing]!=null) throw new InvestigationError('An identity cannot be both exact and missing.');
+  return result;
+}
+export function mergeEconomicsFilters(scope, economics, cohort = null) {
+  const result = Object.fromEntries(Object.entries(scope).filter(([key,value])=>key!=='period' && value!=null && value!==''));
+  for (const input of [economics.filters || {},cohort || {}]) for (const [key,value] of Object.entries(input)) {
+    if (value == null || value === '') continue;
+    if (result[key]!=null && result[key]!==value) throw new InvestigationError('The retained cohort or identity filter conflicts with the shared scope. Clear the filter or restore its matching scope.');
+    result[key]=value;
+  }
+  if (result.missing && result[result.missing]!=null) throw new InvestigationError('The missing-identity filter conflicts with an exact identity in this scope.');
+  for (const key of ['status','costSource','attemptKind']) if (economics[key] && economics[key]!=='all') result[key]=economics[key];
+  return result;
+}
 export function object(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key))) throw new InvestigationError('Unknown or malformed field.');
   return value;
@@ -39,9 +67,14 @@ export function validateScope(input = INITIAL_SCOPE) {
 }
 export function validateSelection(value) {
   if (value == null) return null;
-  object(value, ['kind','id','sessionId','provider','model','connectionId','fromConnectionId','timestamp','groupBy','windowScope','logicalRequestId','clientRef','projectRef','taskRef']);
+  object(value, ['kind','id','sessionId','provider','model','connectionId','fromConnectionId','timestamp','groupBy','windowScope','windowId','logicalRequestId','clientRef','projectRef','taskRef']);
   const selected = { kind: choice(value.kind, kinds), id: text(String(value.id ?? ''), 'record ID', value.kind === 'economics-group' ? 650 : 200, false) };
   for (const name of ['provider','model','connectionId','fromConnectionId','windowScope']) if (value[name] != null) selected[name] = text(value[name], name);
+  if (value.windowId != null) {
+    if (value.kind !== 'account') throw new InvestigationError('Quota window identity requires an account selection.');
+    selected.windowId = text(value.windowId, 'quota window identity', 64, false);
+    if (!/^[a-f0-9]{64}$/.test(selected.windowId)) throw new InvestigationError('Invalid quota window identity.');
+  }
   for (const name of ['logicalRequestId','clientRef','projectRef','taskRef']) if (value[name]!=null) {
     selected[name]=text(value[name],name,128);
     if(name!=='logicalRequestId' && !/^ctx1_[a-f0-9]{64}$/.test(selected[name])) throw new InvestigationError('Invalid explicit identity reference.');
@@ -73,11 +106,11 @@ export function selectionExcluded(selected, scope) {
 }
 export function validateDefinition(value) {
   object(value, ['schemaVersion','lens','scope','selection','comparisonIds','context','economics']);
-  if (![1,2,3].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
+  if (![1,2,3,4].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
   const ids = value.comparisonIds ?? [];
   if (!Array.isArray(ids) || ids.length > 100 || new Set(ids).size !== ids.length) throw new InvestigationError('Compare at most 100 distinct accounts.');
   const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool',...(value.schemaVersion>=2 ? ['baseline'] : [])]);
-  const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort',...(value.schemaVersion>=3 ? ['groupSortBy','groupSortDirection','costSource','attemptKind'] : [])]);
+  const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort',...(value.schemaVersion>=3 ? ['groupSortBy','groupSortDirection','costSource','attemptKind'] : []),...(value.schemaVersion>=4 ? ['filters'] : [])]);
   const page = context.page ?? 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 10000) throw new InvestigationError('Invalid attempt page.');
   const selection=validateSelection(value.selection);
@@ -103,6 +136,7 @@ export function validateDefinition(value) {
     context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client'), ...(value.schemaVersion>=2 ? {baseline} : {}) },
     economics: { groupBy: choice(economics.groupBy,value.schemaVersion>=3 ? ECONOMICS_GROUP_VALUES : ['provider','model','account'],'provider'), status: choice(economics.status,['all','succeeded','failed','pending'],'all'),
       sortBy: choice(economics.sortBy,sorts,'timestamp'), sortDirection: choice(economics.sortDirection,['asc','desc'],'desc'), cohort,
+      ...(value.schemaVersion>=4 ? {filters:validateEconomicsFilters(economics.filters)} : {}),
       ...(value.schemaVersion>=3 ? {groupSortBy:choice(economics.groupSortBy,['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens'],'recordedCostUsd'),groupSortDirection:choice(economics.groupSortDirection,['asc','desc'],'desc'),costSource:choice(economics.costSource,['all','application-estimate','provider-reported','unknown'],'all'),attemptKind:choice(economics.attemptKind,['all','initial','additional','unknown'],'all')} : {}) } };
 }
 export function validateSave(input, updating = false) {

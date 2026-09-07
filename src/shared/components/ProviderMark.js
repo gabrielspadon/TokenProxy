@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Image from 'next/image';
 import { AI_PROVIDERS } from '@/shared/constants/providers';
-import { getProviderIconSrc, markProviderIconMissing } from '@/shared/utils/providerIcon';
+import { getProviderFallbackInitials, getProviderIconSrc, markProviderIconMissing } from '@/shared/utils/providerIcon';
 
 const BRANDS = {
   anthropic: ['claude', 'Anthropic', 'claude'],
@@ -37,11 +37,11 @@ export function providerIdentity(provider) {
 }
 export function ProviderMark({ provider, size = 'normal', label = false }) {
   const brand = providerIdentity(provider);
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState(null);
   return (
-    <span className="provider-identity" data-provider={brand.color} data-i18n-skip>
+    <span className="provider-identity" data-provider={brand.color} data-label={label || undefined} data-i18n-skip>
       <span className="provider-mark" data-size={size} aria-hidden="true">
-        {brand.src && !failed ? (
+        {brand.src && brand.src !== failedSrc ? (
           <Image
             src={brand.src}
             alt=""
@@ -50,11 +50,11 @@ export function ProviderMark({ provider, size = 'normal', label = false }) {
             unoptimized
             onError={() => {
               markProviderIconMissing(brand.logo);
-              setFailed(true);
+              setFailedSrc(brand.src);
             }}
           />
         ) : (
-          brand.name.slice(0, 2).toUpperCase()
+          getProviderFallbackInitials(provider, brand.name)
         )}
       </span>
       {label ? <span>{brand.name}</span> : null}

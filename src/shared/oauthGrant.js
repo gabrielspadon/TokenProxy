@@ -9,6 +9,19 @@ import { call } from "@/shared/api";
 const PROXY_QUERY = ["codex", "xai"]; // start-proxy?app_port=&state=&code_verifier=&redirect_uri=
 const PROXY_SESSION = ["trae", "windsurf", "zed", "devin"]; // start-proxy then register-session
 
+export const requiresCredentialDocument = provider => PROXY_QUERY.includes(provider) || PROXY_SESSION.includes(provider);
+
+export function credentialDocument(text, force = false) {
+  let body; try { body = JSON.parse(text || ''); } catch { throw new Error('Enter valid credential JSON.'); }
+  if (Array.isArray(body?.accounts)) {
+    if (body.accounts.length !== 1) throw new Error('Select a document containing exactly one account.');
+    body = body.accounts[0];
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Enter one account object.');
+  if (!['accessToken', 'refreshToken', 'idToken', 'apiKey'].some(key => typeof body[key] === 'string' && body[key].trim())) throw new Error('The document contains no usable credential.');
+  return { ...body, ...(force ? { force: true } : {}) };
+}
+
 // Poll /poll-status until done or error. The gateway clears the session on
 // either, so a second read after "done" would say "unknown"; stop at the first.
 async function pollStatus(provider, state, signal) {
@@ -59,22 +72,29 @@ function waitForCallback(expectedState, signal) {
 // Run one grant. `report(step)` receives short sentences for the dialog.
 // Returns {ok, connection} | {ok:false, status, body} for refusal rendering.
 // reauth: {reauthConnectionId, forceReauth} carried into exchange for rebinds.
-export async function runGrant(provider, flowType, { report, signal, reauth, deviceHook } = {}) {
+export async function runGrant(provider, flowType, { report, signal, reauth, deviceHook, deviceOptions = {}, meta = {} } = {}) {
+  if (reauth?.reauthConnectionId && requiresCredentialDocument(provider)) return { ok: false, status: 409, body: { error: 'Use a credential document to replace this account. The local callback flow creates a new account.' } };
   const say = report || (() => {});
   const origin = window.location.origin;
 
   if (flowType === "device_code") {
-    const dc = await call(`/api/oauth/${provider}/device-code`);
+    const query = new URLSearchParams();
+    for (const [field, parameter] of [['region', 'region'], ['startUrl', 'start_url'], ['authMethod', 'auth_method']]) {
+      if (deviceOptions[field]) query.set(parameter, deviceOptions[field]);
+    }
+    const dc = await call(`/api/oauth/${provider}/device-code${query.size ? `?${query}` : ''}`);
     if (!dc.ok) return { ok: false, status: dc.status, body: dc.body };
-    deviceHook?.(dc.body); // show userCode + verificationUri in the dialog
+    const { userCode, verificationUri, expiresIn } = dc.body;
+    deviceHook?.({ userCode, verificationUri, expiresIn });
     say("Enter the code where the provider asks, then keep this open.");
     const interval = Math.max(2, dc.body.interval || 5) * 1000;
     for (;;) {
       if (signal?.aborted) return { ok: false, status: 0, body: { error: "Cancelled." } };
       await new Promise((r) => setTimeout(r, interval));
+      if (signal?.aborted) return { ok: false, status: 0, body: { error: 'Cancelled.' } };
       const p = await call(`/api/oauth/${provider}/poll`, {
         method: "POST",
-        body: { deviceCode: dc.body.deviceCode, codeVerifier: dc.body.codeVerifier, ...(reauth || {}) },
+        body: { deviceCode: dc.body.deviceCode, codeVerifier: dc.body.codeVerifier, extraData: dc.body, ...(reauth || {}) },
       });
       if (p.ok && p.body.success) return { ok: true, connection: p.body.connection };
       if (!p.body?.pending) return { ok: false, status: p.status, body: { error: p.body?.errorDescription || p.body?.error || "The provider refused the sign-in." } };
@@ -82,7 +102,9 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
   }
 
   const redirectUri = `${origin}/callback`;
-  const auth = await call(`/api/oauth/${provider}/authorize?redirect_uri=${encodeURIComponent(redirectUri)}`);
+  const authorizeQuery = new URLSearchParams({ redirect_uri: redirectUri });
+  for (const field of ['baseUrl', 'clientId']) if (meta[field]) authorizeQuery.set(field, meta[field]);
+  const auth = await call(`/api/oauth/${provider}/authorize?${authorizeQuery}`);
   if (!auth.ok) return { ok: false, status: auth.status, body: auth.body };
   const a = auth.body;
 
@@ -121,7 +143,7 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
   if (data.error) return { ok: false, status: 0, body: { error: data.error } };
   const ex = await call(`/api/oauth/${provider}/exchange`, {
     method: "POST",
-    body: { code: data.code || data.token, redirectUri: a.redirectUri || redirectUri, codeVerifier: a.codeVerifier, state: data.state || a.state, ...(reauth || {}) },
+    body: { code: data.code || data.token, redirectUri: a.redirectUri || redirectUri, codeVerifier: a.codeVerifier, state: data.state || a.state, ...(Object.keys(meta).length ? { meta } : {}), ...(reauth || {}) },
   });
   if (!ex.ok || !ex.body?.success) return { ok: false, status: ex.status, body: ex.body };
   return { ok: true, connection: ex.body.connection };
@@ -131,6 +153,12 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
 // cursor state.vscdb pair. Routed to the matching import path.
 export async function importPasted(provider, { token, machineId, reauth }) {
   if (provider === "cursor") {
+    if (reauth?.reauthConnectionId) {
+      const r = await call(`/api/providers/${encodeURIComponent(reauth.reauthConnectionId)}/reauth`, {
+        method: 'POST', body: { accessToken: token, providerSpecificData: { machineId }, ...(reauth.forceReauth ? { force: true } : {}) },
+      });
+      return r.ok && r.body?.connection ? { ok: true, connection: r.body.connection } : { ok: false, status: r.status, body: r.body };
+    }
     const r = await call("/api/oauth/cursor/import", { method: "POST", body: { accessToken: token, machineId } });
     return r.ok && r.body.success ? { ok: true, connection: r.body.connection } : { ok: false, status: r.status, body: r.body };
   }
