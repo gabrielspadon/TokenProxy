@@ -55,6 +55,15 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* Measured values are mono and right-aligned so magnitudes line up on the
+   decimal, matching ContextEvidence.module.css. Labels stay in sans. */
+.table th.numeric,
+.table td.numeric {
+  text-align: right;
+}
+.table td.numeric {
+  font-family: var(--mono);
+}
 .table code {
   font-family: var(--mono);
   font-size: 11px;

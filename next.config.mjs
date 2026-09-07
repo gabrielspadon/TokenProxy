@@ -66,7 +66,11 @@ const nextConfig = {
   // dist/sql-wasm.wasm and the fallback could not load, which is how an install
   // reached "no SQLite driver available" with every link exhausted (#987).
   outputFileTracingIncludes: {
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES],
+    // The bounded analytics worker is loaded by path at runtime, so Next
+    // traces nothing it imports. notificationRuleQueries.mjs reaches into
+    // src/lib/notifications, and a miss there kills the whole worker, which
+    // also serves Capacity, Context and Economics.
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/notifications/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
   },
