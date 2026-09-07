@@ -72,10 +72,6 @@ function extractText(content) {
   return text;
 }
 
-function contentChars(content) {
-  return extractText(content).length;
-}
-
 // Text of an assistant message for the reference scan: string content or
 // concatenated text blocks. tool_use inputs are not scanned (the verbatim
 // gate targets prose the model wrote about a result, not the call args).
