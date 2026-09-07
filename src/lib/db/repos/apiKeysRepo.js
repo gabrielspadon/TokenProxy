@@ -1,13 +1,19 @@
-import { v4 as uuidv4 } from "uuid";
-import { getAdapter } from "../driver.js";
-import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
-import { effectiveBudgetPolicy, BUDGET_POLICY_EXPLANATIONS, validateBudgetPolicy, initializeBudgetAccount, getRecordedBudgetExposure } from "./budgetRepo.js";
+import { v4 as uuidv4 } from 'uuid';
+import { getAdapter } from '../driver.js';
+import { parseJson, stringifyJson } from '../helpers/jsonCol.js';
+import {
+  effectiveBudgetPolicy,
+  BUDGET_POLICY_EXPLANATIONS,
+  validateBudgetPolicy,
+  initializeBudgetAccount,
+  getRecordedBudgetExposure,
+} from './budgetRepo.js';
 
 // A key's model allowlist lives in kv rather than in a column on apiKeys (#1154),
 // the same way disabled models, free models and pricing already do. Every read
 // below LEFT JOINs it in as `allowedModels`, so a key still arrives as one
 // object and nothing outside this file knows where it is kept.
-const ALLOWED_MODELS_SCOPE = "apiKeyModels";
+const ALLOWED_MODELS_SCOPE = 'apiKeyModels';
 const WITH_ALLOWED_MODELS = `SELECT a.*, m.value AS allowedModels
    FROM apiKeys a LEFT JOIN kv m ON m.scope = '${ALLOWED_MODELS_SCOPE}' AND m.key = a.id`;
 
@@ -35,6 +41,15 @@ function rowToKey(row) {
     // null means every model, which is what every key issued before this
     // existed keeps (#1154).
     allowedModels: normalizeAllowedModels(row.allowedModels),
+    // Which reusable bundle this key follows, and the version of it that was
+    // copied on. null in all three is a key managed by hand, which is what
+    // every key issued before profiles existed keeps.
+    accessProfileId: row.accessProfileId || null,
+    accessProfileVersion: row.accessProfileVersion ?? null,
+    accessProfileAdoptedAt: row.accessProfileAdoptedAt || null,
+    // Set only on a key whose successor has been issued. Its expiresAt is then
+    // a rotation deadline rather than a lifetime chosen for its own sake.
+    supersededAt: row.supersededAt || null,
   };
 }
 
@@ -52,7 +67,7 @@ export function isExpired(expiresAt, now = Date.now()) {
 // Anything unparseable becomes null, which is "never expires": a caller that
 // fumbled the field must not silently get a key that dies at an arbitrary time.
 function normalizeExpiry(value) {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined || value === '') return null;
   const at = value instanceof Date ? value.getTime() : new Date(value).getTime();
   return Number.isFinite(at) ? new Date(at).toISOString() : null;
 }
@@ -63,7 +78,7 @@ function normalizeExpiry(value) {
 // arbitrary budget. Zero IS a real ceiling and freezes the key, which is a
 // deliberate way to stop one without deleting it.
 function normalizeLimit(value, integer = true) {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return integer ? Math.floor(n) : n;
@@ -77,12 +92,17 @@ function normalizeLimit(value, integer = true) {
 // corruption, and bricking a key over a bad read is worse than the restriction
 // going unenforced until the operator sets it again.
 function normalizeAllowedModels(value) {
-  if (value === null || value === undefined || value === "") return null;
+  if (value === null || value === undefined || value === '') return null;
   const list = Array.isArray(value) ? value : parseJson(value, null);
   if (!Array.isArray(list)) return null;
-  const cleaned = [...new Set(
-    list.filter((m) => typeof m === "string").map((m) => m.trim()).filter(Boolean)
-  )];
+  const cleaned = [
+    ...new Set(
+      list
+        .filter((m) => typeof m === 'string')
+        .map((m) => m.trim())
+        .filter(Boolean)
+    ),
+  ];
   return cleaned.length ? cleaned : null;
 }
 
@@ -104,16 +124,18 @@ function normalizeAllowedModels(value) {
 // answers those directly.
 export function matchesAllowedModel(allowed, model) {
   if (!Array.isArray(allowed) || !allowed.length) return true;
-  const want = String(model ?? "").trim().toLowerCase();
+  const want = String(model ?? '')
+    .trim()
+    .toLowerCase();
   if (!want) return false;
-  const wantBare = want.split("/").pop();
-  const wantProvider = want.includes("/") ? want.slice(0, want.indexOf("/")) : want;
+  const wantBare = want.split('/').pop();
+  const wantProvider = want.includes('/') ? want.slice(0, want.indexOf('/')) : want;
   return allowed.some((raw) => {
     const entry = String(raw).trim().toLowerCase();
     if (entry === want) return true;
-    if (entry.endsWith("/*")) return entry.slice(0, -2) === wantProvider;
-    if (!entry.includes("/")) return entry === wantBare;
-    if (!want.includes("/")) return entry.split("/").pop() === want;
+    if (entry.endsWith('/*')) return entry.slice(0, -2) === wantProvider;
+    if (!entry.includes('/')) return entry === wantBare;
+    if (!want.includes('/')) return entry.split('/').pop() === want;
     return false;
   });
 }
@@ -135,14 +157,15 @@ export async function isModelAllowed(key, model) {
 // therefore applies to traffic already recorded rather than restarting at zero.
 export async function getApiKeyUsage(key) {
   const db = await getAdapter();
-  const row = db.get(
-    `SELECT COALESCE(SUM(promptTokens), 0) AS promptTokens,
+  const row =
+    db.get(
+      `SELECT COALESCE(SUM(promptTokens), 0) AS promptTokens,
             COALESCE(SUM(completionTokens), 0) AS completionTokens,
             COALESCE(SUM(cost), 0) AS costUsd,
             COUNT(*) AS requests
      FROM usageHistory WHERE apiKey = ?`,
-    [key],
-  ) || {};
+      [key]
+    ) || {};
   return {
     promptTokens: row.promptTokens || 0,
     completionTokens: row.completionTokens || 0,
@@ -161,7 +184,7 @@ export async function getApiKeyUsageTotals() {
             COALESCE(SUM(completionTokens), 0) AS completionTokens,
             COALESCE(SUM(cost), 0) AS costUsd,
             COUNT(*) AS requests
-     FROM usageHistory WHERE apiKey IS NOT NULL GROUP BY apiKey`,
+     FROM usageHistory WHERE apiKey IS NOT NULL GROUP BY apiKey`
   );
   const totals = {};
   for (const r of rows) {
@@ -179,16 +202,18 @@ export async function getApiKeyUsageTotals() {
 // A key with no ceiling set can never be over one, so the caller can skip the
 // usage query entirely — which is what every key issued before #3371 does.
 export function hasLimits(key) {
-  return key?.maxPromptTokens != null
-    || key?.maxCompletionTokens != null
-    || key?.maxCostUsd != null;
+  return (
+    key?.maxPromptTokens != null || key?.maxCompletionTokens != null || key?.maxCostUsd != null
+  );
 }
 
 export function exceededLimit(key, usage) {
   if (!key || !usage) return null;
-  if (key.maxPromptTokens != null && usage.promptTokens >= key.maxPromptTokens) return "promptTokens";
-  if (key.maxCompletionTokens != null && usage.completionTokens >= key.maxCompletionTokens) return "completionTokens";
-  if (key.maxCostUsd != null && usage.costUsd >= key.maxCostUsd) return "costUsd";
+  if (key.maxPromptTokens != null && usage.promptTokens >= key.maxPromptTokens)
+    return 'promptTokens';
+  if (key.maxCompletionTokens != null && usage.completionTokens >= key.maxCompletionTokens)
+    return 'completionTokens';
+  if (key.maxCostUsd != null && usage.costUsd >= key.maxCostUsd) return 'costUsd';
   return null;
 }
 
@@ -197,7 +222,13 @@ export function exceededLimit(key, usage) {
 // explicit null clears it back to unlimited.
 export function pickLimits(body) {
   const picked = {};
-  for (const field of ["maxPromptTokens", "maxCompletionTokens", "maxCostUsd", "allowedModels", "budgetPolicy"]) {
+  for (const field of [
+    'maxPromptTokens',
+    'maxCompletionTokens',
+    'maxCostUsd',
+    'allowedModels',
+    'budgetPolicy',
+  ]) {
     if (body?.[field] !== undefined) picked[field] = body[field];
   }
   return picked;
@@ -216,9 +247,9 @@ export async function getApiKeyById(id) {
 }
 
 export async function createApiKey(name, machineId, expiresAt = null) {
-  if (!machineId) throw new Error("machineId is required");
+  if (!machineId) throw new Error('machineId is required');
   const db = await getAdapter();
-  const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
+  const { generateApiKeyWithMachine } = await import('@/shared/utils/apiKey');
   const result = generateApiKeyWithMachine(machineId);
   const apiKey = {
     id: uuidv4(),
@@ -232,15 +263,24 @@ export async function createApiKey(name, machineId, expiresAt = null) {
     maxPromptTokens: null,
     maxCompletionTokens: null,
     maxCostUsd: null,
-    budgetPolicy: "strict",
-    effectiveBudgetPolicy: "strict",
+    budgetPolicy: 'strict',
+    effectiveBudgetPolicy: 'strict',
     budgetPolicyExplanation: BUDGET_POLICY_EXPLANATIONS.strict,
     // and no allowlist, so it may route any model (#1154).
     allowedModels: null,
   };
   db.run(
     `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, expiresAt,budgetPolicy) VALUES(?, ?, ?, ?, ?, ?, ?,?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, apiKey.expiresAt,apiKey.budgetPolicy]
+    [
+      apiKey.id,
+      apiKey.key,
+      apiKey.name,
+      apiKey.machineId,
+      1,
+      apiKey.createdAt,
+      apiKey.expiresAt,
+      apiKey.budgetPolicy,
+    ]
   );
   return apiKey;
 }
@@ -255,17 +295,41 @@ export async function updateApiKey(id, data) {
     validateBudgetPolicy(merged.budgetPolicy);
     // Capture history under the old secret before its stable identity rotates.
     if (merged.key !== row.key) {
-      if (db.get("SELECT id FROM usageHistory WHERE apiKey=? LIMIT 1", [merged.key])) {
-        throw new TypeError("Cannot rotate to key material with existing usage ownership");
+      if (db.get('SELECT id FROM usageHistory WHERE apiKey=? LIMIT 1', [merged.key])) {
+        throw new TypeError('Cannot rotate to key material with existing usage ownership');
       }
       initializeBudgetAccount(db, row);
     }
     writeAllowedModels(db, id, merged.allowedModels);
+    // Profile linkage moves only when the caller says so, so an ordinary limit
+    // edit leaves the adopted version alone and the key simply starts reporting
+    // as drifted. That is the point: an edit that silently re-pinned the key to
+    // its profile would erase the evidence that someone changed it by hand.
+    if (data.accessProfileId !== undefined || data.accessProfileVersion !== undefined) {
+      db.run(
+        `UPDATE apiKeys SET accessProfileId = ?, accessProfileVersion = ?, accessProfileAdoptedAt = ? WHERE id = ?`,
+        [
+          merged.accessProfileId ?? null,
+          merged.accessProfileVersion ?? null,
+          merged.accessProfileId ? (data.accessProfileAdoptedAt ?? new Date().toISOString()) : null,
+          id,
+        ]
+      );
+    }
     db.run(
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, expiresAt = ?, maxPromptTokens = ?, maxCompletionTokens = ?, maxCostUsd = ?, budgetPolicy=? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, normalizeExpiry(merged.expiresAt),
-        normalizeLimit(merged.maxPromptTokens), normalizeLimit(merged.maxCompletionTokens),
-        normalizeLimit(merged.maxCostUsd, false), merged.budgetPolicy, id]
+      [
+        merged.key,
+        merged.name,
+        merged.machineId,
+        merged.isActive ? 1 : 0,
+        normalizeExpiry(merged.expiresAt),
+        normalizeLimit(merged.maxPromptTokens),
+        normalizeLimit(merged.maxCompletionTokens),
+        normalizeLimit(merged.maxCostUsd, false),
+        merged.budgetPolicy,
+        id,
+      ]
     );
     // Read back rather than returning `merged`, so the caller is told what was
     // actually stored. `merged` is the raw input, and echoing "1500.9" for a
@@ -286,7 +350,7 @@ function writeAllowedModels(db, id, value) {
   db.run(
     `INSERT INTO kv(scope, key, value) VALUES(?, ?, ?)
      ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
-    [ALLOWED_MODELS_SCOPE, id, stringifyJson(list)],
+    [ALLOWED_MODELS_SCOPE, id, stringifyJson(list)]
   );
 }
 
@@ -309,14 +373,19 @@ export async function deleteApiKey(id) {
 // matched, so the returned count is what was actually revoked rather than what
 // was asked for.
 export async function deleteApiKeys(ids) {
-  const unique = [...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === "string" && id))];
+  const unique = [
+    ...new Set((Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id)),
+  ];
   if (!unique.length) return 0;
   const db = await getAdapter();
-  const placeholders = unique.map(() => "?").join(", ");
+  const placeholders = unique.map(() => '?').join(', ');
   let changes = 0;
   db.transaction(() => {
     changes = db.run(`DELETE FROM apiKeys WHERE id IN (${placeholders})`, unique)?.changes ?? 0;
-    db.run(`DELETE FROM kv WHERE scope = ? AND key IN (${placeholders})`, [ALLOWED_MODELS_SCOPE, ...unique]);
+    db.run(`DELETE FROM kv WHERE scope = ? AND key IN (${placeholders})`, [
+      ALLOWED_MODELS_SCOPE,
+      ...unique,
+    ]);
   });
   return changes;
 }
@@ -328,7 +397,7 @@ export async function getExceededLimit(key) {
   const db = await getAdapter();
   const row = db.get(
     `SELECT id, maxPromptTokens, maxCompletionTokens, maxCostUsd FROM apiKeys WHERE key = ?`,
-    [key],
+    [key]
   );
   if (!row) return null;
   const limits = {
@@ -337,7 +406,10 @@ export async function getExceededLimit(key) {
     maxCostUsd: normalizeLimit(row.maxCostUsd, false),
   };
   if (!hasLimits(limits)) return null;
-  return exceededLimit(limits, await getRecordedBudgetExposure(row.id) ?? await getApiKeyUsage(key));
+  return exceededLimit(
+    limits,
+    (await getRecordedBudgetExposure(row.id)) ?? (await getApiKeyUsage(key))
+  );
 }
 
 export async function validateApiKey(key) {

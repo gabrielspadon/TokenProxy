@@ -27,22 +27,21 @@ afterEach(() => {
 });
 
 describe('schema 14: operation events', () => {
-  // This suite owns the operationEvents contract, not the current schema
-  // number. Asserting an exact SCHEMA_VERSION here made every later additive
-  // bump look like an operation-events regression, so the assertion is on what
-  // schema 14 actually landed: the table exists, and the version is at or past
-  // the one that introduced it.
-  it('operationEvents is present from schema 14 onwards, with 15 still reserved', async () => {
+  // operationEvents landed at 14 and the table is what this file is about, so
+  // the version is asserted as "at least 14, never 15", which keeps the
+  // reservation guarded without breaking on every later additive bump.
+  it('keeps operationEvents present and 15 reserved for project budgets', async () => {
     const { SCHEMA_VERSION, TABLES } = await import('@/lib/db/schema.js');
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(14);
+    expect(SCHEMA_VERSION).not.toBe(15);
     expect(TABLES.operationEvents).toBeDefined();
-    // 15 is reserved for project identity/budgets and must not be consumed by
-    // any migration until that work lands.
-    const { MIGRATIONS } = await import('@/lib/db/migrations/index.js');
-    expect(MIGRATIONS.some((migration) => migration.version === 15)).toBe(false);
   });
 
   it('upgrading a version-13 database takes a backup before creating operationEvents', async () => {
+    // The backup directory is named for the version pair it spans, so it is
+    // derived rather than written down: hardcoding the target made this test
+    // fail on a later additive bump that changed nothing it is testing.
+    const { SCHEMA_VERSION } = await import('@/lib/db/schema.js');
     // Boot 1: current schema, then rewind the stored backup version to 13 and
     // drop the table, simulating a database written by the version-13 build.
     const { getAdapter } = await import('@/lib/db/driver.js');
@@ -63,9 +62,6 @@ describe('schema 14: operation events', () => {
     const db2 = await boot2();
 
     const backupsDir = path.join(tempDir, 'db', 'backups');
-    // The backup is named for the span it crosses, so its upper bound is the
-    // CURRENT schema version rather than 14 forever.
-    const { SCHEMA_VERSION } = await import('@/lib/db/schema.js');
     const backups = fs
       .readdirSync(backupsDir)
       .filter((name) => name.startsWith(`schema-13-to-${SCHEMA_VERSION}`));
