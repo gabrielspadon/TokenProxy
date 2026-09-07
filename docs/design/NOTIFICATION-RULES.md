@@ -161,14 +161,29 @@ alerts plus the version log both survive deletion of the rule.
 - `src/app/api/admin/notification-rules/` — admin API
 - `src/shared/workspace/NotificationRules.js` — operator surface
 
+## Evaluation trigger
+
+Live evaluation runs on the debounced `statsEmitter` "update" that
+`watcher.js` already owns, so there is no new timer and nothing was added to a
+request path. It carries its own interval, `MIN_RULE_INTERVAL_MS = 300000`,
+because a rule scan is a bounded-analytics-worker query per enabled rule
+rather than the two in-process reads the connection scan costs. The added
+latency is bounded by what the rules already tolerate: the cooldown floor is
+60 s and `durationSeconds` is the operator's own chosen delay.
+
+An idle gateway emits no update and so evaluates no rules, exactly like the
+pre-existing connection scan.
+
+On restart, a rule whose condition breached before the process started
+produces no alert unless new evidence lands afterwards, in which case the
+alert is dated at that new evidence and still carries its true
+`breachStartedAt`. A sustained breach surviving a restart alerts at the next
+cooldown boundary rather than immediately, because cooldown is what paces
+successive firings of an unbroken sustain.
+
 ## Not yet wired
 
-Live evaluation exists as `evaluateEnabledRules()` and is exercised by tests,
-but no scheduler calls it yet. Alerts appear when something invokes it. Choosing
-its trigger (the existing `statsEmitter` throttle that `watcher.js` uses, or a
-dedicated cadence) is a deliberate follow-up, since the trigger determines
-evaluation cost on a busy gateway.
-
-Delivery of an alert to a webhook destination is likewise not wired. The
-existing `src/lib/notifications/webhooks.js` path emits three watcher-derived
-events and knows nothing about rules.
+Delivery of a RULE alert to a webhook destination. The existing
+`src/lib/notifications/webhooks.js` path emits three watcher-derived events
+and knows nothing about rules. `POST /api/notifications` likewise still drives
+only the connection diff.
