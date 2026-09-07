@@ -28,6 +28,9 @@
  *
  * Invariants (both functions):
  *   - never touch a message at or before epochCutIndex
+ *   - never split a tool_use/tool_result pair across a drop boundary
+ *     (autocompact aligns its drop window outward to pair edges and refuses
+ *     to fire when a pair straddles the cut itself)
  *   - never touch paired tool_use/tool_result structure (block count, order,
  *     tool_use_id linkage), the latest assistant turn (covered by the
  *     keepLastTurns tail), or cache_control markers
@@ -41,8 +44,8 @@ const EPOCH_AUTO_TRIGGER = 0.75;
 const MAX_DIGEST_TOOLS = 10;
 const MAX_DIGEST_PATHS = 12;
 
-function unchanged(messages) {
-  return { applied: false, messages, clearedBlocks: 0, clearedChars: 0 };
+function unchanged(messages, skip) {
+  return { applied: false, messages, clearedBlocks: 0, clearedChars: 0, skip };
 }
 
 function stubText(n) {
@@ -86,31 +89,32 @@ function blockChars(block) {
   return 0;
 }
 
-// One message: returns [newMessageOrNull, clearedChars].
+// One message: returns [newMessageOrNull, clearedChars, blocksStubbed].
 function stubMessage(msg, minChars) {
-  if (!msg || typeof msg !== "object") return [null, 0];
+  if (!msg || typeof msg !== "object") return [null, 0, 0];
   const role = msg.role;
   // OpenAI-style tool result: whole content string is the payload.
   if (role === ROLE.TOOL && typeof msg.content === "string") {
     if (msg.content.length >= minChars) {
-      return [{ ...msg, content: stubText(msg.content.length) }, msg.content.length];
+      return [{ ...msg, content: stubText(msg.content.length) }, msg.content.length, 1];
     }
-    return [null, 0];
+    return [null, 0, 0];
   }
-  if (role !== ROLE.USER) return [null, 0];
+  if (role !== ROLE.USER) return [null, 0, 0];
   // OpenAI-style user turn.
   if (typeof msg.content === "string") {
     if (msg.content.length >= minChars) {
-      return [{ ...msg, content: stubText(msg.content.length) }, msg.content.length];
+      return [{ ...msg, content: stubText(msg.content.length) }, msg.content.length, 1];
     }
-    return [null, 0];
+    return [null, 0, 0];
   }
-  if (!Array.isArray(msg.content)) return [null, 0];
+  if (!Array.isArray(msg.content)) return [null, 0, 0];
   // Anthropic-style block array. tool_use blocks are never touched; text and
   // tool_result blocks below minBlockChars keep their reference; a block
   // carrying cache_control is left alone so anchor markers survive.
   let changed = false;
   let cleared = 0;
+  let stubbed = 0;
   const blocks = msg.content.map((block) => {
     if (!block || typeof block !== "object") return block;
     if (block.cache_control) return block;
@@ -121,13 +125,14 @@ function stubMessage(msg, minChars) {
     if (n < minChars) return block;
     changed = true;
     cleared += n;
+    stubbed += 1;
     if (isText) return { ...block, text: stubText(n) };
     // tool_result: content (string or array) collapses to the stub string;
     // type/tool_use_id and block order are preserved.
     return { ...block, content: stubText(n) };
   });
-  if (!changed) return [null, 0];
-  return [{ ...msg, content: blocks }, cleared];
+  if (!changed) return [null, 0, 0];
+  return [{ ...msg, content: blocks }, cleared, stubbed];
 }
 
 /**
@@ -160,10 +165,10 @@ export function microcompact(body, options = {}) {
   let any = false;
   const out = messages.map((msg, i) => {
     if (i <= cut || i >= lastMutable) return msg;
-    const [stubbed, cleared] = stubMessage(msg, minChars);
+    const [stubbed, cleared, blocksStubbed] = stubMessage(msg, minChars);
     if (!stubbed) return msg;
     any = true;
-    clearedBlocks += 1;
+    clearedBlocks += blocksStubbed;
     clearedChars += cleared;
     return stubbed;
   });
@@ -176,6 +181,15 @@ export function microcompact(body, options = {}) {
  * the history between the epoch cut and the recent tail is dropped and
  * replaced by ONE synthetic user message carrying summarizeFn's summary.
  *
+ * Pair safety: the raw drop window is count-aligned, which can bisect a
+ * tool_use/tool_result pair (Anthropic rejects a tool_result whose
+ * tool_use was dropped, and vice versa). Before dropping, both boundaries
+ * are aligned OUTWARD to pair edges — every tool_use/tool_result id group
+ * must lie wholly inside the dropped region or wholly outside it. When the
+ * only outward move would cross the epoch cut (a pair straddles the cut
+ * itself, e.g. tool_use kept at the cut with its tool_result at cut+1),
+ * the stage refuses to fire: never mutate at or before the cut.
+ *
  * Options:
  *   windowTokens    number  REQUIRED; context window in tokens. Non-finite
  *                   or <= 0 disables the stage.
@@ -186,38 +200,96 @@ export function microcompact(body, options = {}) {
  *   keepRecentTurns number  default 6; tail kept verbatim.
  *   epochCutIndex   number  default 0; messages at or before it survive.
  *
- * Returns { applied, messages, droppedTurns, summary }. messages is the
- * input reference when the trigger is not met or there is nothing to drop.
+ * Returns { applied, messages, droppedTurns, summary, skip }. messages is
+ * the input reference when the stage does not fire; `skip` then names the
+ * cause: "invalid_input" | "no_window" | "below_trigger" | "nothing_to_drop"
+ * | "pair_at_cut" | "summary_failed".
  */
 export async function autocompact(body, options = {}) {
   const messages = body?.messages;
-  if (!Array.isArray(messages) || messages.length === 0) return unchanged(messages);
+  if (!Array.isArray(messages) || messages.length === 0) return unchanged(messages, "invalid_input");
   const window = Number(options.windowTokens);
-  if (!Number.isFinite(window) || window <= 0) return unchanged(messages);
+  if (!Number.isFinite(window) || window <= 0) return unchanged(messages, "no_window");
   const used = Number(options.usedTokens);
-  if (!Number.isFinite(used) || used < window * EPOCH_AUTO_TRIGGER) return unchanged(messages);
+  if (!Number.isFinite(used) || used < window * EPOCH_AUTO_TRIGGER) {
+    return unchanged(messages, "below_trigger");
+  }
 
   const cut = Math.max(0, Math.floor(Number(options.epochCutIndex) || 0));
   const keep = Math.max(1, Math.floor(Number(options.keepRecentTurns) || 6));
-  const tailStart = Math.max(cut + 1, messages.length - keep);
-  const droppedTurns = tailStart - (cut + 1);
-  if (droppedTurns <= 0) return unchanged(messages);
 
-  const dropped = messages.slice(cut + 1, tailStart);
+  // tool_use/tool_result linkage per id: min/max message index. Covers
+  // Anthropic blocks (tool_use.id / tool_result.tool_use_id) and OpenAI
+  // turns (assistant.tool_calls[].id / role:"tool".tool_call_id).
+  const pairSpans = new Map();
+  const noteId = (id, i) => {
+    if (typeof id !== "string" || !id) return;
+    const span = pairSpans.get(id);
+    if (span) {
+      if (i < span.min) span.min = i;
+      if (i > span.max) span.max = i;
+    } else {
+      pairSpans.set(id, { min: i, max: i });
+    }
+  };
+  messages.forEach((msg, i) => {
+    if (!msg || typeof msg !== "object") return;
+    if (Array.isArray(msg.tool_calls)) {
+      for (const call of msg.tool_calls) noteId(call?.id, i);
+    }
+    noteId(msg.tool_call_id, i);
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (!block || typeof block !== "object") continue;
+        if (block.type === CLAUDE_BLOCK.TOOL_USE) noteId(block.id, i);
+        else if (block.type === CLAUDE_BLOCK.TOOL_RESULT) noteId(block.tool_use_id, i);
+      }
+    }
+  });
+
+  // Align the drop window outward so no pair straddles either boundary.
+  // Interleaved pairs (A starts before B, ends after) are handled by
+  // iterating to a fixed point.
+  let dropStart = cut + 1;
+  let tailStart = Math.max(cut + 1, messages.length - keep);
+  for (let guard = 0; guard <= messages.length; guard++) {
+    let moved = false;
+    for (const span of pairSpans.values()) {
+      if (span.min === span.max) continue; // single-message id: nothing to split
+      if (span.min < dropStart && span.max >= dropStart) {
+        dropStart = span.min;
+        moved = true;
+        if (dropStart <= cut) return unchanged(messages, "pair_at_cut");
+      }
+      if (span.min < tailStart && span.max >= tailStart) {
+        const next = Math.max(tailStart, span.max + 1);
+        if (next !== tailStart) {
+          tailStart = next;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+
+  const droppedTurns = tailStart - dropStart;
+  if (droppedTurns <= 0) return unchanged(messages, "nothing_to_drop");
+
+  const dropped = messages.slice(dropStart, tailStart);
   const summarizeFn = options.summarizeFn || placeholderEpochSummarizer;
   let summary;
   try {
     summary = await summarizeFn(dropped);
   } catch {
-    return unchanged(messages); // fail closed: never drop turns without a summary
+    return unchanged(messages, "summary_failed"); // fail closed: never drop turns without a summary
   }
-  if (typeof summary !== "string" || !summary.trim()) return unchanged(messages);
+  if (typeof summary !== "string" || !summary.trim()) return unchanged(messages, "summary_failed");
 
   const note = {
     role: ROLE.USER,
     content: `## Session summary (auto-compacted)\n${summary}`,
   };
-  const out = [...messages.slice(0, cut + 1), note, ...messages.slice(tailStart)];
+  const out = [...messages.slice(0, dropStart), note, ...messages.slice(tailStart)];
   return { applied: true, messages: out, droppedTurns, summary };
 }
 

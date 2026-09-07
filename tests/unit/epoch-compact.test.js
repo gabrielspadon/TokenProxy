@@ -208,6 +208,28 @@ describe("microcompact", () => {
     expect(res.messages).toBe(messages);
   });
 
+  it("counts stubbed blocks, not messages", () => {
+    const messages = [
+      textUser(10),
+      textAssistant(10),
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "x".repeat(700) },
+          { type: "tool_result", tool_use_id: "toolu_c", content: "y".repeat(800) },
+        ],
+      },
+      textUser(10),
+    ];
+    const res = microcompact(
+      { messages },
+      { epochCutIndex: 1, minBlockChars: 500, keepLastTurns: 1 },
+    );
+    expect(res.applied).toBe(true);
+    expect(res.clearedBlocks).toBe(2); // two blocks in ONE message
+    expect(res.clearedChars).toBe(1500);
+  });
+
   it("protects the last keepLastTurns messages", () => {
     const messages = [
       textUser(10),
@@ -331,6 +353,165 @@ describe("autocompact", () => {
     expect(threw.messages).toBe(body.messages);
     const empty = await autocompact(body, { ...opts, summarizeFn: async () => "   " });
     expect(empty.applied).toBe(false);
+  });
+
+  it("reports a distinct skip cause", async () => {
+    const body = { messages: history(4) };
+    expect((await autocompact(null, {})).skip).toBe("invalid_input");
+    expect((await autocompact(body, { usedTokens: 1e9 })).skip).toBe("no_window");
+    expect(
+      (await autocompact(body, { windowTokens: 100, usedTokens: 10 })).skip,
+    ).toBe("below_trigger");
+    expect(
+      (
+        await autocompact(body, {
+          windowTokens: 100,
+          usedTokens: 90,
+          epochCutIndex: 0,
+          keepRecentTurns: 8,
+        })
+      ).skip,
+    ).toBe("nothing_to_drop");
+  });
+
+  // Reviewer repro (round 1): the count-aligned window [cut+1, tailStart)
+  // can bisect a tool_use/tool_result pair — a tool_use inside the drop
+  // region with its tool_result surviving (Anthropic 400) or vice versa.
+  it("aligns the drop window outward so a straddling pair is fully dropped", async () => {
+    const u = (t) => ({ role: "user", content: t });
+    const a = (t) => ({ role: "assistant", content: t });
+    const messages = [
+      u("u0"),
+      a("a1"),
+      u("u2"),
+      a([{ type: "tool_use", id: "T", name: "bash", input: {} }]),
+      u([{ type: "tool_result", tool_use_id: "T", content: "out" }]),
+      u("u5"),
+      a("a6"),
+      u("u7"),
+      a("a8"),
+      u("u9"),
+    ];
+    let summarized = null;
+    const res = await autocompact(
+      { messages },
+      {
+        windowTokens: 100,
+        usedTokens: 90,
+        epochCutIndex: 1,
+        keepRecentTurns: 6,
+        summarizeFn: async (dropped) => {
+          summarized = dropped;
+          return "s";
+        },
+      },
+    );
+    // Raw window would be [2, 4): tool_use at 3 dropped, tool_result at 4
+    // kept. Outward alignment extends the drop to [2, 5) so the pair falls
+    // entirely inside the dropped region.
+    expect(res.applied).toBe(true);
+    expect(res.droppedTurns).toBe(3);
+    expect(summarized).toEqual([messages[2], messages[3], messages[4]]);
+    const flat = res.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    expect(flat.some((b) => b?.id === "T" || b?.tool_use_id === "T")).toBe(false);
+    // The kept tail is verbatim: [u0, a1, note, u5, a6, u7, a8, u9].
+    expect(res.messages[0]).toBe(messages[0]);
+    expect(res.messages[1]).toBe(messages[1]);
+    expect(res.messages[2].content).toBe("## Session summary (auto-compacted)\ns");
+    expect(res.messages.slice(3)).toEqual(messages.slice(5));
+  });
+
+  it("extends the drop window outward rather than splitting a pair at the tail boundary", async () => {
+    // Pair spans indices 4-5 with the raw tail boundary at 5: outward
+    // alignment moves the tail boundary to 6 so the pair falls wholly
+    // inside the drop region instead of being bisected.
+    const u = (t) => ({ role: "user", content: t });
+    const a = (t) => ({ role: "assistant", content: t });
+    const messages = [
+      u("u0"),
+      a("a1"),
+      u("u2"),
+      a("a3"),
+      a([{ type: "tool_use", id: "T", name: "bash", input: {} }]),
+      u([{ type: "tool_result", tool_use_id: "T", content: "out" }]),
+      u("u6"),
+      a("u7"),
+      u("u8"),
+    ];
+    const res = await autocompact(
+      { messages },
+      {
+        windowTokens: 100,
+        usedTokens: 90,
+        epochCutIndex: 1,
+        keepRecentTurns: 4,
+        summarizeFn: async () => "s",
+      },
+    );
+    expect(res.applied).toBe(true);
+    // Raw window [2, 5) would drop the tool_use and keep the tool_result.
+    const flat = res.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    const toolUseKept = flat.some((b) => b?.id === "T");
+    const resultKept = flat.some((b) => b?.tool_use_id === "T");
+    expect(toolUseKept).toBe(resultKept);
+    expect(toolUseKept).toBe(false);
+  });
+
+  it("refuses to fire when a pair straddles the epoch cut itself", async () => {
+    // Symmetric boundary case: tool_use kept at the cut index, its
+    // tool_result at cut+1. Aligning outward would have to mutate a message
+    // at/before the cut, so the stage must not fire at all.
+    const u = (t) => ({ role: "user", content: t });
+    const a = (t) => ({ role: "assistant", content: t });
+    const messages = [
+      u("u0"),
+      a([{ type: "tool_use", id: "T", name: "bash", input: {} }]),
+      u([{ type: "tool_result", tool_use_id: "T", content: "out" }]),
+      u("u3"),
+      a("a4"),
+      u("u5"),
+      a("a6"),
+      u("u7"),
+      a("a8"),
+      u("u9"),
+    ];
+    const body = { messages };
+    const res = await autocompact(body, {
+      windowTokens: 100,
+      usedTokens: 90,
+      epochCutIndex: 1,
+      keepRecentTurns: 6,
+      summarizeFn: async () => "s",
+    });
+    expect(res.applied).toBe(false);
+    expect(res.skip).toBe("pair_at_cut");
+    expect(res.messages).toBe(body.messages);
+  });
+
+  it("tracks OpenAI-style tool_calls/tool_call_id pairs across the tail boundary", async () => {
+    const messages = [
+      { role: "user", content: "u0" },
+      { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: { name: "f", arguments: "{}" } }] },
+      { role: "tool", content: "result", tool_call_id: "call_1" },
+      { role: "user", content: "u3" },
+      { role: "assistant", content: "a4" },
+      { role: "user", content: "u5" },
+    ];
+    const res = await autocompact(
+      { messages },
+      {
+        windowTokens: 100,
+        usedTokens: 90,
+        epochCutIndex: 0,
+        keepRecentTurns: 3,
+        summarizeFn: async () => "s",
+      },
+    );
+    expect(res.applied).toBe(true);
+    const keptToolMessages = res.messages.filter((m) => m.role === "tool");
+    const keptCalls = res.messages.flatMap((m) => m.tool_calls || []);
+    // Either both halves of the OpenAI pair survive or neither does.
+    expect(keptToolMessages.length > 0).toBe(keptCalls.some((c) => c.id === "call_1"));
   });
 });
 
@@ -596,6 +777,24 @@ describe("chatCore epoch cascade wiring", () => {
     const skipped = rows.find((r) => r.applied === false);
     expect(skipped).toBeTruthy();
     expect(skipped.reason).toBe("epoch_boundary");
+  });
+
+  it("reports epoch_boundary when a stable epoch blocks epochAuto", async () => {
+    const rows = await readEpochRows("auto-boundary", "epochAuto", async () => {
+      await runSession({
+        firstBody: first(),
+        secondBody: second(),
+        overrides: { epochAutoEnabled: true },
+      });
+      // Third request identical to the second: fully stable epoch, so the
+      // skip cause is the epoch boundary, not window pressure.
+      await handleChatCore(
+        baseArgs({ body: second(), sid: "ep0chs1d", epochAutoEnabled: true }),
+      );
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    const skipped = rows.find((r) => r.applied === false && r.reason === "epoch_boundary");
+    expect(skipped).toBeTruthy();
   });
 
   it("skips epochAuto below the window trigger and reports window_pressure", async () => {

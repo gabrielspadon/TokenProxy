@@ -1349,6 +1349,15 @@ export async function handleChatCore({
 
   const epochAutoWillRun = epochStageWanted && epochAutoEnabled;
   let epochAutoApplied = false;
+  // Skip-cause classification for the telemetry row: a stable/unknown epoch
+  // is "epoch_boundary"; only a genuinely below-trigger evaluation is
+  // "window_pressure"; every other non-fire (no window known, nothing
+  // droppable, summarizer failure, pair straddling the cut) reports no
+  // reason rather than a wrong one.
+  let epochAutoSkipReason = null;
+  if (epochAutoWillRun && epochCutIndex === 0) {
+    epochAutoSkipReason = "epoch_boundary";
+  }
   if (epochAutoWillRun && epochCutIndex > 0) {
     // The model's own window from the capability table, same lookup the
     // memory ladder and pair dropping use.
@@ -1371,6 +1380,8 @@ export async function handleChatCore({
           kind: "epochAuto",
           text: `auto-compacted ${res.droppedTurns} turn(s)`,
         });
+      } else if (res.skip === "below_trigger") {
+        epochAutoSkipReason = "window_pressure";
       }
     }
   }
@@ -1722,26 +1733,30 @@ export async function handleChatCore({
         onTokenSaverEvent?.(row);
       }
     }
-    // Epoch cascade skips are reported, not silenced: a skip means the gate
-    // was on but the trigger did not fire (stable/unknown epoch boundary, or
-    // the window below the 75% auto-compaction trigger).
+    // Epoch cascade skips are reported, not silenced, with the cause the
+    // stage actually had: a stable/unknown epoch is "epoch_boundary", a
+    // below-trigger evaluation is "window_pressure", and everything else
+    // (no eligible blocks, no window known, nothing droppable, summarizer
+    // failure) reports reason omitted rather than mislabeled.
     if (epochMicroWillRun && !epochMicroApplied) {
-      onTokenSaverEvent?.({
+      const row = {
         saver: "epochMicro",
         rid,
         applied: false,
-        reason: "epoch_boundary",
         ce: saverFields.ce,
-      });
+      };
+      if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      onTokenSaverEvent?.(row);
     }
     if (epochAutoWillRun && !epochAutoApplied) {
-      onTokenSaverEvent?.({
+      const row = {
         saver: "epochAuto",
         rid,
         applied: false,
-        reason: "window_pressure",
         ce: saverFields.ce,
-      });
+      };
+      if (epochAutoSkipReason) row.reason = epochAutoSkipReason;
+      onTokenSaverEvent?.(row);
     }
   } catch {
     /* stats must not break requests */
