@@ -44,6 +44,14 @@
 .filter {
   width: 190px;
 }
+/* Mantine's input reset clears the outline the global :focus-visible rule
+   supplies, so this control was keyboard-reachable with no visible focus at
+   all while the page's own native selects kept their ring. Measured at 1440px:
+   focused and blurred computed styles were byte-identical before this rule. */
+.filter input:focus-visible {
+  outline: 2px solid #455bca;
+  outline-offset: 1px;
+}
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1.9fr) minmax(240px, 1fr);

@@ -42,8 +42,12 @@
 
 @layer states {
   @media (max-width: 767px) {
-    .network-node-row,
-    .network-pool-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .network-node-row { grid-template-columns: minmax(0, 1fr) auto; }
+    /* The pool row stacks rather than keeping an `auto` action track beside
+       the name. Its four verbs do not shrink, so that track claimed most of a
+       390px viewport and left the pool name wrapping one word per line. */
+    .network-pool-row { grid-template-columns: minmax(0, 1fr); }
+    .network-pool-row .actions { justify-content: flex-start; margin-block-start: 8px; }
     .network-consequence .facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
     .network-consequence dd { margin-block-end: 8px; }
   }

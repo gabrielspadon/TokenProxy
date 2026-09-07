@@ -495,6 +495,16 @@ export default function NetworkPage() {
           A named outbound path a connection or a provider strategy can be bound to instead of
           routing directly.
         </p>
+        {/* Said once for the whole table rather than repeated per row, where
+            the sentence inflated the row's auto track and crushed the pool
+            name column. The column holds the pool's own mutable field, which
+            every probe overwrites: a cancelled, conflicted or unresolved probe
+            never reaches it at all. */}
+        <p>
+          The latest-applied column is the pool&apos;s own current state, overwritten by each
+          probe. A probe that was cancelled, that conflicted with a configuration change, or that
+          never finished leaves no mark there. Open a pool&apos;s probe history to see those.
+        </p>
         {/* The consequence sits above the controls it describes and is named by
             every Test button below through aria-describedby, so it is reachable
             from the control by keyboard and by screen reader alike. */}
@@ -512,7 +522,7 @@ export default function NetworkPage() {
             <div className="row head network-pool-row">
               <span>Pool</span>
               <span>Bound</span>
-              <span>Test</span>
+              <span>Latest applied</span>
               <span />
             </div>
             {poolRows.map((p) => (
@@ -549,12 +559,6 @@ export default function NetworkPage() {
                   <span className="status" data-tone={TEST_TONE[p.testStatus] || 'warn'}>
                     {TEST_WORD[p.testStatus] || 'Not tested'}
                   </span>
-                  {/* This word is the pool's own mutable field, overwritten by
-                      every probe. It is the latest outcome that was APPLIED,
-                      not a history, and it says nothing about a probe that was
-                      cancelled, conflicted or never finished. Probe history
-                      below is where those live. */}
-                  <span className="caption">Latest applied outcome, overwritten each probe</span>
                   {p.lastError ? (
                     <span className="caption" data-i18n-skip>
                       {p.lastError}

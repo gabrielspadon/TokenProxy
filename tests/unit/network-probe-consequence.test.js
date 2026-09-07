@@ -103,9 +103,13 @@ describe('network page probe disclosure', () => {
   });
 
   it('does not present the mutable pool status as a history', () => {
-    // The row's own word is the latest APPLIED outcome and is labelled as such,
-    // because a cancelled or conflicted probe never reaches it.
-    expect(container.textContent).toContain('Latest applied outcome, overwritten each probe');
+    // The column holds the pool's own current field, which every probe
+    // overwrites. Said once for the table rather than per row, because the
+    // repeated sentence inflated the row's auto track at 390px.
+    const text = container.textContent;
+    expect(text).toContain("pool's own current state, overwritten by each probe");
+    expect(text).toContain('never finished leaves no mark there');
+    expect(text).toContain('Latest applied');
   });
 
   it('mounts the retained history for one pool on demand, keyed to that pool', async () => {
