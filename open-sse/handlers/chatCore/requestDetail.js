@@ -1,4 +1,5 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../src/lib/usageDb.js";
+import { recordCostLedgerForRequest } from "../../../src/lib/db/repos/costLedgerRepo.js";
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage, clampReasoningTokens } from "../../utils/usageTracking.js";
@@ -159,7 +160,7 @@ export function summarizeReasoning(translatedBody) {
   return undefined;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid, contextTelemetry, usageFinality = "final" }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, requestedModel, translatedBody, label = "USAGE", silent = false, rid, contextTelemetry, usageFinality = "final", preSaverSerialized, sid }) {
   if (!tokens || typeof tokens !== "object") {
     if (contextTelemetry?.budgetReservationId) return saveRequestUsage({ provider, model, tokens: null, apiKey, contextTelemetry, usageFinality });
     return;
@@ -182,6 +183,22 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     prompt_tokens: tokens.prompt_tokens ?? tokens.input_tokens ?? 0,
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
+
+  // Counterfactual dollar ledger: one row per completed request, computed from
+  // the pre-saver serialized body (baseline) and this provider-reported usage
+  // (actual). Fire-and-forget: the repo is best-effort, and a ledger failure
+  // must never block or alter the response. Estimated usage is not actual and
+  // is skipped inside the repo, along with unknown-model rate cards.
+  if (usageFinality === "final" && typeof preSaverSerialized === "string" && preSaverSerialized) {
+    void recordCostLedgerForRequest({
+      rid: rid || contextTelemetry?.requestId,
+      sid,
+      provider,
+      model,
+      preSaverSerialized,
+      usage: tokens,
+    }).catch(() => {});
+  }
 
   return saveRequestUsage({
     provider: provider || "unknown",

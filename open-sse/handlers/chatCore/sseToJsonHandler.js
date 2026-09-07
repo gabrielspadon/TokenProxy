@@ -408,7 +408,7 @@ function assertClassifierGeminiSseLossless(rawSSE) {
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry, preSaverSerialized, sid }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
   if (!isSSE) return null; // not handled here
@@ -562,7 +562,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
       const usage = jsonResponse.usage || {};
       appendLog({ tokens: usage, status: "200 OK" });
-      saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid });
+      saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid, preSaverSerialized, sid });
 
       const { msgItem, textContent: rawTextContent } = pickAssistantMessageForChatCompletion(jsonResponse.output);
       // JSON mode: drop a ```json fence the provider added around the object
@@ -795,7 +795,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
     const usage = parsed.usage || {};
     appendLog({ tokens: usage, status: "200 OK" });
-    saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid });
+    saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid, preSaverSerialized, sid });
 
     const totalLatency = Date.now() - requestStartTime;
     const doneDetail = buildRequestDetail({

@@ -1,0 +1,121 @@
+// Counterfactual dollar-cost ledger repo. Writes are best-effort by contract:
+// every exported write path swallows its own errors and returns a status, so a
+// ledger failure can never block or alter the client response. All SQL is
+// parameterized.
+//
+// Baseline estimator (documented for every consumer): the pre-saver serialized
+// request body tokenized at ~4 chars/token, rounded up. baselineUsd costs that
+// full estimate as uncached input; actualUsd costs provider-reported usage with
+// cache multipliers (see open-sse/providers/cachePricing.js). Rows for unknown
+// models (no rate card) or estimated usage (not provider-reported) are skipped,
+// never guessed.
+
+import { getAdapter } from "../driver.js";
+import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
+import { cacheMultiplierFor, costForUsage } from "../../../../open-sse/providers/cachePricing.js";
+import { getPricingForModel } from "./pricingRepo.js";
+
+const CHARS_PER_TOKEN = 4;
+
+// Serialized string length / 4, rounded up; null when there is nothing to
+// tokenize. String length (UTF-16 code units) matches estimateRequestTokens
+// and the token-saver events sink convention.
+export function estimateBaselineTokens(serialized) {
+  if (typeof serialized !== "string" || serialized.length === 0) return null;
+  return Math.ceil(serialized.length / CHARS_PER_TOKEN);
+}
+
+/**
+ * Build one ledger row from the counterfactual inputs, or null when a row
+ * cannot be computed truthfully: no rid, no model, no pre-saver body, no
+ * provider-reported usage (estimated usage is not actual), or no rate card.
+ */
+export async function computeCostLedgerEntry({ rid, sid, provider, model, preSaverSerialized, usage, now } = {}) {
+  if (typeof rid !== "string" || !rid) return null;
+  if (!model || typeof model !== "string") return null;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) return null;
+  if (usage.estimated === true) return null; // only provider-reported usage is "actual"
+  const canonical = canonicalizeUsage(usage);
+  if (!canonical) return null;
+  const baselineTokens = estimateBaselineTokens(preSaverSerialized);
+  if (baselineTokens === null) return null;
+  // Operator overrides merge over the built-in catalog in pricingRepo.
+  const pricing = await getPricingForModel(provider, model);
+  const inputRate = Number(pricing?.input);
+  const outputRate = Number(pricing?.output);
+  if (!Number.isFinite(inputRate) || !Number.isFinite(outputRate)) return null;
+
+  const outputTokens = canonical.completion_tokens;
+  const baselineUsd = baselineTokens * (inputRate / 1e6) + outputTokens * (outputRate / 1e6);
+  const actualUsd = costForUsage({
+    pricing,
+    usage: canonical,
+    multipliers: cacheMultiplierFor(provider),
+  }).totalUsd;
+
+  return {
+    id: rid,
+    ts: typeof now === "string" && now ? now : new Date().toISOString(),
+    sid: typeof sid === "string" && sid ? sid : null,
+    provider: typeof provider === "string" && provider ? provider : null,
+    model,
+    baselineUsd,
+    actualUsd,
+    savedUsd: baselineUsd - actualUsd,
+    inputTokens: canonical.prompt_tokens,
+    cacheReadTokens: canonical.cached_tokens,
+    cacheWriteTokens: canonical.cache_creation_input_tokens,
+    outputTokens,
+  };
+}
+
+// Upsert one row. One completed request owns its rid, so a second completion
+// for the same rid (account-fallback attempt) replaces the first.
+export async function recordCostLedger(entry) {
+  try {
+    if (!entry || typeof entry.id !== "string" || !entry.id) return false;
+    const db = await getAdapter();
+    db.run(
+      `INSERT INTO costLedger(id, ts, sid, provider, model, baselineUsd, actualUsd, savedUsd, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(id) DO UPDATE SET ts=excluded.ts, sid=excluded.sid, provider=excluded.provider,
+         model=excluded.model, baselineUsd=excluded.baselineUsd, actualUsd=excluded.actualUsd,
+         savedUsd=excluded.savedUsd, inputTokens=excluded.inputTokens, cacheReadTokens=excluded.cacheReadTokens,
+         cacheWriteTokens=excluded.cacheWriteTokens, outputTokens=excluded.outputTokens`,
+      [entry.id, entry.ts, entry.sid, entry.provider, entry.model, entry.baselineUsd, entry.actualUsd,
+        entry.savedUsd, entry.inputTokens, entry.cacheReadTokens, entry.cacheWriteTokens, entry.outputTokens],
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Compute + persist in one call. Returns the row when written, null when
+// skipped or the write failed — the caller never needs the distinction.
+export async function recordCostLedgerForRequest(args) {
+  try {
+    const entry = await computeCostLedgerEntry(args);
+    if (!entry) return null;
+    return (await recordCostLedger(entry)) ? entry : null;
+  } catch {
+    return null;
+  }
+}
+
+// Session rollup for the MCP context_status entry: dollars saved by the savers
+// over the last 24h for one sid. Null (not 0) when the read itself failed, so
+// a broken DB never reports a fake "saved nothing".
+export async function sumSavedUsdSince(sid, sinceIso) {
+  try {
+    if (typeof sid !== "string" || !sid || typeof sinceIso !== "string" || !sinceIso) return null;
+    const db = await getAdapter();
+    const row = db.get(
+      `SELECT COALESCE(SUM(savedUsd), 0) AS total FROM costLedger WHERE sid = ? AND ts >= ?`,
+      [sid, sinceIso],
+    );
+    return row && Number.isFinite(Number(row.total)) ? Number(row.total) : null;
+  } catch {
+    return null;
+  }
+}

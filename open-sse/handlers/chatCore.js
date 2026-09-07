@@ -57,6 +57,7 @@ import {
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { withSaverHeaders } from "./chatCore/saverHeaders.js";
 import { writeContextStatus } from "./chatCore/contextStatusStore.js";
+import { sumSavedUsdSince } from "../../src/lib/db/repos/costLedgerRepo.js";
 import { clientRequestedStreaming as requestedStreaming } from "./chatCore/streamMode.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import {
@@ -245,7 +246,22 @@ onReqSummary((verdict, fields) => {
   if (verdict !== "ok") return;
   const actual = fields.ctx;
   if (typeof actual !== "number" || !Number.isFinite(actual) || actual <= 0) return;
-  if (entry.sid) writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
+  if (entry.sid) {
+    writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
+    // Dollar rollup for the same entry: what the savers saved this session in
+    // the last 24h, from the cost ledger. Async fire-and-forget; the sum
+    // resolves after the rid-stamped write above, and the store's writeQueue
+    // serializes in invocation order, so this merges over that row without a
+    // rid (it carries no completion field and cannot trip the rid guard).
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    sumSavedUsdSince(entry.sid, since)
+      .then((dollarsSaved) => {
+        if (typeof dollarsSaved === "number" && Number.isFinite(dollarsSaved)) {
+          writeContextStatus(entry.sid, { dollarsSaved });
+        }
+      })
+      .catch(() => { /* telemetry must never break the request path */ });
+  }
   if (entry.estimatedTokens > 0) {
     const ratio = actual / entry.estimatedTokens;
     const prev = sessionCalibration.get(entry.calibrationKey);
@@ -817,7 +833,8 @@ export async function handleChatCore({
           ponytailEnabled ||
           memorySettings)),
   );
-  const toolsAfterBytes = Buffer.byteLength(JSON.stringify(translatedBody));
+  const preSaverSerialized = JSON.stringify(translatedBody);
+  const toolsAfterBytes = Buffer.byteLength(preSaverSerialized);
   toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true };
   const saverStages = [];
   const contextStages = [{ stage: "tools", ...toolsStageDelta }];
@@ -2128,6 +2145,8 @@ export async function handleChatCore({
     pxpipe: pxpipeSummary,
     saverFields,
     saverMeta,
+    preSaverSerialized,
+    sid,
     privacyFilter,
     callerSignal,
     reqTag,

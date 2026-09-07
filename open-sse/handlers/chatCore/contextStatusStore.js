@@ -45,6 +45,13 @@ function clampSignedInt(value) {
   return Number.isFinite(n) ? Math.round(n) : undefined;
 }
 
+// dollarsSaved mirrors that discipline: a signed REAL (negative = the savers
+// grew the body and cost more than the baseline), never clamped away.
+function clampReal(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 // Strict allowlist, mirroring the tokenSaver events sink: unknown fields are
 // dropped, numbers are clamped nonnegative, no free text beyond rid.
 function sanitize(entry) {
@@ -57,6 +64,8 @@ function sanitize(entry) {
   }
   const saveBytes = clampSignedInt(entry.saveBytes);
   if (saveBytes !== undefined) out.saveBytes = saveBytes;
+  const dollarsSaved = clampReal(entry.dollarsSaved);
+  if (dollarsSaved !== undefined) out.dollarsSaved = dollarsSaved;
   if (entry.compactHint === true) out.compactHint = true;
   const updatedAt = typeof entry.updatedAt === "string" ? entry.updatedAt : "";
   // ISO-shaped AND parseable, else the field is dropped: a free-text or
