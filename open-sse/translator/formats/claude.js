@@ -353,15 +353,16 @@ export function normalizeClaudePassthrough(body, model = "", rawHeaders = null) 
   return body;
 }
 
-// Put a 5m breakpoint on the last cache-eligible block of a message.
-// thinking/redacted_thinking blocks do not accept cache_control.
-function markLastCacheableBlock(msg) {
+// Put a breakpoint on the last cache-eligible block of a message (5m unless
+// the caller passes the 1h control). thinking/redacted_thinking blocks do not
+// accept cache_control.
+function markLastCacheableBlock(msg, cacheControl = CACHE_CONTROL_5M) {
   if (!Array.isArray(msg?.content)) return false;
   for (let i = msg.content.length - 1; i >= 0; i--) {
     const block = msg.content[i];
     if (typeof block !== "object" || block === null) continue;
     if (block.type === CLAUDE_BLOCK.THINKING || block.type === CLAUDE_BLOCK.REDACTED_THINKING) continue;
-    block.cache_control = { ...CACHE_CONTROL_5M };
+    block.cache_control = { ...cacheControl };
     return true;
   }
   return false;
@@ -484,8 +485,16 @@ export function countCacheAnchors(body) {
   return count;
 }
 
-export function anchorClaudeCache(body) {
+export function anchorClaudeCache(body, { ttl } = {}) {
   if (!body || typeof body !== "object") return body;
+  // ttl selects the breakpoint lifetime policy (context-tuning suite, task
+  // 6): "1h" upgrades every ephemeral anchor on the final body for sessions
+  // whose measured inter-request gaps outlive the 5m breakpoint; anything
+  // else is the legacy policy byte for byte. Positions never move — ttl is a
+  // lifetime property, not part of the cache key — so upgrading a kept client
+  // anchor is prefix-stable. A client-stated "1h" is never downgraded.
+  const upgradeTo1h = ttl === "1h";
+  const tailControl = upgradeTo1h ? CACHE_CONTROL_1H : CACHE_CONTROL_5M;
   // Valid client breakpoints are kept verbatim (per-request cache-prefix
   // stability); everything else gets the legacy single-anchor policy.
   const keep = clientCacheAnchors(body);
@@ -521,7 +530,7 @@ export function anchorClaudeCache(body) {
       if (anchored || msg.role !== ROLE.ASSISTANT) continue;
       // Client already anchored this turn — never add a second breakpoint.
       if (keep && msg.content.some(b => keep.has(b))) { anchored = true; continue; }
-      anchored = markLastCacheableBlock(msg);
+      anchored = markLastCacheableBlock(msg, tailControl);
     }
 
     // First turn of a conversation has no assistant yet — anchor the final
@@ -530,7 +539,23 @@ export function anchorClaudeCache(body) {
       for (let i = body.messages.length - 1; i >= 0 && !anchored; i--) {
         const msg = body.messages[i];
         if (keep && Array.isArray(msg.content) && msg.content.some(b => keep.has(b))) { anchored = true; continue; }
-        anchored = markLastCacheableBlock(msg);
+        anchored = markLastCacheableBlock(msg, tailControl);
+      }
+    }
+  }
+
+  if (upgradeTo1h) {
+    // Kept plans (client- or translator-stamped) carry 5m tail anchors; lift
+    // every ephemeral breakpoint to the 1h lifetime without moving it.
+    const lift = (block) => {
+      const cc = block?.cache_control;
+      if (cc?.type === "ephemeral" && cc.ttl !== "1h") block.cache_control = { ...CACHE_CONTROL_1H };
+    };
+    if (Array.isArray(body.system)) body.system.forEach(lift);
+    if (Array.isArray(body.tools)) body.tools.forEach(lift);
+    if (Array.isArray(body.messages)) {
+      for (const msg of body.messages) {
+        if (Array.isArray(msg?.content)) msg.content.forEach(lift);
       }
     }
   }

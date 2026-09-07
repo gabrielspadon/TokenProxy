@@ -639,7 +639,7 @@ function hasMultipleClassifierAlternatives(responseBody) {
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry, preSaverSerialized, sid }) {
   // HEADERS finding: gateway-built error responses carry the same x-tp-*
   // saver telemetry as successes.
   const saverErrorResult = (...args) => {
@@ -835,7 +835,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid });
+  saveUsageStats({ contextTelemetry, provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, silent: true, rid, preSaverSerialized, sid });
 
   if (classifierMode && (
     hasLegacyClassifierFunctionCall(responseBody)

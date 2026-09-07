@@ -15,7 +15,7 @@ import { composeBoundaryNote, injectBoundaryNote } from '../../../open-sse/utils
 
 // The parity gate checks this against chatCore's ledger boundaries. These
 // are the same transformations, evaluated before final wire/cache anchoring.
-export const STAGE_ORDER = ['tools', 'schema', 'thinking', 'rtk', 'privacy', 'inject', 'pxpipe', 'mem', 'headroom', 'qac', 'pairs', 'reorder', 'midinject'];
+export const STAGE_ORDER = ['tools', 'schema', 'thinking', 'rtk', 'privacy', 'inject', 'pxpipe', 'mem', 'headroom', 'qac', 'pairs', 'diet', 'lingua', 'epochMicro', 'epochAuto', 'reorder', 'midinject'];
 const bytes = body => Buffer.byteLength(JSON.stringify(body));
 const digest = body => createHash('sha256').update(JSON.stringify(body)).digest('hex');
 const text = message => typeof message?.content === 'string' ? message.content : (message?.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -83,6 +83,10 @@ export async function evaluateSettings(settings, fixtureSetId, { fixtures = fixt
       const result = dropOldestPairs(body.messages, { deficitChars: Math.ceil(p.deficitChars / chunk) * chunk, keepRecentTurns: 6 }); body.messages = result.messages;
       if (result.droppedPairs) notes.push({ kind: 'pairs', text: `dropped ${result.droppedPairs} pair(s) (~${result.savedChars} chars)` });
     });
+    await stage('diet', settings.dietEnabled, null, 'Expired tool-result pruning replays against the live request context; it is not reproduced on the synthetic fixture.');
+    await stage('lingua', settings.linguaEnabled, null, 'LLMLingua-2 selective compression reads the session cache-epoch chain and a loopback sidecar; it is not reproduced on the synthetic fixture.');
+    await stage('epochMicro', settings.epochMicroEnabled, null, 'Epoch-aligned micro-compaction reads the session cache-epoch chain; it is not reproduced on the synthetic fixture.');
+    await stage('epochAuto', settings.epochAutoEnabled, null, 'Epoch-aligned auto-compaction reads the session cache-epoch chain; it is not reproduced on the synthetic fixture.');
     await stage('reorder', settings.embedReorderEnabled, null, 'Embedding service is never contacted.');
     await stage('midinject', settings.midPrefixInjectEnabled && notes.length > 0, () => { body.messages = injectBoundaryNote(body.messages, body.messages.length - 1, composeBoundaryNote(notes)).messages; });
     const latencyMs = performance.now() - started;

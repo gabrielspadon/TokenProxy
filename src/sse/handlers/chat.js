@@ -24,6 +24,8 @@ import { errorResponse, unavailableResponse, isRetryableStatus } from "open-sse/
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities, resolveComboMemberConnection, resolveComboTokenSaver } from "open-sse/services/combo.js";
 import { resolveRequestModel } from '../services/requestModel.js';
 import { AUTO_MODEL_IDS, resolveAutoModel } from "@/sse/services/autoRouter.js";
+import { resolveSessionId } from "open-sse/utils/sessionManager.js";
+import { isRetryableCascadeStatus, pinEscalatedSession, planCascade } from "@/lib/stepRouter";
 import { detectAgentRole, applyAgentRoleGroup } from "open-sse/utils/agentRole.js";
 import { refuseDisallowedModel } from "@/sse/services/modelAccess.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
@@ -638,7 +640,7 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, null, callerSignal);
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, null, callerSignal, null, true);
 }
 
 /**
@@ -684,7 +686,67 @@ export async function providerConcurrencyOverflow(provider, settings = null) {
   return `at the configured concurrency limit (${inFlight}/${limit} in flight)`;
 }
 
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboChain = null, callerSignal = request?.signal) {
+// Cascade planning reads the operator config once per SOLO request. Anything
+// unreadable fails open to "none": the cascade must never block a request.
+async function planCascadeStep(body, modelStr, clientRawRequest) {
+  let pairs;
+  try {
+    pairs = (await getSettings())?.cascadePairs;
+  } catch {
+    return { action: "none" };
+  }
+  if (!Array.isArray(pairs) || pairs.length === 0) return { action: "none" };
+  let sid = null;
+  try {
+    sid = resolveSessionId({ headers: clientRawRequest?.headers || null, body });
+  } catch {
+    sid = null;
+  }
+  return planCascade({ body, modelStr, cascadePairs: pairs, sid });
+}
+
+/**
+ * Handle single model chat request
+ */
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboChain = null, callerSignal = request?.signal, cascadeCtx = null, allowCascade = false) {
+  // The cascade only engages for the model the caller actually asked for on a
+  // solo request: combo members and capacity-adapter substitutes re-enter this
+  // wrapper with allowCascade=false and dispatch unchanged.
+  if (!cascadeCtx && allowCascade && !comboChain) {
+    const plan = await planCascadeStep(body, modelStr, clientRawRequest);
+    if (plan.action === "cheap") {
+      log.info("CHAT", `Cascade: ${modelStr} -> ${plan.cheapModel} (exploration-class)`);
+      return handleSingleModelChat(body, plan.cheapModel, clientRawRequest, request, apiKey, comboChain, callerSignal,
+        { tag: plan.tag, sid: plan.sid, strong: plan.strongModel });
+    }
+    if (plan.action === "strong") {
+      log.info("CHAT", `Cascade: session pinned, ${modelStr} direct (strong)`);
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, comboChain, callerSignal,
+        { tag: plan.tag, sid: plan.sid, strong: modelStr });
+    }
+  }
+  if (cascadeCtx) {
+    const response = await dispatchSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, comboChain, callerSignal, cascadeCtx.tag);
+    // A retryable-class cheap failure escalates to the strong model with the
+    // SAME body; a 4xx (non-retryable) does not auto-escalate. The escalation
+    // pins the session so the next step goes straight to strong.
+    if (cascadeCtx.tag === "cascade-cheap" && isRetryableCascadeStatus(response?.status)) {
+      // The failed attempt's body can still be a live upstream stream wrapped
+      // around the account lease; discarding it unread would hold both. Cancel
+      // releases the lease and the socket before the strong dispatch spends its
+      // own.
+      try { await response.body?.cancel(); } catch { /* best-effort */ }
+      pinEscalatedSession(cascadeCtx.sid);
+      log.warn("CHAT", `Cascade: ${modelStr} failed (${response.status}) -> escalating to ${cascadeCtx.strong}`);
+      return handleSingleModelChat(body, cascadeCtx.strong, clientRawRequest, request, apiKey, comboChain, callerSignal,
+        { tag: "cascade-strong", sid: cascadeCtx.sid, strong: cascadeCtx.strong });
+    }
+    return response;
+  }
+  return dispatchSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, comboChain, callerSignal, null);
+}
+
+async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboChain = null, callerSignal = request?.signal, routeKindTag = null) {
   // Same request object handleChat saw, so readRid's memoised WeakMap hands
   // back the SAME rid every hop of a recursive chat call.
   const rid = requestRid(request);
@@ -971,6 +1033,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         requestId: requestRid(request),
         contextTelemetry: requestIdentity,
         contextStructureEnabled: chatSettings.contextStructureEnabled !== false,
+        routeKindOverride: routeKindTag,
         body: { ...structuredClone(body), model: `${provider}/${model}` },
         modelInfo: { provider, model },
         credentials: refreshedCredentials,
@@ -994,6 +1057,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         embedReorderUrl: chatSettings.embedReorderUrl,
         embedReorderModel: chatSettings.embedReorderModel,
         midPrefixInjectEnabled: comboTokenSaver.midPrefixInjectEnabled,
+        epochMicroEnabled: comboTokenSaver.epochMicroEnabled,
+        epochAutoEnabled: comboTokenSaver.epochAutoEnabled,
+        dietEnabled: comboTokenSaver.dietEnabled,
+        linguaEnabled: comboTokenSaver.linguaEnabled,
+        // Global, not combo-wired: the knob reads per-SESSION cadence state,
+        // and a combo member switch mid-session flipping the TTL policy would
+        // churn the very prefix it exists to protect.
+        adaptiveCacheTtlEnabled: chatSettings.adaptiveCacheTtlEnabled === true,
         privacyEnabled: !!chatSettings.privacyFilterEnabled,
         privacyTerms: chatSettings.privacyFilterTerms || [],
         headroomEnabled: comboTokenSaver.headroomEnabled,

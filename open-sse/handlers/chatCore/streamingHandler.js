@@ -552,7 +552,7 @@ function notifyTerminalVerificationSuccess(callback, connectionId, log) {
  *   gets a retried request routed to a different backend.
  */
 export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log, onEmptyStream, sourceFormat, rid, route, fmt, sel, notifyTerminalVerificationSuccess: notifyTerminal,
-  saverFields = {}, contextTelemetry }) {
+  saverFields = {}, contextTelemetry, preSaverSerialized, sid }) {
   const streamDetailId = contextTelemetry?.requestId || `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   // One-shot finalization guard shared by onStreamComplete (flush/cancel paths)
@@ -622,7 +622,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
-    saveUsageStats({ contextTelemetry, usageFinality: aborted ? "partial" : "final", provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid });
+    saveUsageStats({ contextTelemetry, usageFinality: aborted ? "partial" : "final", provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid, preSaverSerialized, sid });
     // The one nominal per-request line (doc §3.3/3.4): success is REQ.ok,
     // an aborted/interrupted completion is REQ.failed — exactly one, never both.
     if (usage?.estimated) decide("STREAM", "usage-estimated", { rid, conn: connPrefix(), why: "provider-omitted-usage" });

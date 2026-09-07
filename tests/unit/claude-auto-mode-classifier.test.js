@@ -307,6 +307,7 @@ const CHAT_HANDLER_MOCKS = [
   "@/lib/pxpipe/loader.js",
   "@/lib/pxpipe/events.js",
   "@/lib/tokenSaver/events.js",
+  "open-sse/utils/sessionManager.js",
 ];
 const unloadChatHandler = () => {
   for (const moduleName of CHAT_HANDLER_MOCKS) vi.doUnmock(moduleName);
@@ -439,6 +440,10 @@ async function loadTerminalChatHandler({ coreResult, shouldFallback = false }) {
   vi.doMock("@/lib/pxpipe/loader.js", () => ({ getTransform: vi.fn() }));
   vi.doMock("@/lib/pxpipe/events.js", () => ({ appendPxpipeEvent: mocks.appendPxpipeEvent }));
   vi.doMock("@/lib/tokenSaver/events.js", () => ({ appendTokenSaverEvent: mocks.appendTokenSaverEvent }));
+  // chat.js resolves the cascade session id from this module, whose two
+  // unref'd module-level cleanup intervals would otherwise register as fake
+  // timers and trip the getTimerCount() leak guard.
+  vi.doMock("open-sse/utils/sessionManager.js", () => ({ resolveSessionId: vi.fn(() => null) }));
 
   const { handleChat } = await import("../../src/sse/handlers/chat.js");
   return { handleChat, mocks };

@@ -35,6 +35,10 @@ const DEFAULT_SETTINGS = {
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
+  // Step-level routing cascade (src/lib/stepRouter.js): each pair downgrades
+  // exploration-class steps from a strong model to its cheap member and
+  // escalates back on retryable-class errors. Default empty = inert.
+  cascadePairs: [],
   exposeComboOnly: false,
   capacityAdapter: {
     vision: { enabled: true, roundRobin: false, models: [] },
@@ -92,6 +96,27 @@ const DEFAULT_SETTINGS = {
   // Mid-prefix note: inject a boundary note summarizing what the prefix
   // stages optimized. Off by default.
   midPrefixInjectEnabled: false,
+  // Epoch-aligned compaction cascade (open-sse/utils/epochCompact.js):
+  // microcompact stubs old tool_result payloads; autocompact replaces the
+  // pre-tail history with one summary message at >= 75% of the context
+  // window. Both mutate only below the session's cache-epoch cut. Off by
+  // default.
+  epochMicroEnabled: false,
+  epochAutoEnabled: false,
+  // AgentDiet-style expired tool-result pruning (open-sse/utils/dietPrune.js):
+  // stubs old, unreferenced tool_result payloads below the cache-epoch cut.
+  // Off by default.
+  dietEnabled: false,
+  // LLMLingua-2 selective compression (open-sse/utils/linguaCompress.js):
+  // compresses large natural-language user/tool_result blobs below the
+  // cache-epoch cut via a loopback-only sidecar (env
+  // TOKENPROXY_LINGUA_ENDPOINT). Off by default.
+  linguaEnabled: false,
+  // Adaptive cache breakpoint TTL (open-sse/utils/prefixStability.js):
+  // sessions whose recent inter-request gaps outlive the 5m breakpoint (>= 3
+  // gap samples, p90 > 20 min) get the 1h conversation-tail anchor. Off by
+  // default; "5m" is byte-identical to the legacy anchoring policy.
+  adaptiveCacheTtlEnabled: false,
   // Privacy filter (#2728): pseudonymise emails and the terms below in the
   // outbound body, restored before the client sees the answer. Off by
   // default — it walks every request, so it costs nothing until asked for.

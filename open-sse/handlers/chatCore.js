@@ -57,6 +57,7 @@ import {
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { withSaverHeaders } from "./chatCore/saverHeaders.js";
 import { writeContextStatus } from "./chatCore/contextStatusStore.js";
+import { sumSavedUsdSince } from "../../src/lib/db/repos/costLedgerRepo.js";
 import { clientRequestedStreaming as requestedStreaming } from "./chatCore/streamMode.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import {
@@ -72,6 +73,20 @@ import { distillToolSchemas } from "../utils/schemaDistiller.js";
 import { stripHistoricalThinking } from "../utils/thinkingStrip.js";
 import { compressPrefixByQuery } from "../utils/queryAwareCompress.js";
 import { dropOldestPairs } from "../utils/pairDropper.js";
+import {
+  microcompact,
+  autocompact,
+  computeEpochCutIndex,
+  placeholderEpochSummarizer,
+} from "../utils/epochCompact.js";
+import { pruneExpiredToolResults } from "../utils/dietPrune.js";
+import { compressBlobs, resolveLinguaEndpoint } from "../utils/linguaCompress.js";
+import {
+  chooseCacheTtl,
+  recordEpochRate,
+  topLevelKeySpans,
+  volatileFieldReport,
+} from "../utils/prefixStability.js";
 import { reorderByRelevance } from "../utils/embedReorder.js";
 import {
   injectBoundaryNote,
@@ -245,13 +260,64 @@ onReqSummary((verdict, fields) => {
   if (verdict !== "ok") return;
   const actual = fields.ctx;
   if (typeof actual !== "number" || !Number.isFinite(actual) || actual <= 0) return;
-  if (entry.sid) writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
+  if (entry.sid) {
+    writeContextStatus(entry.sid, { rid, ctxTokensActual: actual });
+    // Dollar rollup for the same entry: what the savers saved this session in
+    // the last 24h, from the cost ledger. Async fire-and-forget; the sum
+    // resolves after the rid-stamped write above, and the store's writeQueue
+    // serializes in invocation order, so this merges over that row without a
+    // rid (it carries no completion field and cannot trip the rid guard).
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    sumSavedUsdSince(entry.sid, since)
+      .then((dollarsSaved) => {
+        if (typeof dollarsSaved === "number" && Number.isFinite(dollarsSaved)) {
+          writeContextStatus(entry.sid, { dollarsSaved });
+        }
+      })
+      .catch(() => { /* telemetry must never break the request path */ });
+  }
   if (entry.estimatedTokens > 0) {
     const ratio = actual / entry.estimatedTokens;
     const prev = sessionCalibration.get(entry.calibrationKey);
     boundedSet(sessionCalibration, entry.calibrationKey, prev ? prev * 0.5 + ratio * 0.5 : ratio);
   }
 });
+
+// Shared-prefix byte count of `whole` against a stored previous body: one
+// digest per CE_BLOCK_BYTES block plus a byte-for-byte tail compare, exact
+// when the new body extends the old one, block-granular when history was
+// rewritten earlier. See the digest rationale in trackCacheEpoch below.
+function sharedPrefixBytes(prev, whole, byteLen) {
+  const blocks = [];
+  for (let off = 0; off < byteLen; off += CE_BLOCK_BYTES) {
+    blocks.push(createHash("sha1").update(whole.subarray(off, off + CE_BLOCK_BYTES)).digest("base64"));
+  }
+  const fullPrev = Math.max(0, prev.blocks.length - 1);
+  const n = Math.min(fullPrev, blocks.length);
+  let i = 0;
+  while (i < n && prev.blocks[i] === blocks[i]) i++;
+  let ce = i * CE_BLOCK_BYTES;
+  if (i === fullPrev && prev.tail) {
+    const here = whole.subarray(prev.tailOff, prev.tailOff + prev.tail.length);
+    const m = Math.min(prev.tail.length, here.length);
+    let j = 0;
+    while (j < m && prev.tail[j] === here[j]) j++;
+    ce = prev.tailOff + j;
+  }
+  return Math.min(ce, prev.len, byteLen);
+}
+
+// Read-only sibling of trackCacheEpoch for the epoch-compaction stages: the
+// same comparison against the session's previous final body WITHOUT storing
+// this intermediate body (storing it would corrupt the epoch chain — the
+// stages below may still mutate, and the tracker must record the final
+// pre-dispatch body exactly once).
+function peekCacheEpoch(sid, serialized) {
+  const prev = sid ? ceBodies.get(sid) : null;
+  if (!prev || Date.now() - prev.at > CE_TTL_MS) return null;
+  const whole = Buffer.from(serialized, "utf8");
+  return { ce: sharedPrefixBytes(prev, whole, whole.length), prevBytes: prev.len, bytes: whole.length };
+}
 
 function trackCacheEpoch(sid, serialized) {
   const whole = Buffer.from(serialized, "utf8");
@@ -274,19 +340,7 @@ function trackCacheEpoch(sid, serialized) {
   let out;
   const prev = ceBodies.get(sid);
   if (prev && now - prev.at <= CE_TTL_MS) {
-    const fullPrev = Math.max(0, prev.blocks.length - 1);
-    const n = Math.min(fullPrev, blocks.length);
-    let i = 0;
-    while (i < n && prev.blocks[i] === blocks[i]) i++;
-    let ce = i * CE_BLOCK_BYTES;
-    if (i === fullPrev && prev.tail) {
-      const here = whole.subarray(prev.tailOff, prev.tailOff + prev.tail.length);
-      const m = Math.min(prev.tail.length, here.length);
-      let j = 0;
-      while (j < m && prev.tail[j] === here[j]) j++;
-      ce = prev.tailOff + j;
-    }
-    out = { ce: Math.min(ce, prev.len, byteLen), prevBytes: prev.len, bytes: byteLen };
+    out = { ce: sharedPrefixBytes(prev, whole, byteLen), prevBytes: prev.len, bytes: byteLen };
   }
   ceBodies.delete(sid);
   ceBodies.set(sid, {
@@ -303,6 +357,58 @@ function trackCacheEpoch(sid, serialized) {
     }
   }
   return out;
+}
+
+// Prefix-stabilization telemetry per contextScope (context-tuning suite, task
+// 6): the rolling epoch hit-rate samples, the recent inter-request gaps the
+// adaptive TTL rule reads, and the previous body's top-level key sketch for
+// volatile-field detection. Same bounded-Map + 30-min TTL discipline as
+// ceBodies above; the sketch stores digests and lengths, never body bytes.
+const prefixTelemetry = new Map();
+const TELEMETRY_GAP_WINDOW = 8;
+
+// Read-only peek for the anchor step: no entry is created for a request that
+// may still bail before the final serializer records it.
+function peekPrefixTelemetry(scope) {
+  const entry = scope ? prefixTelemetry.get(scope) : null;
+  if (!entry || Date.now() - entry.at > CE_TTL_MS) return null;
+  return entry;
+}
+
+// One update per final pre-dispatch body, beside the trackCacheEpoch call:
+// record the inter-request gap and the epoch sample, diff the top-level key
+// sketch against the previous body's, and return the fields the
+// context-status write carries ({ epochHitRate, volatileKeys }, each
+// undefined when nothing was measured). Telemetry only — request bytes are
+// never touched here.
+function updatePrefixTelemetry(scope, serialized, tracked) {
+  const now = Date.now();
+  let entry = prefixTelemetry.get(scope);
+  if (!entry || now - entry.at > CE_TTL_MS) {
+    entry = { rates: [], gaps: [], lastAt: 0, sketch: null };
+  }
+  if (entry.lastAt > 0) {
+    entry.gaps.push(now - entry.lastAt);
+    if (entry.gaps.length > TELEMETRY_GAP_WINDOW) entry.gaps.shift();
+  }
+  entry.lastAt = now;
+  entry.at = now;
+  let epochHitRate;
+  if (tracked && tracked.prevBytes > 0) {
+    epochHitRate = recordEpochRate(entry.rates, tracked.ce / tracked.prevBytes);
+  } else {
+    epochHitRate = recordEpochRate(entry.rates, NaN);
+  }
+  let volatileKeys;
+  const sketch = topLevelKeySpans(serialized);
+  if (sketch) {
+    if (entry.sketch) {
+      volatileKeys = volatileFieldReport([entry.sketch, sketch]).volatileKeys;
+    }
+    entry.sketch = sketch;
+  }
+  boundedSet(prefixTelemetry, scope, entry);
+  return { epochHitRate, volatileKeys };
 }
 
 export async function handleChatCore({
@@ -339,6 +445,11 @@ export async function handleChatCore({
   embedReorderUrl,
   embedReorderModel,
   midPrefixInjectEnabled,
+  epochMicroEnabled,
+  epochAutoEnabled,
+  dietEnabled,
+  linguaEnabled,
+  adaptiveCacheTtlEnabled,
   privacyEnabled,
   privacyTerms,
   headroomEnabled,
@@ -362,6 +473,7 @@ export async function handleChatCore({
   memorySettings,
   toolDisclosure,
   codexFastMode,
+  routeKindOverride = null,
 }) {
   body = isolateRequestBody(body);
   const credentials = rawCredentials
@@ -825,12 +937,19 @@ export async function handleChatCore({
           pairDropEnabled ||
           embedReorderEnabled ||
           midPrefixInjectEnabled ||
+          epochMicroEnabled ||
+          epochAutoEnabled ||
+          dietEnabled ||
+          linguaEnabled ||
           headroomEnabled ||
           cavemanEnabled ||
           ponytailEnabled ||
           memorySettings)),
   );
-  const toolsAfterBytes = toolsBodyMutated ? Buffer.byteLength(JSON.stringify(translatedBody)) : toolsBeforeBytes;
+  // preSaverSerialized is the cost ledger's counterfactual baseline, so the
+  // serialize is unconditional; toolsBodyMutated still gates the byte delta.
+  const preSaverSerialized = JSON.stringify(translatedBody);
+  const toolsAfterBytes = toolsBodyMutated ? Buffer.byteLength(preSaverSerialized) : toolsBeforeBytes;
   toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true };
   const saverStages = [];
   const contextStages = [{ stage: "tools", ...toolsStageDelta }];
@@ -1271,6 +1390,144 @@ export async function handleChatCore({
   }
   measureSaverStage("pairs", pairsWillRun);
 
+  // Epoch-aligned compaction cascade (#context-tuning): diet prunes expired
+  // tool_result payloads, microcompact stubs old tool_result payloads,
+  // autocompact replaces the pre-tail history with one summary message. All
+  // mutate ONLY below the session's cache-epoch cut — the byte region the
+  // provider still serves from cache — so they run after pairs and before the
+  // final cache anchor. The cut comes from a read-only peek at the previous
+  // epoch entry: storing this intermediate body would corrupt the epoch
+  // chain the final serializer records. diet runs first and replaces payloads
+  // in place (no message count change), so the index-based cut stays valid
+  // for the later stages.
+  const epochStageWanted =
+    tokenSaverEnabled &&
+    (epochMicroEnabled || epochAutoEnabled || dietEnabled || linguaEnabled) &&
+    claudePrefixTarget &&
+    !!prefixMessages();
+  let epochCutIndex = 0;
+  if (epochStageWanted) {
+    const peek = peekCacheEpoch(contextScope, JSON.stringify(translatedBody));
+    epochCutIndex = peek ? computeEpochCutIndex(translatedBody.messages, peek) : 0;
+  }
+
+  // AgentDiet-style expired tool-result pruning: old, unreferenced tool_result
+  // payloads below the epoch cut are stubbed; pairs and tool_use blocks are
+  // never touched. Default off (dietEnabled).
+  const dietWillRun = epochStageWanted && dietEnabled;
+  let dietApplied = false;
+  if (dietWillRun && epochCutIndex > 0) {
+    const res = pruneExpiredToolResults(translatedBody, {
+      epochCutIndex,
+      minAgeTurns: 8,
+      minBlockChars: 2048,
+      referenceScanTurns: 3,
+    });
+    if (res.applied) {
+      translatedBody.messages = res.messages;
+      dietApplied = true;
+      prefixRewritten = true;
+      notePath(rid, "XFORM.diet");
+      pushPrefixNote({
+        kind: "diet",
+        text: `pruned ${res.prunedBlocks} expired tool_result(s) (~${res.prunedChars} chars)`,
+      });
+    }
+  }
+  measureSaverStage("diet", dietApplied);
+
+  // LLMLingua-2 selective compression: large natural-language-ish user/
+  // tool_result blobs below the epoch cut are compressed in place by a
+  // loopback-only sidecar (env TOKENPROXY_LINGUA_ENDPOINT, read at request
+  // time). The content classifier skips JSON/code-fence/diff-hunk/keyword-
+  // heavy blobs; system messages and the latest assistant turn are never
+  // candidates. Fail-closed: any backend failure reports applied:false and
+  // leaves the body byte-identical, with the reason in the debug log only.
+  // Default off (linguaEnabled).
+  const linguaWillRun = epochStageWanted && linguaEnabled;
+  let linguaApplied = false;
+  let linguaSkip = null;
+  if (linguaWillRun && epochCutIndex > 0) {
+    const res = await compressBlobs(translatedBody, {
+      epochCutIndex,
+      endpoint: resolveLinguaEndpoint(),
+      signal: callerSignal,
+      log,
+    });
+    linguaSkip = res.skip ?? null;
+    if (res.applied) {
+      translatedBody.messages = res.messages;
+      linguaApplied = true;
+      prefixRewritten = true;
+      notePath(rid, "XFORM.lingua");
+      pushPrefixNote({
+        kind: "lingua",
+        text: `compressed ${res.compressedBlocks} blob(s) (~${res.savedChars} chars)`,
+      });
+    }
+  }
+  measureSaverStage("lingua", linguaApplied);
+
+  const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
+  let epochMicroApplied = false;
+  if (epochMicroWillRun && epochCutIndex > 0) {
+    const res = microcompact(translatedBody, {
+      epochCutIndex,
+      keepLastTurns: 4,
+    });
+    if (res.applied) {
+      translatedBody.messages = res.messages;
+      epochMicroApplied = true;
+      prefixRewritten = true;
+      notePath(rid, "XFORM.epoch-micro");
+      pushPrefixNote({
+        kind: "epochMicro",
+        text: `cleared ${res.clearedBlocks} block(s) (~${res.clearedChars} chars)`,
+      });
+    }
+  }
+  measureSaverStage("epochMicro", epochMicroApplied);
+
+  const epochAutoWillRun = epochStageWanted && epochAutoEnabled;
+  let epochAutoApplied = false;
+  // Skip-cause classification for the telemetry row: a stable/unknown epoch
+  // is "epoch_boundary"; only a genuinely below-trigger evaluation is
+  // "window_pressure"; every other non-fire (no window known, nothing
+  // droppable, summarizer failure, pair straddling the cut) reports no
+  // reason rather than a wrong one.
+  let epochAutoSkipReason = null;
+  if (epochAutoWillRun && epochCutIndex === 0) {
+    epochAutoSkipReason = "epoch_boundary";
+  }
+  if (epochAutoWillRun && epochCutIndex > 0) {
+    // The model's own window from the capability table, same lookup the
+    // memory ladder and pair dropping use.
+    const epochWindowTokens =
+      getCapabilitiesForModel(provider, upstreamModel)?.contextWindow ?? null;
+    if (Number.isFinite(epochWindowTokens) && epochWindowTokens > 0) {
+      const res = await autocompact(translatedBody, {
+        windowTokens: epochWindowTokens,
+        usedTokens: estimateRequestTokens(translatedBody),
+        summarizeFn: placeholderEpochSummarizer,
+        keepRecentTurns: 6,
+        epochCutIndex,
+      });
+      if (res.applied) {
+        translatedBody.messages = res.messages;
+        epochAutoApplied = true;
+        prefixRewritten = true;
+        notePath(rid, "XFORM.epoch-auto");
+        pushPrefixNote({
+          kind: "epochAuto",
+          text: `auto-compacted ${res.droppedTurns} turn(s)`,
+        });
+      } else if (res.skip === "below_trigger") {
+        epochAutoSkipReason = "window_pressure";
+      }
+    }
+  }
+  measureSaverStage("epochAuto", epochAutoApplied);
+
   // Embedding reorder: moves the most relevant historical pairs next to the
   // recent tail via local OpenAI-compatible embeddings. A permutation of the
   // prefix is a full cache rewrite, so a fresh embedding pass runs only on a
@@ -1370,7 +1627,21 @@ export async function handleChatCore({
       translatedBody.tools = defaultClaudeToolType(translatedBody.tools);
     }
     const anchorsBefore = countCacheAnchors(body);
-    anchorClaudeCache(translatedBody);
+    // Adaptive breakpoint TTL (context-tuning suite, task 6): with the knob
+    // on, a session whose recent inter-request gaps outlive the 5m breakpoint
+    // (>= 3 gap samples, p90 > 20 min) gets the 1h lifetime on its ephemeral
+    // anchors (positions never move). "5m" is the legacy policy byte for
+    // byte, and flag-off keeps the historical single-argument call.
+    if (adaptiveCacheTtlEnabled) {
+      const tele = peekPrefixTelemetry(contextScope);
+      const cacheTtl = chooseCacheTtl(tele?.gaps);
+      anchorClaudeCache(translatedBody, { ttl: cacheTtl });
+      if (cacheTtl === "1h") {
+        log?.debug?.("CACHE", `adaptive ttl 1h | gaps=${tele?.gaps.length}`);
+      }
+    } else {
+      anchorClaudeCache(translatedBody);
+    }
     // Path codes (doc §2 XFORM rows): client multi-anchor plan survived
     // translation vs the re-anchor fallback.
     const anchorsAfter = countCacheAnchors(translatedBody);
@@ -1387,6 +1658,7 @@ export async function handleChatCore({
   let finalBodyBytes = null;
   let finalSerialized = null;
   let compactHint = false;
+  let prefixFields = null;
   if (saverPrev || sid) {
     finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
@@ -1401,6 +1673,7 @@ export async function handleChatCore({
           compactHint = true;
         }
       }
+      prefixFields = updatePrefixTelemetry(contextScope, finalSerialized, tracked);
     }
   }
   // HEADERS finding: model-self-sizing response headers, all derived from the
@@ -1437,7 +1710,7 @@ export async function handleChatCore({
     clientTool, inputEstimate, messageCount, toolCount,
     contextEstimate: Math.ceil(estTokens * calibrationFactor(sessionCalibrationFor(contextScope))), bodyAfterBytes: finalBodyBytes,
     cachePrefixBytes: saverMeta.ce, compactHint,
-    routeKind: passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated",
+    routeKind: routeKindOverride || (passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated"),
     formatPair: `${sourceFormat}>${targetFormat}`, selection: credentials?.selection?.verdict,
     controls: {
       contextStructure: contextStructureEnabled,
@@ -1468,6 +1741,11 @@ export async function handleChatCore({
         saveBytes: saverMeta.saveBytes,
         ceBytes: saverMeta.ce,
         compactHint: saverMeta.compactHint,
+        // Undefined means "not measured this request" and must stay absent so
+        // the merge keeps the session's last measured value; an empty
+        // volatileKeys list IS measured and clears the previous one.
+        ...(prefixFields?.epochHitRate !== undefined ? { epochHitRate: prefixFields.epochHitRate } : {}),
+        ...(prefixFields?.volatileKeys !== undefined ? { volatileKeys: prefixFields.volatileKeys } : {}),
       });
     } catch (err) {
       log?.debug?.("CTXSTATUS", `write failed: ${String(err?.message || err).slice(0, 60)}`);
@@ -1583,8 +1861,12 @@ export async function handleChatCore({
       "thinking",
       "qac",
       "pairs",
+      "diet",
+      "lingua",
       "reorder",
       "midinject",
+      "epochMicro",
+      "epochAuto",
     ]) {
       const stageBytes = saverStageDelta(stageName);
       const stageGated =
@@ -1614,6 +1896,52 @@ export async function handleChatCore({
         }
         onTokenSaverEvent?.(row);
       }
+    }
+    // Epoch cascade skips are reported, not silenced, with the cause the
+    // stage actually had: a stable/unknown epoch is "epoch_boundary", a
+    // below-trigger evaluation is "window_pressure", and everything else
+    // (no eligible blocks, no window known, nothing droppable, summarizer
+    // failure) reports reason omitted rather than mislabeled.
+    if (dietWillRun && !dietApplied) {
+      const row = {
+        saver: "diet",
+        rid,
+        applied: false,
+        ce: saverFields.ce,
+      };
+      if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      onTokenSaverEvent?.(row);
+    }
+    if (linguaWillRun && !linguaApplied) {
+      const row = {
+        saver: "lingua",
+        rid,
+        applied: false,
+        ce: saverFields.ce,
+      };
+      if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      else if (linguaSkip === "no_backend") row.reason = "no_backend";
+      onTokenSaverEvent?.(row);
+    }
+    if (epochMicroWillRun && !epochMicroApplied) {
+      const row = {
+        saver: "epochMicro",
+        rid,
+        applied: false,
+        ce: saverFields.ce,
+      };
+      if (epochCutIndex === 0) row.reason = "epoch_boundary";
+      onTokenSaverEvent?.(row);
+    }
+    if (epochAutoWillRun && !epochAutoApplied) {
+      const row = {
+        saver: "epochAuto",
+        rid,
+        applied: false,
+        ce: saverFields.ce,
+      };
+      if (epochAutoSkipReason) row.reason = epochAutoSkipReason;
+      onTokenSaverEvent?.(row);
     }
   } catch {
     /* stats must not break requests */
@@ -2141,6 +2469,8 @@ export async function handleChatCore({
     pxpipe: pxpipeSummary,
     saverFields,
     saverMeta,
+    preSaverSerialized,
+    sid,
     privacyFilter,
     callerSignal,
     reqTag,

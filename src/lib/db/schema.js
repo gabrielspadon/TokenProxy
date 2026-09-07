@@ -19,12 +19,14 @@ import { OPERATION_TABLES } from './operationSchema.js';
 import { NOTIFICATION_RULE_TABLES } from './notificationRuleSchema.js';
 import { ACCESS_PROFILE_KEY_COLUMNS, ACCESS_PROFILE_TABLES } from './accessProfileSchema.js';
 import { KEY_ROTATION_COLUMNS, KEY_ROTATION_TABLES } from './keyRotationSchema.js';
+import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
 
 // 14 = operation events (durable operation evidence). 15 is reserved for
 // project identity/budgets - do not reuse it. 16 = notification rules,
 // their version history, and the alerts they produced. 17 = access profiles
 // and deliberate key rotation. 18 = union of the 16/17 lines of work.
-export const SCHEMA_VERSION = 18;
+// 19 = counterfactual dollar-cost ledger (costLedger).
+export const SCHEMA_VERSION = 19;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -52,6 +54,7 @@ export const TABLES = {
   ...NOTIFICATION_RULE_TABLES,
   ...ACCESS_PROFILE_TABLES,
   ...KEY_ROTATION_TABLES,
+  ...COST_LEDGER_TABLES,
   _meta: {
     columns: {
       key: 'TEXT PRIMARY KEY',
