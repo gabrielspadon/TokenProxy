@@ -7,7 +7,7 @@ Historical implementation plan. Current visual and interaction decisions are own
 TokenProxy is a local routing gateway. One operator, who lives in a terminal
 agent, opens this surface to answer a question the terminal cannot: why a
 session landed on an account, what a five-hour window is doing, which saver
-stage saved bytes, whether the tunnel is really up, what a key costs. Every
+stage saved bytes, what a key costs. Every
 question is about state over time and about trust. The surface holds every
 credential the operator owns and must never show one.
 
@@ -142,9 +142,7 @@ on.
 | `/dashboard/keys` | §7, §9 | Client keys and the operator/client identity split |
 | `/dashboard/usage` | §8 | Per-request facts, rollups, pricing |
 | `/dashboard/shaping` | §11 | Saver layers, stages, bytes, compression service |
-| `/dashboard/translation` | §16 | Inspection and the console log stream |
 | `/dashboard/tools` | §14, §15 | Tool integrations and the extension bridge |
-| `/dashboard/remote` | §17 | Tunnel and Tailscale |
 | `/dashboard/notifications` | §18 | Outbound webhooks |
 | `/dashboard/access` | §19, §9 operator side | Sign-in policy and who the operator is |
 | `/dashboard/system` | §10 detail, §20 | Health detail, version, update, database, shutdown |
@@ -177,10 +175,7 @@ answer.
 - Styling is plain CSS with cascade layers and custom properties in
   `src/app/globals.css`. Tailwind stays wired through PostCSS and unused,
   so the token names appear once.
-- `src/i18n/runtime.js` is kept as the translator. Consequence for markup:
-  every visible English string is one whole text node, numbers and
-  identifiers sit in their own element marked `data-i18n-skip`, and
-  sentences are never split by interpolation.
+- The interface uses English with left-to-right document direction. User-provided names and text retain their original Unicode content.
 - End-to-end specs use the `playwright/test` runner that ships inside the
   installed `playwright` package, so no dependency is added.
   `tests/e2e/playwright.config.mjs` has no `webServer`.
@@ -188,17 +183,6 @@ answer.
   Everything else is local component state.
 - Fonts cover Latin, Vietnamese, currency and arrows; other scripts use the
   system stack.
-- Locale coverage is not uniform, and one locale is deliberately left short.
-  Khmer (`public/i18n/literals/km.json`) holds a large share of values
-  identical to their English key because argos-translate ships no Khmer
-  model, so those strings were never machine-translated and no fallback was
-  substituted. An English string standing in for an untranslated one is
-  visible as untranslated; a wrong translation is not, so the gap is left
-  open rather than filled. Measure it with the command rather than trusting
-  a figure written here, because it moves whenever the catalogue grows:
-  `node -e 'const m=require("./public/i18n/literals/km.json");const e=Object.entries(m);console.log(e.filter(([k,v])=>k===v).length,"of",e.length)'`
-  It closes when a Khmer model exists or a human translation lands.
-
 ## Slices, in build order
 
 Each slice is one commit `feat(ui): <slice>` and one `evidence.mjs` run.
@@ -213,9 +197,7 @@ Each slice is one commit `feat(ui): <slice>` and one `evidence.mjs` run.
 | 6 | `keys` | §7, §9 | `/dashboard/keys` |
 | 7 | `usage` | §8 | `/dashboard/usage` |
 | 8 | `shaping` | §11 | `/dashboard/shaping` |
-| 9 | `translation` | §16 | `/dashboard/translation` |
 | 10 | `tools` | §14, §15 | `/dashboard/tools` |
-| 11 | `remote` | §17 | `/dashboard/remote` |
 | 12 | `notifications` | §18 | `/dashboard/notifications` |
 | 13 | `access` | §19, §9 | `/dashboard/access` |
 | 14 | `system` | §10, §20 | `/dashboard/system` |

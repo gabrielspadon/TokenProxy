@@ -10,7 +10,6 @@ vi.mock('@/shared/hooks/usePoll', () => ({
 }));
 vi.mock('@/store/authStatus', () => ({ useAuthStatus: selector => selector({ status: { requireLogin: true } }) }));
 const { default: SystemPage } = await import('@/app/dashboard/system/page');
-const { default: RemotePage } = await import('@/app/dashboard/remote/page');
 let root, container;
 const network = { status: 0, error: { code: 'network', error: 'Synthetic read aborted' } };
 
@@ -40,6 +39,12 @@ it('scopes a failed version read while retaining successful process health', asy
   expect(container.textContent).toContain('Version information could not be read.');
   expect(container.textContent).toContain('Healthy');
   expect(container.textContent).not.toContain('The gateway did not answer.');
+  await act(async () => [...container.querySelector('[aria-label="System tasks"]').querySelectorAll('button')].find(button => button.textContent.endsWith('Configuration')).click());
+  const notice = [...container.querySelectorAll('[role="status"]')].find(element => element.textContent.includes('Some system observations could not be refreshed.'));
+  expect(notice).toBeTruthy();
+  expect(notice.closest('[hidden]')).toBeNull();
+  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Review system status').click());
+  expect(container.querySelector('[aria-labelledby="h-runtime"]').hidden).toBe(false);
   await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Retry version read').click());
   expect(fixture.refresh).toHaveBeenCalledWith('/api/version');
 });
@@ -50,20 +55,7 @@ it('retains the gateway failure notice when the process health read fails', asyn
   expect(container.textContent).toContain('The gateway did not answer.');
 });
 
-it('scopes a failed mesh host read and retries only that observation', async () => {
-  fixture.reads = {
-    '/api/tunnel/status': { data: { tunnel: { settingsEnabled: false }, tailscale: { settingsEnabled: false } } },
-    '/api/tunnel/tailscale-check': network,
-  };
-  await act(async () => root.render(<RemotePage />));
-  expect(container.textContent).toContain('Mesh host status could not be read.');
-  expect(container.textContent).toContain('Configured off');
-  expect(container.textContent).not.toContain('The gateway did not answer.');
-  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Retry mesh host read').click());
-  expect(fixture.refresh).toHaveBeenCalledWith('/api/tunnel/tailscale-check');
-});
-
-it.each([[SystemPage, '/api/version'], [RemotePage, '/api/tunnel/tailscale-check']])('preserves authentication refusals for a partial read', async (Page, endpoint) => {
+it.each([[SystemPage, '/api/version']])('preserves authentication refusals for a partial read', async (Page, endpoint) => {
   fixture.reads = { [endpoint]: { status: 401, error: { source: 'tokenproxy-admin', code: 'unauthorized' } } };
   await act(async () => root.render(<MantineProvider env="test"><Page /></MantineProvider>));
   expect(container.textContent).toContain('This needs an operator credential.');
@@ -72,9 +64,6 @@ it.each([[SystemPage, '/api/version'], [RemotePage, '/api/tunnel/tailscale-check
 it.each([
   [SystemPage, '/api/admin/health', { uptimeSeconds: 240 }, 'Process health could not be refreshed.', 'Retry process health read'],
   [SystemPage, '/api/admin/health/detail', { status: 'healthy', checks: { database: { status: 'healthy', latencyMs: 0 }, connections: [] } }, 'Readiness checks could not be refreshed.', 'Retry readiness read'],
-  [RemotePage, '/api/tunnel/status', { tunnel: { settingsEnabled: false }, tailscale: { settingsEnabled: false } }, 'Remote process status could not be refreshed.', 'Retry remote process read'],
-  [RemotePage, '/api/tunnel/tailscale-check', { installed: true, loggedIn: true }, 'Mesh host status could not be read.', 'Retry mesh host read'],
-  [RemotePage, '/api/settings/require-login', { tunnelDashboardAccess: false }, 'Remote access policy could not be refreshed.', 'Retry access policy read'],
 ])('makes a failed refresh visible beside retained data, case %#', async (Page, endpoint, data, notice, retry) => {
   fixture.reads = { [endpoint]: { ...network, data, goodAt: 1 } };
   await act(async () => root.render(<MantineProvider env="test"><Page /></MantineProvider>));

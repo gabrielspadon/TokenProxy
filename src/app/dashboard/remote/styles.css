@@ -1,8 +1,0 @@
-@layer components {
-  .remote-overview { overflow: auto; border: 1px solid var(--rule); background: var(--paper); }
-  .remote-overview table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 13px; text-align: start; }
-  .remote-overview th, .remote-overview td { padding: 10px 12px; text-align: start; border-block-end: 1px solid var(--rule); }
-  .remote-overview thead th { color: var(--slate); font-weight: 500; }
-  .remote-overview a { color: var(--signal); }
-  .remote-overview:focus-visible { outline: 2px solid var(--signal); }
-}

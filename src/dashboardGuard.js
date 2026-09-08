@@ -101,18 +101,11 @@ const PROTECTED_API_PATHS = [
   "/api/pricing",
   "/api/tags",
   "/api/mcp",
-  "/api/translator",
-  "/api/tunnel",
 ];
 
 // Routes that spawn child processes or read host secrets — restrict to localhost.
 const LOCAL_ONLY_PATHS = [
   "/api/mcp/",
-  "/api/tunnel/tailscale-enable",
-  "/api/tunnel/tailscale-disable",
-  "/api/tunnel/tailscale-check",
-  "/api/tunnel/enable",
-  "/api/tunnel/disable",
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
   "/api/auth/reset-password",
@@ -333,7 +326,7 @@ export async function proxy(request) {
 
   // Deny-by-default for /api/* — public allow-list bypasses, everything else requires auth.
   if (pathname.startsWith("/api/")) {
-    // Settings writes configure SSO/proxy/tunnel for the whole instance; a remote
+    // Settings writes configure SSO/proxy for the whole instance; a remote
     // caller must never reach them just because requireLogin is off. Reads keep the
     // requireLogin=false dashboard-read behavior (upstream PR #3499).
     if (
@@ -357,35 +350,14 @@ export async function proxy(request) {
   // Protect all dashboard routes
   if (pathname.startsWith("/dashboard")) {
     let requireLogin = true;
-    let tunnelDashboardAccess = true;
 
     try {
       const settings = await loadSettings();
       if (settings) {
         requireLogin = settings.requireLogin !== false;
-        tunnelDashboardAccess = settings.tunnelDashboardAccess === true;
-
-        // Block tunnel/tailscale access if disabled (redirect to login)
-        if (!tunnelDashboardAccess) {
-          const host = (request.headers.get("host") || "")
-            .split(":")[0]
-            .toLowerCase();
-          const tunnelHost = settings.tunnelUrl
-            ? new URL(settings.tunnelUrl).hostname.toLowerCase()
-            : "";
-          const tailscaleHost = settings.tailscaleUrl
-            ? new URL(settings.tailscaleUrl).hostname.toLowerCase()
-            : "";
-          if (
-            (tunnelHost && host === tunnelHost) ||
-            (tailscaleHost && host === tailscaleHost)
-          ) {
-            return NextResponse.redirect(new URL("/login", request.url));
-          }
-        }
       }
     } catch {
-      // On error, keep defaults (require login, block tunnel)
+      // On error, require login
     }
 
     // If login not required, allow through

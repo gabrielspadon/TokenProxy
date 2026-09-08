@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "inventory": "operations-system-notifications-translation-compatibility-modalities-releases-configuration-history",
+  "inventory": "operations-system-notifications-compatibility-modalities-releases-configuration-history",
   "generatedAt": "2026-09-07",
   "sourceRoot": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current",
   "sourceHead": "4c5b584b6918d6e764a94a02e834ac76359eceec",
@@ -127,16 +127,16 @@
     "Recorded release activation/rollback lacks a gateway execution reader; separate record changes from software and traffic cutover.",
     "Database backup endpoint is configuration/credential scope, not full retained history.",
     "Notification rule firings do not dispatch legacy webhooks; these outcomes must remain separate.",
-    "Compatibility retained runner is local-only; Translation real send is a direct executor diagnostic, not full gateway validation.",
+    "Compatibility retains local format-conversion results; these do not establish full gateway validation.",
     "Standalone image-understanding/music endpoint labels have no handlers.",
     "Requests now exposes all 16 supported modality capabilities and Connections exposes all 3 release-record actions. Independent source inspection is complete; owner focused checks and lead rendered/persisted acceptance remain pending. Gemini distinct video edit/extension stays locally refused because the backend lacks distinct actions."
   ],
   "counts": {
-    "supported/exposed": 81,
+    "supported/exposed": 74,
     "unavailable": 10,
     "internal-only": 1
   },
-  "capabilityCount": 92,
+  "capabilityCount": 85,
   "capabilities": [
     {
       "id": "system-liveness",
@@ -256,7 +256,7 @@
         ],
         "stillRequired": [
           "Lead-owned guarded actual API persistence/reload/return checks.",
-          "Lead-owned rendered wide/narrow, dark/locale/keyboard acceptance."
+          "Lead-owned rendered wide/narrow, dark/keyboard acceptance."
         ]
       }
     },
@@ -996,7 +996,7 @@
         ],
         "stillRequired": [
           "Lead-owned guarded actual API persistence/reload/return checks.",
-          "Lead-owned rendered wide/narrow, dark/locale/keyboard acceptance."
+          "Lead-owned rendered wide/narrow, dark/keyboard acceptance."
         ]
       }
     },
@@ -2664,7 +2664,7 @@
         ],
         "stillRequired": [
           "Lead-owned guarded actual API persistence/reload/return checks.",
-          "Lead-owned rendered wide/narrow, dark/locale/keyboard acceptance."
+          "Lead-owned rendered wide/narrow, dark/keyboard acceptance."
         ]
       }
     },
@@ -2723,7 +2723,7 @@
         ],
         "stillRequired": [
           "Lead-owned guarded actual API persistence/reload/return checks.",
-          "Lead-owned rendered wide/narrow, dark/locale/keyboard acceptance."
+          "Lead-owned rendered wide/narrow, dark/keyboard acceptance."
         ]
       }
     },
@@ -3591,449 +3591,6 @@
       }
     },
     {
-      "id": "translation-detect",
-      "area": "translation",
-      "capability": "Detect request format and plan a translation route",
-      "classification": "supported/exposed",
-      "classificationReason": "Operable from the inspected UI and backed by a handler and reader/writer.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/translate/route.js",
-        "line": 46
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/translate/route.js",
-          "line": 46
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        }
-      ],
-      "supportedScope": "Step 1 identifies source format, model/provider target and registered translation route locally; does not call providers.",
-      "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Step 1 identifies source format, model/provider target and registered translation route locally; does not call providers.",
-      "currentEntryPoint": "/dashboard/translation",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [],
-      "writeContract": [
-        "POST /api/translator/translate with step=1,body"
-      ],
-      "apiValidation": "Step and body required; valid supported step; model detection/route resolution.",
-      "savedState": "Editor state unless explicitly saved to a snapshot.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "Malformed request or unavailable conversion refused; no silent passthrough.",
-      "advancedOptions": [
-        "Source/target format",
-        "Model/provider resolution",
-        "Route description"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/translator-request-normalization.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "source-inspected; no execution in this inventory task",
-        "checksPerformed": [
-          "UI entry and handler/repository/consumer source inspection"
-        ],
-        "stillRequired": [
-          "Exercise this journey against isolated guarded actual APIs.",
-          "Inspect wide and narrow rendered states and keyboard interaction."
-        ],
-        "implementationReview": "Owned page controls/styles now consume the shared semantic-token system; wide/narrow rendered acceptance is pending."
-      }
-    },
-    {
-      "id": "translation-neutral",
-      "area": "translation",
-      "capability": "Translate request into neutral OpenAI form",
-      "classification": "supported/exposed",
-      "classificationReason": "Operable from the inspected UI and backed by a handler and reader/writer.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/translate/route.js",
-        "line": 46
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/translate/route.js",
-          "line": 46
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        }
-      ],
-      "supportedScope": "Step 2 uses registered local translators and removes private tool-name mapping from diagnostic output.",
-      "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Step 2 uses registered local translators and removes private tool-name mapping from diagnostic output.",
-      "currentEntryPoint": "/dashboard/translation",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [],
-      "writeContract": [
-        "POST /api/translator/translate with step=2,body"
-      ],
-      "apiValidation": "Supported translation route required; stream defaults true unless specified.",
-      "savedState": "Unsaved editor output only.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "Unavailable translation 422; no provider call.",
-      "advancedOptions": [
-        "Explicit stream flag",
-        "Structural request inspection",
-        "Request/tool conversion"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/translator-request-normalization.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "source-inspected; no execution in this inventory task",
-        "checksPerformed": [
-          "UI entry and handler/repository/consumer source inspection"
-        ],
-        "stillRequired": [
-          "Exercise this journey against isolated guarded actual APIs.",
-          "Inspect wide and narrow rendered states and keyboard interaction."
-        ],
-        "implementationReview": "Owned page controls/styles now consume the shared semantic-token system; wide/narrow rendered acceptance is pending."
-      }
-    },
-    {
-      "id": "translation-target",
-      "area": "translation",
-      "capability": "Build a redacted target-provider request",
-      "classification": "supported/exposed",
-      "classificationReason": "Operable from the inspected UI and backed by a handler and reader/writer.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/translate/route.js",
-        "line": 46
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/translate/route.js",
-          "line": 46
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/open-sse/executors/index.js",
-          "line": 74
-        }
-      ],
-      "supportedScope": "Step 3 selects the first active stored connection, reads credentials and builds URL/headers/body through its executor without sending upstream.",
-      "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Step 3 selects the first active stored connection, reads credentials and builds URL/headers/body through its executor without sending upstream.",
-      "currentEntryPoint": "/dashboard/translation",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [],
-      "writeContract": [
-        "POST /api/translator/translate with step=3,body"
-      ],
-      "apiValidation": "Provider/model and an active connection required; target translation route must exist.",
-      "savedState": "Redacted diagnostic response only unless saved explicitly.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "No active connection 400; unsupported route 422; safe construction failure 500.",
-      "advancedOptions": [
-        "CredentialsRead true, providerCalls 0",
-        "Redacts known secrets, sensitive headers and URL fields",
-        "Output is not a replay-ready authenticated request"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/translator-request-normalization.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "source-inspected; no execution in this inventory task",
-        "checksPerformed": [
-          "UI entry and handler/repository/consumer source inspection"
-        ],
-        "stillRequired": [
-          "Exercise this journey against isolated guarded actual APIs.",
-          "Inspect wide and narrow rendered states and keyboard interaction."
-        ],
-        "implementationReview": "Owned page controls/styles now consume the shared semantic-token system; wide/narrow rendered acceptance is pending."
-      }
-    },
-    {
-      "id": "translation-send",
-      "area": "translation",
-      "capability": "Send an explicitly confirmed diagnostic provider request",
-      "classification": "supported/exposed",
-      "classificationReason": "Implemented control/projection and targeted deterministic checks; browser and actual persistence acceptance remain pending.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/send/route.js",
-        "line": 36
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/send/route.js",
-          "line": 36
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/diagnosticSend.js",
-          "line": 1
-        }
-      ],
-      "supportedScope": "An explicitly confirmed direct-executor diagnostic send reports selected connection ID, direct-executor scope and saved credential-refresh status. It preserves upstream HTTP status/content type, supports cancellation and marks its 1 MiB preview limit incomplete. The UI links full gateway requests separately.",
-      "prerequisites": "Dashboard permission, active provider credentials and explicit paid/upstream send intent.",
-      "currentBehavior": "An explicitly confirmed direct-executor diagnostic send reports selected connection ID, direct-executor scope and saved credential-refresh status. It preserves upstream HTTP status/content type, supports cancellation and marks its 1 MiB preview limit incomplete. The UI links full gateway requests separately.",
-      "currentEntryPoint": "/dashboard/translation, Send to a provider",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [],
-      "writeContract": [
-        "POST /api/translator/send with provider,model,body"
-      ],
-      "apiValidation": "Provider/model/body required; active connection required.",
-      "savedState": "May persist refreshed connection credentials; no retained compatibility-run receipt or media gallery.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "499 cancellation; 502 connect timeout; upstream status retained; network/read failure unconfirmed; oversized response preview explicitly incomplete. Credential refresh retries only the existing 401/403 path. This remains a direct executor diagnostic, not full gateway policy validation.",
-      "advancedOptions": [
-        "Explicit send confirmation",
-        "Provider/global connection timeout",
-        "Request cancellation",
-        "Raw streamed upstream response",
-        "Response headers project selected connection and direct-executor scope",
-        "1 MiB response preview; cancelled at bound and explicitly incomplete",
-        "Stop-reading action aborts the request; no automatic replay"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/translator-connect-timeout.test.js",
-          "tests/unit/operations-parity-contracts.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "implemented; targeted mocked/unit checks passed; browser acceptance pending",
-        "checksPerformed": [
-          "Relevant checks included in the 59-test operations parity pass.",
-          "ESLint on owned JavaScript and tests passed."
-        ],
-        "stillRequired": [
-          "Lead-owned guarded actual API persistence/reload/return checks.",
-          "Lead-owned rendered wide/narrow, dark/locale/keyboard acceptance."
-        ]
-      }
-    },
-    {
-      "id": "translation-snapshots",
-      "area": "translation",
-      "capability": "Load and overwrite named diagnostic snapshots",
-      "classification": "supported/exposed",
-      "classificationReason": "Operable from the inspected UI and backed by a handler and reader/writer.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/save/route.js",
-        "line": 5
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/save/route.js",
-          "line": 5
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/load/route.js",
-          "line": 5
-        }
-      ],
-      "supportedScope": "Eight allow-listed request/response snapshots can be loaded or overwritten under process.cwd()/logs/translator.",
-      "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Eight allow-listed request/response snapshots can be loaded or overwritten under process.cwd()/logs/translator.",
-      "currentEntryPoint": "/dashboard/translation",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [
-        "GET /api/translator/load?file={allowedName}"
-      ],
-      "writeContract": [
-        "POST /api/translator/save with file,content"
-      ],
-      "apiValidation": "Only fixed allow-listed filenames; invalid 400, missing 404.",
-      "savedState": "Plain local files, fixed-name overwrite; no revisions. Handler does not automatically redact arbitrary saved content.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "File IO errors explicit; file existence does not mean an upstream send occurred.",
-      "advancedOptions": [
-        "1_req_client.json",
-        "2_req_source.json",
-        "3_req_openai.json",
-        "4_req_target.json",
-        "5_res_provider.txt",
-        "6_res_openai.txt",
-        "7_res_client.txt",
-        "7_res_client.json"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/translator-request-normalization.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "source-inspected; no execution in this inventory task",
-        "checksPerformed": [
-          "UI entry and handler/repository/consumer source inspection"
-        ],
-        "stillRequired": [
-          "Exercise this journey against isolated guarded actual APIs.",
-          "Inspect wide and narrow rendered states and keyboard interaction."
-        ],
-        "implementationReview": "Owned page controls/styles now consume the shared semantic-token system; wide/narrow rendered acceptance is pending."
-      }
-    },
-    {
-      "id": "translation-console",
-      "area": "translation",
-      "capability": "Inspect and follow the bounded process console",
-      "classification": "supported/exposed",
-      "classificationReason": "Operable from the inspected UI and backed by a handler and reader/writer.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/lib/consoleLogBuffer.js",
-        "line": 86
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/lib/consoleLogBuffer.js",
-          "line": 86
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/console-logs/stream/route.js",
-          "line": 3
-        }
-      ],
-      "supportedScope": "Captures console lines in a 200-line in-memory buffer; UI supports reading, filtering and follow behavior. Server strips ANSI but is not a general secret sanitizer.",
-      "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Captures console lines in a 200-line in-memory buffer; UI supports reading, filtering and follow behavior. Server strips ANSI but is not a general secret sanitizer.",
-      "currentEntryPoint": "/dashboard/translation",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [
-        "GET /api/translator/console-logs",
-        "GET /api/translator/console-logs/stream"
-      ],
-      "writeContract": [],
-      "apiValidation": "No mutation input.",
-      "savedState": "Process memory only, lost on restart.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "Read/stream disconnect shown separately; line absence is not proof an operation never happened.",
-      "advancedOptions": [
-        "ETag/revision supports 304",
-        "SSE initial snapshot and line/lines/clear events",
-        "100 ms batching up to 50 pending lines",
-        "25 s keepalive",
-        "Listeners cleaned on abort/cancel/enqueue failure",
-        "UI filter and follow are view controls, not gateway controls"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/console-log-api.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "source-inspected; no execution in this inventory task",
-        "checksPerformed": [
-          "UI entry and handler/repository/consumer source inspection"
-        ],
-        "stillRequired": [
-          "Exercise this journey against isolated guarded actual APIs.",
-          "Inspect wide and narrow rendered states and keyboard interaction."
-        ],
-        "implementationReview": "Owned page controls/styles now consume the shared semantic-token system; wide/narrow rendered acceptance is pending."
-      }
-    },
-    {
-      "id": "translation-clear-console",
-      "area": "translation",
-      "capability": "Clear the shared process console buffer",
-      "classification": "supported/exposed",
-      "classificationReason": "Operable from the inspected UI and backed by a handler and reader/writer.",
-      "sourceOwner": {
-        "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/console-logs/route.js",
-        "line": 6
-      },
-      "sourceEvidence": [
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/api/translator/console-logs/route.js",
-          "line": 6
-        },
-        {
-          "file": "/Users/gabrielspadon/Documents/ChatGPT/Token Router/tokenproxy-current/src/app/dashboard/translation/page.js",
-          "line": 73
-        }
-      ],
-      "supportedScope": "DELETE clears the process console buffer for all readers and emits a clear event.",
-      "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "DELETE clears the process console buffer for all readers and emits a clear event.",
-      "currentEntryPoint": "/dashboard/translation",
-      "redesignedDestination": {
-        "proposed": "Tools / Translation",
-        "status": "Inventory recommendation; lead owns final navigation and design."
-      },
-      "readContract": [],
-      "writeContract": [
-        "DELETE /api/translator/console-logs"
-      ],
-      "apiValidation": "No mutation input.",
-      "savedState": "Clears volatile console state; does not delete operation/usage records or snapshot files.",
-      "permissionContract": "dashboard-configurable",
-      "failureBehavior": "Permission/read refusal remains distinct from successful clear.",
-      "advancedOptions": [
-        "Shared clear event to connected readers"
-      ],
-      "fixture": {
-        "existingTestSources": [
-          "tests/unit/console-log-api.test.js"
-        ],
-        "requiredState": "Populated success plus the documented refusal or unavailable state."
-      },
-      "verification": {
-        "status": "source-inspected; no execution in this inventory task",
-        "checksPerformed": [
-          "UI entry and handler/repository/consumer source inspection"
-        ],
-        "stillRequired": [
-          "Exercise this journey against isolated guarded actual APIs.",
-          "Inspect wide and narrow rendered states and keyboard interaction."
-        ],
-        "implementationReview": "Owned page controls/styles now consume the shared semantic-token system; wide/narrow rendered acceptance is pending."
-      }
-    },
-    {
       "id": "compatibility-catalog",
       "area": "compatibility",
       "capability": "Inspect supported local formats, routes and run scope",
@@ -4284,7 +3841,7 @@
         ],
         "stillRequired": [
           "Lead-owned guarded actual API persistence/reload/return checks.",
-          "Lead-owned rendered wide/narrow, dark/locale/keyboard acceptance."
+          "Lead-owned rendered wide/narrow, dark/keyboard acceptance."
         ]
       }
     },
@@ -4635,9 +4192,9 @@
           "line": 25
         }
       ],
-      "supportedScope": "Catalog declares these run scopes unavailable; separate Translation send is not retained exact-fixture gateway execution.",
+      "supportedScope": "Catalog declares authenticated executor and full gateway run scopes unavailable.",
       "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Catalog declares these run scopes unavailable; separate Translation send is not retained exact-fixture gateway execution.",
+      "currentBehavior": "Catalog declares authenticated executor and full gateway run scopes unavailable.",
       "currentEntryPoint": null,
       "redesignedDestination": {
         "proposed": "Tools / Compatibility",
@@ -6102,13 +5659,11 @@
   "implementationCheckpoint": {
     "date": "2026-09-07",
     "status": "source frozen for lead integration",
-    "targetedCheck": "npm --prefix tests test -- unit/notifications-parity-controls.test.js unit/notification-rules-controls.test.js unit/notification-rules-ui.test.js unit/compatibility-ui.test.js unit/operations-parity-contracts.test.js unit/operation-history-inspector.test.js unit/system-import-ui.test.js unit/supporting-page-read-errors.test.js unit/translator-connect-timeout.test.js",
-    "result": "9 files, 59 tests passed",
     "lint": "Owned JavaScript and changed test files, exit 0",
     "boundary": "All new external-send controls were verified with mocked calls only. No real upstream requests, shared build, runtime restart or browser calls were made. Browser and persisted API acceptance remain with the lead.",
     "parityReconciliation": {
       "counts": {
-        "supported/exposed": 81,
+        "supported/exposed": 74,
         "unavailable": 10,
         "internal-only": 1
       },

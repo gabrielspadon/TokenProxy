@@ -24,8 +24,7 @@ account ranking, quota windows, session pinning, drain, token-saver stages,
 translation between provider dialects, cost. The operator lives in a
 terminal and reaches for this surface only to answer a question the
 terminal cannot: why did this session land on that account, what is my
-five-hour window doing, which saver stage actually saved bytes, is the
-tunnel really up, what will this key cost me. The surface has to make a
+five-hour window doing, which saver stage actually saved bytes, what will this key cost me. The surface has to make a
 complex routing system legible, controllable, and reversible, and it has to
 earn the operator's trust because it holds every credential they own.
 </why_this_matters>
@@ -71,8 +70,7 @@ OAuth provider redirects back to. You may organise anything you like below
 
 Root layout server duties, whatever else `src/app/layout.js` becomes:
 `import "@/lib/network/initOutboundProxy"`, `import "@/shared/services/bootstrap"`,
-a call to `initConsoleLogCapture()` from `@/lib/consoleLogBuffer`, and
-`<html lang="en" dir="ltr">`, resolved before hydration. The imports boot
+and `<html lang="en" dir="ltr">`, resolved before hydration. The imports boot
 the gateway's background jobs; dropping one silently turns a feature off.
 
 OAuth callback relay (`/callback`): the page receives `code`, `state`,
@@ -103,8 +101,7 @@ that says "error".
 Live data: `GET /api/usage/stream?period=` is `text/event-stream`, each
 `data:` line a full stats JSON, interleaved with lightweight pushes carrying
 only `activeRequests`, `activeSessions`, `recentRequests`, `errorProvider`.
-`GET /api/translator/console-logs/stream` and the antigravity verification
-stream are the same shape. `GET /api/system/state?windowSeconds=` returns
+The antigravity verification stream is also server-sent events. `GET /api/system/state?windowSeconds=` returns
 measures as `{value, unit, window, sampleCount, source, index, unavailable}`;
 `value: null` with a non-null `unavailable` is "cannot answer", never zero,
 and `failoverCount` is permanently null. Render the null contract honestly.
@@ -285,11 +282,10 @@ cd tests && npx vitest run --reporter=json --outputFile.json=/tmp/run.json \
 
 `docs/design/scripts/evidence.mjs` is the deterministic check:
 `node docs/design/scripts/evidence.mjs --slice <name> --routes <a,b>` loads
-each route at 390, 768 and 1440 in `en`, `de`, `vi`, `zh-CN`, and `fa`
-(`dir="rtl"`), screenshots it, and fails on a non-200, a console error, a
-request to any non-loopback host, a serious or critical axe violation,
-horizontal overflow, a missing `dir="rtl"`, or a string in
-`docs/design/strings.json` absent from any literal file. Its report is
+each route at 390, 768 and 1440 in English, screenshots it, and fails on a
+non-200, a console error, a request to any non-loopback host, a serious or
+critical axe violation, horizontal overflow, or a document whose language
+and direction differ from `en` and `ltr`. Its report is
 `docs/design/evidence/<slice>/report.json`. `evidence-runner` runs it for
 you. Write your own end-to-end specs under `tests/e2e/` for behaviour the
 script cannot see (a drain confirmation, a 412 rendered, a stream going
@@ -309,9 +305,8 @@ Done means all of this is true and shown, not asserted:
 - `evidence.mjs` reports `PASS` for every slice in `tests.json`, and
   smoke, lint, the unit baseline gate, and your e2e specs pass on the
   isolated instance, all with output returned by `evidence-runner`.
-- You have read the final screenshot of every slice at every width and
-  in `fa`, and `screenshot-reviewer` reports zero defects on the same set.
-- `docs/design/plan.md`, `strings.json`, `progress.md`, `tests.json` are
+- You have read the final screenshot of every slice at every width, and `screenshot-reviewer` reports zero defects on the same set.
+- `docs/design/plan.md`, `progress.md`, `tests.json` are
   current, every slice in `tests.json` is `passing`, and `git status` is
   clean.
 </verification>

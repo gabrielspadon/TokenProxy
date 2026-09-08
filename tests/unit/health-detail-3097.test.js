@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 //
 // The two invariants worth a test:
 //   1. IT ALWAYS ANSWERS 200. /api/health is the liveness probe read by the
-//      Dockerfile HEALTHCHECK and both tunnel health checks; a sibling that
+//      Dockerfile HEALTHCHECK and external liveness checks; a sibling that
 //      500s on a degraded database would train operators (and orchestrators)
 //      to treat this family as restart-worthy. The verdict lives in the body.
 //   2. AN ANONYMOUS CALLER TRIGGERS NO CONNECTION SCAN. Everything under

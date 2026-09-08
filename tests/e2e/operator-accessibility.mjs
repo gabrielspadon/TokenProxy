@@ -56,16 +56,14 @@ const routes = [
   ['/dashboard/shaping', 'Optimization'],
   ['/dashboard/model-context', 'Context windows'],
   ['/dashboard/compatibility', 'Compatibility'],
-  ['/dashboard/translation', 'Translation'],
   ['/dashboard/notifications', 'Notifications'],
   ['/dashboard/access', 'Access'],
   ['/dashboard/tools', 'Tools'],
-  ['/dashboard/remote', 'Remote'],
   ['/dashboard/system', 'System'],
 ];
 // These GET handlers can inspect host processes or contact a registry. Their
 // unavailable state is audited; those capabilities are outside this run.
-const excludedReads = new Set(['/api/tunnel/tailscale-check', '/api/version']);
+const excludedReads = new Set(['/api/version']);
 const unsafeRead = /\/(?:test|probe|send|refresh|install|start|stop|restart|reset|reveal|database)(?:\/|$)/;
 const report = {
   fixture: 'operator-workspace-v2', accountCount: identities.length,

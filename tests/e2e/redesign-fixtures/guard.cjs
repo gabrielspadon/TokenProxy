@@ -233,8 +233,7 @@ http.Server.prototype.emit = function(event,...args) {
       || method === 'PUT' && /^\/api\/admin\/notification-rules\/[^/]+$/.test(pathname)
       || method === 'POST' && /^\/api\/admin\/compatibility\/(?:fixtures|runs|runs\/[^/]+\/cancel)$/.test(pathname)
       || method === 'PATCH' && /^\/api\/admin\/compatibility\/fixtures\/[^/]+$/.test(pathname)
-      || ['POST','DELETE'].includes(method) && pathname === '/api/models/disabled'
-      || method === 'POST' && pathname === '/api/translator/translate';
+      || ['POST','DELETE'].includes(method) && pathname === '/api/models/disabled';
     const allowedMutation = method === 'POST' && pathname === '/api/auth/login'
       || method === 'POST' && /^\/api\/admin\/shaping\/(?:profiles|experiments|promote|rollback|controls|plans|runtime)$/.test(pathname)
       || method === 'PATCH' && pathname === '/api/settings'

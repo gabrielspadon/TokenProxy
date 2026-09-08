@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "generatedAt": "2026-09-07",
-  "scope": "Current tokenproxy-current only; accounts/providers, keys/profiles/client setup, network/remote, sign-in and Tools/MCP. Other redesign domain inventories are complementary.",
+  "scope": "Current tokenproxy-current only; accounts/providers, keys/profiles/client setup, network, sign-in and Tools/MCP. Other redesign domain inventories are complementary.",
   "brief": "/Users/gabrielspadon/.codex/attachments/1c0697cb-adf9-41c8-b957-2effcee783e9/pasted-text.txt",
   "sourceRevision": "4c5b584b6918d6e764a94a02e834ac76359eceec",
   "sourceState": "Shared worktree is dirty; source behavior observed during inventory. No source, tests, runtime, browser, provider or remote mutation performed.",
   "classificationSemantics": {"supported/exposed":"Existing UI/API/readback/runtime chain for this capability; not a fresh end-to-end acceptance claim.","supported/unexposed":"A concrete API/persistence/runtime chain exists but current UI omits an actionable control.","partial":"Some necessary source/UI/parameter paths are missing or contradictory; details identify gap.","internal-only":"Implementation component without supported user entry point or runtime-owned state; explicit exclusion reason required.","unavailable":"No implemented chain or explicitly disabled/refused behavior; exclude from supported denominator."},
   "permissionContracts": {"dashboard":{"contract":"dashboardGuard generic/protected API path. Valid CLI token or authenticated dashboard session; requireLogin=false can allow generic routes. These routes do not all call requireAdmin or uniformly require loopback.","sources":["src/dashboardGuard.js:223","src/dashboardGuard.js:335"]},"settings":{"contract":"Settings PATCH additionally checks CLI/JWT/direct-local request then generic dashboard authentication; individual setting/password validations remain in handler.","sources":["src/dashboardGuard.js:340","src/app/api/settings/route.js:121"]},"operator":{"contract":"requireAdmin independently requires signed dashboard session or valid CLI token; all mutations also require direct loopback. Inference keys and requireLogin=false never substitute.","sources":["src/lib/admin/guard.js:53","src/lib/admin/policy.js:75"]},"local-dashboard":{"contract":"Local-only path requires isLocalRequest or CLI token, plus generic dashboard authentication. Route may repeat local guard. Not permission to inspect another user installation.","sources":["src/dashboardGuard.js:114","src/dashboardGuard.js:194"]},"local-secret-export":{"contract":"Codex export route requires valid CLI token OR direct-local signed session, even when login disabled.","sources":["src/app/api/oauth/codex/export/route.js:28"]},"public-login":{"contract":"Authentication bootstrap/status/logout endpoints are public-path exceptions; callback/password/CSRF/transport checks determine whether a session may be issued.","sources":["src/dashboardGuard.js:27","src/app/api/auth/login/route.js:21"]},"inference-mcp":{"contract":"Same client-key authentication family as inference; explicit sid is operator-local only.","sources":["src/app/api/v1/mcp/route.js:1"]}},
   "providerRegistry": {"source":"open-sse/providers/registry/index.js:148","enabledDefinitionCount":139,"families":[{"category":"apikey","providerIds":["alicode-intl","alicode","alims-intl","alitp-intl","anthropic","assemblyai","aws-polly","azure","baidu","black-forest-labs","blackbox","bluesminds","brave-search","cartesia","cerebras","charm-hyper","chenzk","chutes","cohere","comfyui","commandcode","crof-ai","deepgram","deepseek","elevenlabs","exa","fal-ai","featherless","firecrawl","firecrawl_custom","fireworks","fish-audio","gitlawb-opengateway","glm-cn","glm","google-pse","groq","huggingface","hyperbolic","inworld","jina-ai","jina-reader","kenari","kimi-cn","linkup","llm7","meta","minimax-cn","minimax","mistral","mmf","morph","nanobanana","nebius","novita","nube","ollama-local","ollama-search","openai","opencode-go","opencode-zen","perplexity-agent","perplexity","playht","recraft","runwayml","sambanova","sdwebui","searchapi","selfhosted-embedding","selfhosted-stt","selfhosted-tts","serper","siliconflow","stability-ai","sumopod","tavily","tencent","together","tokenrouter","topaz","venice","vercel-ai-gateway","vertex-partner","volcengine-ark","voyage-ai","x5lab","xiaomi-mimo","xiaomi-tokenplan","xquik","xunfei","youcom"],"classificationRule":"Category is a registry grouping, not proof every advertised service has an implemented runtime or an exposed form. Consult capability exceptions.","commonWrite":"POST /api/providers with provider/name/apiKey/providerSpecificData for accepted API-key/cookie modes; OAuth routes for flow-specific tokens.","commonPersistence":"src/lib/db/repos/connectionsRepo.js:266","commonReader":"src/sse/services/auth.js:344"},{"category":"free","providerIds":["gemini-cli","kiro","mimo-free","opencode","zenmux-free"],"classificationRule":"Category is a registry grouping, not proof every advertised service has an implemented runtime or an exposed form. Consult capability exceptions.","commonWrite":"POST /api/providers with provider/name/apiKey/providerSpecificData for accepted API-key/cookie modes; OAuth routes for flow-specific tokens.","commonPersistence":"src/lib/db/repos/connectionsRepo.js:266","commonReader":"src/sse/services/auth.js:344"},{"category":"freeTier","providerIds":["api-airforce","bazaarlink","byteplus","cloudflare-ai","coqui","ddgs","edge-tts","gemini","google-tts","kilo-gateway","local-device","modelscope","nous","nvidia","ollama","openrouter","poolside","searxng","sensenova","tortoise","vertex"],"classificationRule":"Category is a registry grouping, not proof every advertised service has an implemented runtime or an exposed form. Consult capability exceptions.","commonWrite":"POST /api/providers with provider/name/apiKey/providerSpecificData for accepted API-key/cookie modes; OAuth routes for flow-specific tokens.","commonPersistence":"src/lib/db/repos/connectionsRepo.js:266","commonReader":"src/sse/services/auth.js:344"},{"category":"oauth","providerIds":["antigravity","claude","cline","clinepass","codebuddy-cn","codebuddy-intl","codex","cursor","devin","github","gitlab","grok-cli","iflow","kilocode","kimchi","kimi","qoder","xai","zed"],"classificationRule":"Category is a registry grouping, not proof every advertised service has an implemented runtime or an exposed form. Consult capability exceptions.","commonWrite":"POST /api/providers with provider/name/apiKey/providerSpecificData for accepted API-key/cookie modes; OAuth routes for flow-specific tokens.","commonPersistence":"src/lib/db/repos/connectionsRepo.js:266","commonReader":"src/sse/services/auth.js:344"},{"category":"webCookie","providerIds":["grok-web","perplexity-web"],"classificationRule":"Category is a registry grouping, not proof every advertised service has an implemented runtime or an exposed form. Consult capability exceptions.","commonWrite":"POST /api/providers with provider/name/apiKey/providerSpecificData for accepted API-key/cookie modes; OAuth routes for flow-specific tokens.","commonPersistence":"src/lib/db/repos/connectionsRepo.js:266","commonReader":"src/sse/services/auth.js:344"}],"definitions":[{"id":"alicode-intl","category":"apikey"},{"id":"alicode","category":"apikey"},{"id":"alims-intl","category":"apikey"},{"id":"alitp-intl","category":"apikey"},{"id":"anthropic","category":"apikey","serviceKinds":["llm","imageToText"]},{"id":"antigravity","category":"oauth","serviceKinds":["llm","image","webSearch"]},{"id":"api-airforce","category":"freeTier","authModes":["apikey"],"authType":"apikey"},{"id":"assemblyai","category":"apikey","authType":"apikey","serviceKinds":["stt"]},{"id":"aws-polly","category":"apikey","authType":"apikey","serviceKinds":["tts"],"advanced":true},{"id":"azure","category":"apikey","advanced":true},{"id":"baidu","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"bazaarlink","category":"freeTier","authModes":["apikey"],"authType":"apikey"},{"id":"black-forest-labs","category":"apikey","authType":"apikey","serviceKinds":["image"]},{"id":"blackbox","category":"apikey","serviceKinds":["llm"]},{"id":"bluesminds","category":"apikey","authModes":["apikey"],"authType":"apikey","hidden":true},{"id":"brave-search","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"byteplus","category":"freeTier","serviceKinds":["llm"]},{"id":"cartesia","category":"apikey","authType":"apikey","hidden":true,"serviceKinds":["tts"]},{"id":"cerebras","category":"apikey"},{"id":"charm-hyper","category":"apikey"},{"id":"chenzk","category":"apikey"},{"id":"chutes","category":"apikey"},{"id":"claude","category":"oauth"},{"id":"cline","category":"oauth"},{"id":"clinepass","category":"oauth","hasOAuth":true,"authModes":["oauth","apikey"]},{"id":"cloudflare-ai","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm","image","embedding"],"advanced":true},{"id":"codebuddy-cn","category":"oauth","hasOAuth":true,"authModes":["oauth","apikey"]},{"id":"codebuddy-intl","category":"oauth","hasOAuth":true,"authModes":["oauth","apikey"]},{"id":"codex","category":"oauth","serviceKinds":["llm","image"]},{"id":"cohere","category":"apikey"},{"id":"comfyui","category":"apikey","serviceKinds":["image"]},{"id":"commandcode","category":"apikey"},{"id":"coqui","category":"freeTier","authType":"none","noAuth":true,"hidden":true,"serviceKinds":["tts"]},{"id":"crof-ai","category":"apikey","authType":"apikey","serviceKinds":["llm","imageToText"]},{"id":"cursor","category":"oauth"},{"id":"ddgs","category":"freeTier","authType":"none","noAuth":true,"serviceKinds":["webSearch"]},{"id":"deepgram","category":"apikey","authType":"apikey","serviceKinds":["stt"]},{"id":"deepseek","category":"apikey"},{"id":"devin","category":"oauth","hasOAuth":true,"authModes":["oauth"],"authType":"oauth"},{"id":"edge-tts","category":"freeTier","authType":"none","noAuth":true,"serviceKinds":["tts"]},{"id":"elevenlabs","category":"apikey","authType":"apikey","serviceKinds":["tts"]},{"id":"exa","category":"apikey","authType":"apikey","serviceKinds":["webSearch","webFetch"]},{"id":"fal-ai","category":"apikey","authType":"apikey","serviceKinds":["image"]},{"id":"featherless","category":"apikey","authType":"apikey"},{"id":"firecrawl","category":"apikey","authType":"apikey","serviceKinds":["webFetch"]},{"id":"firecrawl_custom","category":"apikey","noAuth":true,"serviceKinds":["webFetch"]},{"id":"fireworks","category":"apikey","authType":"apikey","serviceKinds":["llm","embedding"]},{"id":"fish-audio","category":"apikey","authType":"apikey","serviceKinds":["tts"]},{"id":"gemini-cli","category":"free"},{"id":"gemini","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm","embedding","image","imageToText","webSearch","tts","stt","video"]},{"id":"github","category":"oauth","serviceKinds":["llm","embedding"]},{"id":"gitlab","category":"oauth","hidden":true},{"id":"gitlawb-opengateway","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"glm-cn","category":"apikey"},{"id":"glm","category":"apikey","serviceKinds":["llm","webSearch"]},{"id":"google-pse","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"google-tts","category":"freeTier","authType":"none","noAuth":true,"serviceKinds":["tts"]},{"id":"grok-cli","category":"oauth","hasOAuth":true,"authModes":["oauth"]},{"id":"grok-web","category":"webCookie","authType":"cookie"},{"id":"groq","category":"apikey","serviceKinds":["llm","imageToText","stt"]},{"id":"huggingface","category":"apikey","authType":"apikey","serviceKinds":["image","stt"]},{"id":"hyperbolic","category":"apikey","authType":"apikey"},{"id":"iflow","category":"oauth","hidden":true},{"id":"inworld","category":"apikey","authType":"apikey","serviceKinds":["tts"]},{"id":"jina-ai","category":"apikey","authType":"apikey","serviceKinds":["embedding"]},{"id":"jina-reader","category":"apikey","authType":"apikey","serviceKinds":["webFetch"]},{"id":"kenari","category":"apikey"},{"id":"kilo-gateway","category":"freeTier","authModes":["apikey"],"authType":"apikey"},{"id":"kilocode","category":"oauth"},{"id":"kimchi","category":"oauth","hasOAuth":true,"authModes":["oauth"],"serviceKinds":["llm","imageToText"]},{"id":"kimi-cn","category":"apikey"},{"id":"kimi","category":"oauth","hasOAuth":true,"authModes":["oauth","apikey"],"serviceKinds":["llm","webSearch"]},{"id":"kiro","category":"free"},{"id":"linkup","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"llm7","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"local-device","category":"freeTier","authType":"none","noAuth":true,"serviceKinds":["tts"]},{"id":"meta","category":"apikey","serviceKinds":["llm"]},{"id":"mimo-free","category":"free","noAuth":true,"hidden":true},{"id":"minimax-cn","category":"apikey","serviceKinds":["llm","tts"]},{"id":"minimax","category":"apikey","serviceKinds":["llm","image","imageToText","webSearch","tts"]},{"id":"mistral","category":"apikey","serviceKinds":["llm","imageToText","embedding","ocr","moderation"]},{"id":"mmf","category":"apikey","hidden":true},{"id":"modelscope","category":"freeTier","authModes":["apikey"],"authType":"apikey"},{"id":"morph","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"nanobanana","category":"apikey","serviceKinds":["image"]},{"id":"nebius","category":"apikey","authType":"apikey","serviceKinds":["llm","embedding"]},{"id":"nous","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm"]},{"id":"novita","category":"apikey","authType":"apikey"},{"id":"nube","category":"apikey"},{"id":"nvidia","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm","tts","embedding"]},{"id":"ollama-local","category":"apikey","serviceKinds":["llm","embedding"],"baseUrlField":{"label":"Ollama Host URL","placeholder":"http://localhost:11434"}},{"id":"ollama-search","category":"apikey","authModes":["apikey"],"authType":"apikey","serviceKinds":["webSearch"]},{"id":"ollama","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm"]},{"id":"openai","category":"apikey","serviceKinds":["llm","embedding","tts","stt","image","imageToText","webSearch"]},{"id":"opencode-go","category":"apikey"},{"id":"opencode-zen","category":"apikey"},{"id":"opencode","category":"free","noAuth":true},{"id":"openrouter","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm","embedding","tts","imageToText"]},{"id":"perplexity-agent","category":"apikey","authType":"apikey","serviceKinds":["llm","webSearch"]},{"id":"perplexity-web","category":"webCookie","authType":"cookie"},{"id":"perplexity","category":"apikey","authType":"apikey","serviceKinds":["llm","webSearch"]},{"id":"playht","category":"apikey","authType":"apikey","hidden":true,"serviceKinds":["tts"]},{"id":"poolside","category":"freeTier","authModes":["apikey"],"authType":"apikey"},{"id":"qoder","category":"oauth","hasOAuth":true,"authModes":["oauth","apikey"]},{"id":"recraft","category":"apikey","authType":"apikey","serviceKinds":["image"]},{"id":"runwayml","category":"apikey","authType":"apikey","serviceKinds":["image"]},{"id":"sambanova","category":"apikey","authModes":["apikey"],"authType":"apikey","hidden":true},{"id":"sdwebui","category":"apikey","serviceKinds":["image"]},{"id":"searchapi","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"searxng","category":"freeTier","authType":"none","noAuth":true,"serviceKinds":["webSearch"]},{"id":"selfhosted-embedding","category":"apikey","serviceKinds":["embedding"],"baseUrlField":{"label":"Base URL","placeholder":"http://localhost:8080/v1","help":"OpenAI base URL — /embeddings is appended."}},{"id":"selfhosted-stt","category":"apikey","serviceKinds":["stt"],"baseUrlField":{"label":"Base URL","placeholder":"http://localhost:8080/v1/audio/transcriptions","help":"Full transcriptions endpoint."}},{"id":"selfhosted-tts","category":"apikey","serviceKinds":["tts"],"baseUrlField":{"label":"Base URL","placeholder":"http://localhost:8880","help":"Server root — /v1/audio/speech is appended."}},{"id":"sensenova","category":"freeTier","authModes":["apikey"],"authType":"apikey","serviceKinds":["llm"]},{"id":"serper","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"siliconflow","category":"apikey"},{"id":"stability-ai","category":"apikey","authType":"apikey","serviceKinds":["image"]},{"id":"sumopod","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"tavily","category":"apikey","authType":"apikey","serviceKinds":["webSearch","webFetch"]},{"id":"tencent","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"together","category":"apikey","authType":"apikey","serviceKinds":["llm","embedding"]},{"id":"tokenrouter","category":"apikey","serviceKinds":["llm","embedding","image"]},{"id":"topaz","category":"apikey","authType":"apikey","serviceKinds":["image"]},{"id":"tortoise","category":"freeTier","authType":"none","noAuth":true,"hidden":true,"serviceKinds":["tts"]},{"id":"venice","category":"apikey","serviceKinds":["llm","embedding","image"]},{"id":"vercel-ai-gateway","category":"apikey","serviceKinds":["llm","embedding","image","imageToText","webSearch"]},{"id":"vertex-partner","category":"apikey"},{"id":"vertex","category":"freeTier","serviceKinds":["llm","imageToText"]},{"id":"volcengine-ark","category":"apikey"},{"id":"voyage-ai","category":"apikey","authType":"apikey","serviceKinds":["embedding"]},{"id":"x5lab","category":"apikey","authModes":["apikey"],"authType":"apikey"},{"id":"xai","category":"oauth","hasOAuth":true,"authModes":["oauth","apikey"],"serviceKinds":["llm","imageToText","webSearch","image","video"]},{"id":"xiaomi-mimo","category":"apikey","serviceKinds":["llm","tts"]},{"id":"xiaomi-tokenplan","category":"apikey","advanced":true,"regions":[{"id":"sgp","label":"Singapore"},{"id":"cn","label":"China (Mainland)"},{"id":"ams","label":"Amsterdam"}]},{"id":"xquik","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"xunfei","category":"apikey"},{"id":"youcom","category":"apikey","authType":"apikey","serviceKinds":["webSearch"]},{"id":"zed","category":"oauth","hasOAuth":true,"authType":"oauth","hidden":true},{"id":"zenmux-free","category":"free","authType":"cookie"}],"oauthFlowFamilies":{"authorization_code":["antigravity","cline","clinepass","gemini-cli","iflow","trae","windsurf","zed"],"authorization_code_pkce":["claude","codex","devin","gitlab","xai"],"device_code":["codebuddy-cn","codebuddy-intl","github","grok-cli","kilocode","kimi","kiro","qoder"],"import_token":["cursor"],"browser_token":["kimchi"]},"missingOAuthFlagForKnownFlow":["antigravity","cline","gemini-cli","iflow","claude","codex","gitlab","github","kilocode","kiro","cursor"],"explicitlyDisabled":[{"id":"devin-cli","reason":"Local shell/filesystem agent","source":"open-sse/providers/registry/index.js:40"},{"id":"trae","reason":"No tool calling support","source":"open-sse/providers/registry/index.js:128"},{"id":"windsurf","reason":"No tool calling support","source":"open-sse/providers/registry/index.js:136"}],"definitionDefaults":{"hasOAuth":false,"noAuth":false,"hidden":false,"advanced":false,"serviceKinds":[],"authModes":null,"authType":null,"baseUrlField":null,"regions":null}},
-  "counts": {"capabilities":121,"byClassification":{"supported/exposed":53,"partial":14,"supported/unexposed":43,"unavailable":8,"internal-only":3}},
+  "counts": {"capabilities":114,"byClassification":{"supported/exposed":49,"partial":14,"supported/unexposed":41,"unavailable":7,"internal-only":3}},
   "acceptanceBoundary": "All rows are source inventory, not fresh tests. Existing test files are pointers, not evidence that advanced hidden capabilities passed browser acceptance. Provider/remote/host operations need mocked deterministic checks by default; no such calls performed here.",
   "proposedImplementationLane": {"status":"Await parent shared design component contract before edits.","scope":["Repair registry-derived auth selection from category/authModes/known OAuth flow, with no unsupported API-key choices; expose existing custom endpoint nodes in account selection.","Forward Kiro device options and complete response metadata into polling without logging credentials.","Route Cursor existing-account renewal through the exact-ID reauthorization contract, preserving priority/policy/network settings.","Expose an optional named model for the existing local client configuration check; report skipped model check when omitted.","Use shared redesign primitives once parent supplies the component contract; preserve all existing confirmations and API refusal/readback semantics."],"productionOwnership":["src/app/dashboard/connections/page.js","src/app/dashboard/connections/[id]/page.js","src/shared/oauthGrant.js","src/app/dashboard/keys/ClientSetup.js"],"sharedOwnershipNeedsCoordination":["src/shared/constants/providers.js","src/shared/workspace/*","src/app/dashboard/network/page.js","src/app/api/providers/[id]/route.js"],"existingRelevantTests":["tests/unit/oauth-providers-index-dispatch.test.js","tests/unit/connection-validation-feedback.test.js","tests/unit/client-setup-connectivity.test.js","tests/unit/compatible-provider-connections.test.js","tests/unit/provider-import-json-1329.test.js","tests/unit/oauth-cursor-auto-import.test.js","tests/unit/kiro-refresh-region-ssrf-3497.test.js","tests/e2e/connections-keys-persistence.spec.mjs","tests/e2e/connections-keys-contract.spec.mjs"],"newMeaningfulRegressionCases":["Mounted registry family mode selection through actual form; no source-string-only test.","Mock device code response with Kiro _clientId/_clientSecret/_region metadata and assert exact poll payload.","Cursor existing-connection renewal retains ID and preserves policy without creating an account.","Custom node selection and credential attachment through actual saved-node API response.","Named model local connectivity allow/deny without provider call."],"excluded":["No production credentials, provider probes, paid inference, host process actions or deployment.","No independent visual contract, CSS redesign, global key-policy/SSO/network API expansion.","Do not implement advertised AWS Polly from a registry declaration as incidental UI parity."],"deferredParityBacklog":["Provider-specific advanced fields and specialized import mechanisms remain individual inventory rows for subsequent ownership assignment.","Local coding-client installer/config-writer helpers need an actual supported entry-point contract before UI wiring."],"testOwnership":["tests/unit/oauth-grant-ui.test.js (new bounded mounted/mocked cases)","tests/unit/client-setup-connectivity.test.js (existing offline handler tests)","tests/e2e/connections-keys-persistence.spec.mjs (coordinate shared fixture/runner ownership before extension)"]},
   "rowDefaults": {"verificationLevel":"Source traced only; existingTests are pointers and were not executed here.","nextMeaningfulCheck":"fixture.requiredCases unless an explicit verification.nextMeaningfulCheck overrides it.","fixtureKind":"Credentialless local synthetic fixture with mocked provider/host/remote boundary.","redesignedDestination":"Functional grouping only; visual/interaction placement remains pending shared redesign component contract."},
@@ -87,11 +87,6 @@
     {"id":"network.virtual-strategy","domain":"Network","capability":"Select or rotate pools for a credentialless provider","classification":"supported/exposed","currentBehavior":"Network configures fixed, round-robin or random active-pool strategy for a noAuth virtual account; credentialed accounts use their own path.","sourceOwner":"src/app/dashboard/network/page.js:226","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/network/page.js:226"],"redesignedDestination":{"functionalGroup":"Network","capability":"Select or rotate pools for a credentialless provider"},"readWriteContract":[{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["providerStrategyPatch.providerId","values.proxyPoolId","values.rotateStrategy (none/round-robin/random)"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/sse/services/auth.js:432","src/lib/network/connectionProxy.js:119"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Selection consumes only active pools, noAuth restriction, explicit direct and clearing preserve unrelated strategy."},"verification":{"existingTests":["tests/unit/no-auth-providers-3269.test.js"],"executedHere":false}},
     {"id":"network.cloudflare-relay","domain":"Network","capability":"Deploy a Cloudflare outbound relay","classification":"supported/unexposed","currentBehavior":"Dedicated deployment API provisions remote relay code and creates a typed proxy pool on success; no current Network deployment form.","sourceOwner":"src/app/api/proxy-pools/cloudflare-deploy/route.js:50","scopeOrPrerequisite":"Explicit operator-supplied deployment credential; remote project creation is a consequential external action.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Network","capability":"Deploy a Cloudflare outbound relay"},"readWriteContract":[{"method":"POST","path":"/api/proxy-pools/cloudflare-deploy","permission":"dashboard","source":"src/app/api/proxy-pools/cloudflare-deploy/route.js:50"}],"supportedParameters":["accountId","apiToken","projectName"],"savedState":{"record":"proxy_pools and strictness snapshots on bound accounts/provider strategies","writer":"src/lib/db/repos/proxyPoolsRepo.js:60","reader":["src/lib/network/connectionProxy.js:160","open-sse/utils/proxyFetch.js:430"]},"failureBehavior":"Deployment failure/poll timeout must remain distinct from pool availability; do not claim validation from stored field.","fixture":{"requiredCases":"Mock remote deploy/poll and exact pool creation; actual deployment excluded from this task."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"network.vercel-relay","domain":"Network","capability":"Deploy a Vercel outbound relay","classification":"supported/unexposed","currentBehavior":"Dedicated deployment API provisions remote relay code and creates a typed proxy pool on success; no current Network deployment form.","sourceOwner":"src/app/api/proxy-pools/vercel-deploy/route.js:50","scopeOrPrerequisite":"Explicit operator-supplied deployment credential; remote project creation is a consequential external action.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Network","capability":"Deploy a Vercel outbound relay"},"readWriteContract":[{"method":"POST","path":"/api/proxy-pools/vercel-deploy","permission":"dashboard","source":"src/app/api/proxy-pools/vercel-deploy/route.js:50"}],"supportedParameters":["vercelToken","projectName"],"savedState":{"record":"proxy_pools and strictness snapshots on bound accounts/provider strategies","writer":"src/lib/db/repos/proxyPoolsRepo.js:60","reader":["src/lib/network/connectionProxy.js:160","open-sse/utils/proxyFetch.js:430"]},"failureBehavior":"Deployment failure/poll timeout must remain distinct from pool availability; do not claim validation from stored field.","fixture":{"requiredCases":"Mock remote deploy/poll and exact pool creation; actual deployment excluded from this task."},"verification":{"existingTests":[],"executedHere":false}},
-    {"id":"remote.observe","domain":"Remote","capability":"Inspect relay, mesh, binary download and reachability state","classification":"supported/exposed","currentBehavior":"Page combines independent tunnel status, Tailscale check and access settings, keeping partial read failures scoped.","sourceOwner":"src/app/dashboard/remote/page.js:54","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/remote/page.js:54"],"redesignedDestination":{"functionalGroup":"Remote","capability":"Inspect relay, mesh, binary download and reachability state"},"readWriteContract":[{"method":"GET","path":"/api/tunnel/status","permission":"dashboard","source":"src/app/api/tunnel/status/route.js:1"},{"method":"GET","path":"/api/tunnel/tailscale-check","permission":"local-dashboard","source":"src/app/api/tunnel/tailscale-check/route.js:1"}],"supportedParameters":[],"savedState":{"record":"observed runtime state only; not a persistent configuration proof","writer":null,"reader":["src/lib/tunnel/index.js:1"]},"failureBehavior":"Configured enable flag, observed process, public URL and last reachability probe are separate facts.","fixture":{"requiredCases":"Mock relay success with mesh denied, stalled download and unknown access state."},"verification":{"existingTests":["tests/e2e/remote.spec.mjs"],"executedHere":false}},
-    {"id":"remote.cloudflare","domain":"Remote","capability":"Start/stop a Cloudflare incoming tunnel","classification":"supported/exposed","currentBehavior":"Explicit reviewed action changes host transport; separate settings toggle controls future auto-start preference.","sourceOwner":"src/app/dashboard/remote/page.js:276","scopeOrPrerequisite":"Local authenticated gateway/CLI, required tunnel software and mesh login/Funnel prerequisite.","currentEntryPoint":["src/app/dashboard/remote/page.js:276"],"redesignedDestination":{"functionalGroup":"Remote","capability":"Start/stop a Cloudflare incoming tunnel"},"readWriteContract":[{"method":"POST","path":"/api/tunnel/enable","permission":"local-dashboard","source":"src/app/api/tunnel/enable/route.js:1"},{"method":"POST","path":"/api/tunnel/disable","permission":"local-dashboard","source":"src/app/api/tunnel/disable/route.js:1"},{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["tunnelEnabled"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96"]},"failureBehavior":"success=false, authUrl, enableUrl and missing software are not a running transport.","fixture":{"requiredCases":"Mock start/stop, missing binary/login/permission, independent saved preference and observed state."},"verification":{"existingTests":["tests/e2e/remote.spec.mjs"],"executedHere":false}},
-    {"id":"remote.tailscale","domain":"Remote","capability":"Enable/disable Tailscale Funnel","classification":"supported/exposed","currentBehavior":"Explicit reviewed action changes host transport; separate settings toggle controls future auto-start preference.","sourceOwner":"src/app/dashboard/remote/page.js:480","scopeOrPrerequisite":"Local authenticated gateway/CLI, required tunnel software and mesh login/Funnel prerequisite.","currentEntryPoint":["src/app/dashboard/remote/page.js:480"],"redesignedDestination":{"functionalGroup":"Remote","capability":"Enable/disable Tailscale Funnel"},"readWriteContract":[{"method":"POST","path":"/api/tunnel/tailscale-enable","permission":"local-dashboard","source":"src/app/api/tunnel/tailscale-enable/route.js:1"},{"method":"POST","path":"/api/tunnel/tailscale-disable","permission":"local-dashboard","source":"src/app/api/tunnel/tailscale-disable/route.js:1"},{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["tailscaleEnabled"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96"]},"failureBehavior":"success=false, authUrl, enableUrl and missing software are not a running transport.","fixture":{"requiredCases":"Mock start/stop, missing binary/login/permission, independent saved preference and observed state."},"verification":{"existingTests":["tests/e2e/remote.spec.mjs"],"executedHere":false}},
-    {"id":"remote.dashboard-policy","domain":"Remote","capability":"Permit or refuse dashboard access through a tunnel","classification":"supported/exposed","currentBehavior":"Remote settings toggle changes tunnelDashboardAccess; guard and login paths apply the policy independently of inference endpoint usage.","sourceOwner":"src/app/dashboard/remote/page.js:585","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/remote/page.js:585"],"redesignedDestination":{"functionalGroup":"Remote","capability":"Permit or refuse dashboard access through a tunnel"},"readWriteContract":[{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["tunnelDashboardAccess"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/dashboardGuard.js:300","src/app/api/auth/login/route.js:35"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Local dashboard stays available while forwarded/tunnel access refused; readback verifies saved flag."},"verification":{"existingTests":[],"executedHere":false}},
-    {"id":"remote.saved-url","domain":"Remote","capability":"Persist a tunnel URL or mesh auth material through UI","classification":"unavailable","currentBehavior":"Current transport URLs are discovered runtime output, and enable APIs accept no arbitrary URL or auth credential body. Do not substitute a text field for host transport setup.","sourceOwner":"src/app/api/tunnel/enable/route.js:8","scopeOrPrerequisite":"No existing UI/API contract for arbitrary saved URL-as-transport.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Remote","capability":"Persist a tunnel URL or mesh auth material through UI"},"readWriteContract":[],"supportedParameters":[],"savedState":{"record":"none","writer":null,"reader":["src/app/api/tunnel/enable/route.js:8","src/app/api/tunnel/tailscale-enable/route.js:6"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Keep disabled/unknown states truthful until actual host transport reports URL."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"keys.observe","domain":"Keys and client setup","capability":"Inspect key lifecycle, model policy, usage, budget and current clients","classification":"supported/exposed","currentBehavior":"Ordinary key reads return redacted metadata, copied-profile compliance, overlap lifecycle and rolling device counts.","sourceOwner":"src/app/dashboard/keys/page.js:512","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/keys/page.js:512"],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Inspect key lifecycle, model policy, usage, budget and current clients"},"readWriteContract":[{"method":"GET","path":"/api/keys","permission":"operator","source":"src/app/api/keys/route.js:18"},{"method":"GET","path":"/api/keys/devices","permission":"operator","source":"src/app/api/keys/devices/route.js:21"}],"supportedParameters":[],"savedState":{"record":"api_keys plus model allowlist side table; secret never returned by ordinary reads","writer":"src/lib/db/repos/apiKeysRepo.js:249","reader":["src/lib/db/repos/apiKeysRepo.js:415","src/sse/services/auth.js:1397","src/sse/services/apiKeyDevices.js:1","src/lib/db/repos/keyLifecycleRepo.js:1"]},"failureBehavior":"Historical usage unavailable must not erase current policy or fabricate zero usage.","fixture":{"requiredCases":"Populated/empty, usage failure, drifted profile and rotation with redacted credential."},"verification":{"existingTests":["tests/unit/keys-lifecycle-render.test.js","tests/unit/key-budget-presentation.test.js"],"executedHere":false}},
     {"id":"keys.create","domain":"Keys and client setup","capability":"Issue an API key with expiry and policy","classification":"supported/exposed","currentBehavior":"Create is reviewed, binds machineId from the server and deliberately returns the new secret once.","sourceOwner":"src/app/dashboard/keys/page.js:485","scopeOrPrerequisite":"Authenticated operator and direct-local mutation; client inference key does not authorize issuance.","currentEntryPoint":["src/app/dashboard/keys/page.js:485"],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Issue an API key with expiry and policy"},"readWriteContract":[{"method":"POST","path":"/api/keys","permission":"operator","source":"src/app/api/keys/route.js:77"}],"supportedParameters":["name","expiresAt","maxPromptTokens","maxCompletionTokens","maxCostUsd","allowedModels","budgetPolicy"],"savedState":{"record":"api_keys plus model allowlist side table; secret never returned by ordinary reads","writer":"src/lib/db/repos/apiKeysRepo.js:249","reader":["src/lib/db/repos/apiKeysRepo.js:415","src/sse/services/auth.js:1397"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Create synthetic key, clear secret on close/visibility timeout, verify metadata readback and rejected budget policy."},"verification":{"existingTests":["tests/e2e/keys.spec.mjs"],"executedHere":false}},
     {"id":"keys.reveal","domain":"Keys and client setup","capability":"Deliberately reveal and copy an existing key","classification":"supported/exposed","currentBehavior":"Reveal confirmation obtains exact key via no-store audited endpoint; UI clears transient secret on closure, visibility change and timeout.","sourceOwner":"src/app/dashboard/keys/page.js:602","scopeOrPrerequisite":"Direct-local authenticated operator; sensitive value only in explicit response.","currentEntryPoint":["src/app/dashboard/keys/page.js:602"],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Deliberately reveal and copy an existing key"},"readWriteContract":[{"method":"POST","path":"/api/keys/[id]/reveal","permission":"operator","source":"src/app/api/keys/[id]/reveal/route.js:1"}],"supportedParameters":[],"savedState":{"record":"none","writer":null,"reader":["src/lib/db/repos/apiKeysRepo.js:243"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Mounted open-dialog selector, expiry timer, hidden document clear, copy and no secret in ordinary list/audit."},"verification":{"existingTests":["tests/unit/key-reveal-ui.test.js","tests/unit/key-reveal-audit.test.js"],"executedHere":false}},
@@ -110,7 +105,7 @@
     {"id":"client.authentication-check","domain":"Keys and client setup","capability":"Test gateway authentication through its model catalog","classification":"supported/exposed","currentBehavior":"Authentication tier performs only a loopback gateway catalog request using this key; it does not dispatch model inference.","sourceOwner":"src/app/dashboard/keys/ClientSetup.js:148","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/keys/ClientSetup.js:148"],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Test gateway authentication through its model catalog"},"readWriteContract":[{"method":"POST","path":"/api/keys/[id]/connectivity","permission":"operator","source":"src/app/api/keys/[id]/connectivity/route.js:65"}],"supportedParameters":["tier=authentication"],"savedState":{"record":"none","writer":null,"reader":[]},"failureBehavior":"Timeout/refusal stays distinct from upstream entitlement or generation success.","fixture":{"requiredCases":"Mock same-gateway catalog success/refusal/timeout and assert no provider call."},"verification":{"existingTests":["tests/unit/client-setup-connectivity.test.js"],"executedHere":false}},
     {"id":"client.application-presets","domain":"Keys and client setup","capability":"Apply local coding-client or desktop configuration presets","classification":"internal-only","currentBehavior":"Pure Pi/Claude configuration helpers remain but no current src UI/API caller writes them. Tools currently links generic endpoint setup only. Residual helpers are not a supported installer.","sourceOwner":"src/app/dashboard/tools/page.js:187","scopeOrPrerequisite":"Excluded as unexposed internal helper code without an application entry point; new wiring needs explicit local configuration contract.","currentEntryPoint":["src/app/dashboard/tools/page.js:187"],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Apply local coding-client or desktop configuration presets"},"readWriteContract":[],"supportedParameters":[],"savedState":{"record":"none","writer":null,"reader":["src/lib/cliTools/piConfig.js:37","src/shared/utils/claudeEnv.js:38","src/lib/cliTools/readExistingConfig.js:1"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Read-only caller search plus future merge-preservation tests for OAuth/unrelated config before any write UI."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"client.preset-only-constants","domain":"Tools and MCP","capability":"Apply managed remote MCP server presets","classification":"internal-only","currentBehavior":"DEFAULT_PLUGINS and buildManagedMcpServers declare Exa/Tavily managed configuration; no current application caller applies these constants.","sourceOwner":"src/shared/constants/coworkPlugins.js:1","scopeOrPrerequisite":"Excluded internal configuration builder without runtime/UI apply contract.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Tools and MCP","capability":"Apply managed remote MCP server presets"},"readWriteContract":[],"supportedParameters":[],"savedState":{"record":"none","writer":null,"reader":["src/shared/constants/coworkPlugins.js:1","src/shared/constants/coworkPlugins.js:59"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Do not report installation or connection from constant existence."},"verification":{"existingTests":[],"executedHere":false}},
-    {"id":"signin.password","domain":"Sign-in","capability":"Sign in using the dashboard password","classification":"supported/exposed","currentBehavior":"Login applies shared password, throttle and remote-dashboard policy, then issues a signed 24-hour absolute session.","sourceOwner":"src/app/login/page.js:1","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/login/page.js:1"],"redesignedDestination":{"functionalGroup":"Sign-in","capability":"Sign in using the dashboard password"},"readWriteContract":[{"method":"POST","path":"/api/auth/login","permission":"public-login","source":"src/app/api/auth/login/route.js:21"}],"supportedParameters":["password"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/lib/auth/dashboardSession.js:27","src/lib/auth/loginLimiter.js:1"]},"failureBehavior":"Wrong password, lockout, default-password remote protection or SSO-only policy returns explicit refusal.","fixture":{"requiredCases":"Mock password verification, throttle deadline, default remote refusal and signed-cookie success; no real password."},"verification":{"existingTests":["tests/unit/oidc-auth-mode.test.js"],"executedHere":false}},
+    {"id":"signin.password","domain":"Sign-in","capability":"Sign in using the dashboard password","classification":"supported/exposed","currentBehavior":"Login applies shared password, throttle and transport policy, then issues a signed 24-hour absolute session.","sourceOwner":"src/app/login/page.js:1","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/login/page.js:1"],"redesignedDestination":{"functionalGroup":"Sign-in","capability":"Sign in using the dashboard password"},"readWriteContract":[{"method":"POST","path":"/api/auth/login","permission":"public-login","source":"src/app/api/auth/login/route.js:21"}],"supportedParameters":["password"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/lib/auth/dashboardSession.js:27","src/lib/auth/loginLimiter.js:1"]},"failureBehavior":"Wrong password, lockout, default-password remote protection or SSO-only policy returns explicit refusal.","fixture":{"requiredCases":"Mock password verification, throttle deadline, default remote refusal and signed-cookie success; no real password."},"verification":{"existingTests":["tests/unit/oidc-auth-mode.test.js"],"executedHere":false}},
     {"id":"signin.password-change","domain":"Sign-in","capability":"Change the dashboard password","classification":"supported/exposed","currentBehavior":"Access submits current/new password; API verifies current stored hash and hashes replacement before persistence.","sourceOwner":"src/app/dashboard/access/page.js:102","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/access/page.js:102"],"redesignedDestination":{"functionalGroup":"Sign-in","capability":"Change the dashboard password"},"readWriteContract":[{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["currentPassword","newPassword"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/lib/auth/dashboardSession.js:70","src/app/api/settings/route.js:260"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Incorrect current password leaves hash unchanged; success clears secret form; readback never reveals hash."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"signin.password-recovery","domain":"Sign-in","capability":"Reset the local dashboard password","classification":"supported/exposed","currentBehavior":"Access exposes a local-only reset clearing stored hash; route returns no default literal.","sourceOwner":"src/app/dashboard/access/page.js:102","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/access/page.js:102"],"redesignedDestination":{"functionalGroup":"Sign-in","capability":"Reset the local dashboard password"},"readWriteContract":[{"method":"POST","path":"/api/auth/reset-password","permission":"local-dashboard","source":"src/app/api/auth/reset-password/route.js:6"}],"supportedParameters":[],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/app/api/auth/login/route.js:21"]},"failureBehavior":"Remote caller denied; reset is consequential and must not be treated as a connection test.","fixture":{"requiredCases":"Mock local and remote guards; hash cleared only on authorized reset; no secret in response."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"signin.required","domain":"Sign-in","capability":"Require dashboard sign-in","classification":"supported/exposed","currentBehavior":"Access changes requireLogin; always-protected key/admin operations still require real operator credentials when login requirement is off.","sourceOwner":"src/app/dashboard/access/page.js:102","scopeOrPrerequisite":"Configured isolated gateway; provider-dependent operations require an eligible account.","currentEntryPoint":["src/app/dashboard/access/page.js:102"],"redesignedDestination":{"functionalGroup":"Sign-in","capability":"Require dashboard sign-in"},"readWriteContract":[{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["requireLogin"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/app/api/settings/route.js:96","src/dashboardGuard.js:223","src/lib/admin/guard.js:53"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Dashboard generic route changes with flag while key/profile/operator endpoints remain protected."},"verification":{"existingTests":[],"executedHere":false}},
@@ -131,312 +126,300 @@
     {"id":"accounts.generated-identity","domain":"Accounts","capability":"Edit generated OAuth transport identity fields directly","classification":"internal-only","currentBehavior":"Provider device/user IDs, refresh timestamps, Copilot secondary token and OAuth client registration secrets are written by provider flows and consumed by executors; no generic arbitrary-field editor is justified.","sourceOwner":"src/lib/oauth/providers/index.js:127","scopeOrPrerequisite":"Exclude runtime-owned/generated credential state; named operator options have separate rows.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Accounts","capability":"Edit generated OAuth transport identity fields directly"},"readWriteContract":[],"supportedParameters":[],"savedState":{"record":"none","writer":null,"reader":["src/lib/oauth/providers/index.js:127","open-sse/services/tokenRefresh.js:255"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Refresh/import preserves required identity and redacts secrets; UI only shows meaningful nonsecret facts."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"accounts.no-auth-provider-disable","domain":"Accounts","capability":"Disable or restore a credentialless provider","classification":"supported/unexposed","currentBehavior":"Settings accepts disabledProviders[id]; runtime reachability consumes the provider kill switch because virtual accounts have no connection row. No dashboard control references disabledProviders.","sourceOwner":"src/shared/constants/providers.js:152","scopeOrPrerequisite":"Registered noAuth provider; distinct from deleting/disabling a stored account.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Accounts","capability":"Disable or restore a credentialless provider"},"readWriteContract":[{"method":"PATCH","path":"/api/settings","source":"src/app/api/settings/route.js:121","permission":"settings"}],"supportedParameters":["disabledProviders[providerId]"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["src/shared/constants/providers.js:152","src/sse/services/auth.js:330"]},"failureBehavior":"Propagate route refusal; preserve existing saved state on rejection; display unknown/stale when no valid readback exists.","fixture":{"requiredCases":"Mock the documented reader and source of configuration; verify accepted values, invalid/absent values and effective behavior without provider or host actions."},"verification":{"existingTests":[],"executedHere":false}},
     {"id":"network.connect-timeout","domain":"Network","capability":"Configure global or provider connection timeout","classification":"supported/unexposed","currentBehavior":"Network displays global connectTimeoutMs but does not edit it; settings validation and runtime timeout precedence support global and provider-strategy values.","sourceOwner":"open-sse/config/connectTimeout.js:1","scopeOrPrerequisite":"Timeout is bounded by isValidConnectTimeoutMs; provider override falls back to global/adapter/environment policy.","currentEntryPoint":["src/app/dashboard/network/page.js:377"],"redesignedDestination":{"functionalGroup":"Network","capability":"Configure global or provider connection timeout"},"readWriteContract":[{"method":"PATCH","path":"/api/settings","permission":"settings","source":"src/app/api/settings/route.js:121"}],"supportedParameters":["connectTimeoutMs","providerStrategies[provider].connectTimeoutMs"],"savedState":{"record":"settings key/value data","writer":"src/lib/db/repos/settingsRepo.js:222","reader":["open-sse/config/connectTimeout.js:1","src/sse/handlers/chat.js:1024"]},"failureBehavior":"Invalid timeouts are not accepted as effective overrides; saved field display alone does not prove the selected timeout.","fixture":{"requiredCases":"Mock the documented reader and source of configuration; verify accepted values, invalid/absent values and effective behavior without provider or host actions."},"verification":{"existingTests":[],"executedHere":false}},
-    {"id":"remote.worker-configuration","domain":"Remote","capability":"Select a Cloudflare tunnel worker service at startup","classification":"supported/unexposed","currentBehavior":"Host environment config supports worker URL and explicit insecure-worker setting; current dashboard exposes observed transport rather than these startup controls.","sourceOwner":"src/lib/tunnel/cloudflare/config.js:9","scopeOrPrerequisite":"Operator-managed process environment; values take effect through tunnel runtime initialization.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Remote","capability":"Select a Cloudflare tunnel worker service at startup"},"readWriteContract":[],"supportedParameters":["TUNNEL_WORKER_URL (environment)","TUNNEL_WORKER_INSECURE (environment)"],"savedState":{"record":"Host process environment; no dashboard settings writer","writer":null,"reader":["src/lib/tunnel/cloudflare/config.js:9","src/lib/tunnel/cloudflare/config.js:20"]},"failureBehavior":"Worker validation/reachability failures must remain transport errors; URL configuration alone is not a running tunnel.","fixture":{"requiredCases":"Mock the documented reader and source of configuration; verify accepted values, invalid/absent values and effective behavior without provider or host actions."},"verification":{"existingTests":[],"executedHere":false}},
-    {"id":"remote.tailscale-authkey","domain":"Remote","capability":"Authorize Tailscale startup with an environment auth key","classification":"supported/unexposed","currentBehavior":"Tailscale startup consumes TAILSCALE_AUTHKEY and builds auth-key login arguments when configured; current enable route takes no secret body.","sourceOwner":"src/lib/tunnel/tailscale/tailscale.js:121","scopeOrPrerequisite":"Explicit operator-managed host environment; auth key is not displayed or returned by UI.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Remote","capability":"Authorize Tailscale startup with an environment auth key"},"readWriteContract":[],"supportedParameters":["TAILSCALE_AUTHKEY (environment)"],"savedState":{"record":"Host process environment; mesh login state maintained by Tailscale","writer":null,"reader":["src/lib/tunnel/tailscale/tailscale.js:121","src/lib/tunnel/tailscale/tailscale.js:128"]},"failureBehavior":"Rejected auth key remains failed login; browser interactive login instructions are a separate prerequisite.","fixture":{"requiredCases":"Mock the documented reader and source of configuration; verify accepted values, invalid/absent values and effective behavior without provider or host actions."},"verification":{"existingTests":["tests/unit/tailscale-authkey.test.js"],"executedHere":false}},
-    {"id":"client.inference-check","domain":"Keys and client setup","capability":"Run billed inference from the client setup checker","classification":"unavailable","currentBehavior":"Client setup deliberately supports configuration/authentication only; inference tier is declared for explanation and rejected by RUNNABLE_TIERS.","sourceOwner":"src/lib/clientSetup/connectivity.js:43","scopeOrPrerequisite":"Excluded from this checker; explicit provider/translation testing elsewhere must not be silently invoked.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Run billed inference from the client setup checker"},"readWriteContract":[{"method":"POST","path":"/api/keys/[id]/connectivity","source":"src/app/api/keys/[id]/connectivity/route.js:65","permission":"operator"}],"supportedParameters":["tier=inference (refused)"],"savedState":{"record":"none","writer":null,"reader":["src/lib/clientSetup/connectivity.js:43"]},"failureBehavior":"Unsupported tier refuses explicitly and never silently downgrades to a weaker successful check.","fixture":{"requiredCases":"Mock the documented reader and source of configuration; verify accepted values, invalid/absent values and effective behavior without provider or host actions."},"verification":{"existingTests":[],"executedHere":false}}
+    {"id":"client.inference-check","domain":"Keys and client setup","capability":"Run billed inference from the client setup checker","classification":"unavailable","currentBehavior":"Client setup deliberately supports configuration/authentication only; inference tier is declared for explanation and rejected by RUNNABLE_TIERS.","sourceOwner":"src/lib/clientSetup/connectivity.js:43","scopeOrPrerequisite":"Excluded from this checker; explicit provider testing elsewhere must not be silently invoked.","currentEntryPoint":[],"redesignedDestination":{"functionalGroup":"Keys and client setup","capability":"Run billed inference from the client setup checker"},"readWriteContract":[{"method":"POST","path":"/api/keys/[id]/connectivity","source":"src/app/api/keys/[id]/connectivity/route.js:65","permission":"operator"}],"supportedParameters":["tier=inference (refused)"],"savedState":{"record":"none","writer":null,"reader":["src/lib/clientSetup/connectivity.js:43"]},"failureBehavior":"Unsupported tier refuses explicitly and never silently downgrades to a weaker successful check.","fixture":{"requiredCases":"Mock the documented reader and source of configuration; verify accepted values, invalid/absent values and effective behavior without provider or host actions."},"verification":{"existingTests":[],"executedHere":false}}
   ]
 ,
   "currentReconciliation": {
-  "date": "2026-09-07",
-  "baselineBoundary": "The original row classifications are the read-only starting inventory. This checkpoint records the current source reconciliation without rewriting the historical findings.",
-  "counts": {
-    "supported/exposed": 109,
-    "partial": 1,
-    "unavailable": 8,
-    "internal-only": 3
-  },
-  "classificationBoundary": "Supported/exposed means a current operator entry exists for the implemented capability; it is not an OAuth, upstream, production or browser acceptance claim.",
-  "changes": {
-    "accounts.create-api-key": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+    "date": "2026-09-07",
+    "baselineBoundary": "The original row classifications are the read-only starting inventory. This checkpoint records the current source reconciliation without rewriting the historical findings.",
+    "counts": {
+      "supported/exposed": 103,
+      "partial": 1,
+      "unavailable": 7,
+      "internal-only": 3
     },
-    "accounts.oauth-authorization_code": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+    "classificationBoundary": "Supported/exposed means a current operator entry exists for the implemented capability; it is not an OAuth, upstream, production or browser acceptance claim.",
+    "changes": {
+      "accounts.create-api-key": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.oauth-authorization_code": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.oauth-authorization_code_pkce": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.oauth-device_code": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.oauth-import_token": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.oauth-fixed-callback": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.no-auth": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.dynamic-node-credentials": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.bulk-import": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.codex-token": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.codex-bulk": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.grok-bulk": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.kiro-refresh": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.kiro-api-key": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.kiro-cli-proxy": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.gitlab-pat": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.iflow-cookie": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.cursor-import": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.local-token-discovery": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderImports.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.kiro-social": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/KiroSocial.js:1",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.kiro-idc": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.gitlab-oauth-metadata": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/page.js:194",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.codex-export": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOperations.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.renew": {
+        "classification": "supported/exposed",
+        "source": "src/shared/oauthGrant.js:154",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.automatic-refresh": {
+        "classification": "partial",
+        "source": "src/app/dashboard/connections/AccountOperations.js:8",
+        "evidence": "Refresh lead policy and latest stored expiry/refresh evidence are exposed. The current API returns latest evidence, not a complete retained refresh-event history; that part of the original combined capability remains unavailable."
+      },
+      "accounts.rename": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.default-model": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.global-priority": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.concurrency": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.model-discovery": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOperations.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.hot-reload": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOperations.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.sync-username": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOperations.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-azure": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-vertex": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-cloudflare": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-xiaomi-region": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-search-config": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-custom-headers": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-cursor-privacy": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-kilocode-org": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-commandcode-zdr": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-codex-workspace": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.advanced-management-key": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/AccountOptions.js:9",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.declarative-adapter": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/network/NetworkOptions.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.global-proxy-test": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/network/NetworkOptions.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.pool-bulk-delete": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/network/NetworkOptions.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.account-binding": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/[id]/page.js:298",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.cloudflare-relay": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/network/NetworkOptions.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.vercel-relay": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/network/NetworkOptions.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "client.configuration-check": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/keys/ClientSetup.js:189",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "signin.saml-attribute-map": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/access/page.js:1",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "tools.bridge-connect": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/tools/page.js:48",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "tools.context-mcp": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/tools/page.js:175",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "accounts.no-auth-provider-disable": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/connections/ProviderControls.js:38",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      },
+      "network.connect-timeout": {
+        "classification": "supported/exposed",
+        "source": "src/app/dashboard/network/NetworkOptions.js:8",
+        "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+      }
     },
-    "accounts.oauth-authorization_code_pkce": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.oauth-device_code": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.oauth-import_token": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.oauth-fixed-callback": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.no-auth": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.dynamic-node-credentials": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.bulk-import": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.codex-token": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.codex-bulk": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.grok-bulk": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.kiro-refresh": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.kiro-api-key": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.kiro-cli-proxy": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.gitlab-pat": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.iflow-cookie": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.cursor-import": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.local-token-discovery": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderImports.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.kiro-social": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/KiroSocial.js:1",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.kiro-idc": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.gitlab-oauth-metadata": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/page.js:194",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.codex-export": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOperations.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.renew": {
-      "classification": "supported/exposed",
-      "source": "src/shared/oauthGrant.js:154",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.automatic-refresh": {
-      "classification": "partial",
-      "source": "src/app/dashboard/connections/AccountOperations.js:8",
-      "evidence": "Refresh lead policy and latest stored expiry/refresh evidence are exposed. The current API returns latest evidence, not a complete retained refresh-event history; that part of the original combined capability remains unavailable."
-    },
-    "accounts.rename": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.default-model": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.global-priority": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.concurrency": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.model-discovery": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOperations.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.hot-reload": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOperations.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.sync-username": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOperations.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-azure": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-vertex": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-cloudflare": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-xiaomi-region": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-search-config": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-custom-headers": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-cursor-privacy": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-kilocode-org": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-commandcode-zdr": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-codex-workspace": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.advanced-management-key": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/AccountOptions.js:9",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.declarative-adapter": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/network/NetworkOptions.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.global-proxy-test": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/network/NetworkOptions.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.pool-bulk-delete": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/network/NetworkOptions.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.account-binding": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/[id]/page.js:298",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.cloudflare-relay": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/network/NetworkOptions.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.vercel-relay": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/network/NetworkOptions.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "client.configuration-check": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/keys/ClientSetup.js:189",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "signin.saml-attribute-map": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/access/page.js:1",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "tools.bridge-connect": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/tools/page.js:48",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "tools.context-mcp": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/tools/page.js:175",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "accounts.no-auth-provider-disable": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/connections/ProviderControls.js:38",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "network.connect-timeout": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/network/NetworkOptions.js:8",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "remote.worker-configuration": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/remote/page.js:648",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
-    },
-    "remote.tailscale-authkey": {
-      "classification": "supported/exposed",
-      "source": "src/app/dashboard/remote/page.js:648",
-      "evidence": "Current UI entry and existing handler contract reconciled; no claim of external execution."
+    "verification": {
+      "focusedResult": "10 files, 67 tests passed; NotificationRules post-freeze regression 5 tests passed separately.",
+      "sourceStatus": "Supporting UI source frozen after the NotificationRules editor/drawer correction.",
+      "browserStatus": "Current disposable runtime passed all three account/key/node persistence journeys and four presentation contracts. Remaining operations and rendered acceptance are recorded in completion receipts."
     }
-  },
-  "verification": {
-    "focusedResult": "10 files, 67 tests passed; NotificationRules post-freeze regression 5 tests passed separately.",
-    "sourceStatus": "Supporting UI source frozen after the NotificationRules editor/drawer correction.",
-    "browserStatus": "Current disposable runtime passed all three account/key/node persistence journeys and four presentation contracts. Remaining operations and rendered acceptance are recorded in completion receipts."
   }
-}
 }

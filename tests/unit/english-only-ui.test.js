@@ -18,7 +18,6 @@ vi.mock('@mantine/core/styles.layer.css', () => ({}));
 vi.mock('@mantine/dates/styles.layer.css', () => ({}));
 vi.mock('@mantine/notifications/styles.layer.css', () => ({}));
 vi.mock('@/shared/services/bootstrap', () => ({}));
-vi.mock('@/lib/consoleLogBuffer', () => ({ initConsoleLogCapture: vi.fn() }));
 vi.mock('@/shared/workspace/UiProvider', () => ({ UiProvider: ({ children }) => children }));
 vi.mock('@mantine/core', () => ({ ColorSchemeScript: () => null }));
 vi.mock('@/shared/hooks/useSearch', () => ({ useSearch: () => '' }));

@@ -22,11 +22,6 @@ const DEFAULT_SETTINGS = {
   analyticsEnabled: false,
   statsRetentionMode: "preserve",
   statsRetentionDays: 45,
-  tunnelEnabled: false,
-  tunnelUrl: "",
-  tunnelProvider: "cloudflare",
-  tailscaleEnabled: false,
-  tailscaleUrl: "",
   stickyRoundRobinLimit: 3,
   providerStrategies: {},
   // Operator kill switch for the no-auth free providers. They have no
@@ -51,7 +46,6 @@ const DEFAULT_SETTINGS = {
   },
   requireLogin: true,
   requireApiKey: true,
-  tunnelDashboardAccess: true,
   authMode: "password",
   ssoType: "oidc",
   oidcIssuerUrl: "",
@@ -215,6 +209,8 @@ function deleteClearedProxyPoolSnapshots(providerStrategies) {
 // Merge raw settings with defaults; backward-compat for missing keys
 export function mergeWithDefaults(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
+  // Ignore retired settings in the public view while preserving the stored row.
+  for (const key of ["tunnelEnabled", "tunnelUrl", "tunnelProvider", "tailscaleEnabled", "tailscaleUrl", "tunnelDashboardAccess"]) delete merged[key];
   for (const [key, defVal] of Object.entries(DEFAULT_SETTINGS)) {
     if (merged[key] === undefined) {
       if (

@@ -13,7 +13,7 @@ beforeEach(() => {
   localStorage.clear();
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   toggle = vi.fn(); navigate = vi.fn();
-  props = { settings: Object.fromEntries(CONTROLS.map(control => [control.key, false])), stageMap: {}, period: 'all', onPeriod: vi.fn(), onToggle: toggle, onNavigate: navigate, onRefresh: vi.fn() };
+  props = { mode: 'advanced', settings: Object.fromEntries(CONTROLS.map(control => [control.key, false])), stageMap: {}, period: 'all', onPeriod: vi.fn(), onToggle: toggle, onNavigate: navigate, onRefresh: vi.fn() };
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 async function render() { await act(async () => root.render(<MantineProvider env="test"><TokenSavings {...props} /></MantineProvider>)); }
@@ -86,4 +86,26 @@ it('reports a failed measurement read without presenting an empty sample as zero
   expect(container.textContent).toContain('Measurements could not be refreshed');
   expect(container.textContent).toContain('No measurements are available');
   expect(container.querySelectorAll('.savings-byte-row')).toHaveLength(0);
+});
+
+it('offers four everyday controls and group state without nested configuration', async () => {
+  props.mode = 'everyday';
+  props.settings.rtkEnabled = true;
+  await render();
+  expect(container.querySelectorAll('[data-savings-control]')).toHaveLength(4);
+  expect(container.querySelector('input[type="number"], textarea, select, details')).toBeNull();
+  expect(container.querySelectorAll('.savings-group-overview dt')).toHaveLength(5);
+  expect(container.querySelector('.savings-group-overview').textContent).toContain('1 of 6 on');
+  expect(card('rtkEnabled').querySelector('input').checked).toBe(true);
+  await act(async () => button('All controls and limits').click());
+  expect(navigate).toHaveBeenCalledExactlyOnceWith('Advanced');
+  expect(toggle).not.toHaveBeenCalled();
+});
+
+it('reports partial saved state as unknown in the everyday group overview', async () => {
+  props.mode = 'everyday';
+  delete props.settings.rtkEnabled;
+  await render();
+  expect(card('rtkEnabled').querySelector('input').disabled).toBe(true);
+  expect(container.querySelector('.savings-group-overview').textContent).toContain('Not fully reported');
 });

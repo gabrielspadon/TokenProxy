@@ -8,7 +8,7 @@ Next.js App Router, plain ESM JS. Rewrites (`next.config.mjs`): `/v1/*`→`/api/
 - **Login**: progressive lockout on repeated failures.
 - **`requireLogin=false`**: a settings toggle that lets `/api/*` (the ones in `PROTECTED_API_PATHS`) pass without a session — does NOT satisfy the four `ALWAYS_PROTECTED` paths (`/api/shutdown`, `/api/settings/database`, `/api/version/shutdown`, `/api/version/update`, `src/dashboardGuard.js:81-85`), nor the separately-gated admin operator class, oauth credential export, notifications write, or mcp routes.
 - **CLI token**: header `x-tp-cli-token` compared to `getConsistentMachineId("tp-cli-auth")`.
-- **Trusted peer / tunnel**: `x-tp-real-ip` / `x-tp-peer-token` vs `TOKENPROXY_PEER_TOKEN`.
+- **Trusted forwarding peer**: `x-tp-real-ip` / `x-tp-peer-token` vs `TOKENPROXY_PEER_TOKEN`.
 - **Loopback**: `isLocalRequest()` — checks the resolved peer is 127.0.0.1/::1 (post trusted-peer resolution).
 - **Admin ABI** (`src/lib/admin/policy.js`, `adminDecision()`): pure function, called identically by `dashboardGuard.js` middleware and `src/lib/admin/guard.js` per-route. Two auth classes:
   - `inference` (exact paths `/api/admin/health`, `/api/admin/models` only): satisfied by operator OR inference API key OR loopback.
@@ -54,7 +54,7 @@ Login (progressive lockout), logout, session check, password reset, OIDC, SAML r
 
 `settings/database`: export/import whole DB, gated as described in section 0.
 `settings/proxy-test`: trivial POST wrapper around `testProxyUrl`.
-`settings/require-login`: public GET (pre-login gate check itself), returns `{requireLogin, tunnelDashboardAccess, tunnelUrl, tailscaleUrl}`, defaults `requireLogin=true` on error.
+`settings/require-login`: public GET (pre-login gate check itself), returns `{requireLogin}`, defaults `requireLogin=true` on error.
 
 ## 6. Notifications (`/api/notifications/**`)
 
@@ -78,12 +78,6 @@ CRUD plus `type` enum `["http","vercel","cloudflare"]`, `strictProxy` flag. Bulk
 
 In-process library-mode transform (not a subprocess). `health` (POST+GET alias), `install` (POST, `maxDuration=300`, `installPxpipe()` plus `unloadPxpipe()` plus recheck), `logs` (GET, `getInstallLogTail()` plus `readPxpipeEvents({limit})`), `restart` (POST, unload then reload), `start` (POST, auto-installs if `settings.pxpipeAutoInstall` and not installed, else 409 `NOT_INSTALLED`), `stats` (GET, `getPxpipeStats({recentLimit})`), `status` (GET, merges runtime status with settings `pxpipeEnabled`/`pxpipeAutoInstall`/`pxpipeMinChars`/`pxpipeTimeoutMs`), `stop` (POST).
 
-## 10. Tunnel (`/api/tunnel/**`)
-
-`enable`/`disable` (Cloudflare tunnel, `DNS_WARMUP_DELAY_MS=8000` on enable), `status` (3s in-process cache, merges tunnel+tailscale probes+download status), `tailscale-check`/`-enable`/`-disable` (multi-probe daemon detection: brew, custom binary, system daemon; reports `hasCachedPassword` from MITM cert manager).
-
-`status`'s `publicUrl` field is withheld (returned as `""`) unless `state.registered === true`; only then is it `publicUrlFor(shortId)` (`src/lib/tunnel/cloudflare/manager.js` `getTunnelStatus()`, comment: "stops offering a link that 404s while the direct URL works", issue #1365). `tunnelUrl` has no such gate.
-
 ## 11. Headroom (`/api/headroom/**`)
 
 `status`: `{running, enabled, active, url}` (active means enabled AND running). `proxy/[...path]`: forwards arbitrary methods to `settings.headroomUrl`, strips hop-by-hop headers, strips cookie/authorization for non-loopback targets, injects `HEADROOM_API_KEY` bearer, rewrites HTML `src/href/action` and inline `fetch()` under an allowlisted path-prefix set, rewrites `Location` redirects back through the proxy prefix. Exported helpers `rewriteHeadroomHtml()`, `rewriteLocation()`, `forwardedHeaders()`.
@@ -91,10 +85,6 @@ In-process library-mode transform (not a subprocess). `health` (POST+GET alias),
 ## 12. Token-saver / tool-disclosure
 
 `token-saver/stats`: aggregates RTK/headroom/pxpipe reduction sources separately (never combined into one number), 503 on read failure. `tool-disclosure/stats`: trivial GET wrapper around `getRecentStats()`.
-
-## 13. Translator playground (`/api/translator/**`)
-
-`console-logs` (GET with ETag/304 `W/"console-{revision}"`, DELETE clears buffer) and `console-logs/stream` (SSE, named `data:` payloads `{type:"init"|"line"|"lines"|"clear"}`, 25s ping, cleanup on `request.signal` abort). `send`: executes a live provider call, handles 401/403 auto-refresh plus token persistence, streams raw upstream `response.body` through as `text/event-stream` passthrough (not TokenProxy-defined events). `translate`: 3-step (`step:1|2|3`) format-translation debug pipeline, non-streaming JSON. `load`/`save`: fixed 8-filename allowlist under `logs/translator/` (path-traversal-safe by construction).
 
 ## 14. MCP (`/api/mcp/[plugin]/**`)
 
@@ -121,7 +111,7 @@ POST validates by `type` (openai-compatible/multi-compatible/custom-embedding/an
 `shutdown` (top-level): dev-only (`NODE_ENV!==production` refused), requires `Authorization: Bearer ${SHUTDOWN_SECRET}`.
 
 `init`: trivial GET "Initialized" bootstrap ping, no auth logic.
-The former `locale` route was removed on 2026-09-07. The product interface is English only; legacy locale cookies have no effect.
+The product interface uses English with left-to-right document direction.
 `pricing`: GET/PATCH/DELETE over settings-backed pricing table; PATCH strict nested-shape validation; DELETE resets all/provider/provider+model; contains dead `GET_DEFAULTS` export (invalid Next.js route export name, unreachable via HTTP, residual artifact).
 `tags`: CORS-open GET/OPTIONS, no auth at all, serves static Ollama-compatible `ollamaModels` config.
 `changelog`: reads `CHANGELOG.md` from `process.cwd()` at runtime, 404 on missing file.

@@ -19,13 +19,17 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function render(props = {}) { await act(async () => root.render(<MantineProvider env="test"><AccountControlPanel rows={[]} onSelect={vi.fn()} {...props} /></MantineProvider>)); }
-const button = text => [...document.querySelectorAll('button')].find(node => node.textContent === text);
+const button = text => [...document.querySelectorAll('button')].find(node => (node.getAttribute('aria-label') || node.textContent) === text);
 async function click(text) { await act(async () => button(text).click()); }
 async function fill(input, value) {
+  if (input.closest('[hidden]')) await act(async () => container.querySelector('[value="advanced"]').click());
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(value));
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
+}
+async function selectStatus(value) {
+  await act(async () => { const input = container.querySelector('[aria-label="Account status"]'); input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })); });
 }
 const accountCard = (id = 'account-a') => container.querySelector(`[data-account-id="${id}"]`);
 const field = (label, id) => accountCard(id).querySelector(`[aria-label="${label}"]`);
@@ -38,17 +42,17 @@ it('shows snapshot-only quota windows with a real percentage and reverses the sc
   expect(container.querySelector('[role="meter"]').getAttribute('aria-valuenow')).toBe('75');
   expect(container.textContent).toContain('Pause ≤ 10% left');
   expect(container.querySelector('[role="meter"]').parentElement.textContent).toContain('Pause ≤ 10% left');
-  const disclosure = container.querySelector('details');
-  expect(disclosure.open).toBe(false);
-  expect(disclosure.textContent).toContain('2026-09-09 00:00:00 UTC');
-  await act(async () => disclosure.querySelector('summary').click());
-  expect(disclosure.open).toBe(true);
+  expect(container.querySelector('details')).toBeNull();
+  expect(field('Fallback priority').closest('[hidden]')).not.toBeNull();
+  await act(async () => container.querySelector('[value="advanced"]').click());
+  expect(field('Fallback priority').closest('[hidden]')).toBeNull();
+  expect(container.textContent).toContain('2026-09-09 00:00:00 UTC');
 });
 it('uses Rows only for layout and preserves exact Unicode inspection identities', async () => {
   const onSelect = vi.fn(), onCompare = vi.fn();
   state.connections[0] = { ...state.connections[0], id: 'ação / 東京', name: 'João 東京', lastQuotaSnapshot: { windows: [{ key: 'sessão / 5時間', remainingPercentage: null }, { key: 'ilimitado', unlimited: true, remainingPercentage: 0 }] } };
   await render({ onSelect, onCompare });
-  expect(container.querySelector('select[aria-label="Account status"]')).toBeNull();
+  expect(container.querySelector('select[aria-label="Account status"]')).not.toBeNull();
   expect(container.querySelector('[value="compare"]')).toBeNull();
   await act(async () => container.querySelector('[value="rows"]').click());
   expect(onCompare).not.toHaveBeenCalled();
@@ -91,12 +95,12 @@ it('shares comparison selection across filters and enforces four without losing 
   expect(container.querySelector('[aria-label="Compare Account 4"]').disabled).toBe(true);
   await act(async () => container.querySelector('[aria-label="Compare Account 4"]').closest('label').click());
   expect(changed).toHaveBeenCalledTimes(4);
-  await click('Configured on 4');
+  await selectStatus('Enabled');
   expect(container.querySelector('[data-account-id="account-0"]')).toBeNull();
   expect(container.textContent).toContain('4 of 4 selected, 1 outside this view');
   await click('Compare selected (4)');
   expect(onCompare).toHaveBeenCalledOnce();
-  await click('All 5');
+  await selectStatus('all');
   expect(container.querySelector('[aria-label="Compare Account 0"]').checked).toBe(true);
   await act(async () => container.querySelector('[aria-label="Compare Account 1"]').click());
   expect(container.querySelector('[aria-label="Compare Account 4"]').disabled).toBe(false);
@@ -225,9 +229,9 @@ it('retains independent drafts across filters and refresh without silently rebas
   expect(accountCard()).toBeNull();
   expect(container.textContent).toContain('Some drafts are outside this view');
   await fill(container.querySelector('[aria-label="Search accounts"]'), '');
-  await click('Configured on 1');
+  await selectStatus('Enabled');
   expect(accountCard('account-b')).toBeNull();
-  await click('All 2');
+  await selectStatus('all');
   state.connections = state.connections.map(connection => ({ ...connection, priority: 5 }));
   await click('Refresh');
   await render();
@@ -277,11 +281,38 @@ it('recovers malformed persisted visibility preferences before updating them', a
   localStorage.setItem('tokenproxy.account-control-panel', JSON.stringify({ hiddenAccounts: 'broken', hiddenWindows: {}, density: 'compact' }));
   await render(); await click('Customize');
   for (const text of ['Show Account A', 'weekly']) {
-    const label = [...document.querySelectorAll('label')].find(node => node.textContent === text);
+    const label = [...document.querySelectorAll('label')].find(node => (node.getAttribute('aria-label') || node.textContent) === text);
     await act(async () => document.getElementById(label.htmlFor).click());
   }
   const saved = JSON.parse(localStorage.getItem('tokenproxy.account-control-panel'));
   expect(saved.hiddenAccounts).toEqual(['account-a']);
   expect(saved.hiddenWindows).toEqual([JSON.stringify(['account-a', 'weekly'])]);
   expect(request).not.toHaveBeenCalled();
+});
+
+it('retains a priority draft while switching the whole panel back to everyday controls', async () => {
+  await render();
+  expect(field('Fallback priority').closest('[hidden]')).not.toBeNull();
+  expect(field('Auto-pause threshold for weekly').closest('[hidden]')).toBeNull();
+  expect(button('Pause')).not.toBeUndefined();
+  await act(async () => container.querySelector('[value="advanced"]').click());
+  await fill(field('Fallback priority'), 4);
+  await act(async () => container.querySelector('[value="everyday"]').click());
+  expect(field('Fallback priority').closest('[hidden]')).not.toBeNull();
+  expect(container.textContent).toContain('1 unsaved account draft');
+  await act(async () => container.querySelector('[value="advanced"]').click());
+  expect(field('Fallback priority').value).toBe('4');
+  expect(request).not.toHaveBeenCalled();
+});
+
+it('stages a reserve slider change without applying it before Save changes', async () => {
+  await render();
+  const slider = accountCard().querySelector('input[type="range"]');
+  await fill(slider, 20);
+  expect(field('Auto-pause threshold for weekly').value).toBe('20%');
+  expect(button('Save changes').disabled).toBe(false);
+  expect(request).not.toHaveBeenCalled();
+  await click('Discard');
+  expect(field('Auto-pause threshold for weekly').value).toBe('10%');
+  expect(document.activeElement).toBe(field('Auto-pause threshold for weekly'));
 });

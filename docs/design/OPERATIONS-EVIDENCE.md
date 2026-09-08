@@ -22,7 +22,7 @@ their provenance and outcomes before building notification rules over them.
   that successful testing enables a pool and unsuccessful testing disables it.
   Cancellation must release network work promptly without benching a pool.
   A changed pool configuration invalidates a late test's activation effect.
-- Show current account/pool/outbound/tunnel relationships separately from an
+- Show current account/pool/outbound relationships separately from an
   exact recorded request path. Missing historical path evidence remains unknown.
 
 ## Delivery order

@@ -9,9 +9,6 @@ import './workspace.css';
 import { UiProvider } from '@/shared/workspace/UiProvider';
 import { ColorSchemeScript } from '@mantine/core';
 import { connection } from 'next/server';
-import { initConsoleLogCapture } from '@/lib/consoleLogBuffer';
-
-initConsoleLogCapture();
 
 export const metadata = {
   title: 'TokenProxy',

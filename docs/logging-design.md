@@ -39,10 +39,8 @@ There is no logging library. There are four independent emitters.
 | Dev debug | `open-sse/utils/debugLog.js:9` | `[hh:mm:ss] 🐛 [DBG:tag] msg` | `console.log`, dev only |
 | Raw `console.*` | 642 sites | anything | `console.log` / `console.error` |
 
-`src/lib/consoleLogBuffer.js:86-98` monkey-patches all five `console` methods at
-boot to tee every line into a ring buffer for the dashboard. That means every
-`console.log` anywhere in the tree is a log line with a UI consumer, which is
-why the count is 642 raw sites beside 231 helper calls, and not 40.
+Console methods write to the process output. Structured decision records
+also persist to the configured NDJSON sink.
 
 Levels exist (`logger.js:3-10`, `LOG_LEVELS` DEBUG/INFO/WARN/ERROR, selected by
 `LOG_LEVEL`) but are not load-bearing. `error()` at `logger.js:90` writes to
@@ -811,8 +809,7 @@ fixed is a signal that got turned down. Optionally add a second sink at
 **What does not move.** The 642 raw `console.*` sites outside the decision
 points stay as they are. They are not the bloat: the measured top six lines are
 1.5% of the sites and 92% of the volume. A tree-wide rewrite would be a large
-diff for no measurable gain, and the console ring buffer
-(`consoleLogBuffer.js`) means they all still reach the dashboard.
+diff for no measurable gain.
 
 ---
 

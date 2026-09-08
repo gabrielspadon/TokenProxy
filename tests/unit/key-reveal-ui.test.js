@@ -128,3 +128,66 @@ it("preserves the selected policy and refusal when saving fails", async () => {
   expect(container.querySelector('[aria-label="Selected key configuration"] select').value).toBe("reserve-remaining");
   expect(dialog.textContent).toContain("Storage unavailable");
 });
+
+const switchTask = async (label, text) => {
+  const nav = container.querySelector(`nav[aria-label="${label}"]`);
+  const target = [...nav.querySelectorAll('button')].find(button => button.querySelector('span:last-child')?.textContent === text);
+  await act(async () => target.click());
+};
+const fieldInput = (scope, label) => [...scope.querySelectorAll('label.field')].find(field => field.querySelector('span')?.textContent === label).querySelector('input');
+const editInput = async (input, value) => {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+};
+
+it('keeps one selected-key task visible and retains the spending draft across all workspace tasks', async () => {
+  const selected = container.querySelector('[aria-label="Selected key configuration"]');
+  const cost = fieldInput(selected, 'Cost ceiling');
+  expect(cost.closest('[hidden]')).toBeNull();
+  expect(fieldInput(selected, 'Expiry in UTC').closest('[hidden]')).not.toBeNull();
+  expect(container.querySelector('.access-profiles')).toBeNull();
+  expect(container.querySelector('#h-who').closest('[hidden]')).not.toBeNull();
+  await editInput(cost, '24');
+  await switchTask('Key tasks', 'Advanced');
+  expect(cost.closest('[hidden]')).not.toBeNull();
+  expect(fieldInput(selected, 'Expiry in UTC').closest('[hidden]')).toBeNull();
+  await switchTask('Key tasks', 'Limits');
+  await switchTask('Keys workspace', 'Advanced');
+  expect(selected.closest('[hidden]')).not.toBeNull();
+  expect(container.querySelector('#h-who').closest('[hidden]')).toBeNull();
+  await switchTask('Keys workspace', 'Client keys');
+  expect(cost.value).toBe('24');
+  expect(cost.closest('[hidden]')).toBeNull();
+  expect(fixture.calls).toHaveLength(0);
+});
+
+it('starts creation with a name and preserves optional limits while switching or hiding its form', async () => {
+  const create = [...container.querySelectorAll('button')].find(button => button.textContent.trim().endsWith('Create a key'));
+  await act(async () => create.click());
+  const form = container.querySelector('section[aria-label="Create a key"]');
+  const name = fieldInput(form, 'Name');
+  const cost = fieldInput(form, 'Cost ceiling');
+  expect([...form.querySelectorAll('input,select')].filter(input => !input.closest('[hidden]'))).toEqual([name]);
+  await editInput(name, 'Travel laptop');
+  await switchTask('New key options', 'Limits & expiry');
+  await editInput(cost, '12');
+  await switchTask('New key options', 'Name');
+  await act(async () => create.click());
+  expect(form.hidden).toBe(true);
+  await act(async () => create.click());
+  expect(name.value).toBe('Travel laptop');
+  expect(cost.value).toBe('12');
+  await act(async () => form.querySelector('button[type="submit"]').click());
+  const dialog = container.querySelector('dialog[open]');
+  expect(dialog.textContent).toContain('Travel laptop');
+  expect(dialog.textContent).toContain('12');
+  expect(dialog.querySelector('input, select, textarea')).toBeNull();
+  expect(fixture.calls).toHaveLength(0);
+  await submit(dialog);
+  expect(fixture.calls).toEqual([{ url: '/api/keys', method: 'POST', body: {
+    name: 'Travel laptop', expiresAt: null, maxPromptTokens: null, maxCompletionTokens: null,
+    maxCostUsd: 12, allowedModels: null, budgetPolicy: 'strict',
+  } }]);
+});

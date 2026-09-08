@@ -186,7 +186,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
       for(const [method,url] of [['POST','/api/admin/shaping/controls'],['POST','/api/admin/shaping/plans'],['GET','/api/admin/shaping/plan-receipts?page=1&pageSize=20'],['GET','/api/admin/shaping/plan-receipts/fixture'],['PATCH','/api/pricing'],['DELETE','/api/pricing'],['POST','/api/admin/budgets'],['POST','/api/providers/custom'],['DELETE','/api/proxy-pools'],['PATCH','/api/settings'],['PUT','/api/providers/fixture-account']]) {
         const before=delivered; server.emit('request',{url,method,headers:{}},response); assert.equal(delivered,before+1,url);
       }
-      for(const [method,url] of [['PUT','/api/providers/not-fixture'],['POST','/api/providers'],['POST','/api/providers/import'],['POST','/api/providers/test'],['POST','/api/models/discover'],['POST','/api/oauth/codex'],['DELETE','/api/admin/shaping/plans']]) {
+      for(const [method,url] of [['PUT','/api/providers/not-fixture'],['POST','/api/providers'],['POST','/api/providers/import'],['POST','/api/translator/translate'],['POST','/api/tunnel/enable'],['POST','/api/tunnel/tailscale-enable'],['POST','/api/providers/test'],['POST','/api/models/discover'],['POST','/api/oauth/codex'],['DELETE','/api/admin/shaping/plans']]) {
         const before=delivered; server.emit('request',{url,method,headers:{}},response); assert.equal(delivered,before,url); assert.equal(status,403,url);
       }
       (async()=>{

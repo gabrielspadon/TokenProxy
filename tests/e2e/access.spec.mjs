@@ -15,7 +15,7 @@ const STATUS = {
 };
 
 const SETTINGS = {
-  requireLogin: true, requireApiKey: true, tunnelDashboardAccess: true,
+  requireLogin: true, requireApiKey: true,
   authMode: "password", ssoType: "oidc",
   oidcIssuerUrl: "", oidcClientId: "", oidcScopes: "openid profile email", oidcLoginLabel: "Sign in with OIDC",
   samlEntryPoint: "", samlIssuer: "urn:tokenproxy:sp", samlCert: "",

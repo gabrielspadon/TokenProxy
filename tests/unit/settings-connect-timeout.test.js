@@ -79,6 +79,28 @@ afterEach(async () => {
   }
 });
 
+describe("settings compatibility", () => {
+  it("omits retired controls from settings reads without deleting saved data", async () => {
+    const retained = {
+      tunnelEnabled: true,
+      tunnelUrl: "https://retired.example",
+      tunnelProvider: "cloudflare",
+      tailscaleEnabled: true,
+      tailscaleUrl: "https://retired.example.net",
+      tunnelDashboardAccess: false,
+    };
+    await repository.updateSettings({ ...retained, requireLogin: true });
+    for (const key of Object.keys(retained)) {
+      expect(await repository.getSettings()).not.toHaveProperty(key);
+    }
+    const response = await GET();
+    const body = await response.json();
+    for (const key of Object.keys(retained)) expect(body).not.toHaveProperty(key);
+    await repository.updateSettings({ requireLogin: false });
+    expect(await repository.exportSettings()).toMatchObject({ ...retained, requireLogin: false });
+  });
+});
+
 describe("connect timeout settings repository", () => {
   it("merges 15000 into an old row without writing it", async () => {
     expect((await repository.getSettings()).connectTimeoutMs).toBe(15000);

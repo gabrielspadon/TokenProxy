@@ -87,7 +87,7 @@ same bytes.
 
 | Existing route | Relationship |
 |---|---|
-| `GET /api/health` | Untouched. It is the Dockerfile `HEALTHCHECK`, the tunnel liveness probe, and stays `{ok:true}` on purpose (`src/app/api/health/detail/route.js` comment, "WHY NOT /api/health ITSELF"). `/api/admin/health` is a new, separate liveness surface for admin-ABI callers, not a replacement. |
+| `GET /api/health` | Untouched. It is the Dockerfile `HEALTHCHECK` and stays `{ok:true}` on purpose (`src/app/api/health/detail/route.js` comment, "WHY NOT /api/health ITSELF"). `/api/admin/health` is a new, separate liveness surface for admin-ABI callers, not a replacement. |
 | `GET /api/health/detail` | Extended. Same readiness judgment (database reachability, per-provider degraded counts), same operator gate shape (`hasValidCliToken` or a dashboard JWT), projected onto `/api/admin/health/detail` for the admin-ABI audience. The dashboard keeps calling its own route; nothing is deleted yet. |
 | `GET /api/models` | Extended. `/api/admin/models` is a trimmed routing-only projection (model, provider, fullModel, caps) of the same catalog `/api/models` already serves with alias and disabled-model management the admin ABI does not need. |
 | `GET /api/system/state` | Extended in the direction its own header comment names as missing: "Quota headroom remains absent because no authoritative quota table exists." `/api/admin/quota` is that authoritative source. `/api/system/state` keeps owning rolling traffic metrics; it is not superseded, only relieved of a gap it already declared out of scope. |

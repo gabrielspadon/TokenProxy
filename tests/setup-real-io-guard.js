@@ -1,6 +1,6 @@
 // Hard guard against real network access and real `sudo` in the test process.
 // tests/README.md and the #1809/#1462 MITM incidents both trace back to a
-// module (dnsConfig.js, cloudflared.js, tailscale.js) that destructures
+// module (for example dnsConfig.js) that destructures
 // spawn/exec/execSync from node:child_process at import time, which a
 // vi.mock("child_process") factory never reaches. A test that gets the mock
 // wiring wrong is caught here instead of shelling out to a real `sudo tee

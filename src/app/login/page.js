@@ -23,9 +23,6 @@ function loginRefusal(status, body) {
   if (status === 403 && body?.mustChangePassword) {
     return { tone: "bad", title: "The default password is still set, so remote sign-in is refused.", next: "Change the password from the machine that runs the gateway, or set INITIAL_PASSWORD before starting it." };
   }
-  if (status === 403 && /tunnel/i.test(body?.error || "")) {
-    return { tone: "bad", title: "Dashboard access through the tunnel is turned off.", next: "Open the dashboard from the machine that runs the gateway, or turn tunnel access on there." };
-  }
   if (status === 403 && /disabled/i.test(body?.error || "")) {
     return { tone: "warn", title: "Password sign-in is turned off.", next: "Use single sign-on below.", sso: /SAML/i.test(body.error) ? "saml" : "oidc" };
   }

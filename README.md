@@ -132,12 +132,10 @@ for a single request.
 The dashboard is where the gateway is actually operated.
 
 - Providers, accounts and OAuth connections, with secrets encrypted at rest.
-- Combos, model context settings and a translator inspector for seeing what a
-  request became on the way out.
+- Combos, model context settings and request inspection.
 - Usage, statistics, per-session views and quota tracking with cost estimates
   and reset times per provider and per model.
 - Proxy pools for egressing through SOCKS or HTTP proxies, with deploy recipes.
-- Cloudflare and Tailscale tunnels for reaching a local instance from elsewhere.
 - A MITM proxy for the editors and agents that will not be pointed at a base URL
   and must be intercepted instead.
 - One-click settings writers for a long list of coding agents and CLIs, so

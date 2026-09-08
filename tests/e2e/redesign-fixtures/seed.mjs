@@ -30,7 +30,7 @@ export async function seed(root, scenario, { clock = CLOCK } = {}) {
       for (const index of definition.indexes || []) raw.exec(index);
     }
     assert.equal(db.get('SELECT COUNT(*) AS count FROM providerConnections').count, 0, 'Seed requires a fresh database');
-    db.run('INSERT INTO settings(id,data) VALUES(1,?)', [JSON.stringify({ requireLogin: true, requireApiKey: true, cloudEnabled: false, analyticsEnabled: false, tunnelEnabled: false, tailscaleEnabled: false, freeModelSync: { enabled: false }, quotaAutoPing: { enabled: false }, notifications: { enabled: false }, rtkEnabled: false, memEnabled: false, headroomEnabled: false })]);
+    db.run('INSERT INTO settings(id,data) VALUES(1,?)', [JSON.stringify({ requireLogin: true, requireApiKey: true, cloudEnabled: false, analyticsEnabled: false, freeModelSync: { enabled: false }, quotaAutoPing: { enabled: false }, notifications: { enabled: false }, rtkEnabled: false, memEnabled: false, headroomEnabled: false })]);
     for (const [index, account] of accounts.entries()) db.run('INSERT INTO providerConnections(id,provider,authType,name,priority,isActive,data,createdAt,updatedAt) VALUES(?,?,?,?,?,?,?,?,?)', [account.id, account.provider, 'apikey', account.name, index + 1, 0, '{}', CLOCK, CLOCK]);
     let receipt = { version: VERSION, scenario, capturedAt: CLOCK, synthetic: true, upstreamCalls: 0, accounts: accounts.length };
     if (['populated', 'edge-cases', 'representative'].includes(scenario)) {

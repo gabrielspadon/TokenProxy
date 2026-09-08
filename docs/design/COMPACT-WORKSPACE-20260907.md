@@ -44,8 +44,8 @@ Capacity exposes priority and per-window auto-pause beside each account and its 
 - Context separates session analysis from the directly editable history policy. Economics separates analysis, identity filtering, pricing and reservations with one task row, retaining visited drafts.
 - Notifications opens the selected rule's editor beside its list and exposes destination configuration directly. Delivery tests remain explicit external actions.
 - Access presents password and identity-provider fields inline. Final review masks credentials, freezes the intended values and clears secrets on cancellation, visibility loss and submission. Only verified saves replace the affected form baseline.
-- Operations exposes its retained-history query fields. Tools exposes client setup beside tool information. System exposes the import file before its consequential replacement review. Remote exposes host-only setup instructions without implying the dashboard can edit them.
-- Compatibility exposes fixture creation and revision fields beside retained fixtures. Translation confirms snapshot content through a separate load after saving.
+- Operations exposes its retained-history query fields. Tools exposes client setup beside tool information. System exposes the import file before its consequential replacement review.
+- Compatibility exposes fixture creation and revision fields beside retained fixtures.
 
 Browser acceptance waits for route-specific client reads before capture. Finishing animations before hydration can alter native style attributes and create a misleading hydration failure. Isolated previews disable automatic update checks through the existing runtime option, while the outbound guard remains enforced.
 

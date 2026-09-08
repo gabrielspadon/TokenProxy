@@ -36,12 +36,18 @@ async function submit(page, path, method, verb, status = 200) {
   expect(response.status()).toBe(status);
   return response.json();
 }
+async function workspaceTask(page, name) {
+  await page.getByRole('navigation', { name: 'Keys workspace' }).getByRole('button', { name, exact: true }).click();
+}
+async function keyTask(surface, name) {
+  await surface.getByRole('navigation', { name: 'Key tasks' }).getByRole('button', { name, exact: true }).click();
+}
 async function keyDetails(page, name = KEY) {
+  await workspaceTask(page, 'Client keys');
   const row = page.locator('.keys-row').filter({ has: page.locator('.keys-pick .name', { hasText: name }) });
   await expect(row).toHaveCount(1);
-  const detail = row.locator('details.keys-detail').first();
-  if ((await detail.getAttribute('open')) === null) await detail.locator('summary').first().click();
-  return row;
+  await row.getByRole('button', { name: `Configure ${name}`, exact: true }).click();
+  return page.getByRole('region', { name: 'Selected key configuration', exact: true });
 }
 
 test('real isolated key lifecycle and profile versions persist without an upstream call', async ({ page }, testInfo) => {
@@ -53,16 +59,18 @@ test('real isolated key lifecycle and profile versions persist without an upstre
   expect((await read(page, '/api/access-profiles')).profiles.some(profile => profile.name === PROFILE)).toBe(false);
   try {
     assertPreview(await page.goto('/dashboard/keys'));
-    await page.locator('.keys-profiles-disclosure > summary').click();
+    await workspaceTask(page, 'Profiles');
     await page.getByRole('button', { name: 'Create access profile', exact: true }).click();
-    await dialog(page).getByLabel('Profile name', { exact: true }).fill(PROFILE);
-    await dialog(page).getByLabel('Recorded cost ceiling (USD)', { exact: true }).fill('3.25');
-    await dialog(page).getByLabel('Profile model allowlist', { exact: true }).fill('openai/*');
+    await page.locator('.profile-inspector').getByLabel('Profile name', { exact: true }).fill(PROFILE);
+    await page.locator('.profile-inspector').getByLabel('Recorded cost ceiling (USD)', { exact: true }).fill('3.25');
+    await page.locator('.profile-inspector').getByLabel('Profile model allowlist', { exact: true }).fill('openai/*');
+    await page.getByRole('button', { name: 'Review profile', exact: true }).click();
     const profile = await submit(page, '/api/access-profiles', 'POST', 'Save profile', 201);
     created.profile = profile.profile.id;
     await expect(page.getByText('Profile version 1 saved and verified.', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Create a key', exact: true }).click();
-    await dialog(page).getByLabel('Name', { exact: true }).fill(KEY);
+    await page.getByRole('region', { name: 'Create a key', exact: true }).getByLabel('Name', { exact: true }).fill(KEY);
+    await page.getByRole('button', { name: 'Review create a key', exact: true }).click();
     const issued = await submit(page, '/api/keys', 'POST', 'Create', 201);
     created.keys.push(issued.id);
     expect(typeof issued.key).toBe('string');
@@ -75,45 +83,52 @@ test('real isolated key lifecycle and profile versions persist without an upstre
     expect(revealed.key).toBe(issued.key);
     await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
     await expect(page.locator('body')).not.toContainText(issued.key);
-    await row.getByRole('button', { name: 'Access profile', exact: true }).click();
-    await dialog(page).getByRole('combobox', { name: 'Access profile', exact: true }).selectOption(created.profile);
+    await keyTask(row, 'Advanced');
+    await row.getByRole('combobox', { name: 'Access profile', exact: true }).selectOption(created.profile);
+    await row.getByRole('button', { name: 'Review access profile', exact: true }).click();
     await submit(page, `${keyPath}/profile`, 'POST', 'Apply');
     expect((await read(page, keyPath)).key).toMatchObject({ maxCostUsd: 3.25, allowedModels: ['openai/*'], accessProfileVersion: 1, secretRedacted: true });
 
-    // A competing local edit advances the actual DB after the dialog captured v1.
-    await page.getByRole('button', { name: 'Edit access profile', exact: true }).click();
+    // A competing local edit advances the database after selecting version 1.
+    await workspaceTask(page, 'Profiles');
+    await page.locator('.profile-row').filter({ hasText: PROFILE }).click();
     const competing = await page.request.put(`/api/access-profiles/${created.profile}`, { data: { expectedVersion: 1, maxCostUsd: 8 } });
     assertPreview(competing);
     expect(competing.status()).toBe(200);
-    await dialog(page).getByLabel('Recorded cost ceiling (USD)', { exact: true }).fill('4.25');
+    await page.locator('.profile-inspector').getByLabel('Recorded cost ceiling (USD)', { exact: true }).fill('4.25');
+    await page.getByRole('button', { name: 'Review profile', exact: true }).click();
     await submit(page, `/api/access-profiles/${created.profile}`, 'PUT', 'Save profile', 409);
     await expect(dialog(page)).toContainText('This profile changed');
     expect((await read(page, '/api/access-profiles')).profiles.find(value => value.id === created.profile).maxCostUsd).toBe(8);
     await dialog(page).getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(page.locator('.profile-inspector')).toContainText('8');
-    await page.getByRole('button', { name: 'Edit access profile', exact: true }).click();
-    await dialog(page).getByLabel('Recorded cost ceiling (USD)', { exact: true }).fill('4.25');
+    await expect(page.locator('.profile-row').filter({ hasText: PROFILE })).toContainText('$8.00');
+    await workspaceTask(page, 'Profiles');
+    await page.locator('.profile-row').filter({ hasText: PROFILE }).click();
+    await page.locator('.profile-inspector').getByLabel('Recorded cost ceiling (USD)', { exact: true }).fill('4.25');
+    await page.getByRole('button', { name: 'Review profile', exact: true }).click();
     await submit(page, `/api/access-profiles/${created.profile}`, 'PUT', 'Save profile');
     await expect(page.getByText('Profile version 3 saved and verified.', { exact: true })).toBeVisible();
     expect((await read(page, keyPath)).key.maxCostUsd).toBe(3.25);
     expect((await read(page, '/api/keys')).keys.find(value => value.id === issued.id).profile.behind).toBe(true);
 
     row = await keyDetails(page);
-    await row.getByRole('button', { name: 'Edit limits', exact: true }).click();
-    await dialog(page).getByLabel('Cost ceiling', { exact: true }).fill('2');
+    await row.getByLabel('Cost ceiling', { exact: true }).fill('2');
+    await row.getByRole('button', { name: 'Review key budgets and model access', exact: true }).click();
     await submit(page, keyPath, 'PUT', 'Save');
     expect((await read(page, '/api/keys')).keys.find(value => value.id === issued.id).profile.drifted).toBe(true);
-    await row.getByRole('button', { name: 'Change expiry', exact: true }).click();
-    await dialog(page).getByLabel('Expiry in UTC', { exact: true }).fill('2030-01-02T03:04:05');
+    await keyTask(row, 'Advanced');
+    await row.getByLabel('Expiry in UTC', { exact: true }).fill('2030-01-02T03:04:05');
+    await row.getByRole('button', { name: 'Review key expiry', exact: true }).click();
     await submit(page, keyPath, 'PUT', 'Save expiry');
     await expect(page.getByText('Expiry saved and verified.', { exact: true })).toBeVisible();
     expect((await read(page, keyPath)).key.expiresAt).toBe('2030-01-02T03:04:05.000Z');
 
-    await row.locator('summary').filter({ hasText: 'Client setup' }).click();
+    await keyTask(row, 'Client setup');
     await row.getByRole('button', { name: 'Check configuration', exact: true }).click();
     await expect(row).toContainText('Nothing was contacted.');
-    await row.getByRole('button', { name: 'Rotate', exact: true }).click();
-    await dialog(page).getByLabel('Overlap window in hours', { exact: true }).fill('1');
+    await keyTask(row, 'Advanced');
+    await row.getByLabel('Overlap window in hours', { exact: true }).fill('1');
+    await row.getByRole('button', { name: 'Review rotate key', exact: true }).click();
     const rotated = await submit(page, `${keyPath}/rotate`, 'POST', 'Rotate', 201);
     created.keys.push(rotated.successor.id);
     await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
@@ -122,7 +137,7 @@ test('real isolated key lifecycle and profile versions persist without an upstre
     expect(afterRotation.find(value => value.id === rotated.successor.id).rotation.counterpartKeyId).toBe(issued.id);
     await page.reload();
     expect((await read(page, '/api/keys')).keys.every(value => !Object.hasOwn(value, 'key'))).toBe(true);
-    await page.locator('.keys-profiles-disclosure > summary').click();
+    await workspaceTask(page, 'Profiles');
     await page.locator('.profile-row').filter({ hasText: PROFILE }).click();
     await page.getByRole('button', { name: 'Delete access profile', exact: true }).click();
     await submit(page, `/api/access-profiles/${created.profile}`, 'DELETE', 'Delete profile');

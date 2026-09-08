@@ -12,7 +12,7 @@ export const revalidate = 0;
  * GET /api/health/detail — readiness, not liveness (#3097).
  *
  * WHY NOT /api/health ITSELF. That route is the liveness probe: the Dockerfile
- * HEALTHCHECK (Dockerfile:67), the Cloudflare and Tailscale tunnel checks and
+ * HEALTHCHECK (Dockerfile:67), external liveness checks and
  * the dashboard endpoint ping all read it and all treat a non-200 as dead. If
  * it started failing on a degraded provider an orchestrator would restart a
  * perfectly healthy gateway, so it stays `{ok:true}` and this route carries the

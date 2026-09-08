@@ -64,7 +64,7 @@ describe('killAppProcesses on POSIX', () => {
         return [
           `user 5001 0.0 0.0 0 0 ? S 0:00 node next-server`,
           `user ${process.pid} 0.0 0.0 0 0 ? S 0:00 node tokenproxy self`,
-          `user 5002 0.0 0.0 0 0 ? S 0:00 cloudflared tunnel`,
+          `user 5002 0.0 0.0 0 0 ? S 0:00 external-helper`,
           `user 5003 0.0 0.0 0 0 ? S 0:00 unrelated process`,
         ].join('\n');
       }
@@ -78,7 +78,7 @@ describe('killAppProcesses on POSIX', () => {
     const cmds = execSync.mock.calls.map((c) => String(c[0]));
     expect(cmds.some((c) => c.includes('kill -9 4242'))).toBe(true);
     expect(cmds.some((c) => c.includes('kill -9 5001'))).toBe(true);
-    expect(cmds.some((c) => c.includes('kill -9 5002'))).toBe(true);
+    expect(cmds.some((c) => c.includes('kill -9 5002'))).toBe(false);
     // never its own pid, never the unmatched process
     expect(cmds.some((c) => c.includes(`kill -9 ${process.pid}`))).toBe(false);
     expect(cmds.some((c) => c.includes('kill -9 5003'))).toBe(false);
@@ -128,7 +128,6 @@ describe('killAppProcesses on Windows', () => {
           '"9002","node.exe other"',
         ].join('\n');
       }
-      if (c.includes('Get-Process cloudflared')) return '9100\n';
       if (c.includes('Get-Process tray_windows_release')) return '9101\n';
       return '';
     });
@@ -140,7 +139,6 @@ describe('killAppProcesses on Windows', () => {
     const cmds = execSync.mock.calls.map((c) => String(c[0]));
     expect(cmds.some((c) => c.includes('Stop-Process -Id 777'))).toBe(true);
     expect(cmds.some((c) => c.includes('taskkill /F /PID 9001'))).toBe(true);
-    expect(cmds.some((c) => c.includes('taskkill /F /PID 9100'))).toBe(true);
     expect(cmds.some((c) => c.includes('taskkill /F /PID 9101'))).toBe(true);
     expect(cmds.some((c) => c.includes('taskkill /F /PID 9002'))).toBe(false);
   });

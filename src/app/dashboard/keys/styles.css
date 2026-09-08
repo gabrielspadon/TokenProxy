@@ -1,4 +1,8 @@
 @layer components {
+  .keys-task-panel[hidden] { display: none !important; }
+  .keys-task-navigation { gap: 6px; margin-block: 12px; }
+  .keys-task-navigation .button { padding: 5px 10px; min-height: 32px; }
+  .keys-task-navigation .button[aria-pressed="true"] { color: var(--signal); background: var(--signal-wash); border-color: transparent; }
   .keys-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; padding-block: 14px; border-block: 1px solid var(--rule); }
   .keys-summary .measure { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 0; border: 0; background: transparent; }
   .keys-summary .measure .value { font-size: 18px; font-weight: 600; font-family: inherit; font-variant-numeric: tabular-nums; }
@@ -36,18 +40,11 @@
   .keys-budget-table th:first-child { text-align: start; }
   .keys-budget-table td { font-variant-numeric: tabular-nums; font-family: var(--font-mono, 'IBM Plex Mono', monospace); }
 
-  /* A Decisions value is a whole translated sentence inside a .status badge.
-     .status is inline-flex, so the sentence is one flex item sized at
-     max-content and it never shrinks. Cap the badge and let the sentence wrap
-     inside itself; wrapping the FLEX line instead drops the dot onto a line of
-     its own, which is how the German 390 shot read. */
+  /* Long status explanations wrap without displacing the status marker. */
   .keys-decisions .status { max-width: 100%; align-items: baseline; }
   .keys-decisions .status > * { min-width: 0; }
 
-  /* dl.facts is `max-content minmax(0,1fr)`, so a translated term sets the
-     term column. "Client Key erforderlich" takes 240px of a 358px row and
-     leaves the sentence beside it 102px, which overflows the page at 390.
-     Below the row breakpoint, stack term over value so neither competes. */
+  /* Stack each term above its value on narrow screens. */
   @media (max-width: 767px) {
     .keys-decisions dl.facts { grid-template-columns: minmax(0, 1fr); }
     .keys-decisions dl.facts dd { margin-block-end: 8px; }

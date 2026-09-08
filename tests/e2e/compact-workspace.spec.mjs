@@ -112,6 +112,24 @@ test('compact scope, exact selection, shared comparison and responsive inspector
     expect(response.headers()['x-tokenproxy-preview-version']).toBe(runtime.fixtureVersion);
     await expect(panel.locator('[data-account-id]')).toHaveCount(12, { timeout: 60000 });
     await expect(panel.getByText('Rows', { exact: true })).toBeVisible();
+    await check('The default Capacity view shows separately labelled request counts and cache tokens', async () => {
+      const activity = page.getByRole('region', { name: 'Requests and cache activity', exact: true });
+      await expect(activity).toBeVisible();
+      await expect(activity.getByRole('img')).toBeVisible();
+      const query = new URLSearchParams({ view: 'activity', groupBy: 'account', pageSize: '50' });
+      const current = new URL(page.url());
+      for (const key of ['start', 'end', 'provider', 'model', 'connectionId']) if (current.searchParams.has(key)) query.set(key, current.searchParams.get(key));
+      const evidence = await read(`/api/analytics?${query}`);
+      const format = value => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
+      const requests = evidence.summary.records > 0 && evidence.summary.logicalRequests === 0 && evidence.summary.unattributedAttempts > 0 ? 'Unknown' : format(evidence.summary.logicalRequests);
+      await expect(activity.locator('dl > div').nth(0).locator('dd')).toHaveText(requests);
+      await expect(activity.locator('dl > div').nth(1).locator('dd')).toHaveText(format(evidence.summary.records));
+      await expect(activity.locator('dl > div').nth(3).locator('dd')).toHaveText(Number.isFinite(evidence.summary.cacheReadFraction) ? `${format(evidence.summary.cacheReadFraction * 100)}%` : 'Unknown');
+      await expect(activity).toContainText('Cache reads · tokens');
+      await expect(activity).toContainText('Cache writes · tokens');
+      await expect(activity).toContainText('Historical zeros may be unreported');
+      report.activity = { logicalRequests: evidence.summary.logicalRequests, attempts: evidence.summary.records, cacheReadFraction: evidence.summary.cacheReadFraction, source: evidence.source };
+    });
     const emptyScope = {};
     await check('Empty selection and account cards fit desktop and phone widths', async () => {
       await expect(summary).toHaveCount(0);
@@ -254,6 +272,34 @@ test('compact scope, exact selection, shared comparison and responsive inspector
       }
       await closeDetails();
       await expect(trigger).toBeFocused();
+    });
+    await check('Inline activity data selects a real interval while retaining provider filters and exact selected identity', async () => {
+      const originalUrl = page.url(), beforeSelected = selected();
+      await chooseProvider('OpenAI');
+      const activity = page.getByRole('region', { name: 'Requests and cache activity', exact: true });
+      await activity.getByText('Data', { exact: true }).click();
+      await expect(activity.locator('tbody tr').first()).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      const interval = activity.locator('tbody button').first();
+      const label = await interval.getAttribute('aria-label');
+      const bucketStart = label.replace('Filter activity to ', '').replace(/ UTC$/, '');
+      const before = new URL(page.url());
+      await interval.focus();
+      await page.keyboard.press('Enter');
+      await expect.poll(() => new URL(page.url()).searchParams.get('period')).toBe('custom');
+      const after = new URL(page.url());
+      expect(Date.parse(after.searchParams.get('start'))).toBeGreaterThanOrEqual(Date.parse(bucketStart));
+      expect(Date.parse(after.searchParams.get('end'))).toBeGreaterThan(Date.parse(after.searchParams.get('start')));
+      for (const key of ['provider', 'model', 'connectionId', 'compare']) expect(after.searchParams.get(key)).toBe(before.searchParams.get(key));
+      expect(after.searchParams.get('provider')).toBe('openai');
+      expect(selected()).toEqual(beforeSelected);
+      await expect(activity.locator('table')).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      report.activity.interval = { start: after.searchParams.get('start'), end: after.searchParams.get('end'), provider: after.searchParams.get('provider'), selected: selected() };
+      const restored = await page.goto(originalUrl, { waitUntil: 'domcontentloaded' });
+      expect(restored.status()).toBe(200);
+      expect(restored.headers()['x-tokenproxy-preview-version']).toBe(runtime.fixtureVersion);
+      await expect(panel).toBeVisible();
     });
     expect(report.errors).toEqual([]);
     expect(report.apiFailures).toEqual([]);
