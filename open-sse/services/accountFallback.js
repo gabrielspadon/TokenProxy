@@ -4,6 +4,7 @@ import {
   TRANSIENT_COOLDOWN_MS,
   LONG_CONTEXT_DEPLETION_COOLDOWN_MS,
   isLongContextDepletion,
+  isModelCreditDepletion,
 } from "../config/errorConfig.js";
 
 // Envoy "request buffer limit exceeded" (HTTP 507): upstream could not buffer the
@@ -118,7 +119,10 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
     // a window: the 2s backoff below would replay the same account up to the
     // retry limit and relock it almost immediately. A fixed long lock rotates
     // at once and keeps the account out of selection for the model.
-    if (isLongContextDepletion(errorText)) {
+    // Same reasoning for a model the account's plan cannot bill at all: waiting
+    // changes nothing, so take the long lock and let the loop reach an account
+    // that can serve it rather than backing off onto the one that cannot.
+    if (isLongContextDepletion(errorText) || isModelCreditDepletion(errorText)) {
       return { shouldFallback: true, cooldownMs: LONG_CONTEXT_DEPLETION_COOLDOWN_MS };
     }
     const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);

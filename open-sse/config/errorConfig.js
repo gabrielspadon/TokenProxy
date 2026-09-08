@@ -117,6 +117,38 @@ const LONG_CONTEXT_DEPLETION_RE = new RegExp(
   "gi",
 );
 
+// The same depletion keyed on the MODEL rather than on the context window:
+// an account whose plan cannot bill a given model answers 429 with this text
+// while serving its siblings normally (claude-fable-5-1 refused, claude-opus-5
+// and claude-sonnet-5 fine on the identical credential). It is a fact about
+// (account, model) and no waiting clears it, so the generic 429 path was the
+// wrong home: exponential backoff kept the sticky pin on the one account that
+// can never serve the model, and the short cooldown left chat.js's mustWait
+// set, which returns the 429 to the client without rotating. Classified here
+// so it takes the long lock and the pool is actually tried.
+//
+// Deliberately NOT in LONG_CONTEXT_DEPLETION_MARKERS: that list is the client
+// LATCH list, and Claude Code keys longContext1mCreditsBlocked on the long
+// context wording only. This phrase sets no latch, so it is relayed verbatim
+// rather than scrubbed -- naming the real cause is what a caller needs here.
+export const MODEL_CREDIT_DEPLETION_MARKERS = Object.freeze([
+  "usage credits are required for this model",
+  "extra usage is required for this model",
+]);
+
+const MODEL_CREDIT_DEPLETION_RE = new RegExp(
+  MODEL_CREDIT_DEPLETION_MARKERS.map((m) => m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
+  "gi",
+);
+
+/** True when an upstream error body refuses the model itself for want of credits. */
+export function isModelCreditDepletion(errorText) {
+  if (!errorText) return false;
+  const text = typeof errorText === "string" ? errorText : JSON.stringify(errorText);
+  MODEL_CREDIT_DEPLETION_RE.lastIndex = 0;
+  return typeof text === "string" && MODEL_CREDIT_DEPLETION_RE.test(text);
+}
+
 /** True when an upstream error body carries a long-context credit refusal. */
 export function isLongContextDepletion(errorText) {
   if (!errorText) return false;
