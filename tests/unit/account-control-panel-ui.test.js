@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ connections: [], refresh: vi.fn() }));
-vi.mock('@/shared/workspace/useResource', () => ({ useResource: () => ({ data: { connections: state.connections }, loading: false, receivedAt: '2026-09-07T19:00:00Z', refresh: state.refresh }) }));
+vi.mock('@/shared/workspace/useResource', () => ({ useResource: () => ({ data: state.noData ? null : { connections: state.connections }, loading: state.loading, error: state.error, receivedAt: '2026-09-07T19:00:00Z', refresh: state.refresh }) }));
 import { AccountControlPanel } from '@/app/dashboard/AccountControlPanel';
 import { captureAccountControls } from '@/shared/utils/accountControls';
 let root, container, request;
@@ -12,7 +12,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-  localStorage.clear(); state.refresh.mockClear();
+  localStorage.clear(); state.refresh.mockClear(); state.loading = false; state.error = null; state.noData = false;
   state.connections = [{ id: 'account-a', name: 'Account A', provider: 'codex', authType: 'oauth', isActive: true, priority: 1, quotaPauseThresholds: { weekly: 10 }, lastQuotaSnapshot: { fetchedAt: '2026-09-07T19:00:00Z', windows: [{ key: 'weekly', remainingPercentage: 25, resetAt: '2026-09-09T00:00:00Z' }] } }];
   request = vi.fn(async (_url, options) => ({ ok: true, status: 200, json: async () => ({ connection: options?.method === 'PUT' ? { ...state.connections[0], ...JSON.parse(options.body) } : state.connections[0] }) }));
   vi.stubGlobal('fetch', request); container = document.createElement('div'); document.body.append(container); root = createRoot(container);
@@ -317,4 +317,47 @@ it('stages a reserve slider change without applying it before Save changes', asy
   await click('Discard');
   expect(field('Auto-pause threshold for weekly').value).toBe('10%');
   expect(document.activeElement).toBe(field('Auto-pause threshold for weekly'));
+});
+
+it('offers account setup only after the unfiltered inventory confirms an empty installation', async () => {
+  state.connections = [];
+  await render({ scope: { provider: 'claude' } });
+  expect(container.textContent).toContain('No accounts connected yet.');
+  expect(container.querySelector('a').getAttribute('href')).toBe('/dashboard/connections');
+  expect(container.querySelector('a').textContent).toContain('Connect an account');
+  expect(container.querySelector('[aria-label="Search accounts"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Sort accounts"]')).toBeNull();
+  expect(container.textContent).not.toContain('No accounts match this view');
+  expect(request).not.toHaveBeenCalled();
+});
+it('keeps filtering recovery when configured accounts exist outside the current scope', async () => {
+  await render({ scope: { provider: 'claude' } });
+  expect(container.textContent).toContain('No accounts match this view');
+  expect(button('Clear filters')).not.toBeUndefined();
+  expect(button('Show all accounts and windows')).not.toBeUndefined();
+  expect(container.querySelector('a[href="/dashboard/connections"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Search accounts"]')).not.toBeNull();
+});
+it('does not treat retained health rows as a confirmed empty installation', async () => {
+  const retained = { ...state.connections[0], connectionId: 'account-a', displayName: 'Retained account' };
+  state.connections = [];
+  await render({ rows: [retained] });
+  expect(container.textContent).toContain('Retained account');
+  expect(container.textContent).not.toContain('No accounts connected yet.');
+});
+it('reports account load errors with retry instead of onboarding or a filtering explanation', async () => {
+  state.connections = []; state.error = 'Read failed'; state.noData = true;
+  await render();
+  expect(container.textContent).toContain('Account settings could not be refreshed.');
+  expect(container.textContent).not.toContain('No accounts match this view');
+  expect(container.textContent).not.toContain('No accounts connected yet.');
+  await click('Retry account inventory');
+  expect(state.refresh).toHaveBeenCalledOnce();
+});
+it.each([{ loading: true, noData: true }, { loading: false, noData: true }])('does not infer zero accounts from unavailable inventory %j', async settings => {
+  state.connections = []; Object.assign(state, settings);
+  await render();
+  expect(container.textContent).not.toContain('No accounts connected yet.');
+  expect(container.textContent).not.toContain('No accounts match this view');
+  expect(container.textContent).toContain(settings.loading ? 'Reading configured accounts' : 'Account inventory unavailable');
 });

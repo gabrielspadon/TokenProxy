@@ -654,7 +654,7 @@ export default function KeysPage() {
                         {k.expiresAt ? <span>Expires <time dateTime={k.expiresAt}>{fmtRelative(k.expiresAt, now)}</time></span> : <span>Never expires</span>}
                       </div>
                     </div>
-                    <span className="keys-client-count" aria-label={`${fmtNum(k.deviceCount || 0)} clients`}>{fmtNum(k.deviceCount || 0)}</span>
+                    <span className="keys-client-count">{fmtNum(k.deviceCount || 0)} clients</span>
                     <span className="status keys-key-state" data-tone={budgetState.tone} data-state={st}>
                       {budgetState.label}
                     </span>

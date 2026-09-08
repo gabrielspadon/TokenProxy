@@ -82,7 +82,7 @@
 }
 
 /* Match the unlayered workspace controls without stretching a row action. */
-.row.keys-row { grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 8px 20px; }
+.row.keys-row { grid-template-columns: minmax(0, 1fr) 72px 110px 90px; gap: 8px 20px; }
 .keys-row .keys-identity { min-width: 0; display: grid; gap: 4px; }
 .keys-row .keys-pick { width: fit-content; max-width: 100%; min-height: 28px; gap: 8px; }
 .keys-row .keys-pick input { flex-shrink: 0; }
@@ -100,6 +100,5 @@
   .keys-row .keys-identity { grid-column: 1; grid-row: 1; }
   .keys-row .keys-configure { grid-column: 2; grid-row: 1; align-self: start; }
   .keys-row .keys-client-count { grid-column: 1; grid-row: 2; text-align: start; padding-inline-start: 24px; color: var(--slate); }
-  .keys-row .keys-client-count::after { content: ' clients'; }
   .keys-row .keys-key-state { grid-column: 2; grid-row: 2; justify-self: end; }
 }
