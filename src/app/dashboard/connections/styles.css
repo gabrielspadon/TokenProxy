@@ -23,10 +23,10 @@
   .account-task-form .field :is(.input, .select) { width: 100%; max-width: 100%; }
   .account-task-form :is(fieldset, .connections-form) > :is(p, .connections-check, .verb-row) { grid-column: 1 / -1; max-width: 90ch; }
   .account-task-form fieldset > .button { grid-column: 1 / -1; justify-self: start; }
-  [aria-label='Account options'] > form > .mantine-Stack-root { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); align-items: end; gap: 12px 20px; }
-  [aria-label='Account options'] > form > .mantine-Stack-root > :not(.mantine-InputWrapper-root),
-  [aria-label='Account options'] > form > .mantine-Stack-root > .mantine-InputWrapper-root:has(textarea) { grid-column: 1 / -1; }
-  [aria-label='Account options'] > form > .mantine-Stack-root > .mantine-Group-root { justify-content: flex-start; }
+  .account-options-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); align-items: end; gap: 12px 20px; }
+  .account-options-grid > .account-option-field { min-width: 0; }
+  .account-options-grid > :not(.account-option-field),
+  .account-options-grid > .account-option-field:has(textarea) { grid-column: 1 / -1; }
   .connections-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--t-13); }
   .connections-check input { margin: 0; accent-color: var(--signal); }
 

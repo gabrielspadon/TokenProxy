@@ -115,7 +115,7 @@ export function SelectionEvidence() {
       const anchor=document.createElement('a');anchor.href=url;anchor.download=`tokenproxy-evidence-${lens}-${new Date().toISOString().replaceAll(':','-')}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);setManifest(result.manifest);
     } catch(failure){setError(failure.message);}finally{setBusy(false);}
   }
-  return <div className={styles.selectionBar} aria-label="Retained evidence selection">
+  return <div className={styles.selectionBar} role="group" aria-label="Retained evidence selection">
     {(selected || workspace.comparisonIds.length > 0) && <Popover opened={selectionOpen} onChange={setSelectionOpen} position="bottom-end" width={360} trapFocus returnFocus shadow="md">
       <Popover.Target><Button ref={selectionTrigger} variant="light" className={styles.selectionTrigger} color={excluded ? 'orange' : undefined} onClick={() => setSelectionOpen(value => !value)} aria-label="Selected evidence" rightSection={<Icon name="i-chevron-down" />}>
         <span className={styles.selectionLabel}>{excluded ? 'Outside scope' : selected ? 'Selected' : 'Comparison'}{selected ? ` · ${selectedLabel}` : ` · ${workspace.comparisonIds.length} accounts`}</span>

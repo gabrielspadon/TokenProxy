@@ -59,6 +59,13 @@ it('uses Rows only for layout and preserves exact Unicode inspection identities'
   expect(container.textContent).toContain('Unknown');
   expect(container.textContent).toContain('Unlimited');
   expect(container.querySelector('[role="meter"]')).toBeNull();
+  const decorativeMeters = [...container.querySelectorAll('[data-unknown="true"]')];
+  expect(decorativeMeters).toHaveLength(3);
+  for (const meter of decorativeMeters) {
+    expect(meter.getAttribute('aria-hidden')).toBe('true');
+    expect(meter.hasAttribute('aria-label')).toBe(false);
+    expect(meter.hasAttribute('aria-valuenow')).toBe(false);
+  }
 });
 it('labels derived healthy status without claiming an imported account passed a probe', async () => {
   state.connections[0] = { ...state.connections[0], status: 'healthy', testStatus: 'active' };

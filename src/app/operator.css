@@ -592,9 +592,9 @@
   position: fixed;
   top: -100px;
   inset-inline-start: 12px;
-  z-index: 30;
-  background: var(--signal);
-  color: white;
+  z-index: 110;
+  background: var(--ink);
+  color: var(--raised);
   padding: 12px;
 }
 .skip-link:focus {

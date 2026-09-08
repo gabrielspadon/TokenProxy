@@ -18,7 +18,7 @@
   .keys-row { grid-template-columns: minmax(0, 1fr) auto auto; }
   .keys-row .keys-detail { grid-column: 1 / -1; }
 
-  .keys-pick { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .keys-pick { display: flex; align-items: center; gap: 8px; min-block-size: 24px; min-inline-size: 24px; cursor: pointer; }
   .keys-pick input { margin: 0; accent-color: var(--signal); }
 
   .keys-detail summary { cursor: pointer; width: fit-content; color: var(--slate); font-size: var(--t-13); }

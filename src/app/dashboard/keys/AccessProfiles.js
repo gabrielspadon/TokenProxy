@@ -102,7 +102,7 @@ export function AccessProfiles({ poll, onKeysChanged }) {
       {poll.error ? <Notice {...refusal(poll.status, poll.error)} /> : null}
       {uncertain || poll.error ? <button type="button" className="button quiet" onClick={refresh}>Refresh profiles</button> : null}
       <div className="profile-workspace">
-        <div className="profile-list" aria-label="Access profile inventory">
+        <div className="profile-list" role="group" aria-label="Access profile inventory">
           {profiles.map(profile => <button type="button" key={profile.id} className="profile-row" aria-pressed={selectedId === profile.id} disabled={busy || uncertain} onClick={() => { setSelectedId(profile.id); begin('edit', profile); }}>
             <span>{profile.name}</span><span className="caption"><bdi>v{profile.version}</bdi> · {fmtNum(profile.keyCount)} keys · {profile.maxCostUsd === null ? 'No cost ceiling' : `${fmtUsd(profile.maxCostUsd)} lifetime ceiling`}</span>
           </button>)}

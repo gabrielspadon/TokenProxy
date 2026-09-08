@@ -3,9 +3,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
-const fixture = vi.hoisted(() => ({ calls: [], response: null, refresh: vi.fn() }));
+const fixture = vi.hoisted(() => ({ calls: [], response: null, refresh: vi.fn(), keyName: "Workstation" }));
 vi.mock("@/shared/hooks/usePoll", () => ({ usePoll: url => ({ loading: false, goodAt: 1, refresh: fixture.refresh,
-  data: url === "/api/keys" ? { keys: [{ id: "fixture-key", name: "Workstation", keyPreview: "••••last", secretRedacted: true,
+  data: url === "/api/keys" ? { keys: [{ id: "fixture-key", name: fixture.keyName, keyPreview: "••••last", secretRedacted: true,
     isActive: true, usage: {}, machineId: "fixture", allowedModels: null }] } : url === "/api/settings" ? { requireApiKey: true, requireLogin: true } : { devices: [], windowMinutes: 30 },
 }) }));
 vi.mock("@/store/authStatus", () => ({ useAuthStatus: selector => selector({ status: { authenticated: true, displayName: "Operator" } }) }));
@@ -15,6 +15,7 @@ const secret = "sk-fixture-deliberately-revealed-secret";
 let container, root;
 beforeEach(async () => {
   fixture.calls = [];
+  fixture.keyName = "Workstation";
   fixture.response = { ok: true, body: { id: "fixture-key", key: secret, name: "Workstation" } };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
@@ -30,6 +31,33 @@ async function openReveal() {
   return container.querySelector("dialog[open]");
 }
 async function submit(dialog) { await act(async () => dialog.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))); }
+
+it("returns keyboard focus to the current key configuration trigger after closing the panel", async () => {
+  fixture.keyName = "Renamed workstation";
+  await act(async () => root.render(<KeysPage />));
+  const close = [...container.querySelectorAll("button")].find(el => el.textContent.trim() === "Close key");
+  close.focus();
+  expect(document.activeElement).toBe(close);
+  await act(async () => close.click());
+  expect(container.querySelector('[aria-label="Selected key configuration"]')).toBeNull();
+  const configure = [...container.querySelectorAll("button")].find(el => el.textContent.trim() === "Configure Renamed workstation");
+  expect(configure).toBeTruthy();
+  expect(document.activeElement).toBe(configure);
+  expect(configure.getAttribute("aria-pressed")).toBe("false");
+  expect(fixture.calls).toHaveLength(0);
+});
+
+it("selects the key through its enclosing label without configuring or mutating the key", async () => {
+  const label = container.querySelector(".keys-pick");
+  const checkbox = label.querySelector('input[type="checkbox"]');
+  expect(label.control).toBe(checkbox);
+  expect(checkbox.checked).toBe(false);
+  await act(async () => label.click());
+  expect(checkbox.checked).toBe(true);
+  expect(fixture.calls).toHaveLength(0);
+  await act(async () => label.click());
+  expect(checkbox.checked).toBe(false);
+});
 
 it("reveals one selected key only after explicit confirmation, then clears it on close", async () => {
   expect(container.textContent).toContain("••••last");

@@ -23,6 +23,7 @@
 .cardHeader { display: flex; align-items: center; gap: 8px; }
 .configurationLine { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .configurationLine :global(.mantine-Badge-root) { flex-shrink: 0; height: auto; font-size: 13px; font-weight: 500; text-transform: none; padding: 4px 7px; }
+.configurationLine :global(.mantine-Badge-root)[data-configured='on'] { color: var(--positive); background: var(--positive-wash); }
 .comparisonCheckbox { display: flex; flex: 0 0 var(--account-control-height); min-height: var(--account-control-height); align-items: center; justify-content: center; cursor: pointer; }
 .identity { display: flex; flex: 1; align-items: center; gap: 8px; text-align: left; min-width: 0; min-height: max(36px, var(--account-control-height)); background: none; border: 0; color: var(--ink); cursor: pointer; padding: 0; }
 .identity > span:last-child { display: grid; min-width: 0; }

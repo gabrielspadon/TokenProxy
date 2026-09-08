@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Button, Checkbox, Group, NativeSelect, Stack, TextInput, Textarea } from '@mantine/core';
+import { Button, Checkbox, Group, NativeSelect, TextInput, Textarea } from '@mantine/core';
 import { call } from '@/shared/api';
 import { Notice } from '@/shared/components/Notice';
 import { refusal } from '@/shared/refusal';
@@ -55,7 +55,7 @@ export function buildAccountOptions(values, fields) {
 
 export function ProviderOptionInputs({ provider, values, onChange, disabled = false }) {
   return accountOptionFields(provider).map(([key, label, type]) => {
-    const common = { label, value: values[key] ?? '', disabled, onChange: event => onChange(key, event.currentTarget.value) };
+    const common = { className: 'account-option-field', label, value: values[key] ?? '', disabled, onChange: event => onChange(key, event.currentTarget.value) };
     if (Array.isArray(type)) return <NativeSelect key={key} {...common} data={[{ value: '', label: 'Provider default / keep current' }, ...type]} />;
     if (type === 'boolean') return <NativeSelect key={key} {...common} data={[{ value: '', label: 'Provider default / keep current' }, { value: 'true', label: 'On' }, { value: 'false', label: 'Off' }]} />;
     if (type === 'json') return <Textarea key={key} {...common} minRows={3} description="Write-only. Header values can contain credentials; leave empty to preserve them." autoComplete="off" />;
@@ -105,17 +105,17 @@ export default function AccountOptions({ connection, onSaved }) {
   }
   return <section aria-label="Account options">
       <h2>Account options</h2>
-      <form onSubmit={save}><Stack gap="md">
+      <form onSubmit={save}><div className="account-options-grid">
         <p>Changes apply to subsequent selections of <bdi>{connection.name || connection.id}</bdi>. Other accounts keep their settings. Provider-specific blank fields preserve their current values.</p>
         {notice ? <Notice {...notice} /> : null}
         {conflicts.length ? <Notice tone="warn" title="Saved account fields changed while you were editing." next={`Your draft is retained. Reset the draft to load current values before saving. Changed fields: ${conflicts.join(', ')}.`} /> : null}
-        <TextInput label="Account name" value={values.name || ''} onChange={event => set('name', event.currentTarget.value)} required disabled={busy || uncertain} />
-        <TextInput label="Default model" description="Used when this connection supplies a model fallback. Empty clears it." value={values.defaultModel || ''} onChange={event => set('defaultModel', event.currentTarget.value)} disabled={busy || uncertain} />
-        <TextInput type="number" min="1" label="Global display priority" description="Orders the client account listing. This does not replace the routing strategy." value={values.globalPriority ?? ''} onChange={event => set('globalPriority', event.currentTarget.value)} disabled={busy || uncertain} />
-        <TextInput type="number" min="1" label="Account concurrency ceiling" description="Independent of the shared provider ceiling. Empty clears this account override." value={values.maxConcurrent ?? ''} onChange={event => set('maxConcurrent', event.currentTarget.value)} disabled={busy || uncertain} />
+        <TextInput className="account-option-field" label="Account name" value={values.name || ''} onChange={event => set('name', event.currentTarget.value)} required disabled={busy || uncertain} />
+        <TextInput className="account-option-field" label="Default model" description="Used when this connection supplies a model fallback. Empty clears it." value={values.defaultModel || ''} onChange={event => set('defaultModel', event.currentTarget.value)} disabled={busy || uncertain} />
+        <TextInput className="account-option-field" type="number" min="1" label="Global display priority" description="Orders the client account listing. This does not replace the routing strategy." value={values.globalPriority ?? ''} onChange={event => set('globalPriority', event.currentTarget.value)} disabled={busy || uncertain} />
+        <TextInput className="account-option-field" type="number" min="1" label="Account concurrency ceiling" description="Independent of the shared provider ceiling. Empty clears this account override." value={values.maxConcurrent ?? ''} onChange={event => set('maxConcurrent', event.currentTarget.value)} disabled={busy || uncertain} />
         <ProviderOptionInputs provider={connection.provider} values={values} onChange={set} disabled={busy || uncertain} />
         <Checkbox label="Clear all custom upstream headers" checked={Boolean(values.clearHeaders)} onChange={event => set('clearHeaders', event.currentTarget.checked)} disabled={busy || uncertain} />
-        <Group justify="flex-end"><Button variant="default" onClick={() => { reset(); setNotice(null); }} disabled={busy || uncertain}>Reset draft</Button><Button type="submit" loading={busy} disabled={uncertain || conflicts.length > 0}>Save account options</Button></Group>
-      </Stack></form>
+        <Group justify="flex-start"><Button variant="default" onClick={() => { reset(); setNotice(null); }} disabled={busy || uncertain}>Reset draft</Button><Button type="submit" loading={busy} disabled={uncertain || conflicts.length > 0}>Save account options</Button></Group>
+      </div></form>
   </section>;
 }

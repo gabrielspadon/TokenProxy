@@ -88,7 +88,7 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
       onChange={(model) => setScope({ model })} />
   </>;
   return (
-    <><div className={styles.scope} aria-label="Shared analysis scope">
+    <><div className={styles.scope} role="group" aria-label="Shared analysis scope">
       <div className={styles.scopeFields}>
       <Select
         className={styles.periodSelect}

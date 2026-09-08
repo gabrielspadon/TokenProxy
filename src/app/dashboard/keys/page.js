@@ -130,6 +130,18 @@ export default function KeysPage() {
   const accessProfiles = usePoll('/api/access-profiles', 0);
   const auth = useAuthStatus((s) => s.status);
   const [selectedId, setSelectedId] = useState(null);
+  const inventoryRef = useRef(null);
+  const returnKeyFocus = useRef(null);
+  useEffect(() => {
+    if (!selectedId && returnKeyFocus.current) {
+      [...(inventoryRef.current?.querySelectorAll('[data-key-id]') || [])].find(button => button.dataset.keyId === returnKeyFocus.current)?.focus();
+      returnKeyFocus.current = null;
+    }
+  }, [selectedId]);
+  function closeKey() {
+    returnKeyFocus.current = selectedId;
+    setSelectedId(null);
+  }
   const [keyTask, setKeyTask] = useState('policy');
   const [setupVisited, setSetupVisited] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -620,7 +632,7 @@ export default function KeysPage() {
         ) : null}
         {rows.length ? (
           <>
-            <div className="rows">
+            <div className="rows" ref={inventoryRef}>
               <div className="row head keys-row">
                 <span>Key</span>
                 <span>Clients</span>
@@ -643,7 +655,7 @@ export default function KeysPage() {
                         />
                         <span className="name">{k.name}</span>
                       </label>
-                      <button type="button" className="button quiet" aria-pressed={selectedId === k.id} onClick={() => { if (selectedId !== k.id) setSetupVisited(false); setSelectedId(k.id); setKeyTask('policy'); }}>Configure {k.name}</button>
+                      <button type="button" className="button quiet" data-key-id={k.id} aria-pressed={selectedId === k.id} onClick={() => { if (selectedId !== k.id) setSetupVisited(false); setSelectedId(k.id); setKeyTask('policy'); }}>Configure {k.name}</button>
                       <span className="sub">
                         <span className="id">
                           {k.id}
@@ -718,7 +730,7 @@ export default function KeysPage() {
       {rows.find(key => key.id === selectedId) ? (() => {
         const key = rows.find(item => item.id === selectedId);
         return <section aria-label="Selected key configuration" key={key.id}>
-          <div className="screen-head"><h2>{key.name}</h2><button type="button" className="button quiet" onClick={() => setSelectedId(null)}>Close key</button></div>
+          <div className="screen-head"><h2>{key.name}</h2><button type="button" className="button quiet" onClick={closeKey}>Close key</button></div>
           <nav className="verb-row" aria-label="Key tasks">{[['policy', 'Policy'], ['setup', 'Client setup']].map(([value, label]) => <button type="button" key={value} className={keyTask === value ? 'button' : 'button quiet'} aria-pressed={keyTask === value} onClick={() => { setKeyTask(value); if (value === 'setup') setSetupVisited(true); }}>{label}</button>)}</nav>
           {setupVisited ? <div hidden={keyTask !== 'setup'}><ClientSetup record={key} /></div> : null}
           <div hidden={keyTask !== 'policy'}>
