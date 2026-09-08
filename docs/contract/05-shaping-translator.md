@@ -145,7 +145,6 @@ the single global settings object, read/written only through
 Returns `toSafeSettings(settings)` (`route.js:92-103`, strips `password` and
 `oidcClientSecret`, adds computed `oidcConfigured` boolean) spread with:
 - `enableRequestLogs`: `process.env.ENABLE_REQUEST_LOGS === "true"` (`route.js:110`, env-only, not DB-backed)
-- `enableTranslator`: `process.env.ENABLE_TRANSLATOR === "true"` (`route.js:111`, env-only, not DB-backed — this flag exists but nothing in `dashboardGuard.js` or any translator route currently reads it to gate access; the translator routes are reachable whenever the dashboardGuard session check passes regardless of this flag's value)
 - an auto-ping provider list (unrelated to this domain, not detailed here)
 
 Relevant settings-DB keys returned inside `safeSettings`

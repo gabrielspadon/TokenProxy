@@ -210,7 +210,7 @@ function deleteClearedProxyPoolSnapshots(providerStrategies) {
 export function mergeWithDefaults(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
   // Ignore retired settings in the public view while preserving the stored row.
-  for (const key of ["tunnelEnabled", "tunnelUrl", "tunnelProvider", "tailscaleEnabled", "tailscaleUrl", "tunnelDashboardAccess"]) delete merged[key];
+  for (const key of ["tunnelEnabled", "tunnelUrl", "tunnelProvider", "tailscaleEnabled", "tailscaleUrl", "tunnelDashboardAccess", "enableTranslator"]) delete merged[key];
   for (const [key, defVal] of Object.entries(DEFAULT_SETTINGS)) {
     if (merged[key] === undefined) {
       if (

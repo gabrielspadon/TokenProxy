@@ -31,7 +31,7 @@ context_status (mcp tokenproxy tool) is backed by open-sse/handlers/chatCore/con
 | drain (/api/admin/drain[/:id]) | No, reversible | Idempotent POST/DELETE, optional ifMatch optimistic concurrency (412 on mismatch), first drain has no precondition |
 | activation/rollback (/api/admin/activation, /rollback) | Rollback reversible (a 2nd rollback undoes the 1st) | Releases become "known" only via activation, no explicit create-release op; rollback walks previousReleaseId chain, 409 no_prior_release if none |
 | shutdown (/api/shutdown) | Yes | Dev-only (403 in prod), requires SHUTDOWN_SECRET bearer match, 500ms-delayed exit(0) |
-| version/shutdown | Yes | Kills sibling processes (cloudflared/MITM/stray next-server) to release file locks, then exits |
+| version/shutdown | Yes | Kills sibling processes (MITM/stray next-server) to release file locks, then exits |
 | version/update | Yes, irreversible in-place | Refuses if TOKENPROXY_NO_UPDATE set or not production build; kills siblings, spawnUpdaterAndExit() detached updater, current process exits |
 | hotreload (/api/providers/[id]/hotreload) | No | Pokes each model with a 1-token request to roll quota window forward; HOTRELOAD_TIMEOUT_MS=10000, 3 retries, verifies quota moved (USAGE_VERIFY_ATTEMPTS=3) |
 | reauth | Guarded | Preserves connection id/priority/binding, swaps auth material only; identity_mismatch 409 requires force=true to rebind different account |

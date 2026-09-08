@@ -88,6 +88,7 @@ describe("settings compatibility", () => {
       tailscaleEnabled: true,
       tailscaleUrl: "https://retired.example.net",
       tunnelDashboardAccess: false,
+      enableTranslator: true,
     };
     await repository.updateSettings({ ...retained, requireLogin: true });
     for (const key of Object.keys(retained)) {
@@ -96,8 +97,22 @@ describe("settings compatibility", () => {
     const response = await GET();
     const body = await response.json();
     for (const key of Object.keys(retained)) expect(body).not.toHaveProperty(key);
-    await repository.updateSettings({ requireLogin: false });
+    const patched = await PATCH(settingsRequest({ requireLogin: false }));
+    expect(patched.status).toBe(200);
+    const patchedBody = await patched.json();
+    for (const key of Object.keys(retained)) expect(patchedBody).not.toHaveProperty(key);
     expect(await repository.exportSettings()).toMatchObject({ ...retained, requireLogin: false });
+  });
+
+  it("does not publish a retired workbench flag from the startup environment", async () => {
+    vi.stubEnv("ENABLE_TRANSLATOR", "true");
+    try {
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(await response.json()).not.toHaveProperty("enableTranslator");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
