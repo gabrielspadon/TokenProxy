@@ -5,7 +5,7 @@ import { usePoll } from '@/shared/hooks/usePoll';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
-import { TaskNavigation } from '@/shared/components/TaskNavigation';
+import { TaskNavigation, taskPanelClass } from '@/shared/components/TaskNavigation';
 import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
@@ -334,7 +334,7 @@ export default function AccessPage() {
       {done ? <Notice tone="ok" title={done} /> : null}
       {task !== 'signin' && auth.error ? <div role="status"><Notice {...refusal(auth.status, auth.error)} /><button type="button" className="button quiet" onClick={auth.refresh}>Retry sign-in status</button></div> : null}
 
-      <section aria-labelledby="h-now" data-task-panel hidden={task !== 'signin'}>
+      <section aria-labelledby="h-now" className={taskPanelClass} data-task-panel hidden={task !== 'signin'}>
         <h2 id="h-now">
           <Icon name="i-access" />
           How sign-in works now
@@ -383,7 +383,7 @@ export default function AccessPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-password" data-task-panel hidden={task !== 'signin'}>
+      <section aria-labelledby="h-password" className={taskPanelClass} data-task-panel hidden={task !== 'signin'}>
         <h2 id="h-password">
           <Icon name="i-keys" />
           Password
@@ -417,7 +417,7 @@ export default function AccessPage() {
         </form>
       </section>
 
-      <section aria-labelledby="h-sso" data-task-panel hidden={task !== 'sso'}>
+      <section aria-labelledby="h-sso" className={taskPanelClass} data-task-panel hidden={task !== 'sso'}>
         <h2 id="h-sso">Single sign-on</h2><p className="caption">Connect your organization’s identity provider. Password sign-in needs no provider setup.</p>
         {settings.error && !s ? <Notice {...refusal(settings.status, settings.error)} /> : null}
         <fieldset className="segmented">
@@ -606,7 +606,7 @@ export default function AccessPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-open" data-task-panel hidden={task !== 'advanced'}>
+      <section aria-labelledby="h-open" className={taskPanelClass} data-task-panel hidden={task !== 'advanced'}>
         <h2 id="h-open">
           <Icon name="i-lock" />
           What stays protected when sign-in is off
@@ -667,7 +667,7 @@ export default function AccessPage() {
         </div>
       </section>
 
-      <section aria-labelledby="h-lockout" data-task-panel hidden={task !== 'advanced'}>
+      <section aria-labelledby="h-lockout" className={taskPanelClass} data-task-panel hidden={task !== 'advanced'}>
         <h2 id="h-lockout">Lockout rules</h2>
         <p>
           Five wrong passwords from one address lock that address out. Each further lockout waits

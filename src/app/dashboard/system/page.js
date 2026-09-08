@@ -7,7 +7,7 @@ import { usePoll } from '@/shared/hooks/usePoll';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
-import { TaskNavigation } from '@/shared/components/TaskNavigation';
+import { TaskNavigation, taskPanelClass } from '@/shared/components/TaskNavigation';
 import { Notice } from '@/shared/components/Notice';
 import { refusal } from '@/shared/refusal';
 import { fmtDuration, fmtNum, fmtTime, fmtUnit } from '@/shared/format';
@@ -255,7 +255,7 @@ export default function SystemPage() {
       ) : null}
 
       {task !== 'status' && (health.error || detail.error || version.error) ? <div role="status"><Notice tone="warn" title="Some system observations could not be refreshed." next="Retained values may be stale. Review Status for the failed read and its retry control." /><Button variant="subtle" onClick={() => setTask('status')}>Review system status</Button></div> : null}
-      <section aria-labelledby="h-runtime" data-task-panel hidden={task !== 'status'}>
+      <section aria-labelledby="h-runtime" className={taskPanelClass} data-task-panel hidden={task !== 'status'}>
         <h2 id="h-runtime">
           <Icon name="i-system" />
           Runtime
@@ -377,7 +377,7 @@ export default function SystemPage() {
         </dl>
       </section>
 
-      <section aria-labelledby="h-checks" data-task-panel hidden={task !== 'status'}>
+      <section aria-labelledby="h-checks" className={taskPanelClass} data-task-panel hidden={task !== 'status'}>
         <div className="screen-head">
           <h2 id="h-checks">
             <Icon name="i-now" />
@@ -479,7 +479,7 @@ export default function SystemPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-configuration-workflows" data-task-panel hidden={task !== 'configuration'}>
+      <section aria-labelledby="h-configuration-workflows" className={taskPanelClass} data-task-panel hidden={task !== 'configuration'}>
         <h2 id="h-configuration-workflows">Configuration and evidence workflows</h2>
         <p>Each workflow retains or changes a different scope. Review its diff, expected version and receipt before applying another change.</p>
         <ul className="bullets">
@@ -489,7 +489,7 @@ export default function SystemPage() {
         </ul>
       </section>
 
-      <section aria-labelledby="h-backup" data-task-panel hidden={task !== 'configuration'}>
+      <section aria-labelledby="h-backup" className={taskPanelClass} data-task-panel hidden={task !== 'configuration'}>
         <h2 id="h-backup">Export configuration</h2>
         <p>
           Export a configuration file containing settings, provider connections and nodes, proxy pools, client keys, routing plans, aliases, custom models and pricing.
@@ -517,7 +517,7 @@ export default function SystemPage() {
         </div>
       </section>
 
-      <section aria-labelledby="h-import" data-task-panel hidden={task !== 'configuration'}>
+      <section aria-labelledby="h-import" className={taskPanelClass} data-task-panel hidden={task !== 'configuration'}>
         <h2 id="h-import">Import configuration</h2>
         <p>
           Import replaces the configuration tables and scopes included in an export. Existing usage, operation receipts, investigations, rule history and compatibility evidence are not restored from this file and remain separate.
@@ -560,7 +560,7 @@ export default function SystemPage() {
         </div>
       </section>
 
-      <section aria-labelledby="h-update" data-task-panel hidden={task !== 'maintenance'}>
+      <section aria-labelledby="h-update" className={taskPanelClass} data-task-panel hidden={task !== 'maintenance'}>
         <h2 id="h-update">Update</h2>
         <p>Updating stops the gateway, so every tool routed through it stops with it.</p>
         {notes.state === 'ready' ? (
@@ -597,7 +597,7 @@ export default function SystemPage() {
         </div>
       </section>
 
-      <section aria-labelledby="h-shutdown" data-task-panel hidden={task !== 'maintenance'}>
+      <section aria-labelledby="h-shutdown" className={taskPanelClass} data-task-panel hidden={task !== 'maintenance'}>
         <h2 id="h-shutdown">Shutdown</h2>
         <p>
           Shutting down also releases the files a manual reinstall needs, so this is the way to stop
@@ -623,7 +623,7 @@ export default function SystemPage() {
         </div>
       </section>
 
-      <section aria-labelledby="h-gap" data-task-panel hidden={task !== 'status'}>
+      <section aria-labelledby="h-gap" className={taskPanelClass} data-task-panel hidden={task !== 'status'}>
         <h2 id="h-gap">
           <Icon name="i-alert" />
           Routing eligibility

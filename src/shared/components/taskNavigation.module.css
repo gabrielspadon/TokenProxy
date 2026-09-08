@@ -11,6 +11,6 @@
   min-height: 32px;
   font-size: var(--type-ui);
 }
-:global([data-task-panel][hidden]) {
+.panel[hidden] {
   display: none !important;
 }
