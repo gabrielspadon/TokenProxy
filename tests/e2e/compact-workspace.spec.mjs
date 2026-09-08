@@ -127,7 +127,9 @@ test('compact scope, exact selection, shared comparison and responsive inspector
       await expect(activity.locator('dl > div').nth(3).locator('dd')).toHaveText(Number.isFinite(evidence.summary.cacheReadFraction) ? `${format(evidence.summary.cacheReadFraction * 100)}%` : 'Unknown');
       await expect(activity).toContainText('Cache reads · tokens');
       await expect(activity).toContainText('Cache writes · tokens');
+      await activity.getByText('Data', { exact: true }).click();
       await expect(activity).toContainText('Historical zeros may be unreported');
+      await activity.getByText('Chart', { exact: true }).click();
       report.activity = { logicalRequests: evidence.summary.logicalRequests, attempts: evidence.summary.records, cacheReadFraction: evidence.summary.cacheReadFraction, source: evidence.source };
     });
     const emptyScope = {};

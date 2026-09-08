@@ -18,8 +18,12 @@
   .savings-everyday-footer > span { flex-basis: 100%; }
   @media (max-width: 760px) {
     .savings-everyday-head { align-items: start; }
-    .savings-everyday-row { grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; padding-inline: 0; }
-    .savings-everyday-row .savings-control-switch { flex-direction: column; gap: 5px; }
+    .savings-everyday-head > div { min-width: 0; }
+    .savings-everyday-head > button { flex-shrink: 0; }
+    .savings-everyday-row { grid-template-columns: 18px minmax(0, 1fr) 64px; gap: 10px; padding-inline: 0; }
+    .savings-everyday-row > .icon { grid-column: 1; grid-row: 1; }
+    .savings-everyday-row > div:not(.savings-control-switch) { grid-column: 2; grid-row: 1; min-width: 0; }
+    .savings-everyday-row .savings-control-switch { grid-column: 3; grid-row: 1; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 44px; }
     .savings-group-overview dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   .savings-status-strip { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(130px, .7fr) minmax(240px, 2fr); gap: 16px; padding: 12px 16px; background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; }
@@ -82,7 +86,7 @@
     .savings-status-strip .savings-status-context { grid-column: 1 / -1; border-inline-start: 0; border-block-start: 1px solid var(--rule); padding-inline-start: 0; padding-block-start: 12px; }
     .savings-toolbar { grid-template-columns: 1fr 1fr; margin-block: 16px; }
     .savings-control-card { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding-inline: 8px; }
-    .savings-control-switch { grid-column: 2; grid-row: 1; flex-direction: column; align-items: end; gap: 6px; }
+    .savings-control-card > .savings-control-switch { grid-column: 2; grid-row: 1; flex-direction: column; align-items: end; gap: 6px; }
     .savings-control-effect { grid-column: 1 / -1; }
     .savings-thresholds .shaping-form { grid-template-columns: minmax(0, 1fr); }
     .savings-configuration { grid-template-columns: minmax(0, 1fr); }

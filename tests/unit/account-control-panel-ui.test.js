@@ -44,6 +44,8 @@ it('shows snapshot-only quota windows with a real percentage and reverses the sc
   expect(container.querySelector('[role="meter"]').parentElement.textContent).toContain('Pause ≤ 10% left');
   expect(container.querySelector('details')).toBeNull();
   expect(field('Fallback priority').closest('[hidden]')).not.toBeNull();
+  const priorityLabel = [...accountCard().querySelectorAll('label')].find(label => label.textContent === 'Priority');
+  expect(priorityLabel.closest('[hidden]')).not.toBeNull();
   await act(async () => container.querySelector('[value="advanced"]').click());
   expect(field('Fallback priority').closest('[hidden]')).toBeNull();
   expect(container.textContent).toContain('2026-09-09 00:00:00 UTC');

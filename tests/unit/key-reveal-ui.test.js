@@ -23,7 +23,7 @@ beforeEach(async () => {
   container = document.createElement("div"); document.body.appendChild(container);
   root = createRoot(container);
   await act(async () => root.render(<KeysPage />));
-  await act(async () => [...container.querySelectorAll("button")].find(el => el.textContent.trim() === "Configure Workstation").click());
+  await act(async () => [...container.querySelectorAll("button")].find(el => el.getAttribute("aria-label") === "Configure Workstation").click());
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); });
 async function openReveal() {
@@ -40,7 +40,7 @@ it("returns keyboard focus to the current key configuration trigger after closin
   expect(document.activeElement).toBe(close);
   await act(async () => close.click());
   expect(container.querySelector('[aria-label="Selected key configuration"]')).toBeNull();
-  const configure = [...container.querySelectorAll("button")].find(el => el.textContent.trim() === "Configure Renamed workstation");
+  const configure = [...container.querySelectorAll("button")].find(el => el.getAttribute("aria-label") === "Configure Renamed workstation");
   expect(configure).toBeTruthy();
   expect(document.activeElement).toBe(configure);
   expect(configure.getAttribute("aria-pressed")).toBe("false");

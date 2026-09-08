@@ -26,11 +26,11 @@ export function capacityActivityOption(points, bucketMs) {
     ? [{ bucketStartMs: points[index - 1].bucketStartMs + bucketMs }, point] : [point]);
   const metric = (name, key, color, grid, samples) => ({
     name, type: 'line', xAxisIndex: grid, yAxisIndex: grid, connectNulls: false,
-    showSymbol: points.length < 8, symbolSize: 5, lineStyle: { width: 2, color }, itemStyle: { color },
+    showSymbol: true, showAllSymbol: true, symbolSize: 4, lineStyle: { width: 2, color }, itemStyle: { color },
     data: plot.map(point => [point.bucketStartMs, measured(point, key, samples)]),
   });
   return {
-    grid: [{ top: 21, height: 45, left: 52, right: 15 }, { top: 109, height: 45, left: 52, right: 15 }],
+    grid: [{ top: 19, height: 35, left: 52, right: 15 }, { top: 87, height: 35, left: 52, right: 15 }],
     tooltip: { trigger: 'axis', renderMode: 'richText', confine: true, valueFormatter: value => value == null ? 'Unknown' : number(value) },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     xAxis: [0, 1].map(gridIndex => ({ type: 'time', gridIndex, min: points[0]?.bucketStartMs, max: points.at(-1)?.bucketStartMs,
@@ -73,7 +73,7 @@ export function CapacityActivity() {
         : !points.length ? <div className={styles.state}>No recorded activity for this period. Account controls remain available below.</div>
           : view === 'chart' ? <>
             <div className={styles.legend}>{option.series.map((series, index) => <span key={series.name}><i style={{ background: `var(${LEGEND_COLORS[index]}, ${series.itemStyle.color})` }} />{series.name}</span>)}</div>
-            <AnalyticalChart option={option} height={181} label="Requests, attempts and cache tokens over the selected UTC period. Counts and tokens use separate aligned tracks. Use Data for keyboard interval selection." onEvents={{ click: event => {
+            <AnalyticalChart option={option} height={149} label="Requests, attempts and cache tokens over the selected UTC period. Counts and tokens use separate aligned tracks. Use Data for keyboard interval selection." onEvents={{ click: event => {
               const start = event.value?.[0];
               choose(points.find(point => point.bucketStartMs === start));
             } }} />
@@ -88,8 +88,9 @@ export function CapacityActivity() {
           </div>}
     <footer className={styles.foot}>
       <span>{Number.isFinite(bucketMs) ? `${number(bucketMs / 60000)}-minute intervals · UTC. Select an interval to focus.` : 'Selected UTC period.'} {resource.receivedAt ? `Updated ${utc(resource.receivedAt)} UTC.` : ''}</span>
-      <span>{summary?.unattributedAttempts > 0 ? `${number(summary.unattributedAttempts)} attempts have no request ID. ` : ''}Requests can span intervals; interval counts do not add up to unique requests.</span>
-      <span>Cache share uses paired recorded read/input tokens. Historical zeros may be unreported. Current account availability is shown below.</span>
+      {summary?.unattributedAttempts > 0 ? <span>{number(summary.unattributedAttempts)} attempts have no request ID.</span> : null}
+      {view === 'data' ? <><span>Requests can span intervals; interval counts do not add up to unique requests.</span>
+      <span>Cache share uses paired recorded read/input tokens. Historical zeros may be unreported. Current account availability is shown below.</span></> : null}
     </footer>
   </section>;
 }

@@ -64,6 +64,11 @@ it('starts with four switches and keeps every field in one Advanced tab', async 
     expect(input.disabled, field.key).toBe(false);
     expect(container.querySelectorAll(`[name="${field.key}"]`)).toHaveLength(1);
   }
+  for (const field of THRESHOLDS) {
+    const group = container.querySelector(`[name="${field.key}"]`).closest('[role="group"]');
+    expect(group, field.key).not.toBeNull();
+    expect(group.getAttribute('aria-label')).toBe(`${CONTROLS.find(control => control.stage === field.stage).name} thresholds`);
+  }
   expect(state.calls).toEqual([]);
 });
 

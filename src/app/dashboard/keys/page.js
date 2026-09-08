@@ -628,6 +628,7 @@ export default function KeysPage() {
                 <span>Key</span>
                 <span>Clients</span>
                 <span>State</span>
+                <span className="keys-action-heading">Settings</span>
               </div>
               {rows.map((k) => {
                 const st = keyState(k);
@@ -635,7 +636,7 @@ export default function KeysPage() {
                 const on = picked.includes(k.id);
                 return (
                   <div className="row keys-row" key={k.id}>
-                    <span className="who">
+                    <div className="keys-identity">
                       <label className="keys-pick">
                         <input
                           type="checkbox"
@@ -646,42 +647,18 @@ export default function KeysPage() {
                         />
                         <span className="name">{k.name}</span>
                       </label>
-                      <button type="button" className="button quiet" data-key-id={k.id} aria-pressed={selectedId === k.id} onClick={() => { if (selectedId !== k.id) setSetupVisited(false); setSelectedId(k.id); setKeyTask('limits'); }}>Configure {k.name}</button>
-                      <span className="sub">
-                        <span className="id">
-                          {k.id}
-                        </span>
-                        {k.keyPreview ? (
-                          <span className="id">
-                            {' '}
-                            {k.keyPreview}
-                          </span>
-                        ) : null}
-                        {k.createdAt ? (
-                          <>
-                            {' '}
-                            <span>Created</span>{' '}
-                            <span>{fmtRelative(k.createdAt, now)}</span>
-                          </>
-                        ) : null}
-                        {k.expiresAt ? (
-                          <>
-                            {' '}
-                            <span>Expires</span>{' '}
-                            <span>{fmtRelative(k.expiresAt, now)}</span>
-                          </>
-                        ) : (
-                          <>
-                            {' '}
-                            <span>Never expires</span>
-                          </>
-                        )}
-                      </span>
-                    </span>
-                    <span>{fmtNum(k.deviceCount || 0)}</span>
-                    <span className="status" data-tone={budgetState.tone} data-state={st}>
+                      <div className="keys-meta">
+                        {k.keyPreview ? <span className="id">{k.keyPreview}</span> : null}
+                        <span className="keys-record-id id" title={k.id}>{k.id}</span>
+                        {k.createdAt ? <span>Created <time dateTime={k.createdAt}>{fmtRelative(k.createdAt, now)}</time></span> : null}
+                        {k.expiresAt ? <span>Expires <time dateTime={k.expiresAt}>{fmtRelative(k.expiresAt, now)}</time></span> : <span>Never expires</span>}
+                      </div>
+                    </div>
+                    <span className="keys-client-count" aria-label={`${fmtNum(k.deviceCount || 0)} clients`}>{fmtNum(k.deviceCount || 0)}</span>
+                    <span className="status keys-key-state" data-tone={budgetState.tone} data-state={st}>
                       {budgetState.label}
                     </span>
+                    <button type="button" className="button quiet keys-configure" data-key-id={k.id} aria-label={`Configure ${k.name}`} aria-pressed={selectedId === k.id} onClick={() => { if (selectedId !== k.id) setSetupVisited(false); setSelectedId(k.id); setKeyTask('limits'); }}>Configure</button>
                   </div>
                 );
               })}

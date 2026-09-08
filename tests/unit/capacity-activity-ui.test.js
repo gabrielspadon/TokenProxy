@@ -31,10 +31,14 @@ it('keeps logical request totals, attempts and paired cache token share distinct
   const summary = [...host.querySelectorAll('dl > div')].map(node => node.textContent);
   expect(summary).toEqual(['Requests with an ID10', 'Attempts24', 'Failed attempts8', 'Cache read share of input75%']);
   expect(host.textContent).toContain('4 attempts have no request ID');
-  expect(host.textContent).toContain('Historical zeros may be unreported');
+  expect(host.textContent).not.toContain('Historical zeros may be unreported');
   expect(state.chart.option.yAxis.map(axis => axis.name)).toEqual(['Count', 'Tokens']);
   expect(state.chart.option.series[0].data[0][1]).toBe(2);
   expect(state.chart.option.series[1].data[0][1]).toBe(3);
+  expect(state.chart.option.series.every(series => series.showSymbol && series.showAllSymbol)).toBe(true);
+  await act(async () => host.querySelector('[value="data"]').click());
+  expect(host.textContent).toContain('Historical zeros may be unreported');
+  expect(host.textContent).toContain('interval counts do not add up to unique requests');
 });
 
 it('preserves missing token samples and sparse gaps instead of drawing measured zeros', () => {

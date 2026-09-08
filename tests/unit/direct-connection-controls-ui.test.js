@@ -36,7 +36,7 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); expect(network).not.toHaveBeenCalled(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function mount(element) { await act(async () => root.render(<MantineProvider env="test"><Suspense fallback="Reading">{element}</Suspense></MantineProvider>)); }
-const button = (text, scope = container) => [...scope.querySelectorAll('button')].find(node => node.textContent.trim().endsWith(text));
+const button = (text, scope = container) => [...scope.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === text || node.textContent.trim().endsWith(text));
 const input = (text, scope = container) => [...scope.querySelectorAll('label')].find(node => node.textContent.includes(text) && node.control)?.control;
 async function click(text, scope) { await act(async () => button(text, scope).click()); }
 async function change(node, value) {
