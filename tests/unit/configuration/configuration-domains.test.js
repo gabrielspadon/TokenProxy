@@ -117,6 +117,22 @@ it('ordinary account, provider, disabled-model, pool and saver writes share same
   );
   expect(JSON.stringify(versions)).not.toContain('private-name');
 });
+it('an explicit providerSpecificData replacement holding no covered key still records the removed allowlist', async () => {
+  const baseline = await repo.getCurrentConfiguration();
+  expect(baseline.document.accounts.a.enabledModels).toEqual(['gpt-4o']);
+  await updateProviderConnection('a', { providerSpecificData: {} });
+  const current = await repo.getCurrentConfiguration();
+  expect(current.document.accounts.a).not.toHaveProperty('enabledModels');
+  expect(current.currentHash).not.toBe(baseline.currentHash);
+  const versions = await repo.listConfigurationVersions({ limit: 10 });
+  expect(versions.filter((row) => row.kind === 'direct')).toHaveLength(1);
+  const receipts = await repo.listConfigurationReceipts();
+  expect(receipts.at(-1).details.changedPaths.some((path) => path.includes('enabledModels'))).toBe(true);
+});
+it('a patch touching no covered surface records no history', async () => {
+  await updateProviderConnection('a', { name: 'renamed' });
+  expect(await repo.listConfigurationVersions({ limit: 10 })).toEqual([]);
+});
 it('history insertion failure aborts the ordinary policy mutation and preserves the prior version', async () => {
   const before = readConfigurationDomains(fixture.db);
   const run = fixture.db.run.bind(fixture.db);

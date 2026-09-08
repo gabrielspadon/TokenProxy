@@ -627,6 +627,12 @@ export async function reconcileBudgetUsage(apiKeyId, requestId, evidence) {
     if (!allowed.has(key) || typeof value !== "number" || !Number.isFinite(value) || value < 0
       || (!key.includes("cost") && !Number.isSafeInteger(value))) throw new TypeError("Receipt quantities must be finite nonnegative counts or explicit USD amounts");
   }
+  // A receipt naming one quantity under two spellings with different values is
+  // ambiguous. It is refused before any write instead of silently choosing one.
+  for (const [a, b] of [["prompt_tokens", "input_tokens"], ["completion_tokens", "output_tokens"], ["cost_usd", "cost_in_usd"]]) {
+    if (a in evidence.tokens && b in evidence.tokens && evidence.tokens[a] !== evidence.tokens[b])
+      throw new TypeError(`Receipt supplies conflicting values for ${a} and ${b}`);
+  }
   const db = await getAdapter();
   const reservation = db.get("SELECT * FROM apiKeyBudgetReservations WHERE apiKeyId=? AND requestId=?", [apiKeyId, requestId]);
   if (!reservation) return null;

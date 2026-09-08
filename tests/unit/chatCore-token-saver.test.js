@@ -27,6 +27,9 @@ function makeExecutorRes(content = "ok") {
   };
 }
 
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));
 vi.mock("../../open-sse/executors/index.js", () => ({
   getExecutor: () => ({ noAuth: true, execute: mocks.executeMock }),
 }));

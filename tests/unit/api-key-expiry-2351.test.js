@@ -61,7 +61,7 @@ describe("a key with no stamp keeps working, and the column is there from instal
 
   it("no migration reaches back into apiKeys rows", () => {
     for (const m of MIGRATIONS) {
-      expect(String(m.up)).not.toMatch(/DROP|DELETE|UPDATE apiKeys/i);
+      expect(String(m.up)).not.toMatch(/(DROP TABLE|DELETE FROM|UPDATE)\s+(IF EXISTS\s+)?"?apiKeys\b/i);
     }
   });
 

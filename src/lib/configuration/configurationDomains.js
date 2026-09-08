@@ -496,11 +496,15 @@ export function recordConfigurationDomainsMutation(db, before, source) {
 
 export function connectionDomainChange(db, id, patch) {
   const keys = ['provider', 'priority', 'isActive', ...ACCOUNT_KEYS];
+  // An explicitly supplied providerSpecificData replaces the stored object in
+  // updateProviderConnection, so a replacement holding none of the covered keys
+  // (for example {}) can still remove a covered allowlist or proxy field. Any
+  // own providerSpecificData property therefore requires the projected
+  // before/after comparison below; only a patch touching no covered surface at
+  // all skips the read.
   if (
     !Object.keys(patch || {}).some((key) => keys.includes(key)) &&
-    !Object.keys(patch?.providerSpecificData || {}).some((key) =>
-      ['enabledModels', ...CONNECTION_NETWORK_KEYS].includes(key)
-    )
+    !Object.hasOwn(patch || {}, 'providerSpecificData')
   )
     return false;
   const row = db.get(

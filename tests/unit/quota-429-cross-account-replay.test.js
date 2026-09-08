@@ -16,6 +16,9 @@ const dispatchMocks = vi.hoisted(() => ({ handleChatCore: vi.fn() }));
 const modelMocks = vi.hoisted(() => ({ getComboModels: vi.fn(), getModelInfo: vi.fn() }));
 const settingsMocks = vi.hoisted(() => ({ getSettings: vi.fn() }));
 
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));
 vi.mock("@/sse/services/auth.js", () => ({
   clearAccountError: authMocks.clearAccountError,
   extractApiKey: () => null,

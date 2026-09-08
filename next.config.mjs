@@ -75,7 +75,11 @@ const nextConfig = {
     "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/db/completionIdentity.mjs", "./src/lib/notifications/*.mjs", "./src/lib/pxpipe/worker.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES, ...COMPATIBILITY_WORKER_FILES],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
-    "/api/v1/messages/count_tokens": ["./node_modules/gpt-tokenizer/**/*", "./src/lib/tokenization/**/*"],
+    // The local tokenizer worker (open-sse/utils/localTokenizer.js) requires the
+    // gpt-tokenizer encoding modules by path at runtime, so the trace cannot see
+    // them. The worker itself is an inline script, so nothing under src/ is
+    // loaded by path for this route.
+    "/api/v1/messages/count_tokens": ["./node_modules/gpt-tokenizer/**/*"],
   },
   images: {
     unoptimized: true

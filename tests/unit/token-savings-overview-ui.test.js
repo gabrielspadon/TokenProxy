@@ -32,11 +32,11 @@ it('routes a direct toggle through review without displaying an unsaved setting 
 it('keeps unknown and unavailable controls ineligible for a mutation', async () => {
   props.settings = null; await render();
   expect([...container.querySelectorAll('input[type="checkbox"]')].every(input => input.disabled)).toBe(true);
-  props.settings = { ...Object.fromEntries(CONTROLS.map(control => [control.key, false])), memoryHandoffEnabled: true };
+  props.settings = { ...Object.fromEntries(CONTROLS.map(control => [control.key, false])), headroomLossless: true };
   await render();
-  expect(card('memoryHandoffEnabled').textContent).toContain('Runtime unavailable');
-  expect(card('memoryHandoffEnabled').querySelector('input').disabled).toBe(true);
-  expect(card('memoryHandoffEnabled').querySelector('input').checked).toBe(true);
+  expect(card('headroomLossless').textContent).toContain('Runtime unavailable');
+  expect(card('headroomLossless').querySelector('input').disabled).toBe(true);
+  expect(card('headroomLossless').querySelector('input').checked).toBe(true);
 });
 
 it('distinguishes measured zero, growth, reduction and absent byte coverage without summing stages', async () => {

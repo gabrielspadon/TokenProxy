@@ -162,6 +162,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  localStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -338,59 +339,67 @@ describe('Policy workbench controls', () => {
       version: 1,
       captureId: hash,
       capturedAt: '2026-09-06T15:45:00Z',
+      expiresAt: '2026-09-06T16:45:00Z',
       scope: { requestedModel: 'claude/model-a', provider: 'claude', model: 'model-a' },
       configuration: { currentHash: hash },
+    };
+    const attempt = {
+      order: 1,
+      requestedModel: 'claude/model-a',
+      resolvedModel: 'claude/model-a',
+      reason: 'first-pin',
+      localSelection: { status: 'candidate', connectionId: 'account-a', model: 'model-a', reason: 'first-pin' },
+      candidates: [{ order: 1, connectionId: 'account-a', atCapacity: false, quotaEvidence: 'unknown' }],
+      exclusions: [],
+      capabilityFit: { contextFitsDeclaredWindow: null, outputFitsDeclaredLimit: null, missingOrUnknown: ['reasoning'] },
+    };
+    const plan = {
+      requestedModel: 'claude/model-a',
+      selectedModel: 'claude/model-a',
+      connectionId: 'account-a',
+      status: 'candidate',
+      attempts: [attempt],
+      plans: [],
+      unknownEvidence: ['provider-readiness-and-credential-acceptance'],
+      servedModel: null,
+      fallbackContinuation: 'Only a replay-safe local or upstream rejection permits another attempt.',
     };
     const normal = handler;
     handler = async (url, method, body) => {
       if (url.endsWith('/capture')) return response({ capture, input: body.input });
       if (url.endsWith('/simulate'))
         return response({
-          receipt: { captureId: hash, sideEffects: false },
+          receipt: { captureId: hash, sideEffects: false, providerCalls: 0 },
           served: null,
-          readiness: 'unknown',
-          localSelection: {
-            status: 'candidate',
-            connectionId: 'account-a',
-            model: 'model-a',
-            reason: 'first-pin',
+          upstreamVerified: false,
+          before: plan,
+          after: plan,
+          diff: [],
+          sessionPreview: {
+            boundary: 'next-request',
+            attribution: 'Each captured pin is evaluated for a hypothetical next request; assumed new session where no pin exists.',
+            affectedCount: 0,
+            sessions: [],
           },
-          affinity: { source: 'assumed-new-session', action: 'pin', reason: 'first-pin' },
-          candidates: [
-            {
-              order: 1,
-              connectionId: 'account-a',
-              capacity: { gated: true, limit: 80 },
-              activeLoad: { inFlight: 0 },
-              quotaEvidence: 'unknown',
-            },
-          ],
-          exclusions: [],
-          ranking: [],
-          capabilityFit: {
-            contextFitsDeclaredWindow: null,
-            outputFitsDeclaredLimit: null,
-            missingOrUnknown: ['reasoning'],
-          },
-          unknownEvidence: ['provider-acceptance', 'actual-session-affinity'],
+          limitations: ['No provider calls occur.'],
         });
       return normal(url, method, body);
     };
     await render();
-    await click('Offline account decision');
+    await click('Offline route preview');
     await click('Capture current inputs');
     await click('Simulate captured decision');
     expect(calls.find((call) => call.url.endsWith('/simulate')).body.capture).toEqual(capture);
     expect(calls.find((call) => call.url.endsWith('/capture')).body).not.toHaveProperty(
       'sessionHash'
     );
-    expect(document.body.textContent).toContain('Upstream readinessUnknown');
+    expect(document.body.textContent).toContain('None · upstream unverified');
     expect(document.body.textContent).toContain('assumed new session');
     expect(
-      document.querySelector('[aria-label="Captured candidate ordering"]').textContent
+      document.querySelector('[aria-label="Captured route ordering"]').textContent
     ).toContain('Synthetic account');
     await click('History and receipts');
-    await click('Offline account decision');
+    await click('Offline route preview');
     expect(button('Simulate captured decision').disabled).toBe(false);
     expect(calls.some((call) => call.url.includes('/v1/'))).toBe(false);
   });
@@ -404,10 +413,10 @@ describe('Policy workbench controls', () => {
           )
         : normal(url, method, body);
     await render();
-    await click('Offline account decision');
+    await click('Offline route preview');
     await click('Capture current inputs');
     expect(document.body.textContent).toContain('Virtual model capture is unsupported');
-    expect(document.querySelector('[aria-label="Captured candidate ordering"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Captured route ordering"]')).toBeNull();
     expect(button('Simulate captured decision').disabled).toBe(true);
   });
 });

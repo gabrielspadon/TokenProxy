@@ -206,6 +206,9 @@ beforeEach(() => {
   outerHandlerMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false, cooldownMs: 0 });
 });
 
+// A handler test is the HTTP consumer. Reading each body releases the stream
+// permit held by admission, so eight parallel anonymous calls never queue.
+const consumed = (pending) => pending.then(async (response) => new Response(await response.text(), { status: response.status, headers: response.headers }));
 describe("chat core model failure metadata", () => {
   it("retains a verified payload only long enough to attach safe model metadata", async () => {
     mocks.execute.mockResolvedValueOnce(failedResponse(404, {
@@ -259,7 +262,7 @@ describe("chat core model failure metadata", () => {
       handleStt(multipart),
       handleTts(json({ model: "demo/voice", input: "hello" }, "/v1/audio/speech")),
       handleVideoCreate(json({ model: "xai/video", prompt: "hello" }, "/v1/videos/generations"), "generations"),
-    ]);
+    ].map(consumed));
 
     expect(responses).toHaveLength(8);
     for (const response of responses) expect(response.status).toBe(404);
@@ -313,7 +316,7 @@ describe("chat core model failure metadata", () => {
       handleStt(new Request("http://localhost/v1/audio/transcriptions", { method: "POST", body: form })),
       handleTts(json({ model: "demo/voice", input: "hello" }, "/v1/audio/speech")),
       handleVideoCreate(json({ model: "xai/video", prompt: "hello" }, "/v1/videos/generations"), "generations"),
-    ]);
+    ].map(consumed));
 
     for (const response of responses) {
       expect(response.status).toBe(502);

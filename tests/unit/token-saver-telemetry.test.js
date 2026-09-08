@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
   dispatched: null,
 }));
 
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));
 vi.mock('../../open-sse/executors/index.js', () => ({
   getExecutor: () => ({
     noAuth: true,

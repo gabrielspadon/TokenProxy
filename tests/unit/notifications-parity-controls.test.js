@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({ call: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/shared/api', () => ({ call: state.call }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(''), usePathname: () => '/dashboard/notifications', useRouter: () => ({ replace() {}, push() {} }) }));
 vi.mock('@/shared/workspace/NotificationRules', () => ({ NotificationRules: () => null }));
 vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: () => ({ data: { config: { enabled: false, endpoints: [], errorRate: { threshold: 0.5, windowSeconds: 300, minSamples: 20 } }, deliveries: [] }, status: 200, loading: false, refresh: state.refresh }) }));
 vi.mock('@/shared/components/Confirm', () => ({ Confirm: ({ open, onConfirm, changes }) => open ? <div role="dialog"><p>{changes}</p><button onClick={onConfirm}>Confirm test action</button></div> : null }));
