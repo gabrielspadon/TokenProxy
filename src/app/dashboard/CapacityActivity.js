@@ -25,6 +25,10 @@ export function capacityActivityOption(points, bucketMs) {
   const first = points[0]?.bucketStartMs, last = points.at(-1)?.bucketStartMs;
   const end = validBucket && Number.isFinite(last) ? last + bucketMs : null;
   const validDomain = Number.isFinite(first) && Number.isFinite(end) && end > first;
+  const tickFormat = new Intl.DateTimeFormat('en-GB', {
+    ...(validDomain && Math.floor(first / 86400000) === Math.floor(end / 86400000) ? {} : { day: '2-digit', month: 'short' }),
+    hour: '2-digit', minute: '2-digit', ...(validBucket && bucketMs < 60000 ? { second: '2-digit' } : {}), timeZone: 'UTC',
+  });
   // A missing bucket is a gap in retained evidence, not a measured zero.
   const plot = points.flatMap((point, index) => validBucket && index && point.bucketStartMs - points[index - 1].bucketStartMs > bucketMs
     ? [{ bucketStartMs: points[index - 1].bucketStartMs + bucketMs }, point] : [point]);
@@ -38,7 +42,8 @@ export function capacityActivityOption(points, bucketMs) {
     tooltip: { trigger: 'axis', renderMode: 'richText', confine: true, valueFormatter: value => value == null ? 'Unknown' : number(value) },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     xAxis: [0, 1].map(gridIndex => ({ type: 'time', gridIndex, min: validDomain ? first : undefined, max: validDomain ? end : undefined,
-      axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: false }, axisLabel: { show: gridIndex === 1, formatter: utc, hideOverlap: true } })),
+      splitNumber: 4, minInterval: validBucket ? bucketMs : undefined,
+      axisTick: { show: false }, axisLine: { show: false }, splitLine: { show: false }, axisLabel: { show: gridIndex === 1, formatter: value => tickFormat.format(value), hideOverlap: true } })),
     yAxis: ['Count', 'Tokens'].map((name, gridIndex) => ({ type: 'value', name, gridIndex, min: 0, minInterval: 1,
       nameGap: 7, splitNumber: 2, axisLabel: { formatter: compact }, axisTick: { show: false } })),
     series: [

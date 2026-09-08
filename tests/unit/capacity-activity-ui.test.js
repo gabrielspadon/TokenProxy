@@ -53,8 +53,30 @@ it('bounds both tracks to the full covered minute when only one bucket remains',
   for (const axis of option.xAxis) {
     expect(axis.min).toBe(singleStart);
     expect(axis.max).toBe(Date.parse('2026-09-07T11:59:00.000Z'));
+    expect(axis.minInterval).toBe(60000);
+    expect(axis.splitNumber).toBe(4);
+    expect(axis.axisLabel.formatter(axis.min)).toBe('11:58');
+    expect(axis.axisLabel.formatter(axis.max)).toBe('11:59');
   }
   expect(option.series[0].data).toEqual([[singleStart, 1]]);
+});
+
+it('retains dates across UTC midnight even within a short interval', () => {
+  const midnight = Date.parse('2026-09-08T00:00:00Z');
+  const option = capacityActivityOption([{ bucketStartMs: midnight - 60000 }], 60000);
+  const axis = option.xAxis[1];
+  expect(axis.axisLabel.formatter(axis.min)).toBe('07 Sept, 23:59');
+  expect(axis.axisLabel.formatter(axis.max)).toBe('08 Sept, 00:00');
+});
+
+it('keeps multi-day ticks distinct and supports seconds only for sub-minute buckets', () => {
+  const days = capacityActivityOption([{ bucketStartMs: start }, { bucketStartMs: start + 2 * 86400000 }], 60000).xAxis[1];
+  expect(days.axisLabel.formatter(days.min)).toBe('07 Sept, 12:00');
+  expect(days.axisLabel.formatter(days.max)).toBe('09 Sept, 12:01');
+  const seconds = capacityActivityOption([{ bucketStartMs: start + 15000 }], 15000).xAxis[1];
+  expect(seconds.minInterval).toBe(15000);
+  expect(seconds.axisLabel.formatter(seconds.min)).toBe('12:00:15');
+  expect(seconds.axisLabel.formatter(seconds.max)).toBe('12:00:30');
 });
 
 it('includes the final bucket end across multiple sparse buckets without changing observations', () => {
@@ -73,6 +95,7 @@ it.each([0, -60000, null, undefined, NaN, Infinity])('leaves the time domain uns
   for (const axis of option.xAxis) {
     expect(axis.min).toBeUndefined();
     expect(axis.max).toBeUndefined();
+    expect(axis.minInterval).toBeUndefined();
   }
   expect(option.series[1].data).toEqual([[start, 1], [start + 120000, 2]]);
 });
