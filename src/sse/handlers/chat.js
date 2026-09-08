@@ -1208,12 +1208,24 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         result.failureMetadata || null,
         { rid },
       ];
-      const { shouldFallback, cooldownMs, mustWait, retrySameAccount } = await markAccountUnavailable(...accountFailureArgs);
+      const { shouldFallback, cooldownMs, mustWait, retrySameAccount, failureClass } = await markAccountUnavailable(...accountFailureArgs);
 
-      if (result.failureMetadata?.safeToReplay !== true || mustWait) {
+      // An upstream 429 rejected the request before any generation, so
+      // dispatching it on a DIFFERENT credential cannot double-bill the account
+      // that refused. x-should-retry is the wire's advice about retrying the
+      // SAME account, correctly false for an entitlement refusal that no waiting
+      // clears, and isReplaySafeRejection honours it as a global no-replay.
+      // Treating that as terminal is what held a 14-account pool to one account
+      // per request once the pinned account had no credits for the model.
+      // Scoped to the quota class on a 429, so an uncertain generation outcome,
+      // which is what the permission actually guards, still refuses to replay.
+      const replaySafe = result.failureMetadata?.safeToReplay === true
+        || (failureClass === "quota" && result.status === HTTP_STATUS.RATE_LIMITED);
+
+      if (!replaySafe || mustWait) {
         decide("UP", "no-replay", { rid, why: mustWait ? "account-cooldown" : "generation-outcome-uncertain" });
         leaseHandedOff = true;
-        return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs, result.failureMetadata?.safeToReplay === true), accountLease);
+        return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs, replaySafe), accountLease);
       }
 
       if (shouldFallback) {
