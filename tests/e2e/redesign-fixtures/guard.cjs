@@ -79,6 +79,7 @@ Object.assign(process.env, {
   API_KEY_SECRET: crypto.randomBytes(32).toString('hex'),
   DB_ENCRYPTION_KEY: auth.dbEncryptionKey,
   MODEL_CATALOG_SYNC: 'off',
+  TOKENPROXY_NO_UPDATE: '1',
   NEXT_PHASE: 'phase-production-build',
   NEXT_TELEMETRY_DISABLED: '1',
   HOSTNAME: '127.0.0.1',

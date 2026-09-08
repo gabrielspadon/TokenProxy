@@ -3,36 +3,35 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ControlInventory } from '@/app/dashboard/shaping/ControlInventory';
+import { ControlEvidence } from '@/app/dashboard/shaping/ControlInventory';
 import { CONTROLS } from '@/app/dashboard/shaping/controlCatalog';
-let container, root, toggle;
+let container, root, investigate;
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
-  container = document.createElement('div'); document.body.append(container); root = createRoot(container); toggle = vi.fn();
+  container = document.createElement('div'); document.body.append(container); root = createRoot(container); investigate = vi.fn();
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-async function render() { await act(async () => root.render(<MantineProvider env="test"><ControlInventory settings={{ cavemanEnabled: false, memoryHandoffEnabled: true, headroomLossless: true }} stageMap={{}} onToggle={toggle} renderThresholds={() => null} /></MantineProvider>)); }
-it('opens the selected control through the shared adaptive inspector and clears the selection on return', async () => {
-  await render();
-  expect(container.querySelectorAll('button[data-control]')).toHaveLength(CONTROLS.length);
-  expect(document.querySelector('#shaping-control-inspector')).toBeNull();
-  const selected = container.querySelector('[data-control="cavemanEnabled"]');
-  await act(async () => { selected.focus(); selected.click(); });
-  expect(selected.getAttribute('aria-current')).toBe('true');
-  expect(document.querySelector('#shaping-control-inspector')).not.toBeNull();
-  const action = [...document.querySelectorAll('button')].find(node => node.textContent === 'Turn on');
-  await act(async () => action.click());
-  expect(toggle).toHaveBeenCalledWith(expect.objectContaining({ key: 'cavemanEnabled' }), true);
-  await act(async () => document.querySelector('button[aria-label="Close selection details"]').click());
-  expect(document.querySelector('#shaping-control-inspector')).toBeNull();
-  expect(selected.hasAttribute('aria-current')).toBe(false);
+async function render(key = 'cavemanEnabled', stageMap = {}) { await act(async () => root.render(<MantineProvider env="test"><ControlEvidence control={CONTROLS.find(control => control.key === key)} settings={{ cavemanEnabled: false, memoryHandoffEnabled: true, headroomLossless: true }} stageMap={stageMap} onInvestigate={investigate} /></MantineProvider>)); }
+it('keeps evidence in one optional layer without a second editor or inspector', async () => {
+  await render('cavemanEnabled', { inject: { requests: 2, applied: 1, measuredRequests: 1, bytesSaved: 64 } });
+  expect(container.querySelectorAll('details')).toHaveLength(1);
+  expect(container.querySelector('details details')).toBeNull();
+  expect(container.querySelector('input, select, textarea')).toBeNull();
+  expect(container.querySelector('summary').getAttribute('aria-label')).toBe('Evidence and requirements for Compact response instructions');
+  expect(container.textContent).toContain('Off globally');
+  expect(container.textContent).toContain('1 applied stage records');
+  expect(container.textContent).toContain('+64 B');
+  expect(container.textContent).toContain('1 / 2');
+  const compare = [...container.querySelectorAll('button')].find(node => node.textContent === 'Compare saved profiles');
+  await act(async () => compare.click());
+  expect(investigate).toHaveBeenCalledOnce();
 });
-it.each(['memoryHandoffEnabled'])('preserves %s compatibility state without offering a working runtime toggle', async key => {
-  await render(); await act(async () => container.querySelector(`[data-control="${key}"]`).click());
-  const inspector = document.querySelector('#shaping-control-inspector');
-  expect(inspector.textContent).toContain('Runtime unavailable');
-  expect(inspector.textContent).toContain('preserved for compatibility');
-  expect([...inspector.querySelectorAll('button')].some(node => /Turn on|Turn off/.test(node.textContent))).toBe(false);
+it.each(['memoryHandoffEnabled', 'headroomLossless'])('preserves %s compatibility state and explains the missing runtime', async key => {
+  await render(key);
+  expect(container.textContent).toContain('Runtime unavailable');
+  expect(container.textContent).toContain('preserved for compatibility');
+  expect(container.textContent).toContain('On globally');
+  expect(container.querySelector('input, select, textarea')).toBeNull();
 });

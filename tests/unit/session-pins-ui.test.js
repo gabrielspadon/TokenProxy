@@ -121,6 +121,8 @@ async function submit() {
 
 it('requires preview then explicit apply, retains receipt and refreshes the pin list', async () => {
   await select();
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(container.querySelector('[aria-label="Selected pin controls"] select'));
   expect(button('Apply this change')).toBeUndefined();
   await submit();
   expect(state.calls.at(-1)).toMatchObject({
@@ -141,6 +143,13 @@ it('requires preview then explicit apply, retains receipt and refreshes the pin 
   expect(state.calls.at(-1).url).toContain('/actions/action-id');
 });
 
+it('returns focus to the selected inventory control when the direct editor closes', async () => {
+  await select();
+  await click('Close pin controls');
+  expect(container.querySelector('[aria-label="Selected pin controls"]')).toBeNull();
+  expect(document.activeElement).toBe(container.querySelector('button[aria-label^="Inspect pin"]'));
+});
+
 it('selection survives a refresh and live reorder without moving off the selected pin', async () => {
   await select();
   expect(container.querySelector('tr[data-selected]').textContent).toContain('claude-fable-5');
@@ -150,7 +159,7 @@ it('selection survives a refresh and live reorder without moving off the selecte
   await click('Refresh pins');
   const selectedRow = container.querySelector('tr[data-selected]');
   expect(selectedRow.textContent).toContain('claude-fable-5');
-  expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain(
+  expect(container.querySelector('[aria-label="Selected pin controls"]').textContent).toContain(
     'account-a'
   );
 });

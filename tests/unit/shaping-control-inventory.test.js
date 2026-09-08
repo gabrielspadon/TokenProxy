@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONTROLS, configuredState, stageEvidence, thresholdPatch } from '../../src/app/dashboard/shaping/controlCatalog.js';
+import { CONTROLS, configurationPatch, configuredState, stageEvidence, thresholdPatch } from '../../src/app/dashboard/shaping/controlCatalog.js';
 import { PROFILE_KEYS } from '../../src/lib/shaping/profile.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -47,6 +47,21 @@ describe('optimization settings boundary', () => {
     expect(thresholdPatch({ pxpipeTimeoutMs: '600000' })).toBeNull();
     expect(thresholdPatch({ memoryRecentTurnsToKeep: '0' })).toBeNull();
     expect(thresholdPatch({ memoryMaxToolTurnsKeepFull: '0', pxpipeTimeoutMs: '599999' })).toEqual({ memoryMaxToolTurnsKeepFull: 0, pxpipeTimeoutMs: 599999 });
+  });
+  it('keeps an inherited service timeout distinct from numeric zero', () => {
+    expect(thresholdPatch({ headroomTimeoutMs: '' })).toEqual({ headroomTimeoutMs: null });
+    expect(thresholdPatch({ headroomTimeoutMs: null })).toEqual({ headroomTimeoutMs: null });
+    expect(thresholdPatch({ headroomTimeoutMs: '0' })).toBeNull();
+    expect(thresholdPatch({ headroomTimeoutMs: '600000' })).toBeNull();
+  });
+  it('validates direct response levels and exact lists against the saved controls contract', () => {
+    expect(configurationPatch({ cavemanLevel: 'full', toolDisclosureExcludeTools: ['tool_one', ' tool two '] })).toEqual({ cavemanLevel: 'full', toolDisclosureExcludeTools: ['tool_one', ' tool two '] });
+    expect(configurationPatch({ ponytailLevel: 'invalid' })).toBeNull();
+    expect(configurationPatch({ privacyFilterTerms: ['x'.repeat(501)] })).toBeNull();
+    expect(configurationPatch({ privacyFilterTerms: Array(101).fill('x') })).toBeNull();
+    expect(configurationPatch({ privacyFilterTerms: 'not an array' })).toBeNull();
+    expect(configurationPatch({ missing: 1 })).toBeNull();
+    expect(configurationPatch({})).toBeNull();
   });
   it('exposes persisted profile controls with existing source owners', () => {
     for (const control of CONTROLS) {

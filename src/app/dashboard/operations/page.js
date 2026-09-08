@@ -41,17 +41,14 @@ function OperationScope({ search }) {
   return <>
     <div className="screen-head"><h1>Operations</h1><Button component={Link} href="/dashboard/system" variant="default">System controls</Button></div>
     <p>Inspect retained operation receipts across pools and client keys. Reading history does not run a probe, retry an operation or change its subject.</p>
-    <form onSubmit={apply}>
-      <details>
-        <summary>Filter retained operations</summary>
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="sm" mt="sm">
+    <form onSubmit={apply} aria-label="Filter retained operations">
+        <SimpleGrid cols={{ base: 2, sm: 3, lg: 4 }} spacing="sm" mt="sm">
           {FIELDS.map(([key, label]) => <TextInput key={key} label={label} maxLength={512} value={draft[key] || ''} onChange={(event) => setDraft({ ...draft, [key]: event.currentTarget.value })} placeholder={key === 'start' || key === 'end' ? '2026-09-07T00:00:00Z' : undefined} />)}
           <NativeSelect label="Events per page" value={draft.pageSize || '10'} onChange={(event) => setDraft({ ...draft, pageSize: event.currentTarget.value })} data={['10', '25', '50', '100', '200']} />
         </SimpleGrid>
         <p className="caption">Leave time bounds blank for the server’s last 30 days. Times filter when an event was captured; the original occurrence time remains visible beside it.</p>
         {error && <Alert color="red" title="Scope was not applied">{error}</Alert>}
         <Group mt="sm"><Button type="submit">Apply scope</Button><Button variant="default" onClick={() => router.replace(pathname, { scroll: false })}>Reset scope</Button></Group>
-      </details>
     </form>
     <OperationHistoryInspector allSubjects filters={filters} initialPage={Number(initial.page) || 1} initialSelectedId={initial.event ? Number(initial.event) : null} onViewChange={navigate} />
   </>;

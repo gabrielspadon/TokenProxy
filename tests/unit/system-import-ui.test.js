@@ -63,14 +63,17 @@ const importCalls = () => fetchMock.mock.calls.filter(([url, options]) => url ==
 const databaseSection = () => container.querySelector('section[aria-labelledby="h-import"]');
 
 async function submitBackup() {
-  await act(async () => databaseSection().querySelector('button').click());
-  const dialog = container.querySelector('dialog[open]');
   const file = new File([JSON.stringify(backup)], 'synthetic-backup.json', { type: 'application/json' });
   Object.defineProperty(file, 'text', { value: async () => JSON.stringify(backup) });
-  const upload = dialog.querySelector('input[type="file"]');
+  const upload = databaseSection().querySelector('input[type="file"]');
   Object.defineProperty(upload, 'files', { configurable: true, value: [file] });
+  await act(async () => upload.dispatchEvent(new Event('change', { bubbles: true })));
+  expect(importCalls()).toHaveLength(0);
+  await act(async () => databaseSection().querySelector('button').click());
+  const dialog = container.querySelector('dialog[open]');
+  expect(dialog.querySelector('input[type="file"]')).toBeNull();
+  expect(dialog.textContent).toContain('synthetic-backup.json');
   await act(async () => {
-    upload.dispatchEvent(new Event('change', { bubbles: true }));
     const password = dialog.querySelector('input[type="password"]');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(password, 'synthetic-password');
     password.dispatchEvent(new Event('input', { bubbles: true }));

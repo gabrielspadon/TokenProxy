@@ -34,3 +34,48 @@ it('reviews exact reservation reconciliation and retains the draft after a refus
   expect(JSON.parse(write[1].body)).toEqual({apiKeyId:'fixture-key',requestId:'fixture-request',evidence:{kind:'provider-usage',reference:'receipt-42',tokens:{input_tokens:120,output_tokens:20}}});
   expect(host.textContent).toContain('The original attempt is unavailable');expect(field('Nonsecret evidence reference').value).toBe('receipt-42');expect(field('Input tokens').value).toBe('120');
 });
+it('keeps separate pricing drafts when provider and model choices change',async()=>{
+  const fetcher=vi.fn(async()=>Response.json({fixture:{model:{input:2,output:4},other:{input:8,output:9}}}));
+  vi.stubGlobal('fetch',fetcher);await mount(<PricingEditor/>);
+  await input('Pricing provider','fixture');await input('Pricing model','model');await input('Input USD / million tokens','3');
+  await input('Pricing model','other');expect(field('Input USD / million tokens').value).toBe('8');
+  await input('Input USD / million tokens','12');await input('Pricing model','model');
+  expect(field('Input USD / million tokens').value).toBe('3');
+  await act(async()=>button('Read current pricing').click());expect(field('Input USD / million tokens').value).toBe('3');
+  await act(async()=>button('Discard pricing draft').click());expect(field('Input USD / million tokens').value).toBe('2');
+  await input('Pricing model','other');expect(field('Input USD / million tokens').value).toBe('12');
+  expect(fetcher.mock.calls.every(([,options])=>!options?.method)).toBe(true);
+});
+it('reads a known budget key directly and preserves exact reservation drafts across reads and keys',async()=>{
+  const budget=key=>({apiKeyId:key,basis:'lifetime-application-ledger',outstanding:{requests:2},reservations:['request-one','request-two'].map(requestId=>({apiKeyId:key,requestId,state:'uncertain'}))});
+  const fetcher=vi.fn(async url=>url==='/api/keys'?Response.json({keys:[{id:'key-one',name:'Human name'},{id:'key-two',name:'Other name'}]}):Response.json(budget(new URL(url,'http://test.local').searchParams.get('apiKeyId'))));
+  vi.stubGlobal('fetch',fetcher);await mount(<BudgetReservations/>);
+  await input('Budget client key ID','key-one');
+  expect(fetcher.mock.calls.filter(([url])=>url.startsWith('/api/admin/budgets'))).toHaveLength(1);
+  expect(field('Budget client key ID').value).toBe('key-one');
+  await act(async()=>button('request-one').click());await input('Nonsecret evidence reference','receipt-one');await input('Input tokens','0');
+  await act(async()=>button('request-two').click());expect(field('Nonsecret evidence reference').value).toBe('');
+  await act(async()=>button('request-one').click());expect(field('Nonsecret evidence reference').value).toBe('receipt-one');
+  await act(async()=>button('Read budget').click());expect(field('Input tokens').value).toBe('0');
+  await input('Budget client key ID','key-two');await act(async()=>button('request-one').click());expect(field('Nonsecret evidence reference').value).toBe('');
+  await input('Budget client key ID','key-one');await act(async()=>button('request-one').click());expect(field('Nonsecret evidence reference').value).toBe('receipt-one');
+  expect(fetcher.mock.calls.every(([,options])=>!options?.method)).toBe(true);
+});
+it('settles only after final confirmation and a separate matching budget readback',async()=>{
+  let reservation={apiKeyId:'key',requestId:'request',state:'uncertain'};
+  const fetcher=vi.fn(async(url,options)=>{
+    if(url==='/api/keys')return Response.json({keys:[]});
+    if(options?.method==='POST'){reservation={...reservation,state:'settled',actualPromptTokens:0,actualCompletionTokens:12,resolutionEvidence:'receipt'};return Response.json({reservation});}
+    return Response.json({apiKeyId:'key',reservations:[reservation]});
+  });
+  vi.stubGlobal('fetch',fetcher);await mount(<BudgetReservations/>);await input('Budget client key ID','key');
+  expect(fetcher.mock.calls).toHaveLength(1);
+  await act(async()=>button('Read budget').click());await act(async()=>button('request').click());
+  await input('Nonsecret evidence reference','receipt');await input('Input tokens','0');await input('Output tokens','12');
+  await act(async()=>button('Review reservation resolution').click());
+  expect(fetcher.mock.calls.some(([,options])=>options?.method==='POST')).toBe(false);
+  await act(async()=>button('Confirm reservation resolution').click());
+  expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1);
+  expect(fetcher.mock.calls.at(-1)[1].method).toBeUndefined();
+  expect(host.textContent).toContain('Reservation request read back as settled');
+});

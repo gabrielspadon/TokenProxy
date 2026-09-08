@@ -1,5 +1,5 @@
 'use client';
-import { Fragment, useState } from 'react';
+import { useState } from 'react';
 import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
@@ -23,6 +23,7 @@ export function AccessProfiles({ poll, onKeysChanged }) {
   const [selectedId, setSelectedId] = useState(null);
   const selected = profiles.find(profile => profile.id === selectedId);
   const [action, setAction] = useState(null);
+  const [reviewing, setReviewing] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -32,8 +33,9 @@ export function AccessProfiles({ poll, onKeysChanged }) {
     setError(null);
     setForm(inputOf(profile));
     setAction({ kind, profile });
+    setReviewing(kind === 'delete');
   };
-  const close = () => { if (!busy) { setAction(null); setError(null); } };
+  const close = () => { if (!busy) { setReviewing(false); setError(null); if (action?.kind === 'delete') setAction(null); } };
   const refresh = async () => {
     const readback = await call('/api/access-profiles');
     if (!readback.ok || !Array.isArray(readback.body?.profiles)) {
@@ -101,33 +103,15 @@ export function AccessProfiles({ poll, onKeysChanged }) {
       {uncertain || poll.error ? <button type="button" className="button quiet" onClick={refresh}>Refresh profiles</button> : null}
       <div className="profile-workspace">
         <div className="profile-list" aria-label="Access profile inventory">
-          {profiles.map(profile => <button type="button" key={profile.id} className="profile-row" aria-pressed={selectedId === profile.id} onClick={() => setSelectedId(profile.id)}>
+          {profiles.map(profile => <button type="button" key={profile.id} className="profile-row" aria-pressed={selectedId === profile.id} disabled={busy || uncertain} onClick={() => { setSelectedId(profile.id); begin('edit', profile); }}>
             <span>{profile.name}</span><span className="caption"><bdi>v{profile.version}</bdi> · {fmtNum(profile.keyCount)} keys · {profile.maxCostUsd === null ? 'No cost ceiling' : `${fmtUsd(profile.maxCostUsd)} lifetime ceiling`}</span>
           </button>)}
           {!profiles.length ? <p className="empty">No access profiles are defined. Create a reusable policy, then adopt it on each chosen key.</p> : null}
         </div>
         <aside className="profile-inspector" aria-label="Access profile inspector">
-          {selected ? <>
-            <h3>{selected.name}</h3>
-            <dl className="facts">
-              <dt>Version</dt><dd><bdi>{selected.version}</bdi></dd>
-              <dt>Adopting keys</dt><dd><bdi>{fmtNum(selected.keyCount)}</bdi></dd>
-              {FIELDS.map(([field, label, unit]) => <Fragment key={field}><dt>{label}</dt><dd>{selected[field] == null ? 'No requirement' : <bdi>{fmtNum(selected[field])} {unit}</bdi>}</dd></Fragment>)}
-              <dt>Allowed models</dt><dd>{selected.allowedModels?.join(', ') || 'Every model'}</dd>
-              <dt>Budget policy</dt><dd>{selected.budgetPolicy === 'strict' ? 'Verified bounds' : 'Reserve remaining allowance'}</dd>
-              <dt>Last saved</dt><dd><bdi>{selected.updatedAt}</bdi></dd>
-            </dl>
-            <p className="caption">Ceilings count lifetime use already recorded by each key. A required expiry replaces the key expiry with the chosen number of days from adoption. No required expiry leaves its existing date unchanged.</p>
-            <div className="verb-row"><button type="button" className="button quiet" disabled={busy || uncertain || !!poll.error} onClick={() => begin('edit', selected)}>Edit access profile</button><button type="button" className="button danger" disabled={busy || uncertain || !!poll.error} onClick={() => begin('delete', selected)}>Delete access profile</button></div>
-          </> : <p className="caption">Select a profile to inspect the exact limits and version before editing.</p>}
-        </aside>
-      </div>
-      <Confirm open={!!action} busy={busy} refusal={error} title={action?.kind === 'delete' ? 'Delete access profile' : action?.kind === 'edit' ? 'Edit access profile' : 'Create access profile'} verb={action?.kind === 'delete' ? 'Delete profile' : 'Save profile'}
-        requires="A local operator session and the profile version shown when editing or deleting."
-        changes={action?.kind === 'delete' ? `Deletes this profile and releases its ${action.profile.keyCount} adopting keys. Their copied limits and expiry remain unchanged.` : 'Stores a versioned policy. Existing keys keep their adopted settings until you deliberately adopt a newer version.'}
-        undo={action?.kind === 'delete' ? 'The profile history cannot be restored. Create a new profile if needed.' : 'Edit the profile again. Existing keys have not been changed.'}
-        irreversible={action?.kind === 'delete'} onConfirm={save} onClose={close}>
-        {action?.kind !== 'delete' ? <div className="keys-form">
+          {action && action.kind !== 'delete' ? <form onSubmit={event => { event.preventDefault(); setReviewing(true); }}><fieldset disabled={busy || uncertain || reviewing}>
+            <h3>{action.kind === 'edit' ? `Edit ${action.profile.name} (v${action.profile.version})` : 'New access profile'}</h3>
+        {action && action.kind !== 'delete' ? <div className="keys-form">
           <label className="field"><span>Profile name</span><input className="input" required maxLength={80} value={form.name} onChange={event => setForm(value => ({ ...value, name: event.target.value }))} /></label>
           {FIELDS.map(([field, label, unit]) => <label className="field" key={field}><span>{label} ({unit})</span><input className="input" type="number" min={field === 'expiryDays' ? 1 : 0} step={field === 'maxCostUsd' ? 'any' : 1} value={form[field]} onChange={event => setForm(value => ({ ...value, [field]: event.target.value }))} /></label>)}
           <label className="field"><span>Profile model allowlist</span><textarea className="input" value={form.allowedModels} onChange={event => setForm(value => ({ ...value, allowedModels: event.target.value }))} /></label>
@@ -135,6 +119,19 @@ export function AccessProfiles({ poll, onKeysChanged }) {
           <label className="field"><span>Profile budget protection</span><select className="select" value={form.budgetPolicy} onChange={event => setForm(value => ({ ...value, budgetPolicy: event.target.value }))}><option value="strict">Verified bounds</option><option value="reserve-remaining">Reserve remaining allowance</option></select></label>
           <p className="caption">Verified bounds refuses capped requests without a known upper bound. Reserve remaining allowance is best effort and actual usage may exceed the ceiling.</p>
         </div> : null}
+            {error ? <Notice {...error} /> : null}
+            <button type="submit" className="button">Review profile</button>
+          </fieldset></form> : <p className="caption">Select a profile or create one to configure its limits.</p>}
+          {selected ? <button type="button" className="button danger" disabled={busy || uncertain || !!poll.error} onClick={() => begin('delete', selected)}>Delete access profile</button> : null}
+        </aside>
+      </div>
+      <Confirm open={!!action && reviewing} busy={busy} refusal={error} title={action?.kind === 'delete' ? 'Delete access profile' : action?.kind === 'edit' ? 'Edit access profile' : 'Create access profile'} verb={action?.kind === 'delete' ? 'Delete profile' : 'Save profile'}
+        requires="A local operator session and the profile version shown when editing or deleting."
+        changes={action?.kind === 'delete' ? `Deletes this profile and releases its ${action.profile.keyCount} adopting keys. Their copied limits and expiry remain unchanged.` : 'Stores a versioned policy. Existing keys keep their adopted settings until you deliberately adopt a newer version.'}
+        undo={action?.kind === 'delete' ? 'The profile history cannot be restored. Create a new profile if needed.' : 'Edit the profile again. Existing keys have not been changed.'}
+        irreversible={action?.kind === 'delete'} onConfirm={save} onClose={close}>
+        <p>{action?.kind === 'delete' ? action.profile.name : form.name}</p>
+        {action?.kind !== 'delete' ? <dl className="facts">{FIELDS.map(([field, label, unit]) => <div key={field}><dt>{label}</dt><dd>{form[field] === '' ? 'No requirement' : `${form[field]} ${unit}`}</dd></div>)}<dt>Models</dt><dd>{form.allowedModels || 'Every model'}</dd><dt>Budget protection</dt><dd>{form.budgetPolicy === 'strict' ? 'Verified bounds' : 'Reserve remaining allowance'}</dd></dl> : null}
       </Confirm>
     </section>
   );

@@ -16,7 +16,6 @@ import {
   timelineUrl,
   pinAttemptSelection,
 } from '@/shared/workspace/pinTimelineModel';
-import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import styles from './sessionPins.module.css';
 
 const ROOT = '/api/admin/session-pins';
@@ -181,7 +180,7 @@ function Timeline({ pin, onReceipt }) {
                     ))}
                   </dl>
                   {item.kind === 'action' && (
-                    <button type="button" onClick={() => onReceipt(item.actionId)}>
+                    <button className="button quiet" type="button" onClick={() => onReceipt(item.actionId)}>
                       Open receipt <code>{item.actionId.slice(0, 8)}</code>
                     </button>
                   )}
@@ -263,7 +262,7 @@ function History({ pin, bound, busy, onReceipt }) {
         <ul className={styles.history} aria-label="Recent control receipts">
           {pin.actions.map((item) => (
             <li key={item.id}>
-              <button type="button" disabled={busy} onClick={() => onReceipt(item.id)}>
+              <button className="button quiet" type="button" disabled={busy} onClick={() => onReceipt(item.id)}>
                 Receipt <code>{item.id.slice(0, 8)}</code> · {item.action} · {receiptState(item)}
               </button>
             </li>
@@ -310,43 +309,6 @@ function Inspector({
   const { action, target, deadline, setAction, setTarget, setDeadline } = form;
   return (
     <div className={styles.dockBody}>
-      <dl className={styles.facts}>
-        <dt>Binding state</dt>
-        <dd>{pin.state === 'active' ? 'Active' : 'Expired'}</dd>
-        <dt>Provider</dt>
-        <dd>{pin.provider || 'Unknown'}</dd>
-        <dt>Pinned (UTC)</dt>
-        <dd>{timestamp(pin.pinnedAt)}</dd>
-        <dt>Last seen (UTC)</dt>
-        <dd>{timestamp(pin.lastSeenAt)}</dd>
-        <dt>Idle expiry (UTC)</dt>
-        <dd>{timestamp(pin.expiresAt)}</dd>
-        <dt>Operator deadline (UTC)</dt>
-        <dd>{pin.operatorExpiresAt ? timestamp(pin.operatorExpiresAt) : 'No operator deadline'}</dd>
-        <dt>Session join</dt>
-        <dd>
-          {pin.session
-            ? `${pin.session.id} · ${pin.session.identitySource} routing identity`
-            : 'No exact retained session join'}
-        </dd>
-      </dl>
-      <p className={styles.note}>
-        Normal activity extends idle expiry by 24 hours, capped by an operator deadline. Controls
-        apply to later requests only; admitted work stays on its current account.
-      </p>
-      <History pin={pin} bound={bound} busy={busy} onReceipt={onReceipt} />
-      <Button
-        variant="subtle"
-        size="compact-sm"
-        aria-expanded={expanded}
-        aria-controls="pin-full-timeline"
-        onClick={onExpand}
-      >
-        {expanded ? 'Hide full timeline' : 'Full timeline'}
-      </Button>
-      <div id="pin-full-timeline" hidden={!expanded}>
-        {expanded && <Timeline pin={pin} onReceipt={onReceipt} />}
-      </div>
       <h4>Change this binding</h4>
       <form onSubmit={onSubmit} className={styles.form}>
         <label className={styles.field}>
@@ -437,6 +399,44 @@ function Inspector({
           </Button>
         </div>
       )}
+      <dl className={styles.facts}>
+        <dt>Binding state</dt>
+        <dd>{pin.state === 'active' ? 'Active' : 'Expired'}</dd>
+        <dt>Provider</dt>
+        <dd>{pin.provider || 'Unknown'}</dd>
+        <dt>Pinned (UTC)</dt>
+        <dd>{timestamp(pin.pinnedAt)}</dd>
+        <dt>Last seen (UTC)</dt>
+        <dd>{timestamp(pin.lastSeenAt)}</dd>
+        <dt>Idle expiry (UTC)</dt>
+        <dd>{timestamp(pin.expiresAt)}</dd>
+        <dt>Operator deadline (UTC)</dt>
+        <dd>{pin.operatorExpiresAt ? timestamp(pin.operatorExpiresAt) : 'No operator deadline'}</dd>
+        <dt>Session join</dt>
+        <dd>
+          {pin.session
+            ? `${pin.session.id} · ${pin.session.identitySource} routing identity`
+            : 'No exact retained session join'}
+        </dd>
+      </dl>
+      <p className={styles.note}>
+        Normal activity extends idle expiry by 24 hours, capped by an operator deadline. Controls
+        apply to later requests only; admitted work stays on its current account.
+      </p>
+      <History pin={pin} bound={bound} busy={busy} onReceipt={onReceipt} />
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        aria-expanded={expanded}
+        aria-controls="pin-full-timeline"
+        onClick={onExpand}
+      >
+        {expanded ? 'Hide full timeline' : 'Full timeline'}
+      </Button>
+      <div id="pin-full-timeline" hidden={!expanded}>
+        {expanded && <Timeline pin={pin} onReceipt={onReceipt} />}
+      </div>
+
     </div>
   );
 }
@@ -453,6 +453,16 @@ export default function SessionPins({ onChanged } = {}) {
   const [revision, setRevision] = useState(0);
   const [read, setRead] = useState({ key: null, body: null, error: '' });
   const [selectedId, setSelectedId] = useState(null);
+  const editorRef = useRef(null);
+  const inventoryRef = useRef(null);
+  const returnPinFocus = useRef(null);
+  useEffect(() => {
+    if (selectedId) editorRef.current?.querySelector('select')?.focus();
+    else if (returnPinFocus.current) {
+      [...(inventoryRef.current?.querySelectorAll('[data-pin-id]') || [])].find(button => button.dataset.pinId === returnPinFocus.current)?.focus();
+      returnPinFocus.current = null;
+    }
+  }, [selectedId]);
   const [action, setAction] = useState('clear');
   const [target, setTarget] = useState('');
   const [deadline, setDeadline] = useState('');
@@ -579,6 +589,7 @@ export default function SessionPins({ onChanged } = {}) {
           <UnstyledButton
             aria-label={`Inspect pin ${row.original.model} on ${row.original.connectionId}`}
             aria-pressed={row.original.id === selectedId}
+            data-pin-id={row.original.id}
             onClick={() => select(row.original.id)}
           >
             {row.original.model}
@@ -663,13 +674,13 @@ export default function SessionPins({ onChanged } = {}) {
         <p className={styles.empty}>No retained pins match this scope and page.</p>
       )}
       <ControlReceipt receipt={receipt} uncertainId={uncertainId} busy={busy} onReceipt={readReceipt} />
-      <SelectionDock
-        open={Boolean(selectedId)}
-        title={selected ? selected.model : 'Selected pin'}
-        subtitle={selected ? `Account ${selected.connectionId}` : null}
-        onClose={() => select(null)}
-        detail={
-          selected ? (
+      <div className={styles.pinLayout} data-selected={Boolean(selectedId) || undefined}>
+      {selectedId ? <aside ref={editorRef} className={styles.pinEditor} aria-label="Selected pin controls">
+        <div className={styles.pinEditorHeader}>
+          <div><h4>{selected ? selected.model : 'Selected pin'}</h4>{selected ? <p className={styles.note}>Account {selected.connectionId}</p> : null}</div>
+          <Button variant="subtle" disabled={busy || Boolean(uncertainId)} onClick={() => { returnPinFocus.current = selectedId; select(null); }}>Close pin controls</Button>
+        </div>
+        {selected ? (
             <Inspector
               pin={selected}
               busy={busy || Boolean(uncertainId)}
@@ -688,9 +699,9 @@ export default function SessionPins({ onChanged } = {}) {
               The selected pin is not in the current page or scope. Its selection is retained; widen
               the scope or page back to it.
             </p>
-          ) : null
-        }
-      >
+          ) : null}
+      </aside> : null}
+      <div ref={inventoryRef} className={styles.pinInventory}>
         <Table.ScrollContainer minWidth={780} type="native" className={styles.scrollContainer} tabIndex={0} role="region" aria-label="Session pins table, scroll horizontally for all columns">
           <Table
             stickyHeader
@@ -748,7 +759,8 @@ export default function SessionPins({ onChanged } = {}) {
             </Button>
           )}
         </div>
-      </SelectionDock>
+      </div>
+      </div>
     </section>
   );
 }

@@ -16,8 +16,17 @@
   .connection-standing { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font-size: 13px; }
   .account-model-access { overflow-wrap: anywhere; }
   @media (max-width: 767px) { .connections-summary { gap: 8px 18px; } .connections-summary > div { flex: 1 1 42%; justify-content: space-between; } .connections-inspector .facts { grid-template-columns: minmax(0, 1fr); } }
-  /* Add / edit forms inside the confirm dialog. */
   .connections-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+  .account-task-form > form > fieldset { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 12px 20px; border: 0; margin: 0; padding: 0; min-width: 0; }
+  .account-task-form .connections-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: 12px 20px; grid-column: 1 / -1; }
+  .account-task-form .field { min-width: 0; }
+  .account-task-form .field :is(.input, .select) { width: 100%; max-width: 100%; }
+  .account-task-form :is(fieldset, .connections-form) > :is(p, .connections-check, .verb-row) { grid-column: 1 / -1; max-width: 90ch; }
+  .account-task-form fieldset > .button { grid-column: 1 / -1; justify-self: start; }
+  [aria-label='Account options'] > form > .mantine-Stack-root { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); align-items: end; gap: 12px 20px; }
+  [aria-label='Account options'] > form > .mantine-Stack-root > :not(.mantine-InputWrapper-root),
+  [aria-label='Account options'] > form > .mantine-Stack-root > .mantine-InputWrapper-root:has(textarea) { grid-column: 1 / -1; }
+  [aria-label='Account options'] > form > .mantine-Stack-root > .mantine-Group-root { justify-content: flex-start; }
   .connections-check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--t-13); }
   .connections-check input { margin: 0; accent-color: var(--signal); }
 

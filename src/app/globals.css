@@ -93,7 +93,6 @@
   .strap .fresh { font-size: var(--t-12); }
   @media (min-width: 1024px) { .strap { padding: 0 40px; } }
 
-  .icon { width: 16px; height: 16px; flex: none; vertical-align: -3px; }
   .nav-list a { display: flex; align-items: center; gap: 8px; }
   .nav-list .icon { color: var(--slate); }
   .nav-list a:hover .icon, .nav-list a[aria-current="page"] .icon { color: var(--signal-deep); }

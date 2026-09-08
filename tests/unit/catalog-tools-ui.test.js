@@ -72,7 +72,7 @@ it('keeps a successful write with failed readback unconfirmed and never repeats 
 });
 
 it('names provider-wide cooldown scope and verifies every matching lock is absent', async () => {
-  await click('Model cooldowns and failures');
+  expect(container.querySelector('#catalog-tool-cooldown')).not.toBeNull();
   await click('Review cooldown clearance');
   expect(document.querySelector('[role="dialog"]').textContent).toContain('across all matching accounts');
   state.call.mockResolvedValueOnce({ ok: true, body: { ok: true } }).mockResolvedValueOnce({ ok: true, body: { models: [] } });
@@ -82,7 +82,7 @@ it('names provider-wide cooldown scope and verifies every matching lock is absen
 });
 
 it('requires explicit confirmation for provider diagnostics and renders each mixed result', async () => {
-  await click('Explicit model diagnostics');
+  expect(container.querySelector('#catalog-tool-test')).not.toBeNull();
   await fill(input('Diagnostic model IDs'), 'p/first\nq/second');
   await fill(input('Optional diagnostic prompt'), 'Synthetic prompt');
   await click('Review diagnostic sends');
@@ -97,7 +97,7 @@ it('requires explicit confirmation for provider diagnostics and renders each mix
 });
 
 it('keeps suggested membership editable and verifies exact saved order', async () => {
-  await click('Suggested fallback plan');
+  expect(container.querySelector('#catalog-tool-suggest')).not.toBeNull();
   state.call.mockResolvedValueOnce({ ok: true, body: { chain: ['p/first', 'q/second'], counted: 2, tiers: { top: ['p/first'], budget: ['q/second'] } } });
   await click('Suggest a fallback plan');
   expect(container.textContent).toContain('No plan has been saved');
@@ -111,7 +111,7 @@ it('keeps suggested membership editable and verifies exact saved order', async (
 });
 
 it('synchronizes metadata only after confirmation and verifies the persisted check', async () => {
-  await click('Catalog metadata');
+  expect(container.querySelector('#catalog-tool-sync')).not.toBeNull();
   await click('Review catalog refresh');
   expect(state.call).not.toHaveBeenCalled();
   state.call.mockResolvedValueOnce({ ok: true, body: { result: { status: 'unchanged' } } }).mockResolvedValueOnce({ ok: true, body: { lastSync: 2000, lastResult: { status: 'unchanged' } } });

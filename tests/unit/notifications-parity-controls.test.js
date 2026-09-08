@@ -30,6 +30,8 @@ async function fill(input, value) {
 }
 
 it('tests an unsaved public address only after confirmation without creating a destination', async () => {
+  expect(container.querySelector('section[aria-label="Add a destination"]')).not.toBeNull();
+  expect(container.querySelector('input[type="url"]').closest('details, [role="dialog"]')).toBeNull();
   await fill(container.querySelector('input[type="url"]'), 'https://example.com/synthetic-hook');
   await fill(container.querySelector('input[type="password"]'), 'synthetic-signing-value');
   await act(async () => button('Test this address without saving').click());

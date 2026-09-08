@@ -167,6 +167,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
       assert.throws(()=>udp.send('synthetic',53,'example.com'), {code:'EPREVIEWISOLATED'}); udp.close();
       assert.throws(()=>require('node:child_process').spawn('true'), {code:'EPREVIEWISOLATED'});
       assert.equal(process.env.LEAK_TEST_API_KEY, undefined);
+      assert.equal(process.env.TOKENPROXY_NO_UPDATE, '1');
       assert.throws(()=>require('node:fs').statSync(${JSON.stringify(join(homedir(),'.ssh'))}),{code:'ENOENT'});
       const headers={}; let status=0; let delivered=0;
       const server=require('node:http').createServer(()=>{delivered++;});

@@ -178,11 +178,11 @@ it('expands into a paged timeline and collapses back without losing the pin sele
   expect(list()).toBeNull();
   // The comparison table and its selected row are untouched by the expansion.
   expect(container.querySelector('tr[data-selected]').textContent).toContain('claude-fable-5');
-  const dialog = container.querySelector('[role="dialog"]');
-  const heading = document.getElementById(dialog.getAttribute('aria-labelledby'));
+  expect(container.querySelector('[role="dialog"]')).toBeNull();
+  const heading = container.querySelector('[aria-label="Selected pin controls"]');
   expect(heading.textContent).toContain('account-a');
   expect(heading.textContent).toContain('claude-fable-5');
-  expect(container.querySelector('[aria-label="Selection details"]')).not.toBeNull();
+  expect(heading.querySelector('form')).not.toBeNull();
 });
 
 it('renders merge order, exact identifiers and every unknown as a word', async () => {

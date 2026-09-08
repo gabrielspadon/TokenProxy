@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Alert,
@@ -16,7 +16,6 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useResource } from './useResource';
-import { SelectionDock } from './SelectionDock';
 import {
   ALERT_STATE_LABEL,
   DEFAULT_RULE,
@@ -101,6 +100,8 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
           'The save returned, but the stored revision changed before readback. Refresh the rule before editing again.'
         );
       }
+      setDraft({ ...DEFAULT_RULE, ...readback.rule });
+      setRevision(readback.rule.revision);
       onSaved(readback.rule);
     } catch (caught) {
       // A revision conflict is shown as a conflict, with the live values, so
@@ -119,9 +120,11 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
   return (
     <form className={styles.editor} onSubmit={submit} aria-label="Notification rule editor">
       <h4>{editing ? 'Edit rule' : 'New rule'}</h4>
+      {editing && <Text size="sm" c="dimmed">Editing revision {ruleNumber(revision)}</Text>}
       <Group gap="md" align="start" wrap="wrap">
         <TextInput
           label="Name"
+          autoFocus
           value={draft.name}
           onChange={(event) => set({ name: event.currentTarget.value })}
           w={260}
@@ -234,10 +237,10 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
         </Alert>
       )}
       <Group gap="sm" mt="sm">
-        <Button type="submit" size="sm" loading={busy}>
+        <Button type="submit" size="sm" loading={busy} disabled={Boolean(conflict)}>
           {editing ? 'Save rule' : 'Create rule'}
         </Button>
-        <Button size="sm" variant="subtle" onClick={onCancel} type="button">
+        <Button size="sm" variant="subtle" onClick={onCancel} type="button" disabled={busy}>
           Cancel
         </Button>
       </Group>
@@ -559,6 +562,7 @@ export function NotificationRules() {
   const resource = useResource(ENDPOINT);
   const [editing, setEditing] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  const selectionOrigin = useRef(null);
   const rules = useMemo(() => resource.data?.rules || [], [resource.data]);
   const conditions = useMemo(() => resource.data?.conditions || [], [resource.data]);
   const events = useMemo(() => resource.data?.events || [], [resource.data]);
@@ -570,7 +574,7 @@ export function NotificationRules() {
   const refreshAudit = audit.refresh;
   const onSaved = useCallback(
     (saved) => {
-      setEditing(null);
+      setEditing(saved);
       setSelectedId(saved.id);
       setReceipt(`Rule revision ${saved.revision} saved and read back from local storage.`);
       refresh();
@@ -595,7 +599,8 @@ export function NotificationRules() {
           </Button>
           <Button
             size="sm"
-            onClick={() => {
+            onClick={(event) => {
+              selectionOrigin.current = event.currentTarget;
               setEditing({});
               setSelectedId(null);
             }}
@@ -610,38 +615,92 @@ export function NotificationRules() {
         </Text>
       )}
 
-      {resource.loading ? (
-        <Loader size="sm" mt="md" />
-      ) : resource.error ? (
-        <Alert color="orange" title="Notification rules unavailable">
-          {resource.error}
-        </Alert>
-      ) : (
+      {resource.loading && <Loader size="sm" mt="md" />}
+      {resource.error && <Alert color="orange" title="Notification rules unavailable">{resource.error}</Alert>}
+      {resource.data && (
         <>
+          <div className={styles.ruleWorkspace} data-editing={Boolean(editing) || undefined}>
+            <div className={styles.ruleInventory}>
+            {!rules.length ? (
+              <p className={styles.empty}>
+                No rules are defined. A rule alerts on evidence this installation already retains;
+                it cannot reconstruct history it never recorded.
+              </p>
+            ) : (
+              <ScrollArea
+                viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Scroll rules' }}
+              >
+                <Table className={styles.table} aria-label="Notification rules">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Rule</Table.Th>
+                      <Table.Th>Condition</Table.Th>
+                      <Table.Th>Scope</Table.Th>
+                      <Table.Th className={styles.numeric}>Threshold</Table.Th>
+                      <Table.Th className={styles.numeric}>Duration</Table.Th>
+                      <Table.Th className={styles.numeric}>Cooldown</Table.Th>
+                      <Table.Th className={styles.numeric}>Rev</Table.Th>
+                      <Table.Th>State</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {rules.map((rule) => {
+                      const condition = conditions.find(
+                        (entry) => entry.kind === rule.conditionKind
+                      );
+                      return (
+                        <Table.Tr key={rule.id} data-selected={rule.id === selectedId || undefined}>
+                          <Table.Td>
+                            <UnstyledButton
+                              className={styles.action}
+                              aria-pressed={rule.id === selectedId}
+                              onClick={(event) => { selectionOrigin.current = event.currentTarget; setSelectedId(rule.id); setEditing(rule); setReceipt(null); }}
+                            >
+                              {rule.name}
+                            </UnstyledButton>
+                          </Table.Td>
+                          <Table.Td>{condition?.label || rule.conditionKind}</Table.Td>
+                          <Table.Td>
+                            <code>{scopeLabel(rule)}</code>
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {ruleNumber(rule.threshold)}
+                            <span className={styles.thresholdUnit}>
+                              {condition?.unit || 'unit unavailable'}
+                            </span>
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {humanDuration(rule.durationSeconds)}
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {humanDuration(rule.cooldownSeconds)}
+                          </Table.Td>
+                          <Table.Td className={styles.numeric}>
+                            {ruleNumber(rule.revision)}
+                          </Table.Td>
+                          <Table.Td>{rule.enabled ? 'Enabled' : 'Disabled'}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+            )}
+            </div>
+            {editing && <aside className={styles.ruleSelection} aria-label="Selected rule settings">
           {editing && (
             <RuleEditor
               key={editing.id || 'new'}
               rule={editing}
               conditions={conditions}
-              onCancel={() => setEditing(null)}
+              onCancel={() => { setEditing(null); setSelectedId(null); if (selectionOrigin.current?.isConnected) selectionOrigin.current.focus(); }}
               onSaved={onSaved}
               onStale={resource.refresh}
             />
           )}
-
-          <SelectionDock
-            open={Boolean(selected) && !editing}
-            title={selected?.name || 'Rule evidence'}
-            subtitle={selected ? `Revision ${selected.revision} · ${scopeLabel(selected)}` : ''}
-            onClose={() => setSelectedId(null)}
-            height="min(780px, calc(100dvh - 200px))"
-            closedMaxHeight="420px"
-            detail={
-              selected && (
+              {selected && <details className={styles.ruleEvidence}>
+                <summary>Saved rule evidence and audit</summary>
                 <div className={styles.detail}>
-                  <Button size="sm" variant="default" onClick={() => setEditing(selected)}>
-                    Edit rule
-                  </Button>
                   <p className={styles.sentence}>
                     {ruleSentence(
                       selected,
@@ -697,75 +756,9 @@ export function NotificationRules() {
                     )}
                   </section>
                 </div>
-              )
-            }
-          >
-            {!rules.length ? (
-              <p className={styles.empty}>
-                No rules are defined. A rule alerts on evidence this installation already retains;
-                it cannot reconstruct history it never recorded.
-              </p>
-            ) : (
-              <ScrollArea
-                viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': 'Scroll rules' }}
-              >
-                <Table className={styles.table} aria-label="Notification rules">
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Rule</Table.Th>
-                      <Table.Th>Condition</Table.Th>
-                      <Table.Th>Scope</Table.Th>
-                      <Table.Th className={styles.numeric}>Threshold</Table.Th>
-                      <Table.Th className={styles.numeric}>Duration</Table.Th>
-                      <Table.Th className={styles.numeric}>Cooldown</Table.Th>
-                      <Table.Th className={styles.numeric}>Rev</Table.Th>
-                      <Table.Th>State</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {rules.map((rule) => {
-                      const condition = conditions.find(
-                        (entry) => entry.kind === rule.conditionKind
-                      );
-                      return (
-                        <Table.Tr key={rule.id} data-selected={rule.id === selectedId || undefined}>
-                          <Table.Td>
-                            <UnstyledButton
-                              className={styles.action}
-                              aria-pressed={rule.id === selectedId}
-                              onClick={() => setSelectedId(rule.id === selectedId ? null : rule.id)}
-                            >
-                              {rule.name}
-                            </UnstyledButton>
-                          </Table.Td>
-                          <Table.Td>{condition?.label || rule.conditionKind}</Table.Td>
-                          <Table.Td>
-                            <code>{scopeLabel(rule)}</code>
-                          </Table.Td>
-                          <Table.Td className={styles.numeric}>
-                            {ruleNumber(rule.threshold)}
-                            <span className={styles.thresholdUnit}>
-                              {condition?.unit || 'unit unavailable'}
-                            </span>
-                          </Table.Td>
-                          <Table.Td className={styles.numeric}>
-                            {humanDuration(rule.durationSeconds)}
-                          </Table.Td>
-                          <Table.Td className={styles.numeric}>
-                            {humanDuration(rule.cooldownSeconds)}
-                          </Table.Td>
-                          <Table.Td className={styles.numeric}>
-                            {ruleNumber(rule.revision)}
-                          </Table.Td>
-                          <Table.Td>{rule.enabled ? 'Enabled' : 'Disabled'}</Table.Td>
-                        </Table.Tr>
-                      );
-                    })}
-                  </Table.Tbody>
-                </Table>
-              </ScrollArea>
-            )}
-          </SelectionDock>
+              </details>}
+            </aside>}
+          </div>
 
           <section className={styles.alerts} aria-label="Alert history">
             <h4>Alert history</h4>

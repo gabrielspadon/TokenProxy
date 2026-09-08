@@ -181,9 +181,6 @@
 .attemptDelta > strong { font-size: 15px; font-variant-numeric: tabular-nums; }
 .attemptDelta > strong[data-expansion] { color: var(--metric-write); }
 .attemptOverview .footnote { margin-inline: 0; margin-bottom: 0; }
-.requestDetails { border-top: 1px solid var(--rule); padding-top: 10px; }
-.requestDetails summary { cursor: pointer; font-weight: 500; font-size: 13px; padding-block: 3px; }
-.requestDetails summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
 .stageChange { display: flex; flex-direction: column; gap: 4px; text-align: right; }
 .stageRail { position: relative; display: block; width: 92px; height: 5px; margin-inline-start: auto; background: var(--paper); }
 .stageRail::after { content: ''; position: absolute; width: 1px; height: 9px; inset-inline-start: 50%; top: -2px; background: var(--control-edge); }
@@ -192,3 +189,21 @@
 @container (max-width: 600px) { .sessionMeasures { grid-template-columns: repeat(3,minmax(0,1fr)); } .sessionHeading { flex-wrap: wrap; } .trackHeading,.ledgerHead { flex-wrap: wrap; gap: 4px; } }
 @container (max-width: 440px) { .attemptMeasures,.sessionMeasures { grid-template-columns: repeat(2,minmax(0,1fr)); } .sessionMeasures > .tokenMeasure { display: flex; flex-direction: column; } }
 @media (prefers-reduced-motion: no-preference) { .sessionButton,.attemptButton { transition: background-color 140ms ease; } }
+
+.tasks { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.tasks > :global(.mantine-Tabs-list) { padding-inline: 24px; flex-shrink: 0; }
+.tasks :global(.mantine-Tabs-tab) { min-height: var(--op-control-min-height,36px); font-size: 13px; }
+.tracePanel,.trace { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+.trace > .workspace { flex: 1; min-height: 0; }
+.traceActions { padding: 10px 24px; }
+.historyPanel { min-width: 0; overflow: auto; padding: 18px 24px; }
+.retention { color: var(--ink); font-size: 13px; }
+.retention:focus { outline: none; }
+.retentionTitle { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
+.retentionFields { display: grid; grid-template-columns: minmax(220px,1fr) minmax(170px,.7fr) minmax(220px,1fr); gap: 12px; align-items: start; }
+.retentionActions { align-self: center; }
+.retention :global(.mantine-Input-input),.retention :global(.mantine-Button-root) { min-height: var(--op-control-min-height,36px); font-size: 13px; }
+.retention :global(.mantine-InputWrapper-label),.retention :global(.mantine-InputWrapper-description) { font-size: 13px; }
+@media (max-width: 900px) { .retentionFields { grid-template-columns: repeat(2,minmax(0,1fr)); } .retentionActions { grid-column: 1 / -1; } }
+@media (max-width: 768px) { .tasks,.tracePanel,.trace { flex: none; } .tasks > :global(.mantine-Tabs-list),.traceActions { padding-inline: 16px; } .historyPanel { padding: 16px; } }
+@media (max-width: 480px) { .retentionFields { grid-template-columns: 1fr; } }

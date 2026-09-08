@@ -49,11 +49,19 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
     await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
   }
   async function capture(label) {
+    await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture', { timeout: 60000 });
     await page.mouse.move(0, 0);
     await page.evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+    await page.locator('img').evaluateAll(async images => {
+      const visible = images.filter(image => {
+        const bounds = image.getBoundingClientRect();
+        return bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.right > 0 && bounds.top < innerHeight && bounds.left < innerWidth;
+      });
+      await Promise.all(visible.map(image => image.decode()));
+    });
     const path = testInfo.outputPath(`${label}.png`);
-    const bytes = await page.screenshot({ path });
-    report.images.push({ path, sha256: createHash('sha256').update(bytes).digest('hex'), viewport: page.viewportSize(), url: page.url(), imageInspected: false });
+    const bytes = await page.screenshot({ path, animations: 'disabled' });
+    report.images.push({ path, sha256: createHash('sha256').update(bytes).digest('hex'), viewport: page.viewportSize(), url: page.url(), visibleImagesDecoded: true, finiteAnimationsCompleted: true, imageInspected: false });
     await testInfo.attach(label, { path, contentType: 'image/png' });
   }
   async function check(label, action) {
@@ -81,13 +89,15 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
     const current = async () => (await read(accountPath)).connection;
     const card = panel.locator(`[data-account-id="${initial.id}"]`);
     const windowKey = initial.lastQuotaSnapshot.windows[0].key;
-    const limits = () => card.getByRole('button', { name: 'Limits', exact: true });
-    const dialog = page.getByRole('dialog', { name: `Limits for ${initial.name}`, exact: true });
-    async function saveLimits(expectedStatus = 200) {
+    const settings = card.getByRole('form', { name: `Account settings for ${initial.name}`, exact: true });
+    const priority = settings.getByLabel('Fallback priority', { exact: true });
+    const threshold = card.getByLabel(`Auto-pause threshold for ${windowKey}`, { exact: true });
+    const save = card.getByRole('button', { name: 'Save changes', exact: true });
+    async function saveSettings(expectedStatus = 200) {
       const response = page.waitForResponse(response => new URL(response.url()).pathname === accountPath && response.request().method() === 'PUT');
-      await dialog.getByRole('button', { name: 'Save limits', exact: true }).click();
+      await save.click();
       expect((await response).status()).toBe(expectedStatus);
-      if (expectedStatus === 200) await expect(dialog).toBeHidden();
+      if (expectedStatus === 200) await expect(save).toHaveCount(0);
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
     await check('Remaining and used meters describe complementary percentages', async () => {
@@ -101,9 +111,9 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
       await panel.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill(initial.name);
       await expect(panel.locator('[data-account-id]')).toHaveCount(1);
       await panel.getByRole('searchbox', { name: 'Search accounts', exact: true }).fill('');
-      await panel.getByRole('combobox', { name: 'Account status', exact: true }).selectOption('Paused');
+      await panel.getByRole('group', { name: 'Account status filters', exact: true }).getByRole('button', { name: /^Manually paused / }).click();
       await expect(panel.locator('[data-account-id]')).toHaveCount(4);
-      await panel.getByRole('combobox', { name: 'Account status', exact: true }).selectOption('all');
+      await panel.getByRole('group', { name: 'Account status filters', exact: true }).getByRole('button', { name: /^All / }).click();
     });
     await check('Pause and resume persist through actual API and full reload', async () => {
       for (const active of [false, true]) {
@@ -116,43 +126,72 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
         await expect(card.getByRole('button', { name: active ? 'Pause' : 'Resume', exact: true })).toBeEnabled({ timeout: 30000 });
       }
     });
-    await check('Limits save thresholds, zero disables a window, priority renumbering reads back', async () => {
-      await limits().click();
-      await dialog.getByLabel('Fallback priority', { exact: true }).fill('50');
-      await dialog.getByLabel(windowKey, { exact: true }).fill('25');
-      await capture('accounts-limits-1440');
-      await saveLimits();
+    await check('Inline drafts survive search, state facets, refresh and presentation changes until discarded', async () => {
+      await expect(priority).toBeVisible();
+      await expect(threshold).toBeVisible();
+      await expect(card.getByRole('button', { name: 'Limits', exact: true })).toHaveCount(0);
+      const originalThreshold = await threshold.inputValue();
+      const beforeWrites = report.writes.length;
+      await threshold.fill('27');
+      const draft = await threshold.inputValue();
+      const search = panel.getByRole('searchbox', { name: 'Search accounts', exact: true });
+      await search.fill('Synthetic batch account');
+      await expect(card).toHaveCount(0);
+      await search.fill('');
+      await expect(threshold).toHaveValue(draft);
+      const states = panel.getByRole('group', { name: 'Account status filters', exact: true });
+      await states.getByRole('button', { name: /^Manually paused / }).click();
+      await expect(card).toHaveCount(0);
+      await states.getByRole('button', { name: /^All / }).click();
+      await expect(threshold).toHaveValue(draft);
+      const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/providers' && response.request().method() === 'GET');
+      await panel.getByRole('button', { name: 'Refresh', exact: true }).click();
+      expect((await refreshed).status()).toBe(200);
+      await expect(threshold).toHaveValue(draft);
+      for (const view of ['Rows', 'Cards']) {
+        await panel.getByText(view, { exact: true }).click();
+        await expect(threshold).toHaveValue(draft);
+      }
+      await card.getByRole('button', { name: 'Discard', exact: true }).click();
+      await expect(threshold).toHaveValue(originalThreshold);
+      await expect(save).toHaveCount(0);
+      expect(report.writes.length).toBe(beforeWrites);
+      report.inlineDraft = { preservedAcross: ['search exclusion', 'state facet exclusion', 'actual API refresh', 'Rows', 'Cards'], value: draft, discardedTo: originalThreshold, persistedWrites: 0 };
+    });
+    await check('Inline thresholds save, zero disables a window, and priority renumbering reads back', async () => {
+      await priority.fill('50');
+      await threshold.fill('25');
+      await capture('accounts-inline-settings-1440');
+      await saveSettings();
       let saved = await current();
       expect(saved.quotaPauseThresholds[windowKey]).toBe(25);
       expect(saved.priority).toBeGreaterThanOrEqual(1);
       expect(saved.priority).not.toBe(50);
       await page.reload();
-      await limits().click();
-      await expect(dialog.getByLabel(windowKey, { exact: true })).toHaveValue('25%');
-      await dialog.getByLabel(windowKey, { exact: true }).fill('0');
-      await saveLimits();
+      await expect(threshold).toHaveValue('25%');
+      await threshold.fill('0');
+      await saveSettings();
       saved = await current();
       expect(saved.quotaPauseThresholds[windowKey]).toBeUndefined();
     });
     await check('Real competing policy write returns409, keeps the draft, blocks replay and permits explicit reread', async () => {
-      await limits().click();
-      await dialog.getByLabel(windowKey, { exact: true }).fill('30');
+      await threshold.fill('30');
       const before = await current();
       const competing = await context.request.put(`${runtime.url}${accountPath}`, { data: { isActive: false, expectedControls: captureAccountControls(before) } });
       expect(competing.status()).toBe(200);
       report.writes.push({ path: accountPath, method: 'PUT', source: 'actual competing synthetic operator; no response interception' });
-      await saveLimits(409);
-      await expect(dialog.getByLabel(windowKey, { exact: true })).toHaveValue('30%');
-      await expect(dialog.getByRole('button', { name: 'Save limits', exact: true })).toBeDisabled();
+      await saveSettings(409);
+      await expect(threshold).toHaveValue('30%');
+      await expect(save).toBeDisabled();
       await capture('accounts-conflict-1440');
-      await dialog.getByRole('button', { name: 'Read current settings', exact: true }).click();
-      await expect(dialog.getByRole('button', { name: 'Save limits', exact: true })).toBeEnabled();
-      await saveLimits();
+      await card.getByRole('button', { name: 'Read current settings', exact: true }).click();
+      await expect(save).toBeEnabled();
+      await expect(threshold).toHaveValue('30%');
+      await saveSettings();
       expect((await current()).quotaPauseThresholds[windowKey]).toBe(30);
-      await limits().click();
-      await dialog.getByLabel(windowKey, { exact: true }).fill(String(initial.quotaPauseThresholds?.[windowKey] ?? 0));
-      await dialog.getByLabel('Fallback priority', { exact: true }).fill('1');
-      await saveLimits();
+      await threshold.fill(String(initial.quotaPauseThresholds?.[windowKey] ?? 0));
+      await priority.fill('1');
+      await saveSettings();
       await card.getByRole('button', { name: 'Resume', exact: true }).click();
       await expect(card.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
       const restored = await current();
@@ -160,33 +199,58 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
       expect(restored.quotaPauseThresholds).toEqual(initial.quotaPauseThresholds ?? {});
       report.priorityNormalization = { initial: initial.priority, final: restored.priority, note: 'The maintained route normalizes priorities per provider; original relative ordering restored.' };
     });
+    await check('A refreshed competing policy preserves the inline draft and blocks a known-stale write', async () => {
+      const before = await current();
+      const originalThreshold = await threshold.inputValue();
+      await threshold.fill('29');
+      const competing = await context.request.put(`${runtime.url}${accountPath}`, { data: { isActive: !before.isActive, expectedControls: captureAccountControls(before) } });
+      expect(competing.status()).toBe(200);
+      report.writes.push({ path: accountPath, method: 'PUT', source: 'actual competing synthetic operator before refresh; no response interception' });
+      const beforeUiWrites = report.writes.length;
+      const competingRead = page.waitForResponse(response => new URL(response.url()).pathname === '/api/providers' && response.request().method() === 'GET');
+      await panel.getByRole('button', { name: 'Refresh', exact: true }).click();
+      expect((await competingRead).status()).toBe(200);
+      await expect(threshold).toHaveValue('29%');
+      await expect(save).toBeDisabled();
+      await expect(card).toContainText('Stored settings changed. Your draft is retained.');
+      await card.getByRole('button', { name: 'Read current settings', exact: true }).click();
+      await expect(save).toBeEnabled();
+      await expect(threshold).toHaveValue('29%');
+      await card.getByRole('button', { name: 'Discard', exact: true }).click();
+      await expect(threshold).toHaveValue(originalThreshold);
+      expect(report.writes.length).toBe(beforeUiWrites);
+      const restored = page.waitForResponse(response => new URL(response.url()).pathname === accountPath && response.request().method() === 'PUT');
+      await card.getByRole('button', { name: before.isActive ? 'Resume' : 'Pause', exact: true }).click();
+      expect((await restored).status()).toBe(200);
+      expect((await current()).isActive).toBe(before.isActive);
+    });
     await check('Customize persists account and quota-window visibility across full reload', async () => {
       await panel.getByRole('button', { name: 'Customize', exact: true }).click();
-      const customize = page.getByRole('dialog', { name: 'Customize account panel', exact: true });
+      const customize = page.getByRole('region', { name: 'Account panel visibility', exact: true });
       const accountToggle = customize.getByRole('checkbox', { name: `Show ${initial.name}`, exact: true });
       const preference = customize.locator('[class*="preference"]').filter({ has: page.getByRole('checkbox', { name: `Show ${initial.name}`, exact: true }) });
       await preference.getByRole('checkbox', { name: windowKey, exact: true }).uncheck();
-      await page.keyboard.press('Escape');
+      await customize.getByRole('button', { name: 'Done', exact: true }).click();
       await expect(card.getByRole('meter', { name: `${windowKey} remaining`, exact: true })).toHaveCount(0);
       await page.reload();
       await expect(card).toBeVisible();
       await expect(card.getByRole('meter', { name: `${windowKey} remaining`, exact: true })).toHaveCount(0);
       await panel.getByRole('button', { name: 'Customize', exact: true }).click();
       await accountToggle.uncheck();
-      await page.keyboard.press('Escape');
+      await customize.getByRole('button', { name: 'Done', exact: true }).click();
       await page.reload();
       await expect(panel.locator('[data-account-id]')).toHaveCount(11);
       await panel.getByRole('button', { name: 'Customize', exact: true }).click();
       await customize.getByRole('button', { name: 'Restore default view', exact: true }).click();
-      await page.keyboard.press('Escape');
+      await customize.getByRole('button', { name: 'Done', exact: true }).click();
       await expect(panel.locator('[data-account-id]')).toHaveCount(12);
     });
-    await check('Cards and Compare render at all three widths with readable metadata', async () => {
+    await check('Cards and Rows render at all three widths with readable metadata', async () => {
       for (const [width, height] of [[1440, 1000], [1920, 1080], [390, 844]]) {
         await page.setViewportSize({ width, height });
-        await panel.getByText('Compare', { exact: true }).click();
+        await panel.getByText('Rows', { exact: true }).click();
         await page.evaluate(() => window.scrollTo(0, 0));
-        await capture(`accounts-compare-${width}`);
+        await capture(`accounts-rows-${width}`);
         const bounds = await page.evaluate(() => ({ width: innerWidth, content: document.documentElement.scrollWidth }));
         expect(bounds.content).toBeLessThanOrEqual(bounds.width);
         const sizes = await panel.locator('article span, article small, article time').evaluateAll(elements => elements.filter(element => element.childElementCount === 0 && element.textContent.trim() && element.getBoundingClientRect().width > 0).map(element => parseFloat(getComputedStyle(element).fontSize)));
@@ -194,16 +258,23 @@ test('account cards persist scoped controls and visibility, reject conflicts, an
         await panel.getByText('Cards', { exact: true }).click();
       }
     });
-    await check('Mobile limits modal fits, retains keyboard focus, and cancels without a write', async () => {
-      await limits().click();
-      await expect(dialog).toBeVisible();
-      await capture('accounts-limits-390');
+    await check('Mobile priority and threshold controls are direct, fit and discard without a write', async () => {
+      await expect(priority).toBeVisible();
+      await expect(threshold).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      const originalThreshold = await threshold.inputValue();
       const beforeWrites = report.writes.length;
-      await page.keyboard.press('Tab');
-      expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
-      await page.keyboard.press('Escape');
-      await expect(dialog).toBeHidden();
-      await expect(limits()).toBeFocused();
+      await threshold.fill('31');
+      await capture('accounts-inline-settings-390');
+      for (const input of [priority, threshold]) {
+        const bounds = await input.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+      }
+      await card.getByRole('button', { name: 'Discard', exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(threshold).toHaveValue(originalThreshold);
+      await expect(save).toHaveCount(0);
       expect(report.writes.length).toBe(beforeWrites);
     });
     await check('Historical Activity and analysis remains reachable from the primary panel', async () => {

@@ -138,7 +138,15 @@ export default function ConnectionsPage() {
   const health = sys.data?.providerHealth || null;
 
   // ---- add flow ----------------------------------------------------------
-  const [adding, setAdding] = useState(false);
+  const [task, setTask] = useState('accounts');
+  const [reviewAdd, setReviewAdd] = useState(false);
+  const [addUncertain, setAddUncertain] = useState(false);
+  const [taskBusy, setTaskBusy] = useState(false);
+  useEffect(() => {
+    const readTask = () => { if (window.location.hash === '#provider-policy') setTask('provider-policy'); };
+    readTask(); window.addEventListener('hashchange', readTask);
+    return () => window.removeEventListener('hashchange', readTask);
+  }, []);
   const [form, setForm] = useState({ providerId: "", mode: "", name: "", secret: "", machineId: "" });
   const [flow, setFlow] = useState(null); // authorize probe result for OAuth providers
   const [grant, setGrant] = useState(null); // {step} | {device} | {connection}
@@ -179,7 +187,8 @@ export default function ConnectionsPage() {
   function closeAdd() {
     providerChoice.current++;
     abortRef.current?.abort();
-    setAdding(false);
+    setReviewAdd(false);
+    setAddUncertain(false);
     setGrant(null);
     setRefused(null);
     setBusy(false);
@@ -238,17 +247,19 @@ export default function ConnectionsPage() {
       const savedId = out.connection?.id;
       const read = savedId ? await call(`/api/providers/${encodeURIComponent(savedId)}`) : null;
       if (choice !== providerChoice.current) return;
-      if (!read?.ok || read.body?.connection?.id !== savedId) { setBusy(true); setRefused({ tone: 'warn', title: 'The account write was accepted, but the saved account was not confirmed.', next: 'Close and refresh the account list before another import.' }); providers.refresh(); return; }
+      if (!read?.ok || read.body?.connection?.id !== savedId) { setBusy(false); setAddUncertain(true); setRefused({ tone: 'warn', title: 'The account write was accepted, but the saved account was not confirmed.', next: 'Close and refresh the account list before another import.' }); providers.refresh(); return; }
       setGrant({ connection: out.connection });
       providers.refresh();
       qual.refresh();
     } else {
+      if (!out.status) setAddUncertain(true);
       setRefused(refusal(out.status, out.body));
     }
   }
 
   // ---- releases ----------------------------------------------------------
   const [releaseAct, setReleaseAct] = useState(null); // {kind:"activate", release} | {kind:"rollback"}
+  const [restoreId, setRestoreId] = useState('');
   const [relBusy, setRelBusy] = useState(false);
   const [relRefused, setRelRefused] = useState(null);
   const active = activation.data?.active || null;
@@ -285,7 +296,7 @@ export default function ConnectionsPage() {
         </div>
         <div className="actions">
           <Freshness status={pollFresh(qual)} lastDataAt={qual.goodAt} />
-          <button type="button" className="button" onClick={() => { setAdding(true); setForm({ providerId: "", mode: "", name: "", secret: "", machineId: "" }); setFlow(null); setGrant(null); }}><Icon name="i-add" />Add a connection</button>
+          <button type="button" className="button" disabled={busy || taskBusy} onClick={() => { setTask("add"); setForm({ providerId: "", mode: "", name: "", secret: "", machineId: "" }); setFlow(null); setGrant(null); }}><Icon name="i-add" />Add a connection</button>
         </div>
       </header>
 
@@ -296,6 +307,8 @@ export default function ConnectionsPage() {
         <button type="button" className="button quiet" onClick={resource.refresh} disabled={resource.loading}>Retry {label.toLowerCase()}</button>
       </div> : null)}
 
+      <nav className="verb-row" aria-label="Connection tasks">{[['accounts', 'Accounts'], ['add', 'Add account'], ['import', 'Import'], ['provider-policy', 'Provider policy'], ['kiro', 'Kiro sign-in']].map(([value, label]) => <button key={value} type="button" className={task === value ? 'button' : 'button quiet'} aria-pressed={task === value} disabled={busy || taskBusy} onClick={() => { if (task === 'add' && value !== 'add') closeAdd(); setTask(value); }}>{label}</button>)}</nav>
+      {task === 'accounts' ? <>
       <dl className="connections-summary" aria-label="Connection status summary">
         <div><dt>Configured</dt><dd><bdi>{providers.data ? fmtNum(all.length) : 'Unknown'}</bdi></dd></div>
         <div><dt>Enabled</dt><dd><bdi>{providers.data ? fmtNum(enabled) : 'Unknown'}</bdi></dd></div>
@@ -343,7 +356,7 @@ export default function ConnectionsPage() {
 
       <SelectionDock open={!!selected} title={selected?.name || selected?.id} subtitle={selected?.provider} mark={selected ? <ProviderMark provider={selected.provider} /> : null} onClose={() => setSelectedId(null)} height="min(660px, calc(100dvh - 280px))" closedMaxHeight="min(660px, calc(100dvh - 280px))" detail={selected ? <div className="connections-inspector">
         <dl className="facts"><dt>Account ID</dt><dd><bdi>{selected.id}</bdi></dd><dt>Authentication</dt><dd>{AUTH[selected.authType] || selected.authType || 'Unknown'}</dd><dt>Qualification status</dt><dd>{WORDS[selectedQualification?.status] || selectedQualification?.status || 'Unknown'}<p className="caption">Qualification combines recorded validation with drain, active state and cooldown. It does not establish model eligibility.</p></dd><dt>Local participation</dt><dd>{selected.isActive === false ? 'Disabled' : byDrain.get(selected.id)?.isDraining ? 'Draining; no new work' : 'Enabled; model, quota and capacity restrictions still apply'}</dd><dt>Upstream model entitlement</dt><dd>Unknown. A stored account or health result does not establish model access.</dd><dt>Network path</dt><dd>{pools.data ? <><bdi>{selectedPath.label}</bdi>. {selectedPath.policy}</> : 'Pool inventory unavailable; path not verified.'}</dd></dl>
-        <Link href={`/dashboard/connections/${encodeURIComponent(selected.id)}`} prefetch={false}>Investigate account controls and evidence</Link>
+        <Link href={`/dashboard/connections/${encodeURIComponent(selected.id)}`} prefetch={false}>Configure account</Link>
         <h3>Investigate this account</h3>
         <p className="caption">Open the account’s recorded activity with the retained time range and model. Current configuration and historical activity remain separate.</p>
         <div className="verb-row">
@@ -374,13 +387,14 @@ export default function ConnectionsPage() {
               {r.lastQualifiedAt ? <span>{fmtRelative(r.lastQualifiedAt, now)}</span> : <span className="unreported">Not recorded</span>}
               {r.lastError ? <p className="caption">{r.lastError}</p> : null}
             </div>
-            <button type="button" className="button quiet" aria-label={`Inspect account ${r.name}`} aria-pressed={selectedId === r.id} onClick={() => setSelectedId(r.id)}>Inspect account</button>
+            <div className="actions"><Link href={`/dashboard/connections/${encodeURIComponent(r.id)}`} prefetch={false}>Configure</Link>
+            <button type="button" className="button quiet" aria-label={`Inspect account ${r.name}`} aria-pressed={selectedId === r.id} onClick={() => setSelectedId(r.id)}>Inspect account</button></div>
           </div>
         ))}
       </div>
       </SelectionDock>
 
-      <section aria-label="Account setup options"><div className="verb-row"><ProviderImports onSaved={() => providers.refresh()} /><KiroSocial onSaved={() => providers.refresh()} /><ProviderControls nodes={nodes.data?.nodes || []} onSaved={() => providers.refresh()} /></div></section>
+
       <section className="connections-releases">
         <h2>Release records</h2>
         <p className="caption">The recorded active release and its history. These controls update metadata; they do not deploy software or switch request routing.</p>
@@ -409,7 +423,8 @@ export default function ConnectionsPage() {
         </div>
         {active && history.some(item => item.releaseId !== active.releaseId) ? (
           <div className="actions">
-            <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "rollback" }); }}><Icon name="i-refresh" mirror />Restore a record</button>
+            <label className="field"><span>Release record</span><select className="select" value={restoreId} onChange={event => setRestoreId(event.currentTarget.value)}><option value="">Previous recorded release</option>{history.filter(item => item.releaseId !== active?.releaseId).map(item => <option key={item.releaseId} value={item.releaseId}>{item.version || item.releaseId}</option>)}</select></label>
+            <button type="button" className="button quiet" onClick={() => { setRelRefused(null); setReleaseAct({ kind: "rollback", toReleaseId: restoreId }); }}><Icon name="i-refresh" mirror />Restore a record</button>
           </div>
         ) : null}
       </section>
@@ -423,13 +438,13 @@ export default function ConnectionsPage() {
         </ul>
       </section>
 
-      <Confirm open={adding} busy={busy || (form.mode === 'oauth' && !flow)} refusal={refused}
-        title={grant?.connection ? "Connected" : "Add a connection"}
-        verb={grant?.connection ? "Done" : form.mode === "oauth" ? "Sign in" : "Add"}
-        requires={form.mode === "oauth" ? "An operator session, and finishing the provider's own sign-in." : "An operator session, and the credential to store."}
-        changes="A new account joins the fallback order at its priority and can start receiving traffic."
-        undo="Delete the connection. The stored credential is destroyed with it."
-        onConfirm={runAdd} onClose={closeAdd}>
+      </> : null}
+      {task === 'import' ? <ProviderImports onBusyChange={setTaskBusy} onSaved={() => providers.refresh()} /> : null}
+      {task === 'provider-policy' ? <ProviderControls onBusyChange={setTaskBusy} nodes={nodes.data?.nodes || []} onSaved={() => providers.refresh()} /> : null}
+      {task === 'kiro' ? <KiroSocial onBusyChange={setTaskBusy} onSaved={() => providers.refresh()} /> : null}
+      {task === 'add' ? <section aria-label="Add a connection"><h2>Add a connection</h2>
+        {refused ? <Notice {...refused} /> : null}
+        <fieldset disabled={busy || addUncertain || reviewAdd}>
         {grant?.connection ? (
           <Notice tone="ok" title="The account is stored.">
             {grant.connection.email ? <p className="caption">{grant.connection.email}</p> : null}
@@ -463,7 +478,7 @@ export default function ConnectionsPage() {
                 {form.providerId === 'vertex' ? <p className="caption">The credential field accepts a Vertex API key, service-account JSON, or authorized-user ADC JSON. Project and location are available under Provider options.</p> : null}
               </>
             ) : null}
-            {entry && form.mode !== 'oauth' && form.mode !== 'none' ? <details><summary>Provider options</summary><ProviderOptionInputs provider={form.providerId} values={form} onChange={set} disabled={busy} /></details> : null}
+            {entry && form.mode !== 'oauth' && form.mode !== 'none' ? <section aria-label="Provider options"><h3>Provider options</h3><ProviderOptionInputs provider={form.providerId} values={form} onChange={set} disabled={busy} /></section> : null}
             {entry && form.mode === "oauth" && flow?.failed ? <Notice {...flow.failed} /> : null}
             {entry && form.mode === 'none' ? <Notice tone="info" title="No saved credential is needed." next="This provider uses a virtual account. Its availability and outbound path are managed in provider controls and Network." /> : null}
             {form.mode === 'oauth' && form.providerId === 'kiro' ? <div className="connections-form">
@@ -492,6 +507,19 @@ export default function ConnectionsPage() {
             {grant?.step ? <p className="caption">{grant.step}</p> : null}
           </div>
         )}
+        </fieldset>
+        <div className="verb-row"><button type="button" className="button quiet" disabled={busy} onClick={closeAdd}>Reset draft</button><button type="button" className="button" disabled={busy || addUncertain || !entry || (form.mode === 'oauth' && !flow)} onClick={() => grant?.connection ? closeAdd() : setReviewAdd(true)}>{grant?.connection ? 'Done' : form.mode === 'oauth' ? 'Review sign-in' : 'Review account'}</button></div>
+      </section> : null}
+      <Confirm open={reviewAdd} busy={busy || addUncertain || (form.mode === 'oauth' && !flow)} refusal={refused}
+        title={grant?.connection ? 'Connected' : 'Add a connection'} verb={grant?.connection ? 'Done' : form.mode === 'oauth' ? 'Sign in' : 'Add'}
+        requires={form.mode === 'oauth' ? "An operator session, and finishing the provider's own sign-in." : 'An operator session, and the credential to store.'}
+        changes="A new account joins the fallback order at its priority and can start receiving traffic."
+        undo="Delete the connection. The stored credential is destroyed with it."
+        onConfirm={runAdd} onClose={() => { if (!busy) setReviewAdd(false); }}>
+        <p>{entry?.name || entry?.id} · {form.name || 'Provider account'} · {MODE_WORD[form.mode]}</p>
+        {grant?.connection ? <Notice tone="ok" title="The account is stored." /> : null}
+        {grant?.device ? <Notice tone="info" title="Enter this code with the provider."><p><code>{grant.device.userCode}</code> at <a href={grant.device.verificationUri} target="_blank" rel="noreferrer">{grant.device.verificationUri}</a></p></Notice> : null}
+        {grant?.step ? <p className="caption">{grant.step}</p> : null}
       </Confirm>
 
       <Confirm open={!!releaseAct} busy={relBusy} refusal={relRefused}
@@ -504,7 +532,7 @@ export default function ConnectionsPage() {
         undo="Record another known release. The history of this change remains."
         onConfirm={runRelease} onClose={() => setReleaseAct(null)}>
         {releaseAct?.kind === "activate" ? <p className="caption">{releaseAct.release.releaseId}</p> : null}
-        {releaseAct?.kind === 'rollback' ? <label className="field"><span>Release record</span><select className="select" value={releaseAct.toReleaseId || ''} onChange={event => setReleaseAct(value => ({ ...value, toReleaseId: event.target.value }))}><option value="">Previous recorded release</option>{history.filter(item => item.releaseId !== active?.releaseId).map(item => <option key={item.releaseId} value={item.releaseId}>{item.version || item.releaseId}</option>)}</select></label> : null}
+        {releaseAct?.kind === 'rollback' ? <p>Release record · {releaseAct.toReleaseId || 'Previous recorded release'}</p> : null}
       </Confirm>
     </div>
   );

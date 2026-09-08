@@ -9,7 +9,6 @@ import {
   Button,
   Divider,
   Group,
-  Kbd,
   Modal,
   NavLink,
   ScrollArea,
@@ -138,10 +137,10 @@ function WorkspaceShell({ children }) {
           <Link href="/dashboard" className={styles.wordmark}>
             TokenProxy<span className={styles.wordmarkPoint}>.</span>
           </Link>
-          <Text className={styles.workspaceLabel}>AI gateway</Text>
+          {!snapshot && <Text className={styles.workspaceLabel}>Local gateway</Text>}
           <div className={styles.headerSpacer} />
           <SnapshotNotice />
-          <Tooltip label="Find a page or control">
+          <Tooltip label="Find a page or control (⌘ K)">
             <ActionIcon
               variant="subtle"
               color="gray"
@@ -179,18 +178,6 @@ function WorkspaceShell({ children }) {
         >
           Workspace preferences
         </Button>
-        <div className={styles.navIntro}>
-          <div>
-            <strong>Workspace</strong>
-            <span>
-              {snapshot?.kind === 'synthetic-fixture'
-                ? 'Synthetic environment'
-                : snapshot
-                  ? 'Recorded environment'
-                  : 'Local environment'}
-            </span>
-          </div>
-        </div>
         <ScrollArea className={styles.navScroll}>
           <nav aria-label="Sections">
             {NAV_GROUPS.map((group, index) => (
@@ -221,23 +208,6 @@ function WorkspaceShell({ children }) {
         </ScrollArea>
         <div className={styles.navBottom}>
           <ObservationControls />
-          <Button
-            fullWidth
-            variant="transparent"
-            color="gray"
-            leftSection={<Icon name="i-search" />}
-            rightSection={<Kbd size="xs">⌘ K</Kbd>}
-            onClick={() => setSearchOpen(true)}
-          >
-            Find a control
-          </Button>
-          <Text size="xs">
-            {snapshot?.kind === 'synthetic-fixture'
-              ? 'Synthetic preview'
-              : snapshot
-                ? 'Private historical preview'
-                : 'Operator workspace'}
-          </Text>
         </div>
       </AppShell.Navbar>
       <AppShell.Main className={styles.main}>

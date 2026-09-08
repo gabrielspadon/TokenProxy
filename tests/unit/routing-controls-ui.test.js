@@ -74,6 +74,8 @@ it('guards a mixed bulk set/remove using reviewed keys and accepts unrelated rea
   state.read = { overrides: { 'openai/fixture': 128000, sibling: 45000 } };
   await render(<BulkOverrides overrides={{ old: 10000 }} onReadback={receive} />);
   await click('Edit several overrides'); await input('Overrides to set', 'openai/fixture = 128000'); await input('Override keys to remove', 'old'); await click('Review exact keys');
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.querySelector('#model-context-bulk-editor')).not.toBeNull();
   expect(state.calls).toHaveLength(0);
   await click('Save reviewed overrides');
   expect(state.calls[0].body).toEqual({ set: [{ key: 'openai/fixture', contextWindow: 128000 }], deleteKeys: ['old'], expectedOverrides: { 'openai/fixture': null, old: 10000 } });
@@ -88,4 +90,15 @@ it('reports post-commit persistence uncertainty even when the current process re
   expect(document.body.textContent).toContain('persisted readback is incomplete');
   expect(button('Save reviewed overrides').disabled).toBe(true);
   expect(document.querySelector('textarea').value).toBe('exact = 20000');
+});
+
+it('invalidates an inline bulk review when its visible values change', async () => {
+  await render(<BulkOverrides overrides={{ exact: 10000 }} onReadback={vi.fn()} />);
+  await click('Edit several overrides'); await input('Overrides to set', 'exact = 20000'); await click('Review exact keys');
+  expect(button('Save reviewed overrides')).toBeDefined();
+  await input('Overrides to set', 'exact = 30000');
+  expect(button('Save reviewed overrides')).toBeUndefined();
+  expect(state.calls).toHaveLength(0);
+  await click('Review exact keys');
+  expect(container.querySelector('.model-context-bulk-review').textContent).toContain('10,000 tokens → 30,000 tokens');
 });

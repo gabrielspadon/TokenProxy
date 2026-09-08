@@ -1,6 +1,10 @@
 .tools { padding-block: 20px; min-width: 0; }
 .tools h2 { margin: 0 0 8px; font-size: var(--type-section); font-weight: 600; }
 .tools h3 { margin: 8px 0; font-size: var(--type-ui); font-weight: 600; }
+.sectionLinks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.sectionLinks a { color: var(--signal); font-size: var(--type-ui); }
+.toolSection { padding: 14px; border: 1px solid var(--rule); background: var(--raised); scroll-margin-top: 80px; min-width: 0; }
+.toolSection > h3 { margin-top: 0; margin-bottom: 14px; }
 .tools p { margin-block: 8px; overflow-wrap: anywhere; }
 .tools code { font-family: var(--mono); overflow-wrap: anywhere; }
 .code { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }

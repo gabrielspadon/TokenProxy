@@ -58,6 +58,9 @@
   --radius-button: 6px;
   --radius-overlay: 12px;
   --control-height: 36px;
+  --compact-control-height: 32px;
+  --icon-size: 18px;
+  --icon-size-inline: 16px;
   --motion-control: 140ms;
   --motion-context: 200ms;
   --elevation-menu: 0 6px 20px rgb(23 35 45 / 10%);
@@ -140,12 +143,10 @@ pre { overflow: auto; max-width: 100%; }
 .button[disabled], .button[aria-disabled='true'] { background: var(--paper); color: var(--slate); border-color: var(--rule); opacity: 1; }
 .input, .select { border-color: var(--control-edge); border-radius: var(--radius); background: var(--raised); }
 .input::placeholder { color: var(--slate); opacity: 1; }
-.provider-mark { background: #fff; border-color: var(--rule); color: #17232d; }
-.provider-mark img { object-fit: contain; max-width: 100%; max-height: 100%; }
 .fresh[data-state='live']::before, .fresh[data-state='reconnecting']::before, .fresh[data-state='connecting']::before { animation: none; }
 .mantine-Button-root, .mantine-ActionIcon-root, .mantine-Input-input, .button, .input, .select { transition: background-color var(--motion-control), border-color var(--motion-control); }
 .mantine-Button-root { font-size: var(--type-ui); font-weight: 500; border-radius: var(--radius-button); }
-.mantine-Button-root[data-size='compact-sm'], .mantine-Button-root[data-size='xs'] { min-height: 32px; }
+.mantine-Button-root:where([data-size='compact-sm'], [data-size='xs']) { min-height: var(--compact-control-height); }
 .mantine-Button-label { white-space: normal; text-align: start; }
 .mantine-Button-root[data-loading] .mantine-Button-inner { opacity: 1; transform: none; }
 .mantine-Button-label[data-loading] { opacity: 1; }
@@ -173,9 +174,10 @@ pre { overflow: auto; max-width: 100%; }
 .mantine-Table-td { vertical-align: top; }
 .mantine-Table-tr { border-color: var(--rule); }
 .mantine-TableScrollContainer-scrollContainer:focus-visible { outline-offset: -3px; }
+.mantine-Button-section .icon, .mantine-ActionIcon-icon .icon, .mantine-Input-section .icon, .mantine-NavLink-section .icon { display: block; }
 @media (pointer: coarse) {
-  :root { --control-height: 44px; }
-  .mantine-Button-root, .mantine-ActionIcon-root, .mantine-Input-input, .mantine-Menu-item, .mantine-Tabs-tab { min-height: 44px; }
+  :root { --control-height: 44px; --compact-control-height: 44px; }
+  .mantine-Button-root, .mantine-ActionIcon-root, .mantine-Input-input, .mantine-Menu-item, .mantine-Tabs-tab, .mantine-NavLink-root { min-height: 44px; }
   .mantine-ActionIcon-root { min-width: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {

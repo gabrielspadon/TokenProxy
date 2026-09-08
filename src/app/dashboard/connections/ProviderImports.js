@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Button, Group, Modal, NativeSelect, Stack, Textarea, TextInput } from '@mantine/core';
+import { Button, Group, NativeSelect, Stack, Textarea, TextInput } from '@mantine/core';
 import { call } from '@/shared/api';
 import { Notice } from '@/shared/components/Notice';
 
@@ -33,14 +33,14 @@ export function providerImportReceipt(body) {
   return { ids: body?.connection?.id ? [body.connection.id] : [], failed: [] };
 }
 
-export default function ProviderImports({ onSaved }) {
-  const [opened, setOpened] = useState(false);
+export default function ProviderImports({ onSaved, onBusyChange }) {
   const [methodId, setMethodId] = useState('mixed');
   const [values, setValues] = useState({});
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [ids, setIds] = useState([]);
   const [submitted, setSubmitted] = useState(false);
+  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
   const method = IMPORT_METHODS.find(item => item.id === methodId);
   const clearSecrets = useCallback(current => Object.fromEntries(Object.entries(current).filter(([key]) => !method.fields.some(([field, , type]) => field === key && ['password', 'json'].includes(type)))), [method]);
   useEffect(() => {
@@ -48,7 +48,7 @@ export default function ProviderImports({ onSaved }) {
     document.addEventListener('visibilitychange', clear);
     return () => document.removeEventListener('visibilitychange', clear);
   }, [clearSecrets]);
-  const close = () => { if (!busy) { setOpened(false); setValues({}); setNotice(null); setIds([]); setSubmitted(false); } };
+  const close = () => { if (!busy) { setValues({}); setNotice(null); setIds([]); setSubmitted(false); } };
   async function discover() {
     setBusy(true); setNotice(null);
     const response = await call(method.discovery);
@@ -68,7 +68,7 @@ export default function ProviderImports({ onSaved }) {
     const response = await call(method.path, { method: 'POST', body });
     setValues(current => clearSecrets(current));
     if (!response.ok || response.body?.success === false) {
-      setBusy(false); setNotice({ tone: 'bad', title: `Import was refused${response.status ? ` (HTTP ${response.status})` : ''}.`, next: 'Check the credential format, provider prerequisites and your session permission. Secret fields were cleared.' }); return;
+      setBusy(false); if (!response.status) { setSubmitted(true); setNotice({ tone: 'warn', title: 'The import outcome is unknown.', next: 'Refresh the account inventory before another import. Do not repeat the interrupted write.' }); return; } setNotice({ tone: 'bad', title: `Import was refused${response.status ? ` (HTTP ${response.status})` : ''}.`, next: 'Check the credential format, provider prerequisites and your session permission. Secret fields were cleared.' }); return;
     }
     const result = providerImportReceipt(response.body);
     const read = await call('/api/providers');
@@ -78,25 +78,22 @@ export default function ProviderImports({ onSaved }) {
     setNotice({ tone: verified && !result.failed.length ? 'ok' : 'warn', title: verified ? `${result.ids.length} imported account${result.ids.length === 1 ? '' : 's'} read back.` : 'Import returned, but saved accounts could not be fully confirmed.',
       next: result.failed.length ? `Entries ${result.failed.join(', ')} were refused. Successful entries remain stored. Import only corrected entries to avoid duplicates.` : 'Stored credentials do not establish model access or successful generation. Open an account to inspect it.' });
   }
-  return <>
-    <Button variant="default" onClick={() => setOpened(true)}>Import accounts</Button>
-    <Modal opened={opened} onClose={close} title="Import provider accounts" size="lg" closeOnClickOutside={!busy} closeOnEscape={!busy}>
+  return <section aria-label="Import provider accounts"><h2>Import provider accounts</h2>
       <form onSubmit={submit}><Stack gap="md">
         <NativeSelect label="Import mechanism" data={IMPORT_METHODS.map(item => ({ value: item.id, label: item.label }))} value={methodId} disabled={busy || submitted} onChange={event => { setMethodId(event.currentTarget.value); setValues({}); setNotice(null); }} />
         <p>{method.note || 'Imports saved provider credentials. Successful entries are retained even if another entry is refused.'} This requires an authorized dashboard session. New active accounts may receive subsequent requests.</p>
         {notice ? <Notice {...notice} /> : null}
         {!submitted ? method.fields.map(([key, label, type]) => {
           const common = { label, value: values[key] || '', disabled: busy, onChange: event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); } };
-          if (type === 'json') return <Textarea key={key} {...common} minRows={6} autoComplete="off" description="Sensitive credential document. Cleared when this dialog closes or the tab is hidden." />;
+          if (type === 'json') return <Textarea key={key} {...common} minRows={6} autoComplete="off" description="Sensitive credential document. Cleared when this task resets or the tab is hidden." />;
           if (Array.isArray(type)) return <NativeSelect key={key} {...common} data={[{ value: '', label: 'Provider default' }, ...type]} />;
           return <TextInput key={key} {...common} type={type || 'text'} autoComplete={type === 'password' ? 'off' : undefined} />;
         }) : null}
         {ids.map(id => <Link key={id} href={`/dashboard/connections/${encodeURIComponent(id)}`}>Open imported account {id}</Link>)}
         <Group justify="space-between">
           {method.discovery && !submitted ? <Button variant="default" onClick={discover} disabled={busy}>Read local installation</Button> : <span />}
-          <Group><Button variant="default" onClick={close} disabled={busy}>Close</Button>{!submitted ? <Button type="submit" loading={busy}>Import accounts</Button> : null}</Group>
+          <Group><Button variant="default" onClick={close} disabled={busy}>Reset task</Button>{!submitted ? <Button type="submit" loading={busy}>Import accounts</Button> : null}</Group>
         </Group>
       </Stack></form>
-    </Modal>
-  </>;
+  </section>;
 }

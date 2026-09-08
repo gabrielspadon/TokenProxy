@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
 import { ProviderMark } from '@/shared/components/ProviderMark';
-import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { overrideCandidates, parseWindow, resolveWindowOverride } from './contextModel';
@@ -40,6 +39,8 @@ export default function ModelContextPage() {
   const [failed, setFailed] = useState(null);
   const [notice, setNotice] = useState(null);
   const controller = useRef(null);
+  const inspectorRef = useRef(null);
+  const selectionOrigin = useRef(null);
 
   const read = useCallback(async () => {
     controller.current?.abort();
@@ -69,6 +70,9 @@ export default function ModelContextPage() {
     read().then(receive).catch(cause => receive({ error: { tone: 'bad', title: 'Context configuration could not be read.', detail: cause.message } }));
     return () => controller.current?.abort();
   }, [read, receive]);
+  useEffect(() => {
+    if (selection) inspectorRef.current?.querySelector('[data-context-token-input]')?.focus();
+  }, [selection]);
 
   const overrides = data?.overrides || {};
   const model = selection?.kind === 'model' ? data?.models.find(row => identity(row) === selection.key) : null;
@@ -88,7 +92,8 @@ export default function ModelContextPage() {
   const selectedExists = selection?.kind === 'model' ? Boolean(model) : Boolean(selection && Object.hasOwn(overrides, selection.key));
   const canEdit = Boolean(data && !error && !loading && selectedExists && !busy);
 
-  function select(kind, key, row) {
+  function select(kind, key, row, origin) {
+    selectionOrigin.current = origin;
     setSelection({ kind, key });
     setEditKey(key);
     setDraft(String(overrides[key] ?? row?.contextWindow ?? ''));
@@ -126,7 +131,7 @@ export default function ModelContextPage() {
     setBusy(false);
   }
 
-  const inspector = <div className="model-context-inspector" id="model-context-inspector">
+  const inspector = <div ref={inspectorRef} className="model-context-inspector" id="model-context-inspector">
     {notice ? <Notice {...notice} detail={undefined}><p className="caption"><ExactKey>{notice.detail}</ExactKey></p></Notice> : null}
     {!selectedExists ? <p>The selected record is no longer in the returned configuration.</p> : <>
       <div className="model-context-facts">
@@ -152,17 +157,25 @@ export default function ModelContextPage() {
     {loading ? <p role="status">Reading context configuration…</p> : null}
     <BulkOverrides overrides={overrides} disabled={!data || loading || busy || !!error} onReadback={fresh => receive({ data: fresh })} />
     <div className="model-context-tools"><TextInput type="search" label="Find a model or saved key" placeholder="Provider, model identity or wildcard" value={query} onChange={event => { setQuery(event.currentTarget.value); setPage(0); }} /><NativeSelect label="Inventory" value={view} onChange={event => { setView(event.currentTarget.value); setPage(0); }} data={[{ value: 'models', label: 'Registered models' }, { value: 'overrides', label: 'Saved override keys' }]} /><span>{data ? <><bdi dir="ltr">{rows.length.toLocaleString('en-US')}</bdi> {view === 'models' ? 'models' : 'saved keys'}</> : 'Inventory unknown'}</span></div>
-    <div className="model-context-dock"><SelectionDock open={Boolean(selection)} title={model ? <bdi dir="auto">{model.name || model.model}</bdi> : selection ? <bdi dir="ltr">{selection.key}</bdi> : 'Context override'} subtitle={model ? <ExactKey>{identity(model)}</ExactKey> : 'Saved configuration key'} mark={model ? <ProviderMark provider={model.provider} /> : null} onClose={() => { setSelection(null); setNotice(null); }} detail={inspector} height="100%">
+    <div className="model-context-dock" data-selected={Boolean(selection) || undefined}>
       <div className="model-context-inventory">
         <div className="model-context-table-scroll" role="region" aria-label="Context-window inventory, scroll horizontally for all columns" tabIndex={0}><table><caption>{view === 'models' ? 'Registered and effective context windows, in tokens' : 'Persisted overrides in matching order, including rules without a catalog model'}</caption><thead><tr>{view === 'models' ? <><th>Configured identity</th><th>Catalog tokens</th><th>Effective tokens</th><th>Override source</th></> : <><th>Exact saved key</th><th>Tokens</th><th>Scope</th></>}</tr></thead><tbody>{visible.map(row => {
-          if (view === 'overrides') return <tr key={row} data-selected={selection?.kind === 'override' && selection.key === row || undefined}><th><button type="button" aria-controls={selection ? "model-context-inspector" : undefined} aria-current={selection?.kind === 'override' && selection.key === row || undefined} onClick={() => select('override', row)}><ExactKey>{row}</ExactKey></button></th><td><TokenValue value={overrides[row]} /></td><td>{row.includes('*') ? 'Wildcard rule' : 'Exact key'}</td></tr>;
+          if (view === 'overrides') return <tr key={row} data-selected={selection?.kind === 'override' && selection.key === row || undefined}><th><button type="button" aria-controls={selection ? "model-context-inspector" : undefined} aria-current={selection?.kind === 'override' && selection.key === row || undefined} onClick={event => select('override', row, null, event.currentTarget)}><ExactKey>{row}</ExactKey></button></th><td><TokenValue value={overrides[row]} /></td><td>{row.includes('*') ? 'Wildcard rule' : 'Exact key'}</td></tr>;
           const key = identity(row);
           const winner = resolveWindowOverride(overrides, row.provider, row.model);
-          return <tr key={key} data-selected={selection?.kind === 'model' && selection.key === key || undefined}><th><button type="button" aria-controls={selection ? "model-context-inspector" : undefined} aria-current={selection?.kind === 'model' && selection.key === key || undefined} onClick={() => select('model', key, row)}><ProviderMark provider={row.provider} /><span><bdi dir="auto">{row.name || row.model}</bdi><ExactKey>{key}</ExactKey><small><bdi dir="auto">{row.providerName || row.provider}</bdi> · {Number.isFinite(row.providerConnections) ? <><bdi dir="ltr">{row.providerConnections}</bdi> configured connections</> : 'Connections unknown'}</small></span></button></th><td><TokenValue value={row.staticContextWindow} /></td><td><TokenValue value={row.contextWindow} /></td><td>{winner ? <ExactKey>{winner.key}</ExactKey> : 'No context override'}</td></tr>;
+          return <tr key={key} data-selected={selection?.kind === 'model' && selection.key === key || undefined}><th><button type="button" aria-controls={selection ? "model-context-inspector" : undefined} aria-current={selection?.kind === 'model' && selection.key === key || undefined} onClick={event => select('model', key, row, event.currentTarget)}><ProviderMark provider={row.provider} /><span><bdi dir="auto">{row.name || row.model}</bdi><ExactKey>{key}</ExactKey><small><bdi dir="auto">{row.providerName || row.provider}</bdi> · {Number.isFinite(row.providerConnections) ? <><bdi dir="ltr">{row.providerConnections}</bdi> configured connections</> : 'Connections unknown'}</small></span></button></th><td><TokenValue value={row.staticContextWindow} /></td><td><TokenValue value={row.contextWindow} /></td><td>{winner ? <ExactKey>{winner.key}</ExactKey> : 'No context override'}</td></tr>;
         })}</tbody></table>{data && !rows.length ? <p>No matching {view === 'models' ? 'models' : 'saved keys'}. Clear the search to inspect the full inventory.</p> : null}</div>
         <nav className="model-context-pagination" aria-label="Context inventory pages"><Button variant="default" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>Page <bdi dir="ltr">{currentPage + 1}</bdi> of <bdi dir="ltr">{pageCount}</bdi> · <bdi dir="ltr">{PAGE_SIZE}</bdi> rows per page</span><Button variant="default" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>Next</Button></nav>
       </div>
-    </SelectionDock></div>
+      {selection && <aside className="model-context-selection" aria-label="Selection details">
+        <header className="model-context-selection-heading">
+          {model && <ProviderMark provider={model.provider} />}
+          <div><h2>{model ? <bdi dir="auto">{model.name || model.model}</bdi> : <bdi dir="ltr">{selection.key}</bdi>}</h2>{model && <ExactKey>{identity(model)}</ExactKey>}</div>
+          <Button variant="subtle" aria-label="Close selection details" onClick={() => { setSelection(null); setNotice(null); if (selectionOrigin.current?.isConnected) selectionOrigin.current.focus(); }}>Close</Button>
+        </header>
+        {inspector}
+      </aside>}
+    </div>
     <Confirm open={Boolean(pending)} title={pending?.remove ? 'Remove context override' : 'Save context override'} verb={pending?.remove ? 'Remove override' : 'Save override'} requires="Permission to edit the gateway configuration." changes={<>{pending?.remove ? 'Remove' : <>Set <TokenValue value={pending?.value} /> tokens for</>} <ExactKey>{pending?.key}</ExactKey>. The gateway reloads its override map after saving. This does not change provider limits or client compaction policy.</>} undo={pending?.existed ? <>Restore the exact key <ExactKey>{pending.key}</ExactKey> to <TokenValue value={pending.previous} /> tokens.</> : 'Remove this exact override to restore the next matching rule or default.'} busy={busy} refusal={failed} onConfirm={apply} onClose={() => { if (!busy) { setPending(null); setFailed(null); } }} />
   </div>;
 }

@@ -54,6 +54,12 @@
   }
 
   .keys-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+  .key-task-form > form > fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .key-task-form .keys-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px 20px; }
+  .key-task-form .keys-form > .field { min-width: 0; }
+  .key-task-form .keys-form > .caption { grid-column: 1 / -1; order: 1; max-width: 85ch; margin: 0; }
+  .key-task-form .field :is(.input, .select) { width: 100%; max-width: 100%; }
+  .key-task-form .verb-row { margin-block-start: 14px; }
 
   .keys-once { display: flex; flex-direction: column; gap: 8px; margin-block: 14px; }
   .keys-secret {

@@ -479,10 +479,10 @@ export default function NotificationsPage() {
             onTest={testDraft}
           />
         ) : (
-          <details>
-            <summary>Add a destination</summary>
+          <section aria-label="Add a destination">
+            <h3>Add a destination</h3>
             <DestinationForm key="new" onSubmit={saveDestination} onTest={testDraft} />
-          </details>
+          </section>
         )}
       </section>
 

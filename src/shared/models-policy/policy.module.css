@@ -276,7 +276,19 @@
   margin-bottom: 10px;
 }
 .pageTabs > :first-child {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.directEditor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.directEditor > section + section {
+  border-top: 1px solid var(--rule);
+}
+.directSectionHeading {
+  padding: 16px 20px 0;
 }
 @media (max-width: 1100px) {
   .editorGrid {
