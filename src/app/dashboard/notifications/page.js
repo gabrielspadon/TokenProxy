@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
+import { TaskNavigation, taskPanelClass } from '@/shared/components/TaskNavigation';
 import { Notice } from '@/shared/components/Notice';
 import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
@@ -182,6 +183,7 @@ function RateForm({ rate, onSubmit }) {
 }
 
 export default function NotificationsPage() {
+  const [task, setTask] = useState('overview');
   const notif = usePoll('/api/notifications', 15000);
   const [ask, setAsk] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -256,6 +258,7 @@ export default function NotificationsPage() {
         <h1>Notifications</h1>
         <Freshness status={pollFresh(notif)} lastDataAt={notif.goodAt} />
       </div>
+      <TaskNavigation label="Notifications tasks" value={task} onChange={setTask} items={[{ value: 'overview', label: 'Overview', icon: 'i-notifications' }, { value: 'destinations', label: 'Destinations', icon: 'i-connections' }, { value: 'rules', label: 'Rules', icon: 'i-tune' }]} />
       {notif.error && !notif.data ? <Notice {...refusal(notif.status, notif.error)} /> : null}
       {done ? <Notice {...done} /> : null}
 
@@ -268,7 +271,7 @@ export default function NotificationsPage() {
             </span>
           </div>
           <div className="measure">
-            <span className="label">Deliveries</span>
+            <span className="label">Retained deliveries</span>
             <span className="value">
               {fmtNum(deliveries.length)}
             </span>
@@ -276,7 +279,7 @@ export default function NotificationsPage() {
         </div>
       ) : null}
 
-      <section aria-labelledby="h-sending">
+      <section aria-labelledby="h-sending" className={taskPanelClass} data-task-panel hidden={task !== 'overview'}>
         <h2 id="h-sending">
           <Icon name="i-notifications" />
           Sending
@@ -344,7 +347,7 @@ export default function NotificationsPage() {
         <p className="caption">Automatic evaluation follows traffic updates. An idle gateway has no independent evaluation timer. Retained-evidence rules below create local alerts and do not send these webhooks.</p>
       </section>
 
-      <section aria-labelledby="h-where">
+      <section aria-labelledby="h-where" className={taskPanelClass} data-task-panel hidden={task !== 'destinations'}>
         <h2 id="h-where">
           <Icon name="i-send" />
           Where they go
@@ -486,7 +489,7 @@ export default function NotificationsPage() {
         )}
       </section>
 
-      <section aria-labelledby="h-rate">
+      <section aria-labelledby="h-rate" className={taskPanelClass} data-task-panel hidden={task !== 'rules'}>
         <h2 id="h-rate">
           <Icon name="i-alert" />
           When the error rate counts as a problem
@@ -515,7 +518,7 @@ export default function NotificationsPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-log">
+      <section aria-labelledby="h-log" className={taskPanelClass} data-task-panel hidden={task !== 'overview'}>
         <h2 id="h-log">The last deliveries</h2>
         {notif.data && deliveries.length === 0 ? (
           <p className="empty">Never sent. A delivery appears here once an event fires.</p>
@@ -566,7 +569,7 @@ export default function NotificationsPage() {
       {/* Rules are durable and evidence-backed, unlike the in-process delivery
           log above: they persist in the database and alert on retained
           measurements rather than on a webhook round trip. */}
-      <section aria-labelledby="h-rules">
+      <section aria-labelledby="h-rules" className={taskPanelClass} data-task-panel hidden={task !== 'rules'}>
         <h2 id="h-rules">Rules</h2>
         <NotificationRules />
       </section>

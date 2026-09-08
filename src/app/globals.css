@@ -238,7 +238,7 @@
   dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; }
   dl.facts dt { color: var(--slate); }
 
-  /* Batch 3 (tools/remote/notifications/access/system). Appended as one block;
+  /* Batch 3 (tools/notifications/access/system). Appended as one block;
      nothing above is edited. A destructive control panel carries the refusal
      accent, a section heading may carry a sprite icon, stacked panels space
      themselves, and a panel's facts wrap against the panel, not the measure. */

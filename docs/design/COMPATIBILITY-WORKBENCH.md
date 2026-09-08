@@ -1,6 +1,6 @@
 # Retained local compatibility workbench
 
-This extends the approved platinum/navy workspace in the Translation route. Mantine controls keep the established Plex type scale, 13px minimum text, indigo selection, and Mono measured values. No new visual direction is introduced.
+This extends the approved platinum/navy workspace across the dashboard. Mantine controls keep the established Plex type scale, 13px minimum text, indigo selection, and Mono measured values. No new visual direction is introduced.
 
 The left fixture book selects an exact saved revision. A central editor declares source format, target format, request or stream operation, model label and suitable-input consent. An adjacent result inspector shows route evidence, bounded shape/tool/event checks and exact input/output JSON. Run history selects an immutable receipt. Capability evidence is grouped from actual retained local runs and never describes provider readiness. Narrow view stacks the book, editor and inspector with locally scrollable JSON and tables.
 

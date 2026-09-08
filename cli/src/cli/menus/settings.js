@@ -16,7 +16,7 @@ const COLORS = {
 const DEFAULT_PASSWORD = "123456";
 
 /**
- * Show settings menu (tunnel + RTK + reset password)
+ * Show settings menu (RTK + reset password)
  * @param {Array<string>} breadcrumb - Breadcrumb path
  */
 async function showSettingsMenu(breadcrumb = []) {
@@ -25,16 +25,6 @@ async function showSettingsMenu(breadcrumb = []) {
     breadcrumb,
     headerContent: async (data) => {
       const lines = [];
-
-      // Tunnel section
-      const tunnel = data?.tunnel || {};
-      if (tunnel.enabled && tunnel.publicUrl) {
-        lines.push(`  Endpoint: ${COLORS.green}${tunnel.publicUrl}/v1${COLORS.reset}`);
-        lines.push(`  Tunnel:   ${COLORS.green}ON${COLORS.reset} ${COLORS.dim}(${tunnel.shortId})${COLORS.reset}`);
-      } else {
-        lines.push(`  Endpoint: http://localhost:20128/v1`);
-        lines.push(`  Tunnel:   ${COLORS.red}OFF${COLORS.reset} ${COLORS.dim}(local only)${COLORS.reset}`);
-      }
 
       // RTK section
       const rtkOn = data?.settings?.rtkEnabled !== false;
@@ -50,26 +40,14 @@ async function showSettingsMenu(breadcrumb = []) {
       return lines.join("\n");
     },
     refresh: async () => {
-      const [tunnelRes, settingsRes] = await Promise.all([
-        api.getTunnelStatus(),
-        api.getSettings()
-      ]);
+      const settingsRes = await api.getSettings();
       return {
-        tunnel: tunnelRes.success ? (tunnelRes.data || {}) : {},
         settings: settingsRes.success ? (settingsRes.data || {}) : {}
       };
     },
     // A function so the auto-ping entries can be generated from what the
     // server reports rather than from a list that goes stale here.
     items: (d0) => [
-      {
-        label: "Tunnel ON",
-        action: async () => { await enableTunnel(); return true; }
-      },
-      {
-        label: "Tunnel OFF",
-        action: async () => { await disableTunnel(); return true; }
-      },
       {
         label: (d) => {
           const on = d?.settings?.rtkEnabled !== false;
@@ -130,44 +108,6 @@ async function resetAuthMode() {
   } else {
     showStatus(`Failed: ${result.error}`, "error");
   }
-  await pause();
-}
-
-/**
- * Enable tunnel via API
- */
-async function enableTunnel() {
-  showStatus("Creating tunnel...", "info");
-  const result = await api.enableTunnel();
-
-  if (result.success) {
-    const { publicUrl, tunnelUrl, shortId, alreadyRunning } = result.data || {};
-    // publicUrl is empty when the relay would not serve the short link (#1365).
-    const url = publicUrl || tunnelUrl;
-    if (alreadyRunning) {
-      showStatus(`Tunnel already running: ${url}`, "success");
-    } else {
-      showStatus(`Tunnel enabled: ${url} (${shortId})`, "success");
-    }
-  } else {
-    showStatus(`Failed: ${result.error}`, "error");
-  }
-
-  await pause();
-}
-
-/**
- * Disable tunnel via API
- */
-async function disableTunnel() {
-  const result = await api.disableTunnel();
-
-  if (result.success) {
-    showStatus("Tunnel disabled", "success");
-  } else {
-    showStatus(`Failed: ${result.error}`, "error");
-  }
-
   await pause();
 }
 

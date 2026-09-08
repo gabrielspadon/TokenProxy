@@ -53,7 +53,7 @@ const SERVICE = {
   },
 };
 
-const VIEWS = ['Controls', 'Plan overrides', 'Profiles and comparison', 'Services', 'Recorded evidence'];
+const VIEWS = ['Everyday', 'Advanced', 'Plan overrides', 'Profiles and comparison', 'Services', 'Recorded evidence'];
 const REASONS = { epoch_boundary: 'Stable or unknown cache boundary', window_pressure: 'Below context-pressure threshold', no_backend: 'No compression sidecar', phantom: 'Reported reduction without corresponding body reduction' };
 function pollFresh(p) {
   if (p.loading) return 'connecting';
@@ -116,8 +116,8 @@ export default function ShapingPage() {
   const controls = usePoll('/api/admin/shaping', 30000);
   const [controlConsent, setControlConsent] = useState(false);
   const stats = usePoll('/api/token-saver/stats?timelineDays=30&recentLimit=100', 15000);
-  const [view, setView] = useState('Controls');
-  const [opened, setOpened] = useState(['Controls']);
+  const [view, setView] = useState('Everyday');
+  const [opened, setOpened] = useState(['Everyday']);
   const [period, setPeriod] = useState('all');
   const [pending, setPendingState] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -161,7 +161,7 @@ export default function ShapingPage() {
   }
   function renderThresholds(stage) {
     const fields = THRESHOLDS.filter(field => field.stage === stage);
-    return fields.length ? <div className="savings-thresholds" aria-label={`${CONTROLS.find(control => control.stage === stage)?.name} thresholds`}><div className="shaping-form">{fields.map(field => <label key={field.key} className="field"><span>{field.name}</span><div className="savings-threshold-input"><input className="input" name={field.key} type="number" inputMode="numeric" min={field.min} max={field.max} step="1" placeholder={field.nullable ? 'Default' : undefined} disabled={!s || busy || !!pending} value={draft[field.key] ?? s?.[field.key] ?? ''} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value }))} /><span className="shaping-caption">{field.unit}</span></div>{field.nullable ? <span className="shaping-caption">Blank inherits the runtime default.</span> : null}</label>)}</div></div> : null;
+    return fields.length ? <div className="savings-thresholds" role="group" aria-label={`${CONTROLS.find(control => control.stage === stage)?.name} thresholds`}><div className="shaping-form">{fields.map(field => <label key={field.key} className="field"><span>{field.name}</span><div className="savings-threshold-input"><input className="input" name={field.key} type="number" inputMode="numeric" min={field.min} max={field.max} step="1" placeholder={field.nullable ? 'Default' : undefined} disabled={!s || busy || !!pending} value={draft[field.key] ?? s?.[field.key] ?? ''} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value }))} /><span className="shaping-caption">{field.unit}</span></div>{field.nullable ? <span className="shaping-caption">Blank inherits the runtime default.</span> : null}</label>)}</div></div> : null;
   }
   function renderConfiguration(control) {
     const fields = CONFIGURATION_FIELDS.filter(field => field.control === control.key);
@@ -171,15 +171,18 @@ export default function ShapingPage() {
     })}</div> : null;
   }
   return <div className="shaping-page">
-    <header className="shaping-page-head"><div><h1>Token savings</h1><p>Manage tool output, history and compression before requests reach the model.</p></div><div className="shaping-header-observations"><span><span className="shaping-caption">Settings</span><Freshness status={pollFresh(controls)} lastDataAt={controls.goodAt} /></span><span><span className="shaping-caption">Measurements</span><Freshness status={pollFresh(stats)} lastDataAt={stats.goodAt} /></span></div></header>
+    <header className="shaping-page-head"><div><h1>Token savings</h1><p>Keep requests focused. Review each change before it takes effect.</p></div><div className="shaping-header-observations"><span><span className="shaping-caption">Settings</span><Freshness status={pollFresh(controls)} lastDataAt={controls.goodAt} /></span><span><span className="shaping-caption">Measurements</span><Freshness status={pollFresh(stats)} lastDataAt={stats.goodAt} /></span></div></header>
     {settings.error ? <Notice {...refusal(settings.status, settings.error)} /> : null}
     {controls.error ? <Notice {...refusal(controls.status, controls.error)} /> : null}
     {stats.error ? <Notice {...refusal(stats.status, stats.error)} /> : null}
     {notice ? <div role="status"><Notice {...notice} /></div> : null}
     <Tabs value={view} onChange={navigate} keepMounted>
     <Tabs.List aria-label="Token savings views">{VIEWS.map(item => <Tabs.Tab key={item} value={item}>{item}</Tabs.Tab>)}</Tabs.List>
-    <Tabs.Panel value="Controls" pt="md">
-      <TokenSavings settings={s} stageMap={stats.data?.windows?.[period]?.stages || {}} recent={stats.data?.recent || []} period={period} onPeriod={setPeriod} onToggle={toggle} onNavigate={navigate} renderThresholds={renderThresholds} renderConfiguration={renderConfiguration} loading={controls.loading || stats.loading} unavailable={!!stats.error} busy={busy || !!pending} onRefresh={() => { settings.refresh(); controls.refresh(); stats.refresh(); }} />
+    <Tabs.Panel value="Everyday" pt="md">
+      <TokenSavings settings={s} stageMap={{}} onToggle={toggle} onNavigate={navigate} loading={controls.loading} busy={busy || !!pending} onRefresh={() => { settings.refresh(); controls.refresh(); }} />
+    </Tabs.Panel>
+    <Tabs.Panel value="Advanced" pt="md">
+      <TokenSavings mode="advanced" settings={s} stageMap={stats.data?.windows?.[period]?.stages || {}} recent={stats.data?.recent || []} period={period} onPeriod={setPeriod} onToggle={toggle} onNavigate={navigate} renderThresholds={renderThresholds} renderConfiguration={renderConfiguration} loading={controls.loading || stats.loading} unavailable={!!stats.error} busy={busy || !!pending} onRefresh={() => { settings.refresh(); controls.refresh(); stats.refresh(); }} />
       <details className="shaping-technical shaping-scope"><summary>Routing precedence and context-window policy</summary><p>Global settings are the baseline. The outermost routing-plan declaration wins; unspecified supported flags inherit global values. A plan can disable its 15 supported override flags; an explicit per-stage value wins over that plan gate. Privacy, disclosure, memory controls, content-change permissions and adaptive cache lifetime remain global.</p>{chains.length ? <ul className="shaping-observations">{chains.map(chain => <li key={chain.name}><code>{chain.name}</code><code>{JSON.stringify(chain.value)}</code></li>)}</ul> : <p>No routing-plan shaping override is configured.</p>}<p>Context-window overrides and cascade routing have separate settings and are outside shaping profiles.</p><div className="shaping-next"><Link href="/dashboard/models">Open model and plan settings</Link><Link href="/dashboard/model-context">Edit context-window overrides</Link></div></details>
     </Tabs.Panel>
     <Tabs.Panel value="Plan overrides" pt="md">{opened.includes('Plan overrides') ? <PlanOverrides globalSettings={controls.data?.settings} onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /> : null}</Tabs.Panel>

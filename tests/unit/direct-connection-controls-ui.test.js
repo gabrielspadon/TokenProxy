@@ -36,7 +36,7 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); container.remove(); expect(network).not.toHaveBeenCalled(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function mount(element) { await act(async () => root.render(<MantineProvider env="test"><Suspense fallback="Reading">{element}</Suspense></MantineProvider>)); }
-const button = (text, scope = container) => [...scope.querySelectorAll('button')].find(node => node.textContent.trim().endsWith(text));
+const button = (text, scope = container) => [...scope.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === text || node.textContent.trim().endsWith(text));
 const input = (text, scope = container) => [...scope.querySelectorAll('label')].find(node => node.textContent.includes(text) && node.control)?.control;
 async function click(text, scope) { await act(async () => button(text, scope).click()); }
 async function change(node, value) {
@@ -73,7 +73,8 @@ it('opens auth and model controls in one task step without calling providers', a
 it('mounts setup only for the selected key and confirms expiry from an inline draft', async () => {
   await mount(<KeysPage />); expect(call).not.toHaveBeenCalled(); await click('Configure Workstation');
   const surface = container.querySelector('[aria-label="Selected key configuration"]');
-  expect(input('Expiry in UTC', surface)).toBeDefined(); expect(surface.querySelector('details')).toBeNull();
+  await click('Advanced', surface);
+  expect(input('Expiry in UTC', surface).closest('[hidden]')).toBeNull(); expect(surface.querySelector('details')).toBeNull();
   await change(input('Expiry in UTC', surface), '2026-10-01T12:30:00'); await click('Review key expiry');
   const dialog = container.querySelector('dialog[open]'); expect(dialog.querySelector('input, select, textarea')).toBeNull();
   call.mockResolvedValueOnce({ ok: true, body: {} }).mockResolvedValueOnce({ ok: true, body: { key: { expiresAt: '2026-10-01T12:30:00.000Z' } } });
@@ -151,9 +152,9 @@ it('retains policy edits through Client setup without mounting setup before the 
   await mount(<KeysPage />); await click('Configure Workstation');
   await change(input('Prompt tokens ceiling'), '250'); expect(call).not.toHaveBeenCalled();
   call.mockResolvedValue({ ok: true, body: { endpoints: {} } });
-  await click('Client setup'); await click('Policy');
+  await click('Client setup'); await click('Limits');
   expect(input('Prompt tokens ceiling').value).toBe('250');
-  await click('Client setup'); await click('Policy'); expect(call).toHaveBeenCalledTimes(1);
+  await click('Client setup'); await click('Limits'); expect(call).toHaveBeenCalledTimes(1);
 });
 
 it('loads verified adopted limits into clean fields while an allowlist draft stays intact and sends only the allowlist', async () => {
@@ -162,6 +163,7 @@ it('loads verified adopted limits into clean fields while an allowlist draft sta
   fixture.reads['/api/access-profiles'] = { profiles: [{ id: 'lab-profile', name: 'Lab', version: 1 }] };
   await mount(<KeysPage />); await click('Configure Workstation');
   await change(input('Model allowlist'), 'desired/model');
+  await click('Advanced', container.querySelector('[aria-label="Selected key configuration"]'));
   const profileSelect = [...container.querySelectorAll('select')].find(select => [...select.options].some(option => option.value === 'lab-profile'));
   await change(profileSelect, 'lab-profile'); await click('Review access profile');
   const saved = { ...previous, maxPromptTokens: 2000, expiresAt: '2026-12-01T00:00:00.000Z', accessProfileId: 'lab-profile', accessProfileVersion: 1 };
@@ -169,6 +171,7 @@ it('loads verified adopted limits into clean fields while an allowlist draft sta
   await act(async () => container.querySelector('dialog[open] form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   expect(input('Prompt tokens ceiling').value).toBe('2000'); expect(input('Expiry in UTC').value).toBe('2026-12-01T00:00');
   expect(input('Model allowlist').value).toBe('desired/model');
+  await click('Limits');
   await click('Review key budgets and model access'); call.mockResolvedValue({ ok: true, body: {} });
   await act(async () => container.querySelector('dialog[open] form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   expect(call.mock.calls.at(-1)).toEqual(['/api/keys/key-1', { method: 'PUT', body: { allowedModels: ['desired/model'] } }]);

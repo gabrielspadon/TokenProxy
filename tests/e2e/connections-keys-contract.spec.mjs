@@ -13,9 +13,10 @@ test('accepted profile with failed readback blocks further mutation and keeps un
   });
   await page.route('**/api/keys', route => route.fulfill(json(200, { keys: [] })));
   await page.goto('/dashboard/keys');
-  await page.locator('.keys-profiles-disclosure > summary').click();
+  await page.getByRole('navigation', { name: 'Keys workspace' }).getByRole('button', { name: 'Profiles', exact: true }).click();
   await page.getByRole('button', { name: 'Create access profile', exact: true }).click();
-  await page.locator('dialog[open]').getByLabel('Profile name', { exact: true }).fill(profile.name);
+  await page.locator('.profile-inspector').getByLabel('Profile name', { exact: true }).fill(profile.name);
+  await page.getByRole('button', { name: 'Review profile', exact: true }).click();
   await page.locator('dialog[open]').getByRole('button', { name: 'Save profile', exact: true }).click();
   await expect(page.getByText('The mutation was accepted; refreshed state was not verified.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create access profile', exact: true })).toBeDisabled();
@@ -26,10 +27,11 @@ test('profile inspector retains a known zero USD ceiling and long labels at narr
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/access-profiles', route => route.fulfill(json(200, { profiles: [profile] })));
   await page.goto('/dashboard/keys');
-  await page.locator('.keys-profiles-disclosure > summary').click();
+  await page.getByRole('navigation', { name: 'Keys workspace' }).getByRole('button', { name: 'Profiles', exact: true }).click();
   await page.locator('.profile-row').click();
   await expect(page.locator('.profile-inspector')).toContainText(profile.name);
-  await expect(page.locator('.profile-inspector')).toContainText('0 USD');
+  await expect(page.locator('.profile-inspector').getByLabel('Recorded cost ceiling (USD)', { exact: true })).toHaveValue('0');
+  await expect(page.locator('.profile-row')).toContainText('$0.00');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -45,15 +47,4 @@ test('multiple accounts remain separate and absent health never becomes healthy'
   await page.getByRole('button', { name: `Inspect account ${names[0]}`, exact: true }).click();
   await expect(page.getByRole('complementary', { name: 'Selection details' })).toContainText('Unknown. A stored account or health result does not establish model access.');
   await expect(page.locator('.connections-row[data-selected="true"]')).toContainText(names[0]);
-});
-
-test('remote stored addresses remain distinct from reachability and skipped process checks', async ({ page }) => {
-  await page.route('**/api/tunnel/status', route => route.fulfill(json(200, { tunnel: { settingsEnabled: false, running: false, publicUrl: 'https://fixture.example.invalid', tunnelUrl: '', shortId: 'fixture' }, tailscale: { settingsEnabled: true, running: true, tunnelUrl: 'https://mesh.example.invalid', loggedIn: true }, download: { downloading: false } })));
-  await page.route('**/api/tunnel/tailscale-check', route => route.fulfill(json(200, { installed: true, loggedIn: true, daemonRunning: true })));
-  await page.goto('/dashboard/remote');
-  await expect(page.locator('.remote-overview')).toContainText('Probe skipped while off');
-  await expect(page.locator('.remote-overview')).toContainText('Not reported by status API');
-  await expect(page.getByText('Not probed while configured off', { exact: true })).toBeVisible();
-  await expect(page.getByText('Running; reachability unverified', { exact: true })).toBeVisible();
-  await expect(page.getByText('Serving', { exact: true })).toHaveCount(0);
 });

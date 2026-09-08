@@ -31,11 +31,10 @@ context_status (mcp tokenproxy tool) is backed by open-sse/handlers/chatCore/con
 | drain (/api/admin/drain[/:id]) | No, reversible | Idempotent POST/DELETE, optional ifMatch optimistic concurrency (412 on mismatch), first drain has no precondition |
 | activation/rollback (/api/admin/activation, /rollback) | Rollback reversible (a 2nd rollback undoes the 1st) | Releases become "known" only via activation, no explicit create-release op; rollback walks previousReleaseId chain, 409 no_prior_release if none |
 | shutdown (/api/shutdown) | Yes | Dev-only (403 in prod), requires SHUTDOWN_SECRET bearer match, 500ms-delayed exit(0) |
-| version/shutdown | Yes | Kills sibling processes (cloudflared/MITM/stray next-server) to release file locks, then exits |
+| version/shutdown | Yes | Kills sibling processes (MITM/stray next-server) to release file locks, then exits |
 | version/update | Yes, irreversible in-place | Refuses if TOKENPROXY_NO_UPDATE set or not production build; kills siblings, spawnUpdaterAndExit() detached updater, current process exits |
 | hotreload (/api/providers/[id]/hotreload) | No | Pokes each model with a 1-token request to roll quota window forward; HOTRELOAD_TIMEOUT_MS=10000, 3 retries, verifies quota moved (USAGE_VERIFY_ATTEMPTS=3) |
 | reauth | Guarded | Preserves connection id/priority/binding, swaps auth material only; identity_mismatch 409 requires force=true to rebind different account |
-| tunnel enable/disable, tailscale-enable/disable | No | Thin wrappers; enable sleeps DNS_WARMUP_DELAY_MS=8000 before responding (Cloudflare edge DNS propagation) |
 | pxpipe start/stop/restart/install | Stop fails open | Not process supervision -- in-process ES module load/unload (loadPxpipe/unloadPxpipe); "stop" fails open to uncompressed passthrough; "install" runs npm install @latest, maxDuration=300 |
 | proxy-pools cloudflare/vercel-deploy | Yes, deploys live edge code | Both embed the deployed relay's full source as a JS template literal inside the route file; Vercel variant polls readiness up to 120000ms |
 | settings/database (GET/POST) | Yes, full DB overwrite on import | Auth = (valid CLI token OR dashboard JWT) AND correct dashboard password via x-tp-password header |
@@ -50,7 +49,7 @@ Migration model (migrate.js, 125 lines): versioned MIGRATIONS chain (skip-versio
 
 Backup (backup.js, 70 lines): KEEP_BACKUPS=3, BACKUP_EXCLUDE_TABLES=["requestDetails"], uses ATTACH DATABASE to copy tables into a fresh file, chmods to SECRET_FILE_MODE (SQLite attach otherwise creates at umask 0644 despite holding sensitive auth data). No automated restore path -- header comment states recovery is manual only.
 
-In-memory-only state (not in DB): consoleLogBuffer, ceBodies cache-epoch map, sessionCalibration map, usageProbeGate in-flight map, writeBuffer for requestDetails.
+In-memory-only state (not in DB): ceBodies cache-epoch map, sessionCalibration map, usageProbeGate in-flight map, writeBuffer for requestDetails.
 
 CLI runtime install (cli/hooks/sqliteRuntime.js): better-sqlite3 pinned 12.10.1, installed lazily into USER_DATA_DIR/runtime/node_modules (not global npm) to dodge Windows EBUSY locks during npm i -g updates; gated by a hardcoded supported-Node-majors set ({20,22,23,24,25,26}) read from the pinned package's own engines field, to avoid burning the whole install timeout on a build that can't succeed on e.g. Node 18/21.
 
@@ -73,7 +72,7 @@ No Content-Security-Policy header found anywhere in server source (only a false-
 ## E. Background jobs and timers
 
 - backgroundTokenRefresh.js: 5-min tick (DEFAULT_INTERVAL_MS), 30-min lead-time OAuth refresh (BACKGROUND_REFRESH_LEAD_MS), 10s initial delay.
-- initializeApp.js: 60s watchdog (unref()'d) for tunnel/tailscale health; network monitor does IPv4-fingerprint diffing + sleep/wake detection via elapsed-tick heuristic + real TCP reachability probe to 1.1.1.1:443.
+- initializeApp.js: network monitor does IPv4-fingerprint diffing + sleep/wake detection via elapsed-tick heuristic + real TCP reachability probe to 1.1.1.1:443.
 - freeModelSync.js: idempotent stop+reconfigure, immediate first pass + fixed-cadence hourly setInterval, unref()'d.
 - usageProbeGate.js: not a timer, but a standing per-process concurrency ceiling (4) on live provider probes.
 - Per-adapter WAL checkpoint timers (referenced in driver adapters, not fully enumerated here).

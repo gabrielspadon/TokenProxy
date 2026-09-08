@@ -3,13 +3,8 @@
  * singleton, `global._statsEmitter` with `setMaxListeners(50)` — and unsubscribed
  * them only from `ReadableStream.cancel()`.
  *
- * The sibling SSE route already records why that is not enough
- * (src/app/api/translator/console-logs/stream/route.js:22):
- *
- *     // request.signal fires reliably on client disconnect; ReadableStream.cancel()
- *     // is not always invoked in Next.js, which caused listeners to accumulate.
- *
- * `console-logs/stream` therefore takes `request` and cleans up on `request.signal`.
+ * A client disconnect can abort request.signal without invoking
+ * ReadableStream.cancel(). Both paths must release listeners.
  * `usage/stream` was declared `export async function GET()` — no parameter at all —
  * so it had no second path off the emitter. Every dashboard tab that closed without
  * a `cancel()` left both handlers registered, and each surviving handler still ran

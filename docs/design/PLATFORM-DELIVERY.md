@@ -63,19 +63,13 @@ these capabilities are implemented. WORKSPACE-CONTRACT.md governs all surfaces.
     latency/usage/cost coverage/tool validity/outcome/failure metrics, reviewable
     promotion and rollback, and explained recommendations. Smaller alone is not
     evidence of better quality.
-12. Translation adds reusable fixtures, side-by-side requests/responses, streaming
-    events, schema checks and a test-derived capability matrix. Distinguish local
-    conversion, executor tests and complete gateway tests. Budgeted explicit
-    runs have targets, cancellation and retained results. Diagnostic bundles are
-    redacted. Replay requires suitable retained input and a fresh decision;
-    interrupted or uncertain requests are never resent automatically.
 13. Accounts/Keys/Setup adds reusable access profiles, controlled credential
     rotation, device attribution and guided client adapters/configuration.
     Preserve expiry/token/cost/model limits, reauthentication and network
     assignment. Backend key lists are redacted; reveal is deliberate. Bounded
     connectivity checks distinguish authentication from model-request success.
 14. Network/Operations connects accounts, proxy pools, outbound configuration,
-    tunnels, diagnostics and failure paths. Explain tests that mutate activation
+    diagnostics and failure paths. Explain tests that mutate activation
     or eligibility. Preserve database import/export, updates and compression
     controls, showing verified outcomes and partial failures.
 

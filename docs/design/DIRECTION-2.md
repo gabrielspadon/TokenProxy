@@ -61,15 +61,13 @@ Depth stays border-drawn (identity), radius stays 4px, no new shadows.
 
 ## What does not change
 
-Palette family, type family, cascade-layer architecture, the i18n literal
-runtime, the fence (no old-UI file is read for pass-2 styling; the lineage
+Palette family, type family, cascade-layer architecture, the fence (no old-UI file is read for pass-2 styling; the lineage
 study above was operator-authorized and limited to token reading), the e2e
-contracts, the evidence gates. Every new UI string enters
-`docs/design/strings.json` and all 34 literal files before a slice is done.
+contracts, and evidence gates. All interface text is English.
 
 ## Order of work
 
 Shell plus strap plus sprite first (everything inherits), then screens in
 evidence order: connections, sessions, network, models, keys, usage, shaping,
-translation, tools, remote, notifications, access, system. Each slice: build,
-lint, e2e spec, evidence re-run, screenshots read at 390/768/1440 plus fa.
+tools, notifications, access, system. Each slice: build,
+lint, e2e spec, evidence re-run, screenshots read at 390/768/1440.

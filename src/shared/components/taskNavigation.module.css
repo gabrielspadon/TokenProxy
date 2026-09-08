@@ -1,0 +1,16 @@
+.tasks {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-block-end: 1px solid var(--rule);
+  padding-block: 4px 12px;
+  margin-block-end: 16px;
+}
+.tasks button {
+  min-height: 32px;
+  font-size: var(--type-ui);
+}
+.panel[hidden] {
+  display: none !important;
+}

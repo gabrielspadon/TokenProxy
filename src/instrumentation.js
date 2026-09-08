@@ -9,9 +9,6 @@ export async function register() {
       process.title = process.title.replace("next-server", "tokenproxy");
     }
 
-    const { initConsoleLogCapture } = await import("@/lib/consoleLogBuffer");
-    initConsoleLogCapture();
-
     // Server-only: lets capabilities.js read the synced catalog without pulling
     // node:fs into the dashboard's browser bundle.
     try {
@@ -26,7 +23,7 @@ export async function register() {
     // The application bootstrap belongs here, not in the root layout. Importing
     // it from layout.js meant RENDERING A PAGE was what first ran
     // initializeApp() and its deferred heavy startup: connection cleanup, the
-    // tunnel and tailscale watchdog, the network monitor, MITM autostart, quota
+    // network monitor, MITM autostart, quota
     // auto-ping, background token refresh and the free-model sync. That is why
     // opening the dashboard could take the /v1 gateway down with it (#3061),
     // and why MITM autostart never ran on a headless gateway (#1312). It is

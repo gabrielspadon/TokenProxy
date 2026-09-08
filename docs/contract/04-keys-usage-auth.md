@@ -334,8 +334,6 @@ Request body: `{ password: string }` (implicit from `bcrypt.compare(password, ..
 ```
 status 429, header `Retry-After: <same integer, as string>`. `RESET_HINT = "Forgot password? Reset to default via TokenProxy CLI → Settings → Reset Password to Default."` (`login/route.js:11`). This check runs BEFORE the request body is even parsed (`checkLock(ip)` is the first statement in the handler) — a locked-out IP is rejected without touching `settings` or the password at all.
 
-**Tunnel restriction** (`login/route.js:36-38`, confirmed): `isTunnelRequest(request, settings)` compares the request's `Host` header (stripped of port) against `settings.tunnelUrl`/`settings.tailscaleUrl` hostnames. When true AND `settings.tunnelDashboardAccess !== true`, response is `{ error: "Dashboard access via tunnel is disabled" }`, status 403 — this fires regardless of password correctness or fresh-install state, purely on the tunnel-access setting.
-
 **SSO-forced rejection** (`login/route.js:43-50`, confirmed): when `settings.authMode` is `"sso"`/`"saml"`/`"oidc"` and the corresponding provider is actually configured, password login is refused outright: `{ error: "Password login is disabled. Use SAML SSO sign in." }` or `{ error: "Password login is disabled. Use OIDC sign in." }`, both status 403.
 
 **401 response** (confirmed, `login/route.js:~104-107`):

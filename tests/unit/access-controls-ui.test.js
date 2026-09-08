@@ -2,9 +2,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MantineProvider } from '@mantine/core';
 
-const fixture = vi.hoisted(() => ({ settings: {}, auth: {}, refresh: vi.fn() }));
-vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({ data: url === '/api/settings' ? fixture.settings : fixture.auth, refresh: fixture.refresh }) }));
+const fixture = vi.hoisted(() => ({ settings: {}, auth: {}, authError: null, refresh: vi.fn() }));
+vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({ data: url === '/api/settings' ? fixture.settings : fixture.auth, error: url === '/api/auth/status' ? fixture.authError : null, status: url === '/api/auth/status' && fixture.authError ? 401 : 200, refresh: fixture.refresh }) }));
 const { default: AccessPage } = await import('@/app/dashboard/access/page.js');
 let root, container, fetchMock, reply, readback, descriptors;
 const writes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
@@ -18,12 +19,14 @@ async function type(label, value) {
     field.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
-const render = () => act(async () => root.render(<AccessPage />));
+const render = () => act(async () => root.render(<MantineProvider env="test"><AccessPage /></MantineProvider>));
+const selectTask = text => act(async () => [...container.querySelectorAll('nav[aria-label="Access tasks"] button')].find(node => node.textContent.trim().endsWith(text)).click());
 const confirm = () => act(async () => container.querySelector('dialog[open] form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
 
 beforeEach(async () => {
   fixture.settings = { samlEntryPoint: 'https://id.example/sso', samlIssuer: 'gateway', samlAttributeName: 'displayName', samlAttributeEmail: 'mail', samlLoginLabel: 'Research login', oidcIssuerUrl: 'https://id.example', oidcClientId: 'client', oidcScopes: 'openid', oidcLoginLabel: 'Sign in' };
   fixture.auth = { authMode: 'sso', ssoType: 'saml', requireLogin: true, hasPassword: true, authenticated: true };
+  fixture.authError = null;
   fixture.refresh.mockClear();
   reply = null;
   readback = null;
@@ -38,6 +41,7 @@ beforeEach(async () => {
   });
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   descriptors = Object.fromEntries(['showModal', 'close'].map(key => [key, Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, key)]));
   Object.defineProperties(HTMLDialogElement.prototype, {
     showModal: { configurable: true, value() { this.setAttribute('open', ''); } },
@@ -59,7 +63,9 @@ afterEach(() => {
 });
 
 it('edits SAML fields directly, preserves sibling values, reviews a frozen request and separately reads back', async () => {
+  await selectTask('Single sign-on');
   expect(input('Display-name attribute').closest('dialog')).toBeNull();
+  expect(input('Display-name attribute').closest('[hidden]')).toBeNull();
   expect(input('New password').closest('dialog')).toBeNull();
   await type('Display-name attribute', 'name');
   await act(async () => button('Review configuration').click());
@@ -74,6 +80,7 @@ it('edits SAML fields directly, preserves sibling values, reviews a frozen reque
 });
 
 it('retains direct edits during polling and clears secrets when a review is cancelled', async () => {
+  await selectTask('Single sign-on');
   await type('Signing certificate', 'private-certificate');
   fixture.settings.samlAttributeEmail = 'changed-remotely';
   await render();
@@ -86,6 +93,7 @@ it('retains direct edits during polling and clears secrets when a review is canc
 });
 
 it('uses verified saved and cleared configuration as the direct form baseline without reviving old values', async () => {
+  await selectTask('Single sign-on');
   await type('Display-name attribute', 'name');
   await act(async () => button('Review configuration').click());
   await confirm();
@@ -120,6 +128,7 @@ it('requires matching passwords and clears submitted secrets after a refusal wit
 });
 
 it('keeps accepted configuration with missing readback uncertain and prevents an immediate repeat', async () => {
+  await selectTask('Single sign-on');
   readback = () => Response.json({ error: 'Unavailable' }, { status: 503 });
   await type('Display-name attribute', 'name');
   await act(async () => button('Review configuration').click());
@@ -131,6 +140,7 @@ it('keeps accepted configuration with missing readback uncertain and prevents an
 });
 
 it('invalidates a secret-bearing review when the document becomes hidden', async () => {
+  await selectTask('Single sign-on');
   await type('Signing certificate', 'private-certificate');
   await act(async () => button('Review configuration').click());
   const original = Object.getOwnPropertyDescriptor(document, 'hidden');
@@ -140,4 +150,18 @@ it('invalidates a secret-bearing review when the document becomes hidden', async
   expect(button('Save configuration', container.querySelector('dialog[open]')).disabled).toBe(true);
   expect(writes()).toHaveLength(0);
   if (original) Object.defineProperty(document, 'hidden', original); else delete document.hidden;
+});
+
+it('keeps a failed sign-in status visible and retryable while editing single sign-on', async () => {
+  await selectTask('Single sign-on');
+  await type('Display-name attribute', 'retained-name');
+  fixture.authError = { error: 'Session expired' };
+  await render();
+  const retry = button('Retry sign-in status');
+  expect(retry.closest('[hidden]')).toBeNull();
+  expect(retry.parentElement.textContent).toContain('Your session has ended.');
+  expect(input('Display-name attribute').value).toBe('retained-name');
+  await act(async () => retry.click());
+  expect(fixture.refresh).toHaveBeenCalledTimes(1);
+  expect(writes()).toHaveLength(0);
 });

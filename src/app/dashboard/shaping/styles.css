@@ -1,4 +1,31 @@
 @layer components {
+  .savings-everyday { max-width: 960px; }
+  .savings-everyday-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-block-end: 12px; }
+  .savings-everyday h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .savings-everyday-head p, .savings-everyday-row p { color: var(--slate); font-size: 13px; line-height: 1.5; margin-block-start: 4px; }
+  .savings-everyday-rows { border-block: 1px solid var(--rule); }
+  .savings-everyday-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 8px; }
+  .savings-everyday-row + .savings-everyday-row { border-block-start: 1px solid var(--rule); }
+  .savings-everyday-row > .icon { color: var(--signal); }
+  .savings-everyday-row h3 { margin: 0; font-size: 14px; font-weight: 650; }
+  .savings-everyday-note { margin-block: 12px 24px; }
+  .savings-group-overview dl { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-block: 14px 20px; }
+  .savings-group-overview dt { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+  .savings-group-overview dt .icon { width: 17px; height: 17px; font-size: 17px; color: var(--slate); }
+  .savings-group-overview dd { color: var(--slate); margin-block-start: 5px; font-size: 13px; }
+  .savings-group-overview > p { color: var(--slate); font-size: 13px; margin-block: 12px; }
+  .savings-everyday-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border-block-start: 1px solid var(--rule); padding-block-start: 16px; }
+  .savings-everyday-footer > span { flex-basis: 100%; }
+  @media (max-width: 760px) {
+    .savings-everyday-head { align-items: start; }
+    .savings-everyday-head > div { min-width: 0; }
+    .savings-everyday-head > button { flex-shrink: 0; }
+    .savings-everyday-row { grid-template-columns: 18px minmax(0, 1fr) 64px; gap: 10px; padding-inline: 0; }
+    .savings-everyday-row > .icon { grid-column: 1; grid-row: 1; }
+    .savings-everyday-row > div:not(.savings-control-switch) { grid-column: 2; grid-row: 1; min-width: 0; }
+    .savings-everyday-row .savings-control-switch { grid-column: 3; grid-row: 1; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 44px; }
+    .savings-group-overview dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   .savings-status-strip { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(130px, .7fr) minmax(240px, 2fr); gap: 16px; padding: 12px 16px; background: var(--raised); border: 1px solid var(--rule); border-radius: 6px; }
   .savings-status-strip > div { display: grid; gap: 4px; align-content: start; }
   .savings-status-strip strong { font-size: 23px; font-variant-numeric: tabular-nums; line-height: 1.15; }
@@ -59,7 +86,7 @@
     .savings-status-strip .savings-status-context { grid-column: 1 / -1; border-inline-start: 0; border-block-start: 1px solid var(--rule); padding-inline-start: 0; padding-block-start: 12px; }
     .savings-toolbar { grid-template-columns: 1fr 1fr; margin-block: 16px; }
     .savings-control-card { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding-inline: 8px; }
-    .savings-control-switch { grid-column: 2; grid-row: 1; flex-direction: column; align-items: end; gap: 6px; }
+    .savings-control-card > .savings-control-switch { grid-column: 2; grid-row: 1; flex-direction: column; align-items: end; gap: 6px; }
     .savings-control-effect { grid-column: 1 / -1; }
     .savings-thresholds .shaping-form { grid-template-columns: minmax(0, 1fr); }
     .savings-configuration { grid-template-columns: minmax(0, 1fr); }

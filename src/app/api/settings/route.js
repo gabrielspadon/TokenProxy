@@ -115,12 +115,10 @@ export async function GET() {
     const safeSettings = toSafeSettings(settings);
     
     const enableRequestLogs = process.env.ENABLE_REQUEST_LOGS === "true";
-    const enableTranslator = process.env.ENABLE_TRANSLATOR === "true";
     
     return NextResponse.json({ 
       ...safeSettings, 
       enableRequestLogs,
-      enableTranslator,
       // Which providers the auto-ping scheduler knows about. The launcher is
       // CommonJS and cannot import the table this is derived from, so it read
       // from a list of its own that went stale the moment a provider was added

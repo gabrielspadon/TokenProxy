@@ -1,6 +1,6 @@
 # TOOLS / SYSTEM / OAUTH-FLOWS backend contract
 
-Scope: `/api/system/**`, CLI-tool integration routes (`/api/cli-tools/**` — REMOVED, no such route exists in this tree, see section 2 — `/api/mcp/**`, `/api/tool-disclosure/**`), `/api/notifications/**`, `/api/version/**`, `/api/locale`, the generic `/api/oauth/[provider]/[action]` route and its callback semantics.
+Scope: `/api/system/**`, CLI-tool integration routes (`/api/cli-tools/**` — REMOVED, no such route exists in this tree, see section 2 — `/api/mcp/**`, `/api/tool-disclosure/**`), `/api/notifications/**`, `/api/version/**`, the generic `/api/oauth/[provider]/[action]` route and its callback semantics.
 
 Auth-class terms below follow `src/dashboardGuard.js` (Next middleware, runs on every request) and `src/lib/admin/policy.js` (the admin-ABI decision function; not used by any route in this doc — no route here is under `/api/admin`). Where a route has no route-level auth check of its own, the auth class is whatever `dashboardGuard.proxy()` decides for its path before the handler runs.
 
@@ -8,14 +8,14 @@ Auth-class terms below follow `src/dashboardGuard.js` (Next middleware, runs on 
 
 Order of evaluation in `src/dashboardGuard.js:266` (`proxy()`):
 
-1. `LOCAL_ONLY_PATHS` (`src/dashboardGuard.js:109-125`) — path prefix match refused 403 `{ error: "Local only: CLI token required" }` unless `canAccessLocalOnlyRoute()` (valid CLI token, OR loopback-Host/Origin request with a valid session / `requireLogin=false`). Members in this doc's scope: `/api/mcp/`, `/api/oauth/cursor/auto-import`, `/api/oauth/kiro/auto-import` (full list also has tunnel/headroom/pxpipe/context-status paths, out of scope). **`/api/cli-tools/cowork-settings` and `/api/cli-tools/antigravity-mitm` are NOT in `LOCAL_ONLY_PATHS`, and no `/api/cli-tools/**` route exists in this tree at all** (confirmed: `ls src/app/api` has no `cli-tools` directory) — see the note at section 2 below.
+1. `LOCAL_ONLY_PATHS` (`src/dashboardGuard.js:109-125`) — path prefix match refused 403 `{ error: "Local only: CLI token required" }` unless `canAccessLocalOnlyRoute()` (valid CLI token, OR loopback-Host/Origin request with a valid session / `requireLogin=false`). Members in this doc's scope: `/api/mcp/`, `/api/oauth/cursor/auto-import`, `/api/oauth/kiro/auto-import` (full list also has headroom/pxpipe/context-status paths, out of scope). **`/api/cli-tools/cowork-settings` and `/api/cli-tools/antigravity-mitm` are NOT in `LOCAL_ONLY_PATHS`, and no `/api/cli-tools/**` route exists in this tree at all** (confirmed: `ls src/app/api` has no `cli-tools` directory) — see the note at section 2 below.
 2. Admin ABI prefix `/api/admin` — not in this doc's scope.
 3. `ALWAYS_PROTECTED` (`src/dashboardGuard.js:80-85`) — `/api/shutdown`, `/api/settings/database`, `/api/version/shutdown`, `/api/version/update`. Refused 401 `{ error: "Sign in required...", source: "tokenproxy" }` unless a valid CLI token or a valid dashboard session cookie is present — `requireLogin=false` does NOT bypass this tier.
 4. CORS preflight (`OPTIONS`) short-circuits with 204 before auth.
 5. Public LLM API prefixes (`/v1`, `/v1beta`, `/api/v1`, `/api/v1beta`, `/codex`) — out of scope here.
-6. Deny-by-default for `/api/*` (`src/dashboardGuard.js:334-350`): `isPublicApi()` allow-list bypasses (`PUBLIC_API_PATHS` = `/api/health`, `/api/init`, `/api/locale`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/status`, `/api/auth/oidc`, `/api/auth/saml`, `/api/version`, `/api/settings/require-login`, matched by exact path or `${p}/` prefix); everything else needs a valid CLI token OR `isAuthenticated()` (valid session cookie, or `requireLogin===false`). Refusal: 401 `{ error: "Unauthorized", source: "tokenproxy" }`.
+6. Deny-by-default for `/api/*` (`src/dashboardGuard.js:334-350`): `isPublicApi()` allow-list bypasses (`PUBLIC_API_PATHS` = `/api/health`, `/api/init`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/status`, `/api/auth/oidc`, `/api/auth/saml`, `/api/version`, `/api/settings/require-login`, matched by exact path or `${p}/` prefix); everything else needs a valid CLI token OR `isAuthenticated()` (valid session cookie, or `requireLogin===false`). Refusal: 401 `{ error: "Unauthorized", source: "tokenproxy" }`.
 
-`PROTECTED_API_PATHS` (`src/dashboardGuard.js:88-106`, 16 entries: `/api/settings`, `/api/keys`, `/api/providers`, `/api/provider-nodes`, `/api/proxy-pools`, `/api/combos`, `/api/models`, `/api/usage`, `/api/oauth`, `/api/cloud`, `/api/media-providers`, `/api/pricing`, `/api/tags`, `/api/mcp`, `/api/translator`, `/api/tunnel` — **not** `/api/cli-tools`, which is absent from the array and also has no corresponding route in this tree; `/api/cloud` likewise has no corresponding route, see item 14 / section 0 above) is declared but **never referenced by any `.some()` check in the file** — dead list, comments elsewhere (`src/lib/providerNormalization.js:57`, `src/lib/admin/policy.js:59`) still describe its intent (routes that honour `requireLogin=false`), but the deny-by-default branch above is what actually governs these paths today. No `forbidden_class` / `forbidden_loopback` shaped refusal (that shape belongs to the admin ABI, `src/lib/admin/policy.js`, which nothing in this doc's scope reaches).
+`PROTECTED_API_PATHS` (`src/dashboardGuard.js:88-106`, entries: `/api/settings`, `/api/keys`, `/api/providers`, `/api/provider-nodes`, `/api/proxy-pools`, `/api/combos`, `/api/models`, `/api/usage`, `/api/oauth`, `/api/cloud`, `/api/media-providers`, `/api/pricing`, `/api/tags`, `/api/mcp` — **not** `/api/cli-tools`, which is absent from the array and also has no corresponding route in this tree; `/api/cloud` likewise has no corresponding route, see item 14 / section 0 above) is declared but **never referenced by any `.some()` check in the file** — dead list, comments elsewhere (`src/lib/providerNormalization.js:57`, `src/lib/admin/policy.js:59`) still describe its intent (routes that honour `requireLogin=false`), but the deny-by-default branch above is what actually governs these paths today. No `forbidden_class` / `forbidden_loopback` shaped refusal (that shape belongs to the admin ABI, `src/lib/admin/policy.js`, which nothing in this doc's scope reaches).
 
 `/api/system/state` and `/api/notifications*` are **not** in `PUBLIC_API_PATHS` or any `LOCAL_ONLY_PATHS`/`ALWAYS_PROTECTED` entry, so both fall to the plain deny-by-default branch (tier 6): 401 `{ error: "Unauthorized", source: "tokenproxy" }` when neither a CLI token nor an authenticated/requireLogin-disabled session is present.
 
@@ -141,22 +141,6 @@ Best-effort `killAppProcesses()` (errors swallowed via empty catch). Response 20
 
 ---
 
-## 5. `/api/locale`
-
-`src/app/api/locale/route.js:1-31`. In `PUBLIC_API_PATHS` (no auth). POST only (`route.js` exports only `POST`).
-
-Body: `{ locale }` (string). Validated with `isSupportedLocale(locale)` imported from `@/i18n/config` — **this is a presentation-layer-adjacent dependency the new frontend must resolve or replace**, since `@/i18n/config` (`src/i18n/config.js`) is a plain data module (LOCALES array, `normalizeLocale`, `isSupportedLocale`, `getLocaleDirection`) with no React/UI code in it, so it is safe for the new frontend to port verbatim or re-implement.
-
-`LOCALES` (`src/i18n/config.js`, exported array): `en, vi, zh-CN, zh-TW, ja, pt-BR, pt-PT, ko, es, de, fr, he, ar, ru, pl, cs, nl, tr, uk, tl, id, km, th, hi, bn, ur, ro, sv, it, el, hu, fi, da, no, fa` (35 locales).
-
-- Missing or unsupported `locale` → 400 `{ error: "Invalid locale" }`.
-- Success: sets `LOCALE_COOKIE` (from the same `@/i18n/config` module) to `normalizeLocale(locale)`, returns 200 `{ success: true, locale: normalized }`.
-- JSON parse failure or any other exception → 500 `{ error: "Failed to set locale" }`.
-
-The route has zero dependency on `@/i18n/server.js`, `@/i18n/runtime.js`, or `@/i18n/RuntimeI18nProvider.js` (all three are React/runtime i18n plumbing, out of scope per the presentation-code prohibition and not imported here) — only `@/i18n/config.js` (pure constants/functions) is a hard dependency for this one route.
-
----
-
 ## 6. Generic OAuth route: `/api/oauth/[provider]/[action]`
 
 `src/app/api/oauth/[provider]/[action]/route.js` (551 lines). All actions live behind dashboardGuard's `/api/oauth` prefix in `PROTECTED_API_PATHS` (declared but dead — see section 0) — actual gate is deny-by-default (tier 6), EXCEPT `cursor/auto-import` and `kiro/auto-import` sibling routes (separate files, not this one) which are `LOCAL_ONLY_PATHS`. This generic route itself carries no extra route-level auth check beyond dashboardGuard.
@@ -214,14 +198,12 @@ This local-callback-server model is why the `/callback` contract cannot be expre
 - /home/spadon/Codebases/tokenproxy/src/app/api/version/route.js
 - /home/spadon/Codebases/tokenproxy/src/app/api/version/update/route.js
 - /home/spadon/Codebases/tokenproxy/src/app/api/version/shutdown/route.js
-- /home/spadon/Codebases/tokenproxy/src/app/api/locale/route.js
 - /home/spadon/Codebases/tokenproxy/src/app/api/oauth/[provider]/[action]/route.js
 - /home/spadon/Codebases/tokenproxy/src/lib/admin/policy.js
 - /home/spadon/Codebases/tokenproxy/src/dashboardGuard.js
 - /home/spadon/Codebases/tokenproxy/src/lib/oauth/providers.js
 - /home/spadon/Codebases/tokenproxy/src/lib/oauth/providers/index.js
 - /home/spadon/Codebases/tokenproxy/src/lib/oauth/utils/server.js (grep of callback/response-writing lines only, not read in full)
-- /home/spadon/Codebases/tokenproxy/src/i18n/config.js
 - /home/spadon/Codebases/tokenproxy/src/app/api/cli-tools/all-statuses/route.js
 - /home/spadon/Codebases/tokenproxy/src/app/api/cli-tools/claude-settings/route.js
 - /home/spadon/Codebases/tokenproxy/src/app/api/cli-tools/cline-settings/route.js

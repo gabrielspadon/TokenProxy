@@ -14,7 +14,7 @@ Use Manrope interface typography, IBM Plex Mono for identifiers, a cool gray can
 2. Fixture owner owns scripts/redesign-preview.mjs and tests/e2e/redesign-fixtures, disposable runtimes and fixture provenance. It supplies an isolated dev URL first and an isolated production build later.
 3. Context/Economics owner owns its page/component trees, exact attempt/cost inspection, cohort comparison and focused tests. It requests shared-store changes from root.
 4. Routing owner owns Models, Sessions, Shaping, model-context and their focused tests. It completes pending policy/context-window edits and safe route/version semantics.
-5. Supporting-journey owner owns Connections, Keys, Access, Network, Remote, System, Operations, Notifications, Translation, Compatibility and Tools, with scoped read/error/persistence checks.
+5. Supporting-journey owner owns Connections, Keys, Access, Network, System, Operations, Notifications, Compatibility and Tools, with scoped read/error/persistence checks.
 6. Reconciliation owner first returns paused failures and release topology; after implementation, fresh reviewers inspect disjoint fronts. Native implementation workers inherit the driving Astra model. The task ledger's routing-class display is not the runtime identity of those native workers.
 
 Every owner preserves concurrent dirty files. No broad stage/reset/stash/clean, guessed process termination or unaudited fixture copying. Root alone owns shared browser inspection and release mutations.

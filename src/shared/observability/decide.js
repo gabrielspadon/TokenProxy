@@ -427,9 +427,6 @@ function appendNdjson(record, nowMs = Date.now()) {
 function write(cls, verdict, fields, nowMs) {
   const entries = orderedEntries(fields);
   const line = formatLine(cls, verdict, fields, nowMs);
-  // console.log, not process.stdout: consoleLogBuffer.js:86 tees console output
-  // into the dashboard ring buffer, so the decision lines stay visible in the UI
-  // that already exists rather than becoming journald-only.
   console.log(line);
   appendNdjson({ ts: new Date(nowMs).toISOString(), cls, verdict, ...Object.fromEntries(entries) }, nowMs);
   return line;

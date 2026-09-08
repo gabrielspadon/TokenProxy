@@ -30,12 +30,6 @@ test("default password refusal says what to change", async ({ page }) => {
   await expect(page.getByText(/INITIAL_PASSWORD/)).toBeVisible();
 });
 
-test("tunnel refusal is its own sentence", async ({ page }) => {
-  await page.route("**/api/auth/login", (r) => r.fulfill(json(403, { error: "Dashboard access via tunnel is disabled" })));
-  await submit(page);
-  await expect(page.getByText("Dashboard access through the tunnel is turned off.")).toBeVisible();
-});
-
 test("password disabled offers single sign-on", async ({ page }) => {
   await page.route("**/api/auth/login", (r) => r.fulfill(json(403, { error: "Password login is disabled. Use SAML SSO sign in." })));
   await submit(page);

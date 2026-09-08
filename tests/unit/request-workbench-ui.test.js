@@ -34,7 +34,6 @@ it('opens with no network request, exposes every operation, and leaves sending d
   expect(container.querySelectorAll('select option')).toHaveLength(20);
   expect(button('Send gateway request').disabled).toBe(true);
   expect(container.textContent).toContain('No provider requests run when you open this page');
-  expect(container.querySelector('a[href="/dashboard/translation"]')).toBeTruthy();
   expect(container.querySelector('a[href="/dashboard/compatibility"]')).toBeTruthy();
 });
 it('validates without inference and only explicit sending consumes the transient password field', async () => {

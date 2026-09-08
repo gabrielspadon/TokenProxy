@@ -10,10 +10,9 @@ const GLYPHS = {
   'i-keys': 'key',
   'i-usage': 'monitoring',
   'i-shaping': 'tune',
-  'i-translation': 'translate',
+  'i-request': 'code',
   'i-compatibility': 'checklist',
   'i-tools': 'build',
-  'i-remote': 'computer',
   'i-notifications': 'chat',
   'i-access': 'shield',
   'i-system': 'settings',
@@ -30,6 +29,10 @@ const GLYPHS = {
   'i-play': 'play_arrow',
   'i-chevron-down': 'expand_more',
   'i-back': 'arrow_back',
+  'i-tune': 'tune',
+  'i-chart': 'show_chart',
+  'i-clock': 'schedule',
+  'i-table': 'table_rows',
 };
 export function Icon({ name, mirror }) {
   if (GLYPHS[name])

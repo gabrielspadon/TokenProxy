@@ -19,8 +19,9 @@ import { keyBudgetState } from './budget';
 import { useSavedDraft } from '../connections/useSavedDraft';
 import './styles.css';
 
-// The three ceilings of §7, in the order the gateway checks them.
+// Present the spending cap before the optional token ceilings.
 const CEILINGS = [
+  { field: 'maxCostUsd', used: 'costUsd', label: 'Cost', render: fmtUsd },
   { field: 'maxPromptTokens', used: 'promptTokens', label: 'Prompt tokens', render: fmtNum },
   {
     field: 'maxCompletionTokens',
@@ -28,7 +29,6 @@ const CEILINGS = [
     label: 'Completion tokens',
     render: fmtNum,
   },
-  { field: 'maxCostUsd', used: 'costUsd', label: 'Cost', render: fmtUsd },
 ];
 
 function pollFresh(p) {
@@ -142,7 +142,11 @@ export default function KeysPage() {
     returnKeyFocus.current = selectedId;
     setSelectedId(null);
   }
-  const [keyTask, setKeyTask] = useState('policy');
+  const [pageTask, setPageTask] = useState('keys');
+  const [profilesVisited, setProfilesVisited] = useState(false);
+  const [keyTask, setKeyTask] = useState('limits');
+  const [createTask, setCreateTask] = useState('name');
+  const [createVisited, setCreateVisited] = useState(false);
   const [setupVisited, setSetupVisited] = useState(false);
   const [creating, setCreating] = useState(false);
   const [action, setAction] = useState(null);
@@ -218,28 +222,20 @@ export default function KeysPage() {
 
   const renderFields = (action, form, set) => <>
         {action?.kind === 'create' ? (
-          <div className="keys-form">
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                value={form.name}
-                onChange={(e) => set('name', e.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>Expires on</span>
-              <input
-                className="input"
-                type="date"
-                value={form.expiresAt}
-                onChange={(e) => set('expiresAt', e.target.value)}
-              />
-            </label>
-            <p className="caption">Leave empty and the key never expires.</p>
-            <LimitFields form={form} set={set} />
-          </div>
+          <>
+            <KeyTasks label="New key options" value={createTask} onChange={setCreateTask} items={[
+              ['name', 'Name', 'i-keys'], ['limits', 'Limits & expiry', 'i-tune'],
+            ]} />
+            <div className="keys-task-panel keys-form" hidden={createTask !== 'name'}>
+              <label className="field"><span>Name</span><input className="input" type="text" value={form.name} onChange={event => set('name', event.target.value)} placeholder="For example, Work laptop" /></label>
+              <p className="caption">Use a name you will recognize. Limits and expiry are optional; without them, this key has no spending cap or expiry.</p>
+            </div>
+            <div className="keys-task-panel keys-form" hidden={createTask !== 'limits'}>
+              <LimitFields form={form} set={set} />
+              <label className="field"><span>Expires on</span><input className="input" type="date" value={form.expiresAt} onChange={event => set('expiresAt', event.target.value)} /></label>
+              <p className="caption">Leave expiry empty to keep the key active until you turn it off.</p>
+            </div>
+          </>
         ) : null}
         {action?.kind === 'limits' ? (
           <div className="keys-form">
@@ -564,8 +560,8 @@ export default function KeysPage() {
   return (
     <>
       <div className="screen-head">
-        <h1>Keys</h1>
-        <Freshness status={pollFresh(keys)} lastDataAt={keys.goodAt} />
+        <div><h1>Keys</h1><p className="screen-subtitle">Connect a client, then set its limits.</p></div>
+        <div className="verb-row"><Freshness status={pollFresh(keys)} lastDataAt={keys.goodAt} /><button type="button" className="button" aria-expanded={creating && pageTask === 'keys'} onClick={() => { setPageTask('keys'); setCreateVisited(true); setCreating(value => pageTask !== 'keys' || !value); }}><Icon name="i-add" />Create a key</button></div>
       </div>
 
       <div className="measures keys-summary">
@@ -599,8 +595,11 @@ export default function KeysPage() {
         />
       </div>
 
-
-
+      <KeyTasks label="Keys workspace" value={pageTask} onChange={value => { setPageTask(value); if (value === 'profiles') setProfilesVisited(true); }} items={[
+        ['keys', 'Client keys', 'i-keys'], ['profiles', 'Profiles', 'i-sessions'], ['advanced', 'Advanced', 'i-tune'],
+      ]} />
+      {result ? <Notice {...result} /> : null}
+      <div className="keys-task-panel" hidden={pageTask !== 'keys'}>
       <section aria-labelledby="h-keys">
         <p className="caption">
           {keys.data?.usageState === 'unavailable'
@@ -613,16 +612,8 @@ export default function KeysPage() {
         </p>
         <div className="screen-head">
           <h2 id="h-keys">Client keys</h2>
-          <button type="button" className="button" onClick={() => setCreating(value => !value)}>
-            <Icon name="i-add" />
-            Create a key
-          </button>
         </div>
-        <p>
-          A client key authenticates a downstream caller against this gateway&apos;s inference
-          surface. It never reaches an upstream provider account of its own.
-        </p>
-        {result ? <Notice {...result} /> : null}
+        <p className="caption">Give each client its own key so you can control access and spending separately.</p>
         {keys.error && !keys.data ? <Notice {...refusal(keys.status, keys.error)} /> : null}
         {keys.loading && !keys.data ? <p className="skeleton">Reading</p> : null}
         {keys.data && rows.length === 0 ? (
@@ -637,6 +628,7 @@ export default function KeysPage() {
                 <span>Key</span>
                 <span>Clients</span>
                 <span>State</span>
+                <span className="keys-action-heading">Settings</span>
               </div>
               {rows.map((k) => {
                 const st = keyState(k);
@@ -644,7 +636,7 @@ export default function KeysPage() {
                 const on = picked.includes(k.id);
                 return (
                   <div className="row keys-row" key={k.id}>
-                    <span className="who">
+                    <div className="keys-identity">
                       <label className="keys-pick">
                         <input
                           type="checkbox"
@@ -655,42 +647,18 @@ export default function KeysPage() {
                         />
                         <span className="name">{k.name}</span>
                       </label>
-                      <button type="button" className="button quiet" data-key-id={k.id} aria-pressed={selectedId === k.id} onClick={() => { if (selectedId !== k.id) setSetupVisited(false); setSelectedId(k.id); setKeyTask('policy'); }}>Configure {k.name}</button>
-                      <span className="sub">
-                        <span className="id">
-                          {k.id}
-                        </span>
-                        {k.keyPreview ? (
-                          <span className="id">
-                            {' '}
-                            {k.keyPreview}
-                          </span>
-                        ) : null}
-                        {k.createdAt ? (
-                          <>
-                            {' '}
-                            <span>Created</span>{' '}
-                            <span>{fmtRelative(k.createdAt, now)}</span>
-                          </>
-                        ) : null}
-                        {k.expiresAt ? (
-                          <>
-                            {' '}
-                            <span>Expires</span>{' '}
-                            <span>{fmtRelative(k.expiresAt, now)}</span>
-                          </>
-                        ) : (
-                          <>
-                            {' '}
-                            <span>Never expires</span>
-                          </>
-                        )}
-                      </span>
-                    </span>
-                    <span>{fmtNum(k.deviceCount || 0)}</span>
-                    <span className="status" data-tone={budgetState.tone} data-state={st}>
+                      <div className="keys-meta">
+                        {k.keyPreview ? <span className="id">{k.keyPreview}</span> : null}
+                        <span className="keys-record-id id" title={k.id}>{k.id}</span>
+                        {k.createdAt ? <span>Created <time dateTime={k.createdAt}>{fmtRelative(k.createdAt, now)}</time></span> : null}
+                        {k.expiresAt ? <span>Expires <time dateTime={k.expiresAt}>{fmtRelative(k.expiresAt, now)}</time></span> : <span>Never expires</span>}
+                      </div>
+                    </div>
+                    <span className="keys-client-count">{fmtNum(k.deviceCount || 0)} clients</span>
+                    <span className="status keys-key-state" data-tone={budgetState.tone} data-state={st}>
                       {budgetState.label}
                     </span>
+                    <button type="button" className="button quiet keys-configure" data-key-id={k.id} aria-label={`Configure ${k.name}`} aria-pressed={selectedId === k.id} onClick={() => { if (selectedId !== k.id) setSetupVisited(false); setSelectedId(k.id); setKeyTask('limits'); }}>Configure</button>
                   </div>
                 );
               })}
@@ -726,17 +694,21 @@ export default function KeysPage() {
         ) : null}
       </section>
 
-      {creating ? <section aria-label="Create a key">{keyForm('create', null, 'Create a key', BLANK)}</section> : null}
+      {createVisited ? <section className="keys-task-panel" hidden={!creating} aria-label="Create a key">{keyForm('create', null, 'Create a key', BLANK)}</section> : null}
       {rows.find(key => key.id === selectedId) ? (() => {
         const key = rows.find(item => item.id === selectedId);
         return <section aria-label="Selected key configuration" key={key.id}>
           <div className="screen-head"><h2>{key.name}</h2><button type="button" className="button quiet" onClick={closeKey}>Close key</button></div>
-          <nav className="verb-row" aria-label="Key tasks">{[['policy', 'Policy'], ['setup', 'Client setup']].map(([value, label]) => <button type="button" key={value} className={keyTask === value ? 'button' : 'button quiet'} aria-pressed={keyTask === value} onClick={() => { setKeyTask(value); if (value === 'setup') setSetupVisited(true); }}>{label}</button>)}</nav>
-          {setupVisited ? <div hidden={keyTask !== 'setup'}><ClientSetup record={key} /></div> : null}
-          <div hidden={keyTask !== 'policy'}>
-            <KeyBudget record={key} />
-            <KeyLifecycle record={key} profiles={profiles} now={now} />
+          <KeyTasks label="Key tasks" value={keyTask} onChange={value => { setKeyTask(value); if (value === 'setup') setSetupVisited(true); }} items={[
+            ['limits', 'Limits', 'i-usage'], ['setup', 'Client setup', 'i-tools'], ['advanced', 'Advanced', 'i-tune'],
+          ]} />
+          {setupVisited ? <div className="keys-task-panel" hidden={keyTask !== 'setup'}><ClientSetup record={key} /></div> : null}
+          <div className="keys-task-panel" hidden={keyTask !== 'limits'}>
             {keyForm('limits', key, 'Key budgets and model access', { ...BLANK, maxPromptTokens: key.maxPromptTokens ?? '', maxCompletionTokens: key.maxCompletionTokens ?? '', maxCostUsd: key.maxCostUsd ?? '', allowedModels: (key.allowedModels || []).join(', '), budgetPolicy: key.budget?.policy || key.effectiveBudgetPolicy || 'reserve-remaining' })}
+            <KeyBudget record={key} />
+          </div>
+          <div className="keys-task-panel" hidden={keyTask !== 'advanced'}>
+            <KeyLifecycle record={key} profiles={profiles} now={now} />
             {keyForm('expiry', key, 'Key expiry', { ...BLANK, expiresAt: key.expiresAt?.slice(0, 19) || '' })}
             {keyForm('adopt', key, 'Access profile', { ...BLANK, profileId: key.profile?.profileId || '' })}
             {!key.supersededAt ? keyForm('rotate', key, 'Rotate key', BLANK) : null}
@@ -748,8 +720,10 @@ export default function KeysPage() {
           </div>
         </section>;
       })() : null}
-      <AccessProfiles poll={accessProfiles} onKeysChanged={keys.refresh} />
+      </div>
+      {profilesVisited ? <div className="keys-task-panel" hidden={pageTask !== 'profiles'}><AccessProfiles poll={accessProfiles} onKeysChanged={keys.refresh} /></div> : null}
 
+      <div className="keys-task-panel" hidden={pageTask !== 'advanced'}>
       <section aria-labelledby="h-who">
         <h2 id="h-who">Who may do what</h2>
         <div>
@@ -802,9 +776,7 @@ export default function KeysPage() {
               holds the wrong kind of credential, which is a different answer from holding none.
             </li>
             <li>
-              Every action that changes state must arrive from this machine, directly or through a
-              tunnel that ends as a local connection. The right operator credential from elsewhere
-              is still refused.
+              Admin actions that change state require a local connection and operator credentials.
             </li>
             <li>
               A refused request changes nothing at all. Every other fact reads exactly as it did the
@@ -853,12 +825,6 @@ export default function KeysPage() {
               Change it under Access
             </Link>
           </dd>
-          <dt>Operator access over a tunnel</dt>
-          <dd>
-            <Link href="/dashboard/remote" prefetch={false}>
-              Decided under Remote
-            </Link>
-          </dd>
         </dl>
       </section>
 
@@ -871,6 +837,7 @@ export default function KeysPage() {
         </p>
       </section>
 
+      </div>
       <p className="caption">
         Key lists contain masked previews. Revealing a stored credential requires an explicit
         operator action on that key, even when dashboard sign-in is turned off.
@@ -943,4 +910,10 @@ function KeyTaskForm({ title, seed, disabled, onReview, children }) {
     {conflicts.length ? <Notice tone="warn" title="Saved key fields changed while you were editing." next={`Your draft is retained. Load saved values before reviewing. Changed fields: ${conflicts.join(', ')}.`} /> : null}
     <div className="verb-row"><button type="button" className="button quiet" onClick={reset}>Load saved values</button><button type="submit" className="button" disabled={conflicts.length > 0}>Review {title.toLowerCase()}</button></div>
   </fieldset></form></section>;
+}
+
+function KeyTasks({ label, value, onChange, items }) {
+  return <nav className="verb-row keys-task-navigation" aria-label={label}>
+    {items.map(([id, text, icon]) => <button type="button" key={id} className={value === id ? 'button' : 'button quiet'} aria-pressed={value === id} onClick={() => onChange(id)}><Icon name={icon} /><span>{text}</span></button>)}
+  </nav>;
 }

@@ -32,7 +32,7 @@ import { Icon } from '@/shared/components/Icon';
 import { QuotaSummary, WindowEvidence, orderQuotaWindows } from '@/shared/workspace/QuotaEvidence';
 import { QuotaHistoryWorkbench } from '@/shared/workspace/QuotaHistoryWorkbench';
 import { QuotaAcquisitionControls } from '@/shared/workspace/QuotaAcquisitionControls';
-import { ActivityBand } from '@/shared/workspace/ActivityBand';
+import { CapacityActivity } from './CapacityActivity';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import { AnalyticalChart, METRIC_COLORS } from '@/shared/workspace/AnalyticalChart';
@@ -769,7 +769,7 @@ export default function CapacityPage() {
         />
       </div>
       <ScopeBar showRefresh={view !== 'control'} />
-      {view === 'accounts' && <ActivityBand />}
+      {view !== 'support' && <CapacityActivity />}
       <div className={`${styles.book} ${shared.lensContent}`}>
         <SelectionDock
           open={Boolean(selected) || comparing}

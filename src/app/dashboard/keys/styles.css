@@ -1,4 +1,8 @@
 @layer components {
+  .keys-task-panel[hidden] { display: none !important; }
+  .keys-task-navigation { gap: 6px; margin-block: 12px; }
+  .keys-task-navigation .button { padding: 5px 10px; min-height: 32px; }
+  .keys-task-navigation .button[aria-pressed="true"] { color: var(--signal); background: var(--signal-wash); border-color: transparent; }
   .keys-summary { display: flex; flex-wrap: wrap; gap: 12px 32px; padding-block: 14px; border-block: 1px solid var(--rule); }
   .keys-summary .measure { display: flex; flex-direction: row; align-items: baseline; gap: 12px; padding: 0; border: 0; background: transparent; }
   .keys-summary .measure .value { font-size: 18px; font-weight: 600; font-family: inherit; font-variant-numeric: tabular-nums; }
@@ -13,11 +17,6 @@
   .profile-inspector { padding: 16px; border-inline-start: 1px solid var(--rule); overflow-wrap: anywhere; min-width: 0; }
   .profile-inspector .facts { margin-block: 12px; }
   @media (max-width: 767px) { .profile-workspace { grid-template-columns: minmax(0, 1fr); } .profile-inspector { border-inline-start: 0; border-block-start: 1px solid var(--rule); } .profile-inspector .facts { grid-template-columns: minmax(0, 1fr); } }
-  /* The key row: who, how many clients, what state, then its own disclosure
-     spanning the full width so a ceiling band has room to be read. */
-  .keys-row { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .keys-row .keys-detail { grid-column: 1 / -1; }
-
   .keys-pick { display: flex; align-items: center; gap: 8px; min-block-size: 24px; min-inline-size: 24px; cursor: pointer; }
   .keys-pick input { margin: 0; accent-color: var(--signal); }
 
@@ -36,18 +35,11 @@
   .keys-budget-table th:first-child { text-align: start; }
   .keys-budget-table td { font-variant-numeric: tabular-nums; font-family: var(--font-mono, 'IBM Plex Mono', monospace); }
 
-  /* A Decisions value is a whole translated sentence inside a .status badge.
-     .status is inline-flex, so the sentence is one flex item sized at
-     max-content and it never shrinks. Cap the badge and let the sentence wrap
-     inside itself; wrapping the FLEX line instead drops the dot onto a line of
-     its own, which is how the German 390 shot read. */
+  /* Long status explanations wrap without displacing the status marker. */
   .keys-decisions .status { max-width: 100%; align-items: baseline; }
   .keys-decisions .status > * { min-width: 0; }
 
-  /* dl.facts is `max-content minmax(0,1fr)`, so a translated term sets the
-     term column. "Client Key erforderlich" takes 240px of a 358px row and
-     leaves the sentence beside it 102px, which overflows the page at 390.
-     Below the row breakpoint, stack term over value so neither competes. */
+  /* Stack each term above its value on narrow screens. */
   @media (max-width: 767px) {
     .keys-decisions dl.facts { grid-template-columns: minmax(0, 1fr); }
     .keys-decisions dl.facts dd { margin-block-end: 8px; }
@@ -65,13 +57,6 @@
   .keys-secret {
     display: block; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius);
     background: var(--paper); user-select: all; overflow-wrap: anywhere;
-  }
-}
-
-@layer states {
-  @media (max-width: 767px) {
-    .keys-row { grid-template-columns: minmax(0, 1fr) auto; }
-    .keys-row .status { grid-column: 1 / -1; }
   }
 }
 
@@ -94,4 +79,26 @@
   }
   .keys-findings li[data-tone='bad'] { border-inline-start-color: var(--refusal); }
   .keys-findings li[data-tone='warn'] { border-inline-start-color: var(--ember); }
+}
+
+/* Match the unlayered workspace controls without stretching a row action. */
+.row.keys-row { grid-template-columns: minmax(0, 1fr) 72px 110px 90px; gap: 8px 20px; }
+.keys-row .keys-identity { min-width: 0; display: grid; gap: 4px; }
+.keys-row .keys-pick { width: fit-content; max-width: 100%; min-height: 28px; gap: 8px; }
+.keys-row .keys-pick input { flex-shrink: 0; }
+.keys-row .keys-pick .name { font-weight: 500; overflow-wrap: anywhere; }
+.keys-row .keys-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; padding-inline-start: 24px; font-size: var(--type-dense); color: var(--slate); }
+.keys-row .keys-meta > span { display: inline-flex; gap: 4px; white-space: nowrap; }
+.keys-row .keys-meta .keys-record-id { display: block; max-width: min(100%, 30ch); overflow: hidden; text-overflow: ellipsis; }
+.keys-row .keys-configure { justify-self: end; width: auto; min-width: 32px; min-height: 32px; padding: 5px 8px; background: transparent; border-color: transparent; }
+.keys-row .keys-configure:hover, .keys-row .keys-configure[aria-pressed='true'] { color: var(--ink); background: var(--signal-wash); border-color: transparent; }
+.keys-row .keys-action-heading { text-align: end; }
+.keys-row .keys-client-count { text-align: end; font-variant-numeric: tabular-nums; }
+.keys-row .keys-key-state { justify-self: start; }
+@media (max-width: 767px) {
+  .row.keys-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .keys-row .keys-identity { grid-column: 1; grid-row: 1; }
+  .keys-row .keys-configure { grid-column: 2; grid-row: 1; align-self: start; }
+  .keys-row .keys-client-count { grid-column: 1; grid-row: 2; text-align: start; padding-inline-start: 24px; color: var(--slate); }
+  .keys-row .keys-key-state { grid-column: 2; grid-row: 2; justify-self: end; }
 }

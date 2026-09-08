@@ -19,8 +19,8 @@ import {
   Tooltip,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useHotkeys, useMediaQuery } from '@mantine/hooks';
-import { NAV, NAV_GROUPS } from '@/shared/nav';
+import { useHotkeys, useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import { NAV, navigationGroups } from '@/shared/nav';
 import { useAuthStatus } from '@/store/authStatus';
 import { Icon } from './Icon';
 import { WorkspaceProvider, useWorkspace } from '@/shared/workspace/WorkspaceProvider';
@@ -84,6 +84,7 @@ function WorkspaceShell({ children }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [navigationMode, setNavigationMode] = useLocalStorage({ key: 'tokenproxy.navigation-mode', defaultValue: 'everyday' });
   const desktopNavigation = useMediaQuery('(min-width: 62em)');
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
@@ -180,10 +181,14 @@ function WorkspaceShell({ children }) {
         </Button>
         <ScrollArea className={styles.navScroll}>
           <nav aria-label="Sections">
-            {NAV_GROUPS.map((group, index) => (
+            <div className={styles.navigationMode}>
+              <SegmentedControl fullWidth size="xs" aria-label="Navigation view" value={navigationMode === 'advanced' ? 'advanced' : 'everyday'} onChange={setNavigationMode}
+                data={[{ value: 'everyday', label: 'Everyday' }, { value: 'advanced', label: 'Advanced' }]} />
+            </div>
+            {navigationGroups(navigationMode, pathname).map((group) => (
               <div className={styles.navGroup} key={group.label}>
                 <Text className={styles.navGroupLabel}>
-                  {index === 0 ? 'Analysis' : group.label}
+                  {group.label}
                 </Text>
                 {group.paths
                   .map((href) => NAV.find((item) => item.href === href))

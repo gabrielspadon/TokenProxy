@@ -79,6 +79,43 @@ afterEach(async () => {
   }
 });
 
+describe("settings compatibility", () => {
+  it("omits retired controls from settings reads without deleting saved data", async () => {
+    const retained = {
+      tunnelEnabled: true,
+      tunnelUrl: "https://retired.example",
+      tunnelProvider: "cloudflare",
+      tailscaleEnabled: true,
+      tailscaleUrl: "https://retired.example.net",
+      tunnelDashboardAccess: false,
+      enableTranslator: true,
+    };
+    await repository.updateSettings({ ...retained, requireLogin: true });
+    for (const key of Object.keys(retained)) {
+      expect(await repository.getSettings()).not.toHaveProperty(key);
+    }
+    const response = await GET();
+    const body = await response.json();
+    for (const key of Object.keys(retained)) expect(body).not.toHaveProperty(key);
+    const patched = await PATCH(settingsRequest({ requireLogin: false }));
+    expect(patched.status).toBe(200);
+    const patchedBody = await patched.json();
+    for (const key of Object.keys(retained)) expect(patchedBody).not.toHaveProperty(key);
+    expect(await repository.exportSettings()).toMatchObject({ ...retained, requireLogin: false });
+  });
+
+  it("does not publish a retired workbench flag from the startup environment", async () => {
+    vi.stubEnv("ENABLE_TRANSLATOR", "true");
+    try {
+      const response = await GET();
+      expect(response.status).toBe(200);
+      expect(await response.json()).not.toHaveProperty("enableTranslator");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("connect timeout settings repository", () => {
   it("merges 15000 into an old row without writing it", async () => {
     expect((await repository.getSettings()).connectTimeoutMs).toBe(15000);

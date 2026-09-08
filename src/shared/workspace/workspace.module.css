@@ -81,6 +81,25 @@
   flex: 1;
   padding-block: 8px;
 }
+.navigationMode {
+  padding: 4px 12px 12px;
+}
+.navigationMode :global(.mantine-SegmentedControl-root) {
+  background: var(--nav-active);
+}
+.navigationMode :global(.mantine-SegmentedControl-label) {
+  color: var(--nav-text);
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.navigationMode :global(.mantine-SegmentedControl-label[data-active]) {
+  color: var(--ink);
+}
+.navigationMode :global(.mantine-SegmentedControl-indicator) {
+  background: var(--raised);
+}
 .navGroup {
   padding: 6px 12px;
 }

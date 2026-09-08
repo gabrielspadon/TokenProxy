@@ -1,8 +1,7 @@
-# Shaping / RTK / Translator / Inspector — backend API contract
+# Shaping / RTK / Inspector backend API contract
 
 Scope: request-shaping config (system-prompt injection, RTK token-saver, tool
-disclosure), the translator devtools surface under `/api/translator/*`, and
-what remains of request-log/inspector capability. Verified against source
+disclosure) and request-log/inspector capability. Verified against source
 only — no field below is inferred.
 
 ## Auth model (from `src/dashboardGuard.js` + `src/lib/admin/policy.js`)
@@ -11,16 +10,11 @@ None of the routes in this scope sit under the admin ABI prefix
 (`isAdminPath`/`adminAuthClass`/`adminDecision` from `src/lib/admin/policy.js`
 gate `/api/admin/*` only — grep confirms no admin-policy import anywhere
 under `src/app/api/token-saver`, `src/app/api/tool-disclosure`,
-`src/app/api/translator`, or `src/app/api/settings`). All routes below are
+or `src/app/api/settings`). All routes below are
 gated purely by `dashboardGuard.js`'s session/API-key layer, which never
 returns `{code:'forbidden_class'}` or `{code:'forbidden_loopback'}` — those
 shapes are admin-ABI-only and out of scope here.
 
-- `/api/translator` is listed in `PROTECTED_API_PATHS` (`src/dashboardGuard.js:104`,
-  full list `src/dashboardGuard.js:88-106`). Protected means: session cookie
-  or CLI/API-key auth required UNLESS the operator has `requireLogin: false`
-  in settings, in which case `isAuthenticated()` (`src/dashboardGuard.js:222-227`)
-  passes anyone through. Refusal on this path: `{ error: "Unauthorized", source: GATEWAY_ERROR_SOURCE }`, HTTP 401 (`src/dashboardGuard.js:353`, reached via the `PROTECTED_API_PATHS` branch at `src/dashboardGuard.js:351-354`).
 - `/api/token-saver/stats` and `/api/tool-disclosure/stats` are **not** in
   `PROTECTED_API_PATHS`, `ALWAYS_PROTECTED`, `PUBLIC_API_PATHS`, or
   `PUBLIC_PREFIXES` (checked all four arrays, `src/dashboardGuard.js:39-106`).
@@ -33,7 +27,7 @@ shapes are admin-ABI-only and out of scope here.
   rejected UNLESS it has a valid CLI token, a valid session token, or is a
   loopback request (`isLocalRequest`) — `requireLogin:false` does NOT bypass
   this check (`src/dashboardGuard.js:334-349`). Rationale in-code: settings
-  writes configure SSO/proxy/tunnel instance-wide, so a remote caller must
+  writes configure SSO/proxy instance-wide, so a remote caller must
   never reach them just because `requireLogin` is off (reads keep the
   `requireLogin:false` bypass). Refusal: `{ error: "Unauthorized", source: GATEWAY_ERROR_SOURCE }`, HTTP 401 (`src/dashboardGuard.js:347`).
 - No route in this scope issues a 403 of any kind. `forbidden_class` /
@@ -151,7 +145,6 @@ the single global settings object, read/written only through
 Returns `toSafeSettings(settings)` (`route.js:92-103`, strips `password` and
 `oidcClientSecret`, adds computed `oidcConfigured` boolean) spread with:
 - `enableRequestLogs`: `process.env.ENABLE_REQUEST_LOGS === "true"` (`route.js:110`, env-only, not DB-backed)
-- `enableTranslator`: `process.env.ENABLE_TRANSLATOR === "true"` (`route.js:111`, env-only, not DB-backed — this flag exists but nothing in `dashboardGuard.js` or any translator route currently reads it to gate access; the translator routes are reachable whenever the dashboardGuard session check passes regardless of this flag's value)
 - an auto-ping provider list (unrelated to this domain, not detailed here)
 
 Relevant settings-DB keys returned inside `safeSettings`
@@ -201,7 +194,6 @@ validation actually read):
 - Success response: `toSafeSettings(settings)` (post-update), HTTP 200,
   headers `SETTINGS_RESPONSE_HEADERS` (constant not further inspected).
 - Error response: `{ error: error.message }`, HTTP 500 (`route.js:326-329`).
-
 
 ### Explicit content-loss consent
 
@@ -291,12 +283,6 @@ Nothing writes a request log through this function.
   `DEFAULT_FLUSH_INTERVAL_MS`), and feeds `saveRequestDetail`/request-stats
   paths — this is the mechanism actually behind (c)'s live capability, not
   the dead `appendRequestLog`.
-- **Translator devtools file-based inspector** (`/api/translator/load`,
-  `/api/translator/save`, `/api/translator/console-logs*` — full detail in
-  the Translator section below) is a SEPARATE debug surface: fixed-name
-  JSON snapshot files (`1_req_client.json` etc.) plus a captured-console-log
-  ring buffer, unrelated to the DB-backed request-details inspector above.
-
 ### Operator-facing semantics for (c)
 
 Enabling request-details observability (`ENABLE_REQUEST_LOGS=true` env, or
@@ -306,132 +292,10 @@ real rows instead of an empty/disabled response; disabling it stops new rows
 from being written but does not itself purge history (no route in this scope
 performs a delete/purge — not found in the routes read).
 
-## (d) Translator introspection
-
-**No route exposes registered translator pairs or direct routes.**
-`open-sse/translator/index.js` self-registers translators via `register(from, to, reqFn, resFn)` as an import side effect (`index.js:15-21` — confirms the
-CLAUDE.md-documented registration model). Grepped every import of
-`open-sse/translator/index.js` under `src/app/api`: only
-`translateRequest`/`translateResponse`/`initTranslators` are imported
-(`src/app/api/translator/translate/route.js:3`,
-`src/app/api/v1/responses/route.js:2`, `src/app/api/v1beta/models/[...path]/route.js`)
-— nothing imports or exposes the registration table itself. There is no
-`getRegisteredPairs`/`listTranslators`-shaped export in `translator/index.js`
-to expose even internally (only `register`, `translateRequest`,
-`translateResponse`, `needsT...` were seen in the export grep).
-
-The `/api/translator/*` routes below are a **devtools harness for manually
-driving one translation**, not an introspection API over the registry.
-
-### `POST /api/translator/translate` — `src/app/api/translator/translate/route.js:9`
-
-- Auth: `PROTECTED_API_PATHS` (`/api/translator` prefix) — 401 gate as above.
-- Body: `{ step, body }` (`route.js:11`). `step` and `body` both required —
-  `{ success: false, error: "Step and body required" }`, HTTP 400 if either
-  missing (`route.js:13-15`).
-- `step` is an integer 1-3 (`switch (step)`, `route.js:17`):
-  - `step === 1`: detects provider/model/format from a client-shaped body.
-    `clientBody = body.body || body` (`route.js:20`); calls
-    `getModelInfo(clientBody.model)` → `{ provider, model }`
-    (`route.js:21`); calls `detectFormat`/`getTargetFormat`
-    (`open-sse/services/provider.js`) to resolve source/target `FORMATS`.
-  - `step === 2` and `step === 3`: not fully re-read line-by-line (file is
-    90 lines; steps 2/3 span roughly lines 40-83) — they proceed to call
-    `translateRequest()` (`open-sse/translator/index.js`) and
-    `getExecutor()` (`open-sse/executors/index.js`) to actually run a live
-    translation/dispatch step. Treat step 2/3 as executing real
-    translation logic against real provider connections
-    (`getProviderConnections` from `@/lib/localDb.js` is imported), not a
-    dry-run/simulation — a frontend built against this route is driving
-    live translator code paths.
-  - Invalid `step` (outside 1-3, or falsy): `{ success: false, error: "Invalid step (1-3)" }`, HTTP 400 (`route.js:83-84`).
-- Catch-all error: `{ success: false, error: error.message }`, HTTP 500 (`route.js:86-88`).
-
-### `POST /api/translator/send` — `src/app/api/translator/send/route.js:1`
-
-Sends a fully-prepared request to a live provider executor and, on token
-refresh, persists new credentials back to the connection.
-
-- Imports `getExecutor` from `open-sse/index.js` (the whole engine entry,
-  not just the executors submodule) and
-  `getProviderConnections`/`getSettings`/`updateProviderConnection` from
-  `@/lib/localDb.js` — this route can both read AND write provider
-  connection credentials (`persistRefreshedCredentials()`,
-  `route.js:5-16`, updates `accessToken`/`refreshToken`/`idToken` when
-  `newCredentials` carries them).
-- Full request/response body shape for steps within `send` not exhaustively
-  re-read (94-line handler); the error-mapping tail is confirmed:
-  `error?.name === "AbortError"` → HTTP 499; `isConnectTimeoutError(error)`
-  (`open-sse/utils/responseHeaderTimeout.js`) → HTTP 502; else HTTP 500
-  (`route.js:106-111`). Error body: `{ success: false, error: error.message }`.
-
-### `GET /api/translator/load` — `src/app/api/translator/load/route.js:5`
-
-Reads one of a fixed set of on-disk JSON snapshot files used by the
-translator devtools UI to persist request/response state between steps.
-
-- Query param: `file` (required) — `{ success: false, error: "File parameter required" }`, HTTP 400 if missing (`route.js:8-12`).
-- `allowedFiles` allowlist (`route.js:15` onward — first entries confirmed
-  `1_req_client.json`, more follow per the numbered-step convention implied
-  by CLAUDE.md's 1/2/3-step translator flow; full list not exhaustively
-  transcribed past what was read). A `file` outside the allowlist is
-  rejected (exact rejection message/status not re-read past line 19 — the
-  comment marks this as the security boundary: "only allow specific
-  filenames").
-- Success: `{ success: true, content }` (`route.js:40`, file content read
-  via `fs`/`path`).
-- Error: `{ success: false, error: error.message }`, HTTP 500 (`route.js:41-44`).
-
-### `POST /api/translator/save` — `src/app/api/translator/save/route.js:1`
-
-Writes one of the same fixed-name JSON files.
-
-- Body: `{ file, content }` — `{ success: false, error: "File and content required" }`, HTTP 400 if `file` falsy or `content === undefined` (`route.js:7-11`).
-- Same `allowedFiles` allowlist pattern as `load` (`route.js:14` onward).
-- Success: `{ success: true }` (`route.js:39`).
-- Error: `{ success: false, error: error.message }`, HTTP 500 (`route.js:40-43`).
-
-### `GET /api/translator/console-logs` — `src/app/api/translator/console-logs/route.js:6`
-
-Snapshot read of a captured-console-log ring buffer (`@/lib/consoleLogBuffer`,
-`initConsoleLogCapture()` called at module load, `route.js:4`).
-
-- Returns `{ logs, revision }` from `getConsoleLogSnapshot()`
-  (`route.js:8`). ETag support: `W/"console-${revision}"`
-  (`route.js:9`); a matching `If-None-Match` request header yields a bare
-  304 with the same headers, no body (`route.js:12-14`). Headers:
-  `Cache-Control: no-store`, `ETag`.
-- A second handler in the same file clears the buffer
-  (`clearConsoleLogs()`) — method not fully re-read (file is 32 lines; the
-  clear handler's HTTP method was not confirmed, only its success/error
-  shape: `{ success: true }` / `{ success: false, error: error.message }`
-  HTTP 500, `route.js:26-30`).
-
-### `GET /api/translator/console-logs/stream` — `src/app/api/translator/console-logs/stream/route.js:7`
-
-SSE stream of live captured console output.
-
-- `export const dynamic = "force-dynamic"` (`route.js:3`).
-- Uses `getConsoleEmitter()` (`@/lib/consoleLogBuffer`) to push log lines as
-  they occur; internal `state` tracks `closed`/`send`/`sendLines`/
-  `sendClear`/`keepalive` with an idempotent `cleanup()` callable from
-  abort/cancel/enqueue-failure paths (`route.js:10-15`).
-- Response headers: `Content-Type: text/event-stream`,
-  `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`,
-  `X-Accel-Buffering: no` (`route.js:88-93`).
-- Exact SSE event/message shape not fully re-read (95-line file, the
-  send/keepalive body between lines 15-87 was not transcribed line-by-line).
-
 ## Files read
 
 - src/app/api/token-saver/stats/route.js
 - src/app/api/tool-disclosure/stats/route.js
-- src/app/api/translator/translate/route.js
-- src/app/api/translator/send/route.js
-- src/app/api/translator/load/route.js
-- src/app/api/translator/save/route.js
-- src/app/api/translator/console-logs/route.js
-- src/app/api/translator/console-logs/stream/route.js
 - src/app/api/settings/route.js
 - src/app/api/usage/logs/route.js
 - src/app/api/usage/request-logs/route.js
@@ -444,7 +308,6 @@ SSE stream of live captured console output.
 - src/lib/requestDetailsDb.js
 - src/lib/tokenSaver/events.js
 - src/lib/pxpipe/events.js
-- src/lib/consoleLogBuffer.js (export list only)
 - open-sse/rtk/index.js
 - open-sse/rtk/registry.js
 - open-sse/rtk/constants.js

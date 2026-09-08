@@ -4,6 +4,7 @@ import { Button, NativeSelect, Switch, TextInput } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { UNAVAILABLE_CONTROLS } from '@/lib/shaping/runtimeSupport';
 import { fmtNum } from '@/shared/format';
+import { Icon } from '@/shared/components/Icon';
 import { CONTROLS, CONTROL_GROUPS, configuredState, stageEvidence } from './controlCatalog';
 import { ControlEvidence, SignedBytes } from './ControlInventory';
 
@@ -15,7 +16,15 @@ const DESCRIPTIONS = {
   'Privacy and cache': 'Manage private terms and cache lifetime.',
 };
 
-export function TokenSavings({ settings, stageMap, recent, period, onPeriod, onToggle, onNavigate, renderThresholds, renderConfiguration, loading, unavailable, onRefresh, busy }) {
+const GROUP_ICONS = { 'Tool traffic': 'i-tools', History: 'i-context', Compression: 'i-shaping', Instructions: 'i-compatibility', 'Privacy and cache': 'i-access' };
+const EVERYDAY_CONTROLS = [
+  { key: 'rtkEnabled', description: 'Reduce repeated tool output before sending it to the model.' },
+  { key: 'memoryToolPruningEnabled', description: 'Shorten older tool results when context is tight. Keep recent work intact.' },
+  { key: 'cavemanEnabled', description: 'Ask for shorter replies using your saved response style.' },
+  { key: 'privacyFilterEnabled', description: 'Replace emails and saved private terms in requests; restore them in replies.' },
+];
+
+export function TokenSavings({ mode = 'everyday', settings, stageMap, recent, period, onPeriod, onToggle, onNavigate, renderThresholds, renderConfiguration, loading, unavailable, onRefresh, busy }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [category, setCategory] = useState('all');
@@ -33,6 +42,28 @@ export function TokenSavings({ settings, stageMap, recent, period, onPeriod, onT
     .filter(stage => stage.records !== null);
   const largest = Math.max(1, ...stages.filter(stage => stage.measured).map(stage => Math.abs(stage.delta)));
   function resetFilters() { setQuery(''); setCategory('all'); setFilter('all'); }
+
+  if (mode === 'everyday') return <section className="savings-everyday" aria-label="Everyday token savings">
+    <div className="savings-everyday-head"><div><h2>Everyday controls</h2><p>Choose what changes before a request reaches the model. Each switch saves separately.</p></div><Button variant="subtle" onClick={onRefresh} leftSection={<Icon name="i-refresh" />}>Refresh</Button></div>
+    {!settings ? <p className="shaping-empty" role="status">{loading ? 'Reading saved controls…' : 'Saved controls could not be read. Refresh to try again.'}</p> : null}
+    <div className="savings-everyday-rows">{EVERYDAY_CONTROLS.map(item => {
+      const control = CONTROLS.find(candidate => candidate.key === item.key);
+      const state = configuredState(settings, control);
+      return <article key={control.key} className="savings-everyday-row" data-savings-control={control.key}>
+        <Icon name={GROUP_ICONS[control.group]} />
+        <div><h3>{control.name}</h3><p>{item.description}</p></div>
+        <div className="savings-control-switch"><span className="shaping-state" data-state={state}>{state}</span><Switch aria-label={`Enable ${control.name}`} checked={state === 'On'} disabled={state === 'Unknown' || busy} onChange={event => onToggle(control, event.currentTarget.checked)} /></div>
+      </article>;
+    })}</div>
+    <p className="shaping-caption savings-everyday-note">Changes take effect on new requests after review. Saved settings and plan overrides determine which controls run.</p>
+    <section className="savings-group-overview" aria-label="Saved controls by group"><h2>Across all controls</h2><dl>{CONTROL_GROUPS.map(group => {
+      const members = CONTROLS.filter(control => control.group === group);
+      const unknown = members.some(control => configuredState(settings, control) === 'Unknown');
+      const enabled = members.filter(control => configuredState(settings, control) === 'On').length;
+      return <div key={group}><dt><Icon name={GROUP_ICONS[group]} />{group}</dt><dd>{unknown ? 'Not fully reported' : `${enabled} of ${members.length} on`}</dd></div>;
+    })}</dl>{unavailableOn.length ? <p role="status">{unavailableOn.length} enabled control has no connected runtime. Review it in Advanced.</p> : null}</section>
+    <div className="savings-everyday-footer"><Button variant="default" onClick={() => onNavigate('Advanced')}>All controls and limits</Button><Button variant="subtle" onClick={() => onNavigate('Recorded evidence')}>View recorded changes</Button><span className="shaping-caption">Advanced includes compression, limits, private terms and every saved control.</span></div>
+  </section>;
 
   return <section className="savings-overview" aria-label="Token savings control panel">
     <div className="savings-status-strip">

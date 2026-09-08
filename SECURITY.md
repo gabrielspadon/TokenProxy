@@ -160,15 +160,13 @@ about it rather than discover it.
 |---|---|---|
 | Usage analytics | Google Analytics, property `G-LC959F603F` | Dashboard pages only, and only while the Analytics setting is on. It is **off by default** and no event is sent until you turn it on (`src/app/layout.js`). |
 | Update check | `registry.npmjs.org` | On CLI start and when the dashboard renders its version badge. Sends the package name only (`cli/cli.js`, `src/app/api/version/route.js`). |
-| Tunnel broker | `abc-tunnel.us` | Only while the Cloudflare tunnel feature is enabled: registers the quick-tunnel URL and probes it for reachability (`src/lib/tunnel/cloudflare/`). |
-| Cloudflare tunnel | `api.cloudflare.com`, and the `cloudflared` binary download | Only when you enable the tunnel. |
-| Repository links | `github.com`, `raw.githubusercontent.com` | Documentation and changelog links you click, and the `cloudflared` release download. |
+| Repository links | `github.com`, `raw.githubusercontent.com` | Documentation and changelog links you click. |
 
 Nothing above carries prompts, responses, or provider credentials. Analytics
 covers dashboard page views, not `/v1` traffic.
 
 To run with no outbound calls of its own: leave Analytics off (the default),
-leave the tunnel off, and block `registry.npmjs.org` if you do not want the
+block `registry.npmjs.org` if you do not want the
 update check. Provider calls remain, since they are the point.
 
 ## Supported versions

@@ -99,7 +99,7 @@ export function RequestWorkbench() {
   return <div className={styles.workbench}>
     <div className="screen-head">
       <div className="page-title"><h1>Request workbench</h1><p className="screen-subtitle">Inspect a native gateway request, then send it deliberately.</p></div>
-      <Group gap="xs"><Button component={Link} href="/dashboard/translation" variant="default">Translation</Button><Button component={Link} href="/dashboard/compatibility" variant="default">Local compatibility</Button></Group>
+      <Group gap="xs"><Button component={Link} href="/dashboard/compatibility" variant="default">Local compatibility</Button></Group>
     </div>
     <div className={styles.scope}>
       <NativeSelect label="Gateway operation" data={operationGroups} value={operation.id} onChange={event => selectOperation(event.currentTarget.value)} />

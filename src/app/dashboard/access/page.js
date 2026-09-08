@@ -5,6 +5,7 @@ import { usePoll } from '@/shared/hooks/usePoll';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
+import { TaskNavigation, taskPanelClass } from '@/shared/components/TaskNavigation';
 import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
@@ -69,6 +70,7 @@ function Secret({ set }) {
 }
 
 export default function AccessPage() {
+  const [task, setTask] = useState('signin');
   const auth = usePoll('/api/auth/status', 15000);
   const settings = usePoll('/api/settings', 30000);
   const [open, setOpen] = useState(null);
@@ -327,18 +329,17 @@ export default function AccessPage() {
         <Freshness status={pollFresh(auth)} lastDataAt={auth.goodAt} />
       </div>
 
-      <nav className="access-summary" aria-label="Access control investigation">
-        <a href="#h-now">Current sign-in</a><a href="#h-password">Password</a><a href="#h-sso">Identity provider</a><Link href="/dashboard/keys">Client keys and access profiles</Link>
-      </nav>
+      <TaskNavigation label="Access tasks" value={task} onChange={setTask} items={[{ value: 'signin', label: 'Sign-in', icon: 'i-access' }, { value: 'sso', label: 'Single sign-on', icon: 'i-connections' }, { value: 'advanced', label: 'Advanced', icon: 'i-tune' }]} />
 
       {done ? <Notice tone="ok" title={done} /> : null}
+      {task !== 'signin' && auth.error ? <div role="status"><Notice {...refusal(auth.status, auth.error)} /><button type="button" className="button quiet" onClick={auth.refresh}>Retry sign-in status</button></div> : null}
 
-      <section aria-labelledby="h-now">
+      <section aria-labelledby="h-now" className={taskPanelClass} data-task-panel hidden={task !== 'signin'}>
         <h2 id="h-now">
           <Icon name="i-access" />
           How sign-in works now
         </h2>
-        {auth.error && !a ? <Notice {...refusal(auth.status, auth.error)} /> : null}
+        {auth.error ? <Notice {...refusal(auth.status, auth.error)} /> : null}
         {!a && auth.loading ? <p className="skeleton">Reading</p> : null}
         {a ? (
           <dl className="facts access-facts">
@@ -377,12 +378,12 @@ export default function AccessPage() {
           <Notice
             tone="bad"
             title="This installation is still on its default password."
-            next="Change it below. Until it changes, a correct sign-in from anywhere but this machine is refused, because the default is public knowledge."
+            next="Change it in the Password form. Until it changes, a correct sign-in from anywhere but this machine is refused, because the default is public knowledge."
           />
         ) : null}
       </section>
 
-      <section aria-labelledby="h-password">
+      <section aria-labelledby="h-password" className={taskPanelClass} data-task-panel hidden={task !== 'signin'}>
         <h2 id="h-password">
           <Icon name="i-keys" />
           Password
@@ -416,8 +417,8 @@ export default function AccessPage() {
         </form>
       </section>
 
-      <section aria-labelledby="h-sso">
-        <h2 id="h-sso">Single sign-on</h2>
+      <section aria-labelledby="h-sso" className={taskPanelClass} data-task-panel hidden={task !== 'sso'}>
+        <h2 id="h-sso">Single sign-on</h2><p className="caption">Connect your organization’s identity provider. Password sign-in needs no provider setup.</p>
         {settings.error && !s ? <Notice {...refusal(settings.status, settings.error)} /> : null}
         <fieldset className="segmented">
           <legend>Sign-in method</legend>
@@ -605,7 +606,7 @@ export default function AccessPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-open">
+      <section aria-labelledby="h-open" className={taskPanelClass} data-task-panel hidden={task !== 'advanced'}>
         <h2 id="h-open">
           <Icon name="i-lock" />
           What stays protected when sign-in is off
@@ -645,19 +646,6 @@ export default function AccessPage() {
               Keys
             </Link>
           </dd>
-          <dt>Sign-in over the remote transport</dt>
-          <dd>
-            {s ? (
-              <span className="status" data-tone={s.tunnelDashboardAccess ? 'warn' : 'ok'}>
-                {s.tunnelDashboardAccess ? 'Allowed' : 'Refused'}
-              </span>
-            ) : (
-              <span className="skeleton">Reading</span>
-            )}{' '}
-            <Link href="/dashboard/remote" prefetch={false}>
-              Remote
-            </Link>
-          </dd>
         </dl>
         <p className="caption">
           An inference key never reaches anything on this screen. A caller holding only one is told
@@ -679,7 +667,7 @@ export default function AccessPage() {
         </div>
       </section>
 
-      <section aria-labelledby="h-lockout">
+      <section aria-labelledby="h-lockout" className={taskPanelClass} data-task-panel hidden={task !== 'advanced'}>
         <h2 id="h-lockout">Lockout rules</h2>
         <p>
           Five wrong passwords from one address lock that address out. Each further lockout waits
