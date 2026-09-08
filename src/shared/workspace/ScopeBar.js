@@ -2,7 +2,6 @@
 import { useState } from 'react';
 import { ActionIcon, Button, Group, Modal, Select, Stack, Text, Tooltip } from '@mantine/core';
 import { DateTimePicker } from '@mantine/dates';
-import { useMediaQuery } from '@mantine/hooks';
 import { Icon } from '@/shared/components/Icon';
 import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
@@ -16,14 +15,12 @@ const PERIODS = [
   { value: 'custom', label: 'Custom UTC range' },
 ];
 const unique = (values) => [...new Set(values.filter(Boolean))];
-export function ScopeBar({ analysisActions = true }) {
+export function ScopeBar({ analysisActions = true, showRefresh = true }) {
   const { scope, setScope, snapshot, accounts, models, refresh } = useWorkspace();
   const [customOpen, setCustomOpen] = useState(false);
   const [start, setStart] = useState(null);
   const [end, setEnd] = useState(null);
   const [rangeError, setRangeError] = useState(null);
-  const compact = useMediaQuery('(max-width: 48em)');
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const openRange = () => {
     const fieldValue = (value) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString().slice(0, 19).replace('T', ' ') : null;
     setStart(fieldValue(scope.start));
@@ -80,19 +77,19 @@ export function ScopeBar({ analysisActions = true }) {
     setCustomOpen(false);
   };
   const populationFilters = <>
-    <Select className={compact ? undefined : styles.scopeSelect} label={compact ? 'Provider' : undefined}
+    <Select className={styles.scopeSelect}
       aria-label="Provider filter" placeholder="All providers" data={providers} value={scope.provider} searchable clearable
       onChange={(provider) => setScope({ provider, connectionId: null, model: null })} />
-    <Select className={compact ? undefined : styles.scopeSelect} label={compact ? 'Account' : undefined}
+    <Select className={styles.scopeSelect}
       aria-label="Account filter" placeholder="All accounts" data={accountOptions} value={scope.connectionId} searchable clearable
       onChange={(connectionId) => setScope({ connectionId })} />
-    <Select className={compact ? undefined : styles.scopeSelect} label={compact ? 'Model' : undefined}
+    <Select className={styles.scopeSelect}
       aria-label="Model filter" placeholder="All models" data={modelOptions} value={scope.model} searchable clearable
       onChange={(model) => setScope({ model })} />
   </>;
-  const filterCount = [scope.provider, scope.connectionId, scope.model].filter(Boolean).length;
   return (
-    <><div className={styles.scope} aria-label="Shared analysis scope">
+    <><div className={styles.scope} role="group" aria-label="Shared analysis scope">
+      <div className={styles.scopeFields}>
       <Select
         className={styles.periodSelect}
         aria-label="Time range"
@@ -102,7 +99,7 @@ export function ScopeBar({ analysisActions = true }) {
         allowDeselect={false}
       />
       {scope.period === 'custom' && <Button variant="subtle" onClick={openRange}>Edit range</Button>}
-      {compact ? <Button variant="default" onClick={() => setFiltersOpen(true)}>Filters{filterCount ? ` · ${filterCount}` : ''}</Button> : <><span className={styles.scopeSeparator} />{populationFilters}</>}
+      <span className={styles.scopeSeparator} />{populationFilters}
       {(scope.start || scope.provider || scope.model || scope.connectionId) && (
         <Button
           variant="subtle"
@@ -121,9 +118,11 @@ export function ScopeBar({ analysisActions = true }) {
           Clear
         </Button>
       )}
+      </div>
+      <div className={styles.scopeActions}>
       {analysisActions && <Investigations />}
       {analysisActions && <SelectionEvidence />}
-      <Tooltip label={snapshot ? 'Re-read the isolated snapshot' : 'Refresh observations'}>
+      {showRefresh && <Tooltip label={snapshot ? 'Re-read the isolated snapshot' : 'Refresh observations'}>
         <ActionIcon
           variant="default"
           size={36}
@@ -132,14 +131,8 @@ export function ScopeBar({ analysisActions = true }) {
         >
           <Icon name="i-refresh" />
         </ActionIcon>
-      </Tooltip>
-      {compact && filterCount > 0 && <Text size="sm" c="dimmed" w="100%">
-        {[scope.provider && providerIdentity(scope.provider).name, scope.connectionId && (accountOptions.find(item => item.value === scope.connectionId)?.label || scope.connectionId), scope.model].filter(Boolean).join(' · ')}
-      </Text>}
-      <Modal opened={compact && filtersOpen} onClose={() => setFiltersOpen(false)} title="Analysis population filters" centered>
-        <Stack>{populationFilters}<Text size="sm" c="dimmed">Changes apply immediately to the shared analytical population. The selected record remains inspectable even when excluded.</Text>
-          <Button onClick={() => setFiltersOpen(false)}>Return to analysis</Button></Stack>
-      </Modal>
+      </Tooltip>}
+      </div>
       <Modal
         opened={customOpen}
         onClose={() => setCustomOpen(false)}

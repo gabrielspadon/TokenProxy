@@ -12,9 +12,9 @@ import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
 import { ShapingWorkbench } from './Workbench';
 import { PlanOverrides } from './PlanOverrides';
 import { RuntimeSettings } from './RuntimeSettings';
-import { ControlInventory, SignedBytes } from './ControlInventory';
+import { SignedBytes } from './ControlInventory';
 import { TokenSavings } from './TokenSavings';
-import { CONTROLS, THRESHOLDS, controlScope, stageEvidence, thresholdPatch } from './controlCatalog';
+import { CONFIGURATION_FIELDS, CONTROLS, THRESHOLDS, configurationPatch, controlLabel, controlScope, stageEvidence } from './controlCatalog';
 import './styles.css';
 
 const SERVICE = {
@@ -53,7 +53,7 @@ const SERVICE = {
   },
 };
 
-const DEPTHS = ['Controls', 'Plan overrides', 'Recorded evidence', 'Profiles and comparison', 'Service'];
+const VIEWS = ['Controls', 'Plan overrides', 'Profiles and comparison', 'Services', 'Recorded evidence'];
 const REASONS = { epoch_boundary: 'Stable or unknown cache boundary', window_pressure: 'Below context-pressure threshold', no_backend: 'No compression sidecar', phantom: 'Reported reduction without corresponding body reduction' };
 function pollFresh(p) {
   if (p.loading) return 'connecting';
@@ -62,6 +62,7 @@ function pollFresh(p) {
   return 'live';
 }
 const numeric = value => Number.isFinite(value) ? fmtNum(value) : 'Not reported';
+const settingValue = value => value === null ? 'Runtime default' : value === undefined ? 'Not reported' : Array.isArray(value) ? value.join(', ') || 'None' : typeof value === 'number' ? fmtNum(value) : value;
 
 function ServiceDetails({ onAction, health }) {
   const status = usePoll('/api/pxpipe/status', 15000);
@@ -115,9 +116,7 @@ export default function ShapingPage() {
   const controls = usePoll('/api/admin/shaping', 30000);
   const [controlConsent, setControlConsent] = useState(false);
   const stats = usePoll('/api/token-saver/stats?timelineDays=30&recentLimit=100', 15000);
-  const [depth, setDepth] = useState('Controls');
-  const [view, setView] = useState('overview');
-  const [selectedControl, setSelectedControl] = useState(null);
+  const [view, setView] = useState('Controls');
   const [opened, setOpened] = useState(['Controls']);
   const [period, setPeriod] = useState('all');
   const [pending, setPendingState] = useState(null);
@@ -132,11 +131,9 @@ export default function ShapingPage() {
     setControlConsent(false);
     setPendingState(action?.body ? { ...action, expectedCurrent: controls.data?.currentHash, before: controls.data?.settings } : action);
   }
-  const stageMap = stats.data?.windows?.all?.stages || {};
   const chains = Object.entries(s?.comboStrategies || {}).filter(([, value]) => value && Object.hasOwn(value, 'tokenSaver')).map(([name, value]) => ({ name, value: value.tokenSaver }));
-  const patch = thresholdPatch(draft);
-  function navigate(next) { setDepth(next); setOpened(previous => previous.includes(next) ? previous : [...previous, next]); }
-  function advanced(next, key) { if (key) setSelectedControl(previous => ({ key, revision: (previous?.revision || 0) + 1 })); navigate(next); setView('advanced'); }
+  const patch = configurationPatch(draft);
+  function navigate(next) { setView(next); setOpened(previous => previous.includes(next) ? previous : [...previous, next]); }
   function close() { if (!busy) { setPending(null); setFailed(null); } }
   function toggle(control, on) {
     setFailed(null); setControlConsent(false);
@@ -158,13 +155,20 @@ export default function ShapingPage() {
       const verified = response.status !== 207 && verification.ok && verification.body?.currentHash === response.body?.afterHash && Object.entries(action.body).every(([key, value]) => JSON.stringify(verification.body?.settings?.[key]) === JSON.stringify(value));
       setNotice(verified ? { tone: 'ok', title: action.done } : { tone: 'warn', title: 'Save accepted; refreshed settings could not be confirmed.', children: 'Refresh the settings and inspect the control before making another change.' });
       settings.refresh(); controls.refresh(); setControlConsent(false);
-      if (verified && action.thresholds) setDraft({});
+      if (verified && action.configuration) setDraft({});
     } else { setNotice(observedHealth?.healthy === false ? { tone: 'warn', title: 'Operation finished, but the local self-test failed.', children: observedHealth.error } : { tone: 'ok', title: action.done }); setServiceRevision(value => value + 1); }
     setPending(null); setBusy(false);
   }
   function renderThresholds(stage) {
     const fields = THRESHOLDS.filter(field => field.stage === stage);
-    return fields.length ? <details className="shaping-technical"><summary>Edit this stage’s thresholds</summary><div className="shaping-form">{fields.map(field => <label key={field.key} className="field"><span>{field.name}</span><input className="input" type="number" inputMode="numeric" min={field.min} max={field.max} step="1" value={draft[field.key] ?? s?.[field.key] ?? ''} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value }))} /><span className="shaping-caption">{field.unit}</span></label>)}</div></details> : null;
+    return fields.length ? <div className="savings-thresholds" aria-label={`${CONTROLS.find(control => control.stage === stage)?.name} thresholds`}><div className="shaping-form">{fields.map(field => <label key={field.key} className="field"><span>{field.name}</span><div className="savings-threshold-input"><input className="input" name={field.key} type="number" inputMode="numeric" min={field.min} max={field.max} step="1" placeholder={field.nullable ? 'Default' : undefined} disabled={!s || busy || !!pending} value={draft[field.key] ?? s?.[field.key] ?? ''} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value }))} /><span className="shaping-caption">{field.unit}</span></div>{field.nullable ? <span className="shaping-caption">Blank inherits the runtime default.</span> : null}</label>)}</div></div> : null;
+  }
+  function renderConfiguration(control) {
+    const fields = CONFIGURATION_FIELDS.filter(field => field.control === control.key);
+    return fields.length ? <div className="savings-configuration">{fields.map(field => {
+      const value = draft[field.key] ?? s?.[field.key];
+      return <label key={field.key} className="field"><span>{field.name}</span>{field.list ? <><textarea className="input" name={field.key} rows={2} disabled={!s || busy || !!pending} value={Array.isArray(value) ? value.join('\n') : ''} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value === '' ? [] : event.target.value.split('\n') }))} /><span className="shaping-caption">One exact entry per line, up to 100 entries of 500 characters.</span></> : <select className="input" name={field.key} value={value ?? ''} disabled={!s || busy || !!pending} onChange={event => setDraft(previous => ({ ...previous, [field.key]: event.target.value }))}>{value == null ? <option value="">Not reported</option> : null}{field.options.map(option => <option key={option} value={option}>{option}</option>)}</select>}</label>;
+    })}</div> : null;
   }
   return <div className="shaping-page">
     <header className="shaping-page-head"><div><h1>Token savings</h1><p>Manage tool output, history and compression before requests reach the model.</p></div><div className="shaping-header-observations"><span><span className="shaping-caption">Settings</span><Freshness status={pollFresh(controls)} lastDataAt={controls.goodAt} /></span><span><span className="shaping-caption">Measurements</span><Freshness status={pollFresh(stats)} lastDataAt={stats.goodAt} /></span></div></header>
@@ -172,22 +176,18 @@ export default function ShapingPage() {
     {controls.error ? <Notice {...refusal(controls.status, controls.error)} /> : null}
     {stats.error ? <Notice {...refusal(stats.status, stats.error)} /> : null}
     {notice ? <div role="status"><Notice {...notice} /></div> : null}
-    <Tabs value={view} onChange={setView} keepMounted>
-    <Tabs.List aria-label="Token savings views"><Tabs.Tab value="overview">Overview</Tabs.Tab><Tabs.Tab value="advanced">Advanced</Tabs.Tab></Tabs.List>
-    <Tabs.Panel value="overview" pt="md"><TokenSavings settings={s} stageMap={stats.data?.windows?.[period]?.stages || {}} period={period} onPeriod={setPeriod} onToggle={toggle} onAdvanced={advanced} loading={controls.loading || stats.loading} unavailable={!!stats.error} busy={busy || !!pending} onRefresh={() => { settings.refresh(); controls.refresh(); stats.refresh(); }} /></Tabs.Panel>
-    <Tabs.Panel value="advanced" pt="md">
-    <nav className="shaping-depths" aria-label="Advanced savings views">{DEPTHS.map(item => <button type="button" key={item} aria-current={depth === item ? 'page' : undefined} onClick={() => navigate(item)}>{item}</button>)}</nav>
-    <div hidden={depth !== 'Controls'}>
-      {!s && controls.loading ? <p className="shaping-empty">Reading global settings.</p> : <ControlInventory key={selectedControl?.revision || 'inventory'} initialSelection={selectedControl?.key} settings={s} stageMap={stageMap} recent={stats.data?.recent || []} onToggle={toggle} renderThresholds={renderThresholds} onInvestigate={() => navigate('Profiles and comparison')} />}
+    <Tabs value={view} onChange={navigate} keepMounted>
+    <Tabs.List aria-label="Token savings views">{VIEWS.map(item => <Tabs.Tab key={item} value={item}>{item}</Tabs.Tab>)}</Tabs.List>
+    <Tabs.Panel value="Controls" pt="md">
+      <TokenSavings settings={s} stageMap={stats.data?.windows?.[period]?.stages || {}} recent={stats.data?.recent || []} period={period} onPeriod={setPeriod} onToggle={toggle} onNavigate={navigate} renderThresholds={renderThresholds} renderConfiguration={renderConfiguration} loading={controls.loading || stats.loading} unavailable={!!stats.error} busy={busy || !!pending} onRefresh={() => { settings.refresh(); controls.refresh(); stats.refresh(); }} />
       <details className="shaping-technical shaping-scope"><summary>Routing precedence and context-window policy</summary><p>Global settings are the baseline. The outermost routing-plan declaration wins; unspecified supported flags inherit global values. A plan can disable its 15 supported override flags; an explicit per-stage value wins over that plan gate. Privacy, disclosure, memory controls, content-change permissions and adaptive cache lifetime remain global.</p>{chains.length ? <ul className="shaping-observations">{chains.map(chain => <li key={chain.name}><code>{chain.name}</code><code>{JSON.stringify(chain.value)}</code></li>)}</ul> : <p>No routing-plan shaping override is configured.</p>}<p>Context-window overrides and cascade routing have separate settings and are outside shaping profiles.</p><div className="shaping-next"><Link href="/dashboard/models">Open model and plan settings</Link><Link href="/dashboard/model-context">Edit context-window overrides</Link></div></details>
-    </div>
-    {opened.includes('Recorded evidence') ? <div hidden={depth !== 'Recorded evidence'}><RecordedEvidence stats={stats} period={period} onPeriod={setPeriod} /></div> : null}
-    {opened.includes('Plan overrides') ? <div hidden={depth !== 'Plan overrides'}><PlanOverrides globalSettings={controls.data?.settings} onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /></div> : null}
-    {opened.includes('Profiles and comparison') ? <div hidden={depth !== 'Profiles and comparison'}><ShapingWorkbench onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /></div> : null}
-    {opened.includes('Service') ? <div hidden={depth !== 'Service'}><RuntimeSettings /><ServiceDetails key={serviceRevision} onAction={action => { setFailed(null); setPending(action); }} health={health} /></div> : null}
     </Tabs.Panel>
+    <Tabs.Panel value="Plan overrides" pt="md">{opened.includes('Plan overrides') ? <PlanOverrides globalSettings={controls.data?.settings} onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /> : null}</Tabs.Panel>
+    <Tabs.Panel value="Profiles and comparison" pt="md">{opened.includes('Profiles and comparison') ? <ShapingWorkbench onSettingsChanged={() => { settings.refresh(); controls.refresh(); }} /> : null}</Tabs.Panel>
+    <Tabs.Panel value="Services" pt="md">{opened.includes('Services') ? <><RuntimeSettings /><ServiceDetails key={serviceRevision} onAction={action => { setFailed(null); setPending(action); }} health={health} /></> : null}</Tabs.Panel>
+    <Tabs.Panel value="Recorded evidence" pt="md">{opened.includes('Recorded evidence') ? <RecordedEvidence stats={stats} period={period} onPeriod={setPeriod} /> : null}</Tabs.Panel>
     </Tabs>
-    {Object.keys(draft).length ? <div className="shaping-draft-bar"><span>{fmtNum(Object.keys(draft).length)} unsaved threshold changes</span>{!patch ? <span>Enter whole numbers within each field’s limits.</span> : null}<button type="button" className="button" disabled={!patch} onClick={() => { setFailed(null); setControlConsent(false); setPending({ title: 'Save threshold changes', verb: 'Save thresholds', changes: 'New requests use these global thresholds. In-flight requests retain their settings.', undo: 'Restore the previous numbers here.', body: patch, thresholds: true, done: 'Thresholds saved and verified after refresh.' }); }}>Review threshold changes</button><button type="button" className="button quiet" onClick={() => setDraft({})}>Discard</button></div> : null}
-    <Confirm open={!!pending} title={pending?.title} verb={pending?.verb} requires="A signed-in operator session on the gateway host." changes={pending?.changes} undo={pending?.undo} irreversible={pending?.irreversible} busy={busy} refusal={failed} onConfirm={run} onClose={close}>{pending?.body ? <Checkbox mt="md" mb="md" checked={controlConsent} onChange={event => setControlConsent(event.currentTarget.checked)} label="I have reviewed this change and consent to the enabled content-changing transformations. Existing saved controls remain in effect." /> : null}{pending?.layer ? <p>{pending.layer}</p> : null}{pending?.thresholds ? <dl className="shaping-control-facts">{Object.entries(pending.body).map(([key, value]) => <div key={key}><dt>{THRESHOLDS.find(field => field.key === key)?.name}</dt><dd>{numeric(s?.[key])} → {fmtNum(value)} {THRESHOLDS.find(field => field.key === key)?.unit}</dd></div>)}</dl> : null}</Confirm>
+    {Object.keys(draft).length ? <div className="shaping-draft-bar"><span>{fmtNum(Object.keys(draft).length)} unsaved control settings</span>{!patch ? <span>Use valid levels, whole numbers within each field’s limits, and at most 100 list entries of 500 characters.</span> : null}<button type="button" className="button" disabled={!patch || busy || !!pending} onClick={() => { setFailed(null); setControlConsent(false); setPending({ title: 'Save control settings', verb: 'Save settings', changes: 'New requests use these global settings. In-flight requests retain their settings.', undo: 'Restore the previous values here.', body: patch, configuration: true, done: 'Control settings saved and verified after refresh.' }); }}>Review setting changes</button><button type="button" className="button quiet" disabled={busy || !!pending} onClick={() => setDraft({})}>Discard</button></div> : null}
+    <Confirm open={!!pending} title={pending?.title} verb={pending?.verb} requires="A signed-in operator session on the gateway host." changes={pending?.changes} undo={pending?.undo} irreversible={pending?.irreversible} busy={busy} refusal={failed} onConfirm={run} onClose={close}>{pending?.body ? <Checkbox mt="md" mb="md" checked={controlConsent} onChange={event => setControlConsent(event.currentTarget.checked)} label="I have reviewed this change and consent to the enabled content-changing transformations. Existing saved controls remain in effect." /> : null}{pending?.layer ? <p>{pending.layer}</p> : null}{pending?.configuration ? <dl className="shaping-control-facts">{Object.entries(pending.body).map(([key, value]) => <div key={key}><dt>{controlLabel(key)}</dt><dd>{settingValue(pending.before?.[key])} → {settingValue(value)} {THRESHOLDS.find(field => field.key === key)?.unit}</dd></div>)}</dl> : null}</Confirm>
   </div>;
 }

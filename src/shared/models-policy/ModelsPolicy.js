@@ -80,7 +80,7 @@ function Validation({ result }) {
     </div>
   );
 }
-export function ModelsPolicy() {
+export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }) {
   const workspace = useWorkspace();
   const current = useResource('/api/admin/configuration', {
     onSnapshot: workspace.observeSnapshot,
@@ -94,6 +94,7 @@ export function ModelsPolicy() {
     [review, setReview] = useState(null),
     [historyKey, setHistoryKey] = useState(0);
   const [section, setSection] = useState('editor');
+  const [visitedSections, setVisitedSections] = useState(['editor']);
   const [discardTarget, setDiscardTarget] = useState(null);
   const [publicationUncertain, setPublicationUncertain] = useState(false);
   const [historyKind, setHistoryKind] = useState('drafts');
@@ -337,6 +338,18 @@ export function ModelsPolicy() {
           )}
         </div>
       )}
+      <Tabs value={section} onChange={value => { setSection(value); setVisitedSections(previous => previous.includes(value) ? previous : [...previous, value]); }} keepMounted={false} className={styles.pageTabs}>
+        <Tabs.List aria-label="Model configuration tasks">
+          <Tabs.Tab value="editor">Plans</Tabs.Tab>
+          {automaticRouting && <Tabs.Tab value="auto-routing">Automatic routing</Tabs.Tab>}
+          {catalogControls && <Tabs.Tab value="catalog">Catalog controls</Tabs.Tab>}
+          {catalogTools && <Tabs.Tab value="catalog-tools">Catalog tools</Tabs.Tab>}
+          <Tabs.Tab value="cascade">Solo chat cascade</Tabs.Tab>
+          <Tabs.Tab value="simulator">Offline account decision</Tabs.Tab>
+          <Tabs.Tab value="history">History and receipts</Tabs.Tab>
+          <Tabs.Tab value="transfer">Import and export</Tabs.Tab>
+        </Tabs.List>
+        <Tabs.Panel value="editor" keepMounted>
       <div className={styles.toolbar}>
         <Group gap="xs">
           <Badge variant="light" color={dirty ? 'orange' : 'teal'}>
@@ -387,15 +400,6 @@ export function ModelsPolicy() {
         </Alert>
       )}
       {!activeDocument && current.loading && <Text role="status">Reading active policy…</Text>}
-      <Tabs value={section} onChange={setSection} keepMounted={false}>
-        <Tabs.List>
-          <Tabs.Tab value="editor">Plan editor</Tabs.Tab>
-          <Tabs.Tab value="history">History and receipts</Tabs.Tab>
-          <Tabs.Tab value="simulator">Offline account decision</Tabs.Tab>
-          <Tabs.Tab value="cascade">Solo chat cascade</Tabs.Tab>
-          <Tabs.Tab value="transfer">Import and export</Tabs.Tab>
-        </Tabs.List>
-        <Tabs.Panel value="editor" keepMounted>
           {activeDocument && (
             <div className={styles.surface}>
               <PolicyEditor
@@ -438,8 +442,11 @@ export function ModelsPolicy() {
             }
           />
         </Tabs.Panel>
-        <Tabs.Panel value="cascade"><CascadePolicy /></Tabs.Panel>
-        <Tabs.Panel value="transfer"><PlanTransfer disabled={busy || dirty} onImported={(value) => { adopt(value); refreshHistory(); setNotice({ message: `Imported draft revision ${value.revision} stored and read back. Validate and review its differences before activation.` }); }} /></Tabs.Panel>
+        <Tabs.Panel value="auto-routing" keepMounted>{visitedSections.includes('auto-routing') && automaticRouting}</Tabs.Panel>
+        <Tabs.Panel value="catalog" keepMounted>{visitedSections.includes('catalog') && catalogControls}</Tabs.Panel>
+        <Tabs.Panel value="catalog-tools" keepMounted>{visitedSections.includes('catalog-tools') && catalogTools}</Tabs.Panel>
+        <Tabs.Panel value="cascade" keepMounted>{visitedSections.includes('cascade') && <CascadePolicy />}</Tabs.Panel>
+        <Tabs.Panel value="transfer" keepMounted>{visitedSections.includes('transfer') && <PlanTransfer disabled={busy || dirty} onImported={(value) => { adopt(value); refreshHistory(); setNotice({ message: `Imported draft revision ${value.revision} stored and read back. Validate and review its differences before activation.` }); }} />}</Tabs.Panel>
       </Tabs>
       <Modal
         opened={Boolean(review)}

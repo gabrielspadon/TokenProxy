@@ -6,14 +6,14 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TokenSavings } from '@/app/dashboard/shaping/TokenSavings';
 import { CONTROLS } from '@/app/dashboard/shaping/controlCatalog';
 
-let container, root, toggle, advanced, props;
+let container, root, toggle, navigate, props;
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   localStorage.clear();
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
-  toggle = vi.fn(); advanced = vi.fn();
-  props = { settings: Object.fromEntries(CONTROLS.map(control => [control.key, false])), stageMap: {}, period: 'all', onPeriod: vi.fn(), onToggle: toggle, onAdvanced: advanced, onRefresh: vi.fn() };
+  toggle = vi.fn(); navigate = vi.fn();
+  props = { settings: Object.fromEntries(CONTROLS.map(control => [control.key, false])), stageMap: {}, period: 'all', onPeriod: vi.fn(), onToggle: toggle, onNavigate: navigate, onRefresh: vi.fn() };
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 async function render() { await act(async () => root.render(<MantineProvider env="test"><TokenSavings {...props} /></MantineProvider>)); }
@@ -57,25 +57,28 @@ it('distinguishes measured zero, growth, reduction and absent byte coverage with
   expect(container.textContent).toContain('not billed token or cost savings');
 });
 
-it('filters the full catalog and opens matched categories, including initially hidden controls', async () => {
+it('filters the full catalog without requiring a category reveal or inspector', async () => {
   props.settings.linguaEnabled = true;
   await render();
   const select = container.querySelector('select');
   await act(async () => { select.value = 'on'; select.dispatchEvent(new Event('change', { bubbles: true })); });
   expect(container.querySelectorAll('[data-savings-control]')).toHaveLength(1);
   expect(card('linguaEnabled')).not.toBeNull();
-  expect(card('linguaEnabled').parentElement.hidden).toBe(false);
-  await act(async () => card('linguaEnabled').querySelector('button').click());
-  expect(advanced).toHaveBeenCalledWith('Controls', 'linguaEnabled');
+  expect(card('linguaEnabled').closest('[hidden]')).toBeNull();
+  await act(async () => card('linguaEnabled').querySelector('input').click());
+  expect(toggle).toHaveBeenCalledWith(expect.objectContaining({ key: 'linguaEnabled' }), false);
 });
 
-it('remembers category expansion and measurement visibility across remounts', async () => {
+it('shows every control directly and remembers only optional measurement visibility', async () => {
+  localStorage.setItem('tokenproxy.savings.categories', JSON.stringify([]));
   await render();
-  await act(async () => container.querySelector('[aria-label="Show History controls"]').click());
+  expect(container.querySelectorAll('[data-savings-control]')).toHaveLength(CONTROLS.length);
+  for (const control of CONTROLS) expect(card(control.key).querySelector('input').closest('details, [hidden]')).toBeNull();
+  expect(container.querySelector('details details')).toBeNull();
   await act(async () => button('Hide measurements').click());
   await act(async () => root.unmount()); root = createRoot(container); await render();
-  expect(container.querySelector('[aria-label="Hide History controls"]').getAttribute('aria-expanded')).toBe('true');
   expect(container.querySelector('#savings-byte-evidence').hidden).toBe(true);
+  expect(card('memoryCompactionEnabled').querySelector('input').closest('details, [hidden]')).toBeNull();
 });
 
 it('reports a failed measurement read without presenting an empty sample as zero savings', async () => {

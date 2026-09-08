@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ settings: {}, calls: [], reads: [], conflict: false, hash: 'a'.repeat(64) }));
+const state = vi.hoisted(() => ({ settings: {}, calls: [], reads: [], conflict: false, mismatch: false, hash: 'a'.repeat(64) }));
 vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => {
   state.reads.push(url);
   return { loading: false, data: url === '/api/admin/shaping' ? { settings: state.settings, currentHash: state.hash } : url === '/api/settings' ? state.settings : { windows: { all: { stages: {} } } }, goodAt: 1, refresh: vi.fn() };
@@ -15,12 +15,13 @@ vi.mock('@/shared/api', () => ({ call: async (url, options = {}) => {
     state.settings = { ...state.settings, ...options.body.patch }; state.hash = 'b'.repeat(64);
     return { ok: true, status: 200, body: { afterHash: state.hash } };
   }
-  return { ok: true, status: 200, body: { settings: state.settings, currentHash: state.hash } };
+  return { ok: true, status: 200, body: { settings: state.settings, currentHash: state.mismatch ? 'c'.repeat(64) : state.hash } };
 } }));
 vi.mock('@/app/dashboard/shaping/Workbench', () => ({ ShapingWorkbench: () => null }));
 vi.mock('@/app/dashboard/shaping/PlanOverrides', () => ({ PlanOverrides: () => null }));
 import ShapingPage from '@/app/dashboard/shaping/page';
-import { CONTROLS } from '@/app/dashboard/shaping/controlCatalog';
+import { CONFIGURATION_FIELDS, CONTROLS, THRESHOLDS } from '@/app/dashboard/shaping/controlCatalog';
+import { PROFILE_KEYS } from '@/lib/shaping/profile';
 let container, root;
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,14 +29,38 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
-  localStorage.clear(); state.calls = []; state.reads = []; state.conflict = false; state.hash = 'a'.repeat(64);
-  state.settings = Object.fromEntries(CONTROLS.map(control => [control.key, false]));
+  localStorage.clear(); state.calls = []; state.reads = []; state.conflict = false; state.mismatch = false; state.hash = 'a'.repeat(64);
+  state.settings = { ...Object.fromEntries(CONTROLS.map(control => [control.key, false])), ...Object.fromEntries(THRESHOLDS.map(field => [field.key, field.nullable ? null : field.min])), ...Object.fromEntries(CONFIGURATION_FIELDS.map(field => [field.key, field.list ? [] : 'full'])) };
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 async function render() { await act(async () => root.render(<MantineProvider env="test"><ShapingPage /></MantineProvider>)); }
 async function review() { await render(); await act(async () => container.querySelector('[data-savings-control="rtkEnabled"] input').click()); }
 async function submit() { await act(async () => container.querySelector('dialog form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))); }
+const button = text => [...container.querySelectorAll('button')].find(node => node.textContent === text);
+async function change(name, value) {
+  const input = container.querySelector(`[name="${name}"]`);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), 'value').set.call(input, value);
+    input.dispatchEvent(new Event(input.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+  });
+}
+
+it('exposes every persisted global field directly under one task tab bar', async () => {
+  await render();
+  expect([...container.querySelectorAll('[role="tab"]')].map(node => node.textContent)).toEqual(['Controls', 'Plan overrides', 'Profiles and comparison', 'Services', 'Recorded evidence']);
+  expect(container.querySelector('[role="tab"][aria-selected="true"]').textContent).toBe('Controls');
+  expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+  expect(new Set([...CONTROLS, ...THRESHOLDS, ...CONFIGURATION_FIELDS].map(field => field.key))).toEqual(new Set(PROFILE_KEYS));
+  for (const field of [...THRESHOLDS, ...CONFIGURATION_FIELDS]) {
+    const input = container.querySelector(`[name="${field.key}"]`);
+    expect(input, field.key).not.toBeNull();
+    expect(input.closest('details, [hidden], [data-hidden]'), field.key).toBeNull();
+    expect(input.disabled, field.key).toBe(false);
+    expect(container.querySelectorAll(`[name="${field.key}"]`)).toHaveLength(1);
+  }
+  expect(state.calls).toEqual([]);
+});
 
 it('opens the simple view without service calls and requires explicit consent before a save', async () => {
   await review();
@@ -68,4 +93,49 @@ it('retains a refused change and the saved off state after a settings conflict',
   expect(container.querySelector('dialog').open).toBe(true);
   expect(container.querySelector('dialog').textContent).toContain('Settings changed after this view was read');
   expect(container.querySelector('[data-savings-control="rtkEnabled"] input').checked).toBe(false);
+});
+
+it('edits thresholds, levels and lists directly, reviews once, and verifies the exact patch', async () => {
+  await render();
+  await change('pxpipeTimeoutMs', '12500');
+  await change('cavemanLevel', 'lite');
+  await change('privacyFilterTerms', 'private-one\nprivate-two');
+  expect(state.calls).toEqual([]);
+  await act(async () => button('Review setting changes').click());
+  expect(container.querySelector('dialog input[type="number"], dialog select, dialog textarea')).toBeNull();
+  expect(container.querySelector('dialog').textContent).toContain('12,500');
+  await act(async () => container.querySelector('dialog input[type="checkbox"]').click());
+  await submit();
+  expect(state.calls).toEqual([
+    { url: '/api/admin/shaping/controls', method: 'POST', body: { patch: { pxpipeTimeoutMs: 12500, cavemanLevel: 'lite', privacyFilterTerms: ['private-one', 'private-two'] }, expectedCurrent: 'a'.repeat(64), consent: [] } },
+    { url: '/api/admin/shaping' },
+  ]);
+  expect(container.textContent).toContain('Control settings saved and verified after refresh');
+  expect(container.querySelector('.shaping-draft-bar')).toBeNull();
+});
+
+it('preserves the draft when the separate readback hash cannot confirm persistence', async () => {
+  state.mismatch = true;
+  await render();
+  await change('memoryMaxToolTurnsKeepFull', '4');
+  await act(async () => button('Review setting changes').click());
+  await act(async () => container.querySelector('dialog input[type="checkbox"]').click());
+  await submit();
+  expect(container.textContent).toContain('Save accepted; refreshed settings could not be confirmed');
+  expect(container.querySelector('[name="memoryMaxToolTurnsKeepFull"]').value).toBe('4');
+  expect(container.querySelector('.shaping-draft-bar')).not.toBeNull();
+});
+
+it('retains the runtime-default timeout and validates numeric limits before review', async () => {
+  state.settings.headroomTimeoutMs = 15000;
+  await render();
+  await change('headroomTimeoutMs', '');
+  await change('pxpipeTimeoutMs', '600000');
+  expect(button('Review setting changes').disabled).toBe(true);
+  await change('pxpipeTimeoutMs', '15000');
+  await act(async () => button('Review setting changes').click());
+  expect(container.querySelector('dialog').textContent).toContain('Runtime default');
+  await act(async () => container.querySelector('dialog input[type="checkbox"]').click());
+  await submit();
+  expect(state.calls[0].body.patch).toEqual({ headroomTimeoutMs: null, pxpipeTimeoutMs: 15000 });
 });

@@ -36,12 +36,43 @@ export function mergeAccountControls(connections, rows) {
 export function accountControlState(account, now) {
   if (account.isActive === false) return 'Paused';
   if (getPausedWindow(account, now)) return 'Quota pause';
-  if (account.drain?.isDraining || account.isDraining) return 'Draining';
+  if (account.drain?.isDraining || account.isDraining || account.status === 'drained') return 'Draining';
   if (account.status === 'cooldown') return 'Cooldown';
   if (account.status === 'degraded') return 'Needs attention';
   if (account.status === 'unqualified') return 'Not checked';
   if (account.isActive === true) return 'Enabled';
   return 'Unknown';
+}
+
+export function accountControlEvidence(account, now) {
+  const paused = getPausedWindow(account, now);
+  const gates = [];
+  if (paused) gates.push(`Quota pause at ${paused.remainingPercentage}% remaining in ${paused.key} (threshold ${paused.threshold}%)`);
+  if (account.drain?.isDraining || account.isDraining || account.status === 'drained') gates.push('Local drain is on');
+  if (account.status === 'cooldown') gates.push('Recorded cooldown');
+  const health = account.status === 'healthy' ? 'Recorded status healthy'
+    : account.status === 'degraded' ? 'Recorded health needs attention'
+      : account.status === 'unqualified' ? 'Qualification not established' : 'Provider health unknown';
+  return { health, gates, observedAt: account.lastQualifiedAt || account.lastTestedAt };
+}
+
+export function accountWindowStale(window, now) {
+  const observedAt = Date.parse(window.observedAt);
+  return !Number.isFinite(observedAt) || observedAt > now || now - observedAt > 900000 || Date.parse(window.resetAt) <= now;
+}
+
+export function sortAccountControls(accounts, sort, now) {
+  const name = account => String(account.displayName || account.name || accountControlId(account));
+  const compareName = (a, b) => name(a).localeCompare(name(b)) || String(a.provider || '').localeCompare(String(b.provider || '')) || accountControlId(a).localeCompare(accountControlId(b));
+  const metric = account => {
+    const windows = accountWindows(account).filter(window => !window.unlimited && !accountWindowStale(window, now));
+    const values = windows.map(window => sort === 'reset' ? Date.parse(window.resetAt) : window.remaining)
+      .filter(value => typeof value === 'number' && Number.isFinite(value) && (sort !== 'reset' || value > now));
+    return values.length ? Math.min(...values) : Infinity;
+  };
+  if (sort === 'name') return [...accounts].sort(compareName);
+  const values = new Map(accounts.map(account => [accountControlId(account), metric(account)]));
+  return [...accounts].sort((a, b) => (values.get(accountControlId(a)) - values.get(accountControlId(b))) || compareName(a, b));
 }
 
 export function accountWindowTime(value, now, reset = false) {
@@ -57,6 +88,42 @@ export function accountLimitsPatch(priority, thresholds) {
   if (String(priority).trim() === '' || !Number.isSafeInteger(Number(priority)) || Number(priority) < 1) return null;
   if (Object.values(thresholds).some(value => String(value).trim() === '' || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) return null;
   return { priority: Number(priority), quotaPauseThresholds: Object.fromEntries(Object.entries(thresholds).map(([key, value]) => [key, Number(value)])) };
+}
+
+export function accountControlBaseline(connection, id) {
+  if (typeof id !== 'string' || !id || !connection || connection.id !== id || typeof connection.isActive !== 'boolean'
+    || connection.priority != null && (!Number.isSafeInteger(connection.priority) || connection.priority < 1)) return null;
+  const thresholds = connection.quotaPauseThresholds ?? {};
+  if (typeof thresholds !== 'object' || Array.isArray(thresholds)
+    || Object.values(thresholds).some(value => percentage(value) === null)) return null;
+  return { id, ...captureAccountControls(connection) };
+}
+
+export const sameAccountControls = (a, b) => JSON.stringify(captureAccountControls(a)) === JSON.stringify(captureAccountControls(b));
+
+export function makeAccountDraft(before, windows) {
+  return { before, priority: before.priority ?? '', thresholds: { ...Object.fromEntries(windows.map(window => [window.key, 0])), ...before.quotaPauseThresholds } };
+}
+
+function changedDraftFields(draft) {
+  const equal = (value, expected) => value !== '' && Number(value) === expected;
+  const priority = draft.before.priority === null ? draft.priority !== '' : !equal(draft.priority, draft.before.priority);
+  const keys = [...new Set([...Object.keys(draft.before.quotaPauseThresholds), ...Object.keys(draft.thresholds)])];
+  return { priority, thresholds: keys.filter(key => !equal(draft.thresholds[key] ?? 0, draft.before.quotaPauseThresholds[key] ?? 0)) };
+}
+
+export function accountDraftState(draft) {
+  const changed = changedDraftFields(draft);
+  const dirty = changed.priority || changed.thresholds.length > 0;
+  const valid = accountLimitsPatch(changed.priority ? draft.priority : 1, draft.thresholds);
+  return { dirty, patch: valid ? { ...(changed.priority ? { priority: valid.priority } : {}), ...(changed.thresholds.length ? { quotaPauseThresholds: valid.quotaPauseThresholds } : {}) } : null };
+}
+
+export function rebaseAccountDraft(draft, before, windows) {
+  const changed = changedDraftFields(draft);
+  const current = makeAccountDraft(before, windows);
+  return { ...current, priority: changed.priority ? draft.priority : current.priority,
+    thresholds: { ...current.thresholds, ...Object.fromEntries(changed.thresholds.map(key => [key, draft.thresholds[key] ?? 0])) } };
 }
 
 const failure = (body, status) => typeof body?.error === 'string' ? body.error : body?.error?.message || `Account settings unavailable (${status})`;

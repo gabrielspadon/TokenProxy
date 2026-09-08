@@ -21,6 +21,12 @@ const EMPTY_OIDC = {
   oidcLoginLabel: '',
 };
 const EMPTY_SAML = { samlEntryPoint: '', samlIssuer: '', samlCert: '', samlLoginLabel: '', samlAttributeName: '', samlAttributeEmail: '' };
+const SSO_LABELS = {
+  oidcIssuerUrl: 'Provider address', oidcClientId: 'Client identity', oidcClientSecret: 'Client secret',
+  oidcScopes: 'Requested scopes', oidcLoginLabel: 'Sign-in label', samlEntryPoint: 'Provider address',
+  samlIssuer: 'Gateway identity', samlCert: 'Signing certificate', samlLoginLabel: 'Sign-in label',
+  samlAttributeName: 'Display-name attribute', samlAttributeEmail: 'Email attribute',
+};
 
 function pollFresh(p) {
   if (p.loading) return 'connecting';
@@ -66,17 +72,21 @@ export default function AccessPage() {
   const auth = usePoll('/api/auth/status', 15000);
   const settings = usePoll('/api/settings', 30000);
   const [open, setOpen] = useState(null);
+  const [review, setReview] = useState(null);
+  const [verifiedSettings, setVerifiedSettings] = useState(null);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState(null);
   const [done, setDone] = useState(null);
   const [pw, setPw] = useState(EMPTY_PASSWORD);
-  const [oidc, setOidc] = useState(EMPTY_OIDC);
-  const [saml, setSaml] = useState(EMPTY_SAML);
+  const [oidcDraft, setOidc] = useState(null);
+  const [samlDraft, setSaml] = useState(null);
   const [method, setMethod] = useState(null);
   const [probe, setProbe] = useState(null);
 
   const a = auth.data;
-  const s = settings.data;
+  const s = verifiedSettings?.source === settings.data ? verifiedSettings.data : settings.data;
+  const oidc = oidcDraft ?? Object.fromEntries(Object.keys(EMPTY_OIDC).map(key => [key, key === 'oidcClientSecret' ? '' : s?.[key] || '']));
+  const saml = samlDraft ?? Object.fromEntries(Object.keys(EMPTY_SAML).map(key => [key, key === 'samlCert' ? '' : s?.[key] || '']));
   const federated = a?.authMode === 'sso' || a?.authMode === 'oidc' || a?.authMode === 'saml';
   const protocol = federated ? a?.ssoType || 'oidc' : 'password';
   const chosen = method ?? protocol;
@@ -85,12 +95,13 @@ export default function AccessPage() {
   // Every secret this screen holds is write-only, so the fields empty the moment
   // a submit is answered, refused or not. Nothing typed here survives the reply.
   const forget = () => {
+    setReview(null);
     setPw(EMPTY_PASSWORD);
-    setOidc(current => ({ ...current, oidcClientSecret: '' }));
-    setSaml(current => ({ ...current, samlCert: '' }));
+    setOidc(current => current ? { ...current, oidcClientSecret: '' } : null);
+    setSaml(current => current ? { ...current, samlCert: '' } : null);
   };
   useEffect(() => {
-    const clear = () => { if (document.hidden) { setPw(EMPTY_PASSWORD); setOidc(current => ({ ...current, oidcClientSecret: '' })); setSaml(current => ({ ...current, samlCert: '' })); } };
+    const clear = () => { if (document.hidden) { setReview(null); setPw(EMPTY_PASSWORD); setOidc(current => current ? { ...current, oidcClientSecret: '' } : null); setSaml(current => current ? { ...current, samlCert: '' } : null); } };
     document.addEventListener('visibilitychange', clear);
     return () => document.removeEventListener('visibilitychange', clear);
   }, []);
@@ -121,6 +132,9 @@ export default function AccessPage() {
         setFailure({ tone: 'warn', title: 'The setting was accepted; refreshed state was not verified.', next: 'Close and refresh before making another change. Do not repeat the mutation.' });
         return;
       }
+      setVerifiedSettings({ data: readback.body, source: settings.data });
+      if (Object.keys(body).some(key => key.startsWith('oidc'))) setOidc(null);
+      if (Object.keys(body).some(key => key.startsWith('saml'))) setSaml(null);
       setBusy(false);
     }
     setOpen(null);
@@ -168,6 +182,143 @@ export default function AccessPage() {
   };
 
   const mismatch = pw.next !== '' && pw.repeat !== '' && pw.next !== pw.repeat;
+  const passwordFields = (<div className="access-fields">
+          {a?.hasPassword ? (
+            <label className="field">
+              <span>Current password</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={pw.current}
+                onChange={(e) => setPw({ ...pw, current: e.target.value })}
+                required
+              />
+            </label>
+          ) : null}
+          <label className="field">
+            <span>New password</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={pw.next}
+              onChange={(e) => setPw({ ...pw, next: e.target.value })}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>New password again</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={pw.repeat}
+              onChange={(e) => setPw({ ...pw, repeat: e.target.value })}
+              required
+            />
+          </label>
+          {mismatch ? (
+            <Notice
+              tone="warn"
+              title="The two new passwords are not the same."
+              next="Type the same password twice, so a typo cannot lock you out."
+            />
+          ) : null}
+        </div>);
+  const ssoFields = (<div className="access-fields">
+          {chosen === 'saml' ? (
+            <>
+              <label className="field">
+                <span>Provider address</span>
+                <input
+                  className="input"
+                  type="url"
+                  value={saml.samlEntryPoint}
+                  onChange={(e) => setSaml({ ...saml, samlEntryPoint: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Our identity to the provider</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={saml.samlIssuer}
+                  onChange={(e) => setSaml({ ...saml, samlIssuer: e.target.value })}
+                />
+              </label>
+              {['samlAttributeName', 'samlAttributeEmail'].map(key => <label className="field" key={key}><span>{key === 'samlAttributeName' ? 'Display-name attribute' : 'Email attribute'}</span><input className="input" value={saml[key]} onChange={event => setSaml({ ...saml, [key]: event.currentTarget.value })} /></label>)}
+              <label className="field">
+                <span>Signing certificate</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={saml.samlCert}
+                  onChange={(e) => setSaml({ ...saml, samlCert: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Label on the sign-in action</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={saml.samlLoginLabel}
+                  onChange={(e) => setSaml({ ...saml, samlLoginLabel: e.target.value })}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="field">
+                <span>Provider address</span>
+                <input
+                  className="input"
+                  type="url"
+                  value={oidc.oidcIssuerUrl}
+                  onChange={(e) => setOidc({ ...oidc, oidcIssuerUrl: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Client identity</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={oidc.oidcClientId}
+                  onChange={(e) => setOidc({ ...oidc, oidcClientId: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Client secret</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={oidc.oidcClientSecret}
+                  onChange={(e) => setOidc({ ...oidc, oidcClientSecret: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Requested scopes</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={oidc.oidcScopes}
+                  onChange={(e) => setOidc({ ...oidc, oidcScopes: e.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>Label on the sign-in action</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={oidc.oidcLoginLabel}
+                  onChange={(e) => setOidc({ ...oidc, oidcLoginLabel: e.target.value })}
+                />
+              </label>
+            </>
+          )}
+        </div>);
 
   return (
     <>
@@ -243,14 +394,18 @@ export default function AccessPage() {
           <dd>{a?.passwordSource === 'stored' ? 'Stored password' : a?.passwordSource === 'environment' ? 'Process configuration' : a?.passwordSource === 'default' ? 'Built-in default' : 'Not reported'}</dd>
         </dl>
         <p className="caption">A stored password is never readable back, here or anywhere else.</p>
+        <form onSubmit={event => {
+          event.preventDefault();
+          if (busy || !a || !pw.next || pw.next !== pw.repeat || (a.hasPassword && !pw.current)) return;
+          setReview({ kind: 'password', body: { currentPassword: pw.current, newPassword: pw.next } });
+          setOpen('password');
+        }}>
+        {passwordFields}
         <div className="access-actions">
           <button
-            type="button"
+            type="submit"
             className="button"
-            onClick={() => {
-              setPw(EMPTY_PASSWORD);
-              setOpen('password');
-            }}
+            disabled={busy || !a || !pw.next || pw.next !== pw.repeat || (a.hasPassword && !pw.current)}
           >
             Change password
           </button>
@@ -258,6 +413,7 @@ export default function AccessPage() {
             Clear stored password
           </button>
         </div>
+        </form>
       </section>
 
       <section aria-labelledby="h-sso">
@@ -407,18 +563,22 @@ export default function AccessPage() {
         )}
 
         {chosen !== 'password' ? (
-          <>
+          <form onSubmit={event => {
+            event.preventDefault();
+            if (busy || !s) return;
+            const body = chosen === 'saml' ? Object.fromEntries(Object.entries(saml).filter(([key, value]) => key !== 'samlCert' || value.trim())) : { ...oidc };
+            setReview({ kind: 'sso', protocol: chosen, body });
+            setOpen('sso');
+          }}>
+            {ssoFields}
+            <p className="caption">Empty secret or certificate fields preserve stored values. Review before applying; a saved configuration does not establish a successful sign-in.</p>
             <div className="access-actions">
               <button
-                type="button"
+                type="submit"
                 className="button"
-                onClick={() => {
-                  setOidc(Object.fromEntries(Object.keys(EMPTY_OIDC).map(key => [key, key === 'oidcClientSecret' ? '' : s?.[key] || ''])));
-                  setSaml(Object.fromEntries(Object.keys(EMPTY_SAML).map(key => [key, key === 'samlCert' ? '' : s?.[key] || ''])));
-                  setOpen('sso');
-                }}
+                disabled={busy || !s}
               >
-                Configure
+                Review configuration
               </button>
               <button type="button" className="button quiet" onClick={test} disabled={busy}>
                 Test without saving
@@ -441,7 +601,7 @@ export default function AccessPage() {
                 : 'This reads provider discovery and checks stored client credentials when available. It does not complete sign-in.'}
               {' '}Nothing is saved. A stored client secret cannot be cleared from here, only replaced.
             </p>
-          </>
+          </form>
         ) : null}
       </section>
 
@@ -551,7 +711,7 @@ export default function AccessPage() {
         open={open === 'password'}
         title="Change password"
         verb="Change password"
-        busy={busy}
+        busy={busy || review?.kind !== 'password'}
         refusal={failure}
         requires={
           a?.hasPassword
@@ -563,59 +723,15 @@ export default function AccessPage() {
         irreversible
         onClose={close}
         onConfirm={() => {
-          if (!mismatch && pw.next)
+          if (review?.kind === 'password')
             run(
               '/api/settings',
-              { currentPassword: pw.current, newPassword: pw.next },
+              review.body,
               'PATCH',
               'Password changed.'
             );
         }}
       >
-        <div className="access-fields">
-          {a?.hasPassword ? (
-            <label className="field">
-              <span>Current password</span>
-              <input
-                className="input"
-                type="password"
-                autoComplete="current-password"
-                value={pw.current}
-                onChange={(e) => setPw({ ...pw, current: e.target.value })}
-                required
-              />
-            </label>
-          ) : null}
-          <label className="field">
-            <span>New password</span>
-            <input
-              className="input"
-              type="password"
-              autoComplete="new-password"
-              value={pw.next}
-              onChange={(e) => setPw({ ...pw, next: e.target.value })}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>New password again</span>
-            <input
-              className="input"
-              type="password"
-              autoComplete="new-password"
-              value={pw.repeat}
-              onChange={(e) => setPw({ ...pw, repeat: e.target.value })}
-              required
-            />
-          </label>
-          {mismatch ? (
-            <Notice
-              tone="warn"
-              title="The two new passwords are not the same."
-              next="Type the same password twice, so a typo cannot lock you out."
-            />
-          ) : null}
-        </div>
       </Confirm>
 
       <Confirm
@@ -699,7 +815,7 @@ export default function AccessPage() {
         open={open === 'sso'}
         title="Configure single sign-on"
         verb="Save configuration"
-        busy={busy}
+        busy={busy || review?.kind !== 'sso'}
         refusal={failure}
         requires="A session, and the values the identity provider issued for this gateway."
         changes="Stores the identity-provider configuration for subsequent sign-ins. Empty secret and certificate fields preserve stored values. This does not test sign-in completion."
@@ -707,102 +823,13 @@ export default function AccessPage() {
         irreversible={false}
         onClose={close}
         onConfirm={() =>
-          run('/api/settings', chosen === 'saml' ? Object.fromEntries(Object.entries(saml).filter(([key, value]) => key !== 'samlCert' || value.trim())) : oidc, 'PATCH', 'Single sign-on configuration saved and read back. Sign-in has not been tested.')
+          review?.kind === 'sso' && run('/api/settings', review.body, 'PATCH', 'Single sign-on configuration saved and read back. Sign-in has not been tested.')
         }
       >
-        <div className="access-fields">
-          {chosen === 'saml' ? (
-            <>
-              <label className="field">
-                <span>Provider address</span>
-                <input
-                  className="input"
-                  type="url"
-                  value={saml.samlEntryPoint}
-                  onChange={(e) => setSaml({ ...saml, samlEntryPoint: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Our identity to the provider</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={saml.samlIssuer}
-                  onChange={(e) => setSaml({ ...saml, samlIssuer: e.target.value })}
-                />
-              </label>
-              {['samlAttributeName', 'samlAttributeEmail'].map(key => <label className="field" key={key}><span>{key === 'samlAttributeName' ? 'Display-name attribute' : 'Email attribute'}</span><input className="input" value={saml[key]} onChange={event => { const value = event.currentTarget.value; setSaml(current => ({ ...current, [key]: value })); }} /></label>)}
-              <label className="field">
-                <span>Signing certificate</span>
-                <input
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={saml.samlCert}
-                  onChange={(e) => setSaml({ ...saml, samlCert: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Label on the sign-in action</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={saml.samlLoginLabel}
-                  onChange={(e) => setSaml({ ...saml, samlLoginLabel: e.target.value })}
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              <label className="field">
-                <span>Provider address</span>
-                <input
-                  className="input"
-                  type="url"
-                  value={oidc.oidcIssuerUrl}
-                  onChange={(e) => setOidc({ ...oidc, oidcIssuerUrl: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Client identity</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={oidc.oidcClientId}
-                  onChange={(e) => setOidc({ ...oidc, oidcClientId: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Client secret</span>
-                <input
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={oidc.oidcClientSecret}
-                  onChange={(e) => setOidc({ ...oidc, oidcClientSecret: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Requested scopes</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={oidc.oidcScopes}
-                  onChange={(e) => setOidc({ ...oidc, oidcScopes: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Label on the sign-in action</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={oidc.oidcLoginLabel}
-                  onChange={(e) => setOidc({ ...oidc, oidcLoginLabel: e.target.value })}
-                />
-              </label>
-            </>
-          )}
-        </div>
+        {review?.kind === 'sso' ? <dl className="facts">
+          <dt>Protocol</dt><dd>{review.protocol.toUpperCase()}</dd>
+          {Object.entries(review.body).map(([key, value]) => <div key={key} className="access-review-entry"><dt>{SSO_LABELS[key]}</dt><dd>{key === 'oidcClientSecret' || key === 'samlCert' ? (value ? 'Replacement supplied, value hidden' : 'Preserve stored value') : value || 'Empty'}</dd></div>)}
+        </dl> : null}
       </Confirm>
 
       <Confirm

@@ -55,7 +55,6 @@ export function ContextInspector({ turn, detail, accounts = [], baseline, onBase
       </section>
       <section className={styles.stageSection}><h3>Shaping sequence <span>{turn.stages?.length ?? 0} recorded boundaries</span></h3><StageLedger stages={turn.stages} /></section>
       <section className={styles.measurementSection}><h3>Request evidence <Badge variant="light" color={turn.usageSource === 'provider' ? 'teal' : 'gray'} size="sm">{source}</Badge></h3>
-        <details className={styles.requestDetails}><summary>Identity, timing and all recorded measurements</summary>
         <Facts rows={[
           ['Time · UTC', utc(turn.timestamp)], ['Recorded state', turn.status === 'pending' ? 'Pending / incomplete' : turn.status],
           ['Physical request', turn.id], ['Context session', turn.contextSessionId ?? detail.session?.id], ['Dispatch coverage', turn.dispatchCoverage], ['Logical request', turn.logicalRequestId], ['Upstream attempt', quantity(turn.attempt)],
@@ -72,7 +71,7 @@ export function ContextInspector({ turn, detail, accounts = [], baseline, onBase
           ['Body before / after', `${quantity(turn.bodyBeforeBytes)} / ${quantity(turn.bodyAfterBytes)} B`],
           ['Net body change', signedBytes(finite(turn.savedBytes) ? -turn.savedBytes : null)],
           ['Recorded latency / first token', `${quantity(turn.latencyMs)} / ${quantity(turn.ttftMs)} ms`],
-        ]} /></details>
+        ]} />
         <ContextCostEvidence records={turn.costRecords} onInspect={onEconomics} />
         {turn.compactHint && <p className={styles.caution}>A prefix discontinuity was observed. This is not proof of client compaction.</p>}
         <p className={styles.footnote}>{IDENTITY[detail.session?.identitySource] || 'Identity source unknown'}. {IDENTITY_NOTE[detail.session?.identitySource] || 'No distinct agent identity is asserted.'}</p>

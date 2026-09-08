@@ -1,7 +1,7 @@
 'use client';
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Alert, Badge, Button, Group, Loader, Select, TextInput, UnstyledButton } from '@mantine/core';
+import { Alert, Badge, Button, Group, Loader, Select, Tabs, TextInput, UnstyledButton } from '@mantine/core';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
@@ -81,14 +81,23 @@ function NoContext({ data, snapshot }) {
 }
 export function ContextWorkspace() {
   const workspace = useWorkspace();
+  const [task, setTask] = useState('sessions'), [historyVisited, setHistoryVisited] = useState(false), [historyRevision, setHistoryRevision] = useState(0);
   const identity = workspace.contextView.baseline;
   const resource = useResource(identity ? contextUrl({}, {sessionId:identity.sessionId,requestId:identity.id}) : null, {onSnapshot:workspace.observeSnapshot});
   const baseline = identity ? {identity,turn:resource.data?.turns?.find((row)=>String(row.id)===identity.id && Number(row.contextSessionId)===identity.sessionId),
     loading:resource.loading,error:resource.error,refresh:resource.refresh,receivedAt:resource.data?.freshness?.snapshotCompletedAt || resource.receivedAt} : null;
   const setBaseline = (turn) => workspace.setContextView({baseline:turn ? {id:String(turn.id),sessionId:turn.contextSessionId ?? workspace.contextView.sessionId} : null});
-  return <ContextScope key={contextUrl(workspace.scope)} workspace={workspace} baseline={baseline} setBaseline={setBaseline} />;
+  return <div className={`${shared.lensViewport} ${styles.viewport}`}>
+    <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Token savings</Button></div>
+    <ScopeBar />
+    <Tabs className={styles.tasks} value={task} onChange={value => { setTask(value); if (value === 'history') setHistoryVisited(true); }}>
+      <Tabs.List aria-label="Context tasks"><Tabs.Tab value="sessions">Session tracks</Tabs.Tab><Tabs.Tab value="history">History policy</Tabs.Tab></Tabs.List>
+      <Tabs.Panel value="sessions" className={styles.tracePanel}><ContextScope key={contextUrl(workspace.scope)} workspace={workspace} baseline={baseline} setBaseline={setBaseline} historyRevision={historyRevision} active={task === 'sessions'} /></Tabs.Panel>
+      <Tabs.Panel value="history" className={styles.historyPanel}>{historyVisited && <HistoryRetention onSaved={() => setHistoryRevision(value => value + 1)} />}</Tabs.Panel>
+    </Tabs>
+  </div>;
 }
-function ContextScope({ workspace, baseline, setBaseline }) {
+function ContextScope({ workspace, baseline, setBaseline, historyRevision, active }) {
   const { scope, setScope, accounts, snapshot, observeSnapshot, contextView, setContextView, selectedRecord, setSelectedRecord } = workspace;
   const [page, setPage] = useState(1);
   const [showReports,setShowReports] = useState(false);
@@ -109,6 +118,13 @@ function ContextScope({ workspace, baseline, setBaseline }) {
   const turns = detail.data?.turns || EMPTY;
   const pageTurn = turns.find((turn) => String(turn.id) === String(turnId));
   const exact = useResource(turnId && selectedSessionId && !pageTurn ? contextUrl({}, { sessionId: selectedSessionId, requestId: turnId }) : null, { onSnapshot: observeSnapshot });
+  const previousHistory = useRef(historyRevision);
+  const refreshHistoryOverview = overview.refresh, refreshHistoryDetail = detail.refresh, refreshHistoryExact = exact.refresh;
+  useEffect(() => {
+    if (previousHistory.current === historyRevision) return;
+    previousHistory.current = historyRevision;
+    refreshHistoryOverview(); refreshHistoryDetail(); refreshHistoryExact();
+  }, [historyRevision, refreshHistoryOverview, refreshHistoryDetail, refreshHistoryExact]);
   const selectedTurn = pageTurn || exact.data?.turns?.find(turn=>String(turn.id)===String(turnId) && Number(turn.contextSessionId)===selectedSessionId);
   const selectedDetail = pageTurn ? detail.data : exact.data;
   const setTurnId = useCallback((id) => {
@@ -133,16 +149,15 @@ function ContextScope({ workspace, baseline, setBaseline }) {
   const focusInterval = (next) => { if (selectedSessionId) setSessionId(selectedSessionId); setScope(next); };
   const recordingStart = utc(data?.recordingStartedAt);
   const dataTimestamp = utc(data?.freshness?.persistedAt || data?.freshness?.snapshotCompletedAt);
-  return <div className={`${shared.lensViewport} ${styles.viewport}`}>
-    <div className={shared.lensHeading}><div className={shared.lensTitle}><h1>Context trace</h1><p>Session continuity, cache evidence and request shaping</p></div><Group gap={8}><Button variant="default" size="compact-sm" aria-pressed={showReports} onClick={()=>setShowReports(!showReports)}>{showReports ? 'Return to session tracks' : 'Browse client reports'}</Button><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button><Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-sm">Token savings</Button></Group></div>
-    <ScopeBar />
+  return <div className={styles.trace}>
+    <Group className={styles.traceActions} gap={8}><Button variant="default" size="compact-sm" aria-pressed={showReports} onClick={()=>setShowReports(!showReports)}>{showReports ? 'Return to session tracks' : 'Browse client reports'}</Button><Button variant="default" size="compact-sm" onClick={refresh}>Refresh context</Button></Group>
     <details className={styles.scopeActivity} onToggle={event => setShowActivity(event.currentTarget.open)}><summary>Activity across the shared scope</summary>{showActivity && <ActivityBand title="Retained request activity" />}</details>
     <div className={`${styles.workspace} ${shared.lensContent}`}>
       <RecordingCoverage recording={data?.recording} />
       {data?.recording?.rejectedAttempts > 0 && <Alert color="orange" className={styles.rejection} title={`${quantity(data.recording.rejectedAttempts)} context ${data.recording.rejectedAttempts === 1 ? 'record' : 'records'} rejected`}>Usage may remain available; context and stage evidence is absent. Counts follow the current filters.</Alert>}
       {showReports ? <div className={styles.reportsViewport}><ContextClientEvents key={contextUrl(scope,filters)} scope={scope} filters={filters} onSnapshot={observeSnapshot} /></div> : <ReadState resource={overview}>
         <div className={styles.toolbar}><div><h2>Session cohort</h2><span>{quantity(data?.summary?.sessions)} identities · latest observation first</span></div><Group gap={8}><Select aria-label="Project label filter" placeholder="All project labels" value={projectLabel} onChange={filterByProject} data={(data?.projects || []).filter((project) => project.projectLabel).map((project) => project.projectLabel)} clearable searchable w={180} /><form className={styles.clientFilter} onSubmit={(event) => { event.preventDefault(); setClientTool(clientDraft.trim()); changePage(1); }}><TextInput aria-label="Exact client filter" placeholder="Exact client name" value={clientDraft} onChange={(event) => setClientDraft(event.currentTarget.value)} w={150} /><Button type="submit" variant="default">Apply</Button></form>{clientTool && <Button variant="subtle" onClick={() => { setClientDraft(''); setClientTool(''); changePage(1); }}>Clear client</Button>}</Group></div>
-        <div className={styles.sessionViewport}>{!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="100%" detail={selectedTurn && <ReadState resource={pageTurn ? detail : exact}><ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={selectedDetail} accounts={accounts} baseline={baseline} onBaseline={setBaseline} onClearBaseline={()=>setBaseline(null)} onSnapshot={observeSnapshot} onEconomics={row => setSelectedRecord({kind: 'economics-record', id: String(row.ledgerId)})} /></ReadState>}>
+        <div className={styles.sessionViewport}>{!sessions.length && !selectedSessionId ? <NoContext data={data || {}} snapshot={snapshot} /> : <SelectionDock open={active && Boolean(selectedTurn)} title={selectedTurn ? `Request #${selectedTurn.id} · attempt ${selectedTurn.attempt ?? 'unknown'}` : ''} subtitle={selectedTurn ? `${selectedTurn.provider || 'Unknown'} · ${selectedTurn.model || 'Unknown model'} · ${accountName(selectedTurn.connectionId)}` : ''} onClose={() => setTurnId(null)} height="100%" detail={selectedTurn && <ReadState resource={pageTurn ? detail : exact}><ContextInspector key={selectedTurn.id} turn={selectedTurn} detail={selectedDetail} accounts={accounts} baseline={baseline} onBaseline={setBaseline} onClearBaseline={()=>setBaseline(null)} onSnapshot={observeSnapshot} onEconomics={row => setSelectedRecord({kind: 'economics-record', id: String(row.ledgerId)})} /></ReadState>}>
           <div className={styles.cohortGrid}>
             <aside className={styles.sessions} aria-label="Recorded session cohort"><div className={styles.sessionList}>{sessions.map((item) => <UnstyledButton key={item.id} className={styles.sessionButton} data-selected={item.id === selectedSessionId || undefined} aria-pressed={item.id === selectedSessionId} onClick={() => selectSession(item.id)}><div className={styles.sessionName}><strong>{item.projectLabel || 'Unlabeled session'}</strong><span>#{item.id}</span></div><div className={styles.sessionClient}>{item.clientTool || 'Unknown client'}<Badge size="xs" color="gray" variant="light">{IDENTITY[item.identitySource] || 'Unknown identity'}</Badge></div><div className={styles.sessionNumbers}><span>{quantity(item.requests)} requests <small>· {quantity(item.attempts)} attempts</small></span><span>{quantity(item.providerInputTokens, true)} input</span></div><time className={styles.sessionTime} dateTime={item.lastSeenAt}>{utc(item.lastSeenAt)} UTC</time></UnstyledButton>)}</div><Pager pagination={data?.pagination} onPage={changePage} label="Sessions" /><p className={styles.identityFoot}>Identity is not a count of agents. Inferred locality may combine separate callers. Project labels are operator assigned.</p></aside>
             <div className={styles.sessionDetail}>{!selectedSessionId && <p className={styles.emptyInline}>Choose a recorded session to inspect its evidence.</p>}<ReadState resource={detail}>{session && <>
@@ -160,7 +175,7 @@ function ContextScope({ workspace, baseline, setBaseline }) {
         </SelectionDock>}</div>
       </ReadState>}
       {data?.summary?.sessions > 0 && !sessions.length && !selectedSessionId && <Pager pagination={data?.pagination} onPage={changePage} label="Sessions" />}
-      <footer className={styles.footer}><span>{data?.retentionDays === null ? 'History preserved' : finite(data?.retentionDays) ? `${quantity(data.retentionDays)} days retained` : 'Retention policy unknown'} · {recordingStart === 'Unknown' ? 'recording start unknown' : `recording began ${recordingStart} UTC`}</span><HistoryRetention onSaved={refresh} /><span>{dataTimestamp === 'Unknown' ? 'Data timestamp unknown' : `${data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · ${dataTimestamp} UTC`}</span></footer>
+      <footer className={styles.footer}><span>{data?.retentionDays === null ? 'History preserved' : finite(data?.retentionDays) ? `${quantity(data.retentionDays)} days retained` : 'Retention policy unknown'} · {recordingStart === 'Unknown' ? 'recording start unknown' : `recording began ${recordingStart} UTC`}</span><span>{dataTimestamp === 'Unknown' ? 'Data timestamp unknown' : `${data?.freshness?.source === 'last-persisted-snapshot' ? 'Persisted snapshot' : 'Committed data'} · ${dataTimestamp} UTC`}</span></footer>
     </div>
   </div>;
 }

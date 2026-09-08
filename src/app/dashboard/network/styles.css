@@ -16,6 +16,11 @@
   .network-pool-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
 
   .network-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
+  .network-task-form > form > fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .network-task-form .network-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px 20px; }
+  .network-task-form .network-form > .field { min-width: 0; }
+  .network-task-form .network-form > :is(.caption, .network-check) { grid-column: 1 / -1; max-width: 90ch; }
+  .network-task-form .field :is(.input, .select) { width: 100%; max-width: 100%; }
   /* Strategy form (pass-2 defect 17): constrained fields inside the panel, not full-width. */
   .network-form-strategy { flex-direction: row; flex-wrap: wrap; align-items: end; }
   .network-form-strategy .field { flex: 0 1 260px; }

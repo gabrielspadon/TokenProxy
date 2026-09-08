@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
-import { Button, Group, Modal, NativeSelect, Stack, Table } from '@mantine/core';
+import { Button, Group, NativeSelect, Stack, Table } from '@mantine/core';
 import { call } from '@/shared/api';
 import { Notice } from '@/shared/components/Notice';
+import { Confirm } from '@/shared/components/Confirm';
 import { getHotReloadConfig } from '@/shared/constants/config';
 
 export function accountOperations(connection) {
@@ -26,10 +27,11 @@ export function accountOperationRows(kind, body, id) {
 }
 
 export default function AccountOperations({ connection, onSaved }) {
-  const [opened, setOpened] = useState(false), [kind, setKind] = useState('models'), [probe, setProbe] = useState('none');
+  const [kind, setKind] = useState('models'), [probe, setProbe] = useState('none');
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(null), [rows, setRows] = useState([]), [submitted, setSubmitted] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const actions = accountOperations(connection), action = actions.find(item => item.id === kind) || actions[0];
-  const close = () => { if (!busy) { setOpened(false); setNotice(null); setRows([]); setSubmitted(false); } };
+  const close = () => { if (!busy) { setNotice(null); setRows([]); setSubmitted(false); } };
   async function run() {
     setBusy(true); setNotice(null); setRows([]);
     const path = action.path || `/api/providers/${encodeURIComponent(connection.id)}${action.suffix}${kind === 'reconcile' ? `?probe=${probe}` : ''}`;
@@ -48,15 +50,15 @@ export default function AccountOperations({ connection, onSaved }) {
       const partial = response.body?.aborted || response.body?.liveListUsable === false || response.body?.liveListError || (kind === 'reload' && response.body.quotaMoved !== true) || !resultRows.length || resultRows.some(row => row.result === 'Request failed');
       setNotice({ tone: partial ? 'warn' : 'info', title: partial ? 'The operation returned incomplete or unsuccessful evidence.' : 'The operation returned evidence.', next: kind === 'reconcile' ? `Applied changes: none. Generation probes: ${response.body.probed ?? 'not reported'}. New upstream IDs: ${(response.body.newUpstream || []).join(', ') || 'none reported'}.` : action.effect });
     }
-    setBusy(false); setSubmitted(true);
+    setBusy(false); setSubmitted(true); setReviewing(false);
   }
-  return <><Button variant="default" onClick={() => setOpened(true)}>Account diagnostics and export</Button>
-    <Modal opened={opened} onClose={close} title="Account diagnostics and export" size="lg" closeOnClickOutside={!busy} closeOnEscape={!busy}>
+  return <section aria-label="Account diagnostics and export"><h2>Account diagnostics and export</h2>
       <Stack gap="md"><NativeSelect label="Operation" value={action.id} disabled={busy || submitted} data={actions.map(item => ({ value: item.id, label: item.label }))} onChange={event => { setKind(event.currentTarget.value); setNotice(null); setRows([]); }} /><p>{action.effect}</p>
         {kind === 'reconcile' ? <NativeSelect label="Generation probes" value={probe} disabled={busy || submitted} onChange={event => setProbe(event.currentTarget.value)} data={[{ value: 'none', label: 'None; catalog comparison only' }, { value: 'missing', label: 'Only missing models; can be billable' }, { value: 'all', label: 'All models; can be billable' }]} /> : null}
         {notice ? <Notice {...notice} /> : null}
         {rows.length ? <Table.ScrollContainer minWidth={420}><Table><Table.Thead><Table.Tr><Table.Th>Subject</Table.Th><Table.Th>Outcome</Table.Th><Table.Th>Evidence</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{rows.map((row, index) => <Table.Tr key={`${row.model}-${index}`}><Table.Td>{row.model}</Table.Td><Table.Td>{row.result}</Table.Td><Table.Td>{row.detail}</Table.Td></Table.Tr>)}</Table.Tbody></Table></Table.ScrollContainer> : null}
-        <Group justify="flex-end"><Button variant="default" onClick={close} disabled={busy}>Close</Button>{!submitted ? <Button loading={busy} onClick={run}>{action.label}</Button> : null}</Group>
+        <Group justify="flex-end">{submitted ? <Button variant="default" onClick={close} disabled={busy}>Choose another operation</Button> : <Button loading={busy} onClick={() => setReviewing(true)}>{action.label}</Button>}</Group>
       </Stack>
-    </Modal></>;
+      <Confirm open={reviewing} title={action.label} verb="Run operation" busy={busy} refusal={notice} requires="An authorized operator session." changes={action.effect} undo="Recorded observations and any upstream usage remain. Keep downloaded credentials private." onConfirm={run} onClose={() => { if (!busy) setReviewing(false); }} />
+    </section>;
 }

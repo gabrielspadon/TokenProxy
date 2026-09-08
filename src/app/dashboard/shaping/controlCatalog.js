@@ -22,6 +22,8 @@ export const CONTROLS = [
   { key: 'embedReorderEnabled', stage: 'reorder', group: 'History', name: 'Relevant history ordering', purpose: 'Move relevant earlier pairs closer to the recent tail.', effect: 'Reorders history and may change prefix cache behavior.', dependency: 'Claude-format request and configured embedding endpoint. Fresh scoring follows an earlier prefix rewrite; otherwise session order is replayed.', threshold: 'A saved session order or an earlier prefix rewrite.', failure: 'Embedding failure leaves the existing order unchanged.', source: 'open-sse/utils/embedReorder.js', override: 'reorder' },
   { key: 'headroomEnabled', stage: 'headroom', group: 'Compression', name: 'Context rewriting service', purpose: 'Apply the configured Headroom transformation before forwarding.', effect: 'Rewriting requires the separate content-change opt-in.', dependency: 'Configured and reachable Headroom endpoint; request shaping enabled.', threshold: 'Uses model context pressure and configured timeout.', failure: 'Unavailable or failed transformation passes through the request. Reported token reductions are distinct from measured body bytes.', source: 'open-sse/handlers/chatCore.js', technical: 'Headroom', override: 'headroom' },
   { key: 'headroomAllowLossy', stage: 'headroom', group: 'Compression', name: 'Allow context rewriting', purpose: 'Permit content-changing Headroom processing.', effect: 'Allows replacement or removal of request content.', dependency: 'Context rewriting service enabled.', threshold: 'Uses the service’s pressure and timeout rules.', source: 'open-sse/handlers/chatCore.js', dependsOn: 'headroomEnabled' },
+  { key: 'headroomCompressUserMessages', stage: 'headroom', group: 'Compression', name: 'Rewrite earlier user messages', purpose: 'Include earlier user messages in Headroom compression.', effect: 'May remove or replace earlier user content; the current user message stays protected.', dependency: 'Context rewriting service enabled with content-change permission.', threshold: 'Uses the service’s pressure and timeout rules.', source: 'open-sse/rtk/contentPolicy.js', dependsOn: 'headroomAllowLossy' },
+  { key: 'headroomLossless', stage: 'headroom', group: 'Compression', name: 'Legacy Headroom lossless flag', purpose: 'Retain the saved compatibility value.', effect: 'Has no execution effect. Current Headroom behavior uses its content-change permission.', dependency: 'No runtime reader is connected to this compatibility setting.', threshold: 'No active threshold.', source: 'src/lib/shaping/runtimeSupport.js' },
   { key: 'pxpipeEnabled', stage: 'pxpipe', group: 'Compression', name: 'Visual compression service', purpose: 'Use the installed PXPIPE transformer for eligible requests.', effect: 'Can replace text with visual content when its separate opt-in is allowed.', dependency: 'Installed local PXPIPE module and content-change opt-in.', threshold: 'Minimum characters and timeout are editable below.', failure: 'Missing service, a declined transform or timeout passes the request through. Opening this page does not load the module.', source: 'open-sse/handlers/chatCore.js', technical: 'PXPIPE', override: 'pxpipe' },
   { key: 'pxpipeAllowLossy', stage: 'pxpipe', group: 'Compression', name: 'Allow visual replacement', purpose: 'Permit PXPIPE to replace text with visual content.', effect: 'Content-changing and dependent on model vision support.', dependency: 'Visual compression service enabled.', threshold: 'Uses service minimum characters and timeout.', source: 'open-sse/handlers/chatCore.js', dependsOn: 'pxpipeEnabled' },
   { key: 'queryAwareCompressionEnabled', stage: 'qac', group: 'Compression', name: 'Query-aware history', purpose: 'Replace low-relevance historical turns with placeholders.', effect: 'Removes text selected against the current query; earlier decisions replay within the session.', dependency: 'Claude-format request, usable query or saved decisions, and request shaping enabled.', threshold: 'Fresh scoring only while over context budget; two recent turns retained.', source: 'open-sse/handlers/chatCore.js', override: 'qac' },
@@ -35,6 +37,7 @@ export const CONTROLS = [
 ];
 
 export const THRESHOLDS = [
+  { key: 'headroomTimeoutMs', stage: 'headroom', name: 'Context rewriting timeout', unit: 'milliseconds', min: 1, max: 599999, nullable: true },
   { key: 'pxpipeMinChars', stage: 'pxpipe', name: 'Minimum request size', unit: 'characters', min: 1, max: 10000000 },
   { key: 'pxpipeTimeoutMs', stage: 'pxpipe', name: 'Transform timeout', unit: 'milliseconds', min: 1, max: 599999 },
   { key: 'memoryMaxToolTurnsKeepFull', stage: 'mem', name: 'Recent tool turns kept whole', unit: 'turns', min: 0, max: 1000 },
@@ -44,7 +47,15 @@ export const THRESHOLDS = [
   { key: 'toolDisclosureMaxTools', stage: 'tools', name: 'Maximum disclosed tools', unit: 'tools', min: 1, max: 10000 },
 ];
 
-export const controlLabel = key => CONTROLS.find(control => control.key === key)?.name || THRESHOLDS.find(field => field.key === key)?.name || key.replace(/Enabled$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
+export const CONFIGURATION_FIELDS = [
+  { key: 'cavemanLevel', control: 'cavemanEnabled', name: 'Compact response level', options: ['lite', 'full', 'ultra'] },
+  { key: 'ponytailLevel', control: 'ponytailEnabled', name: 'Structured response level', options: ['lite', 'full', 'ultra'] },
+  { key: 'privacyFilterTerms', control: 'privacyFilterEnabled', name: 'Private terms', list: true },
+  { key: 'toolDisclosureExcludeServers', control: 'toolDisclosureFilterEnabled', name: 'Excluded tool servers', list: true },
+  { key: 'toolDisclosureExcludeTools', control: 'toolDisclosureFilterEnabled', name: 'Excluded tools', list: true },
+];
+
+export const controlLabel = key => CONTROLS.find(control => control.key === key)?.name || THRESHOLDS.find(field => field.key === key)?.name || CONFIGURATION_FIELDS.find(field => field.key === key)?.name || key.replace(/Enabled$/, '').replace(/([a-z])([A-Z])/g, '$1 $2');
 export const controlFailure = control => control.failure || localFailure;
 export const controlScope = control => control.override ? 'Global default, with supported routing-plan overrides' : 'Global only';
 export function configuredState(settings, control) {
@@ -68,8 +79,22 @@ export function thresholdPatch(draft) {
   if (!entries.length) return null;
   for (const [key, value] of entries) {
     const field = THRESHOLDS.find(item => item.key === key);
+    if (field?.nullable && (value === null || String(value).trim() === '')) continue;
     const number = Number(value);
     if (!field || String(value).trim() === '' || !Number.isSafeInteger(number) || number < field.min || number > field.max) return null;
   }
-  return Object.fromEntries(entries.map(([key, value]) => [key, Number(value)]));
+  return Object.fromEntries(entries.map(([key, value]) => [key, THRESHOLDS.find(field => field.key === key)?.nullable && (value === null || String(value).trim() === '') ? null : Number(value)]));
+}
+
+export function configurationPatch(draft) {
+  const numeric = Object.fromEntries(Object.entries(draft).filter(([key]) => THRESHOLDS.some(field => field.key === key)));
+  const patch = Object.keys(numeric).length ? thresholdPatch(numeric) : {};
+  if (!patch || !Object.keys(draft).length) return null;
+  for (const [key, value] of Object.entries(draft)) {
+    if (Object.hasOwn(patch, key)) continue;
+    const field = CONFIGURATION_FIELDS.find(item => item.key === key);
+    if (!field || (field.list ? !Array.isArray(value) || value.length > 100 || value.some(item => typeof item !== 'string' || item.length > 500) : !field.options.includes(value))) return null;
+    patch[key] = value;
+  }
+  return patch;
 }

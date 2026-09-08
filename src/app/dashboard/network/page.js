@@ -1,5 +1,5 @@
 'use client';
-import { Fragment, useCallback, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
@@ -64,6 +64,9 @@ export default function NetworkPage() {
   const settings = usePoll('/api/settings', 30000);
   const connections = usePoll('/api/providers', 30000);
 
+  const [task, setTask] = useState('paths');
+  const [reviewing, setReviewing] = useState(false);
+  const [uncertain, setUncertain] = useState(false);
   const [action, setAction] = useState(null); // { kind, node? | pool? }
   const [nodeForm, setNodeForm] = useState(NODE_BLANK);
   const [poolForm, setPoolForm] = useState(POOL_BLANK);
@@ -80,6 +83,12 @@ export default function NetworkPage() {
   // pages a bounded query, so opening every row at once would fan out reads.
   const [historyPoolId, setHistoryPoolId] = useState(null);
 
+  useEffect(() => {
+    const clear = () => { if (document.hidden) { setPoolForm(current => ({ ...current, proxyUrl: '' })); setOutbound(current => current ? { ...current, url: '' } : null); } };
+    document.addEventListener('visibilitychange', clear);
+    return () => document.removeEventListener('visibilitychange', clear);
+  }, []);
+
   const nodeRows = nodes.data?.nodes || [];
   const poolRows = pools.data?.proxyPools || [];
   const outboundEnabled = settings.data?.outboundProxyEnabled;
@@ -90,6 +99,7 @@ export default function NetworkPage() {
 
   const close = useCallback(() => {
     setAction(null);
+    setReviewing(false);
     setRefused(null);
     setBusy(false);
     setPoolForm(POOL_BLANK);
@@ -111,7 +121,7 @@ export default function NetworkPage() {
           }
         : NODE_BLANK
     );
-    setAction({ kind, node });
+    setAction({ kind, node }); setTask('nodes'); setReviewing(kind === 'deleteNode');
   };
   const openPool = (kind, pool) => {
     setRefused(null);
@@ -127,7 +137,7 @@ export default function NetworkPage() {
           }
         : POOL_BLANK
     );
-    setAction({ kind, pool });
+    setAction({ kind, pool }); setTask('pools'); setReviewing(kind === 'deletePool');
   };
 
   const run = async () => {
@@ -169,11 +179,12 @@ export default function NetworkPage() {
         },
       });
     }
+    setPoolForm(current => ({ ...current, proxyUrl: '' }));
     setBusy(false);
     if (!res.ok) {
       if (!res.status) {
         setRefused({ tone: 'warn', title: 'The network configuration outcome is unknown.', next: 'Close and refresh the relevant inventory before taking another action. Do not repeat the interrupted mutation.' });
-        setBusy(true);
+        setUncertain(true);
         return;
       }
       setRefused(refusal(res.status, res.body));
@@ -197,6 +208,7 @@ export default function NetworkPage() {
       verified = readback.ok && readback.body?.outboundProxyEnabled === (action.kind === 'outboundOn');
     }
     if (!verified) {
+      setBusy(false); setUncertain(true);
       setRefused({ tone: 'warn', title: 'The change was accepted; refreshed configuration was not verified.', next: 'Close and refresh before making another change. Do not repeat the mutation.' });
       return;
     }
@@ -323,12 +335,131 @@ export default function NetworkPage() {
       (action.kind === 'deletePool' ? POOL_COPY.deletePool(action.pool) : POOL_COPY[action.kind])
     : null;
 
+  const editForm = action && !action.kind.startsWith('delete') && !action.kind.startsWith('outbound') ? <section className="panel network-task-form" aria-label="Network configuration form"><h2>{copyFor?.title}</h2><form onSubmit={event => { event.preventDefault(); setReviewing(true); }}><fieldset disabled={busy || uncertain || reviewing}>
+        {action?.kind === 'createNode' || action?.kind === 'editNode' ? (
+          <div className="network-form">
+            <label className="field">
+              <span>Name</span>
+              <input
+                className="input"
+                type="text"
+                value={nodeForm.name}
+                onChange={(e) => setNodeForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Prefix</span>
+              <input
+                className="input"
+                type="text"
+                value={nodeForm.prefix}
+                onChange={(e) => setNodeForm((f) => ({ ...f, prefix: e.target.value }))}
+              />
+            </label>
+            {action.kind === 'createNode' ? (
+              <label className="field">
+                <span>Type</span>
+                <select
+                  className="select"
+                  value={nodeForm.type}
+                  onChange={(e) => setNodeForm((f) => ({ ...f, type: e.target.value }))}
+                >
+                  <option value="openai-compatible">OpenAI compatible</option>
+                  <option value="multi-compatible">OpenAI and Anthropic compatible</option>
+                  <option value="custom-embedding">Custom embedding</option>
+                  <option value="anthropic-compatible">Anthropic compatible</option>
+                </select>
+              </label>
+            ) : null}
+            {nodeForm.type === 'openai-compatible' ? (
+              <label className="field">
+                <span>API type</span>
+                <select
+                  className="select"
+                  value={nodeForm.apiType}
+                  onChange={(e) => setNodeForm((f) => ({ ...f, apiType: e.target.value }))}
+                >
+                  <option value="chat">Chat</option>
+                  <option value="responses">Responses</option>
+                </select>
+              </label>
+            ) : null}
+            {nodeForm.type === 'multi-compatible' ? <>
+              <label className="field"><span>OpenAI endpoint URL</span><input className="input" type="url" required value={nodeForm.openaiUrl} onChange={event => setNodeForm(value => ({ ...value, openaiUrl: event.target.value }))} /></label>
+              <label className="field"><span>Anthropic endpoint URL</span><input className="input" type="url" required value={nodeForm.anthropicUrl} onChange={event => setNodeForm(value => ({ ...value, anthropicUrl: event.target.value }))} /></label>
+              <label className="network-check"><input type="checkbox" checked={nodeForm.supportsResponses} onChange={event => setNodeForm(value => ({ ...value, supportsResponses: event.target.checked }))} /><span>Register the OpenAI Responses transport</span></label>
+              <p className="caption">Stores both endpoint formats. This local configuration does not establish provider support or send a validation request.</p>
+            </> : <label className="field">
+              <span>Base URL</span>
+              <input
+                className="input"
+                type="text"
+
+                value={nodeForm.baseUrl}
+                onChange={(e) => setNodeForm((f) => ({ ...f, baseUrl: e.target.value }))}
+              />
+            </label>}
+          </div>
+        ) : null}
+        {action?.kind === 'createPool' || action?.kind === 'editPool' ? (
+          <div className="network-form">
+            <label className="field">
+              <span>Name</span>
+              <input
+                className="input"
+                type="text"
+                value={poolForm.name}
+                onChange={(e) => setPoolForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Proxy URL</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="off"
+                placeholder={
+                  action.kind === 'editPool'
+                    ? 'Leave empty to keep the current URL'
+                    : 'http://user:pass@host:port'
+                }
+                value={poolForm.proxyUrl}
+                onChange={(e) => setPoolForm((f) => ({ ...f, proxyUrl: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>No-proxy list</span>
+              <input
+                className="input"
+                type="text"
+                value={poolForm.noProxy}
+                onChange={(e) => setPoolForm((f) => ({ ...f, noProxy: e.target.value }))}
+              />
+            </label>
+            <label className="network-check">
+              <input
+                type="checkbox"
+                checked={poolForm.strictProxy}
+                onChange={(e) => setPoolForm((f) => ({ ...f, strictProxy: e.target.checked }))}
+              />
+              <span>
+                Strict: a connection or strategy bound here fails outright rather than falling back
+                to a direct connection
+              </span>
+            </label>
+          </div>
+        ) : null}
+        <div className="verb-row"><button type="button" className="button quiet" onClick={close}>Cancel edit</button><button type="submit" className="button">Review configuration</button></div>
+      </fieldset></form></section> : null;
+
   return (
     <>
       <div className="screen-head">
         <h1>Network</h1>
         <Freshness status={pollFresh(pools)} lastDataAt={pools.goodAt} />
       </div>
+      <nav className="verb-row" aria-label="Network tasks">{[['paths', 'Paths'], ['pools', 'Pools'], ['nodes', 'Nodes'], ['relay', 'Relay']].map(([value, label]) => <button type="button" key={value} className={task === value ? 'button' : 'button quiet'} aria-pressed={task === value} disabled={busy || uncertain || reviewing} onClick={() => { close(); setTask(value); }}>{label}</button>)}</nav>
+      {uncertain ? <Notice tone="warn" title="Refresh the configuration before another change."><button type="button" className="button quiet" onClick={() => window.location.reload()}>Reload saved configuration</button></Notice> : null}
       {result ? <Notice {...result} /> : null}
 
       <dl className="network-summary" aria-label="Network configuration summary">
@@ -337,8 +468,9 @@ export default function NetworkPage() {
         <div><dt>Provider strategies</dt><dd><bdi>{settings.data ? fmtNum(Object.keys(providerStrategies).length) : 'Unknown'}</bdi></dd></div>
         <div><dt>Outbound proxy</dt><dd>{settings.data ? outboundEnabled ? 'On' : 'Off' : 'Unknown'}</dd></div>
       </dl>
+      {task === 'paths' ? <>
       {connections.error ? <Notice {...refusal(connections.status, connections.error)} /> : null}
-      {connections.data && pools.data ? <AccountPaths connections={connections.data.connections || []} pools={poolRows} /> : <p className="caption">Account paths require both the account and pool inventories.</p>}
+      {connections.data && pools.data ? <AccountPaths connections={connections.data.connections || []} pools={poolRows} onSaved={connections.refresh} /> : <p className="caption">Account paths require both the account and pool inventories.</p>}
 
       <section aria-labelledby="h-outbound" className="panel">
         <div className="screen-head">
@@ -409,7 +541,7 @@ export default function NetworkPage() {
                   <button
                     type="button"
                     className="button"
-                    onClick={() => setAction({ kind: 'outboundOn' })}
+                    onClick={() => { setAction({ kind: 'outboundOn' }); setReviewing(true); }}
                   >
                     <Icon name="i-play" />
                     Turn on
@@ -434,7 +566,7 @@ export default function NetworkPage() {
                     <button
                       type="button"
                       className="button danger"
-                      onClick={() => setAction({ kind: 'outboundOff' })}
+                      onClick={() => { setAction({ kind: 'outboundOff' }); setReviewing(true); }}
                     >
                       <Icon name="i-pause" />
                       Turn off
@@ -458,6 +590,10 @@ export default function NetworkPage() {
         ) : null}
       </section>
 
+      <NetworkOptions actionId="timeout" onSaved={settings.refresh} />
+      <NetworkOptions actionId="test" />
+      </> : null}
+      {task === 'nodes' ? <>
       <section aria-labelledby="h-nodes">
         <div className="screen-head">
           <h2 id="h-nodes">Provider nodes</h2>
@@ -520,6 +656,11 @@ export default function NetworkPage() {
         ) : null}
       </section>
 
+      {editForm}
+      <NetworkOptions actionId="adapter" onSaved={nodes.refresh} />
+      <NetworkOptions actionId="export" />
+      </> : null}
+      {task === 'pools' ? <>
       <section aria-labelledby="h-pools">
         <div className="screen-head">
           <h2 id="h-pools">Proxy pools</h2>
@@ -646,8 +787,10 @@ export default function NetworkPage() {
         ) : null}
       </section>
 
-      <section aria-labelledby="h-strategy" className="panel">
-        <NetworkOptions pools={poolRows} onSaved={() => { nodes.refresh(); pools.refresh(); settings.refresh(); }} />
+      {editForm}
+      <NetworkOptions actionId="delete" pools={poolRows} onSaved={pools.refresh} />
+      </> : null}
+      {task === 'paths' ? <section aria-labelledby="h-strategy" className="panel">
         <h2 id="h-strategy">Per-provider proxy strategy</h2>
         <p>
           Binds a proxy pool to the virtual account of a provider that uses no credentials.
@@ -730,8 +873,9 @@ export default function NetworkPage() {
             ))}
           </dl>
         ) : null}
-      </section>
+      </section> : null}
 
+      {task === 'relay' ? <><h2>Deploy outbound relay</h2><NetworkOptions actionId="cloudflare" onSaved={pools.refresh} /><NetworkOptions actionId="vercel" onSaved={pools.refresh} /></> : null}
       <Confirm open={!!strategyReview} busy={busy} refusal={refused} title="Review virtual-account proxy strategy" verb="Apply proxy strategy" requires="A local operator session and a provider that uses no credentials."
         changes="Changes pool selection on subsequent routing for this provider's virtual account. Rotation uses all active pools with addresses. Credentialed accounts retain their separate account policies."
         undo="Restore the previous mode and fixed pool. A saved strategy does not move in-flight responses."
@@ -740,8 +884,8 @@ export default function NetworkPage() {
       </Confirm>
 
       <Confirm
-        open={!!action}
-        busy={busy}
+        open={!!action && reviewing}
+        busy={busy || uncertain}
         refusal={refused}
         title={copyFor?.title}
         verb={copyFor?.verb}
@@ -750,121 +894,10 @@ export default function NetworkPage() {
         undo={copyFor?.undo}
         irreversible={!!copyFor?.irreversible}
         onConfirm={run}
-        onClose={close}
+        onClose={() => { if (!busy) { setReviewing(false); if (action?.kind.startsWith('delete') || action?.kind.startsWith('outbound')) close(); } }}
       >
-        {action?.kind === 'createNode' || action?.kind === 'editNode' ? (
-          <div className="network-form">
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                value={nodeForm.name}
-                onChange={(e) => setNodeForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Prefix</span>
-              <input
-                className="input"
-                type="text"
-                value={nodeForm.prefix}
-                onChange={(e) => setNodeForm((f) => ({ ...f, prefix: e.target.value }))}
-              />
-            </label>
-            {action.kind === 'createNode' ? (
-              <label className="field">
-                <span>Type</span>
-                <select
-                  className="select"
-                  value={nodeForm.type}
-                  onChange={(e) => setNodeForm((f) => ({ ...f, type: e.target.value }))}
-                >
-                  <option value="openai-compatible">OpenAI compatible</option>
-                  <option value="multi-compatible">OpenAI and Anthropic compatible</option>
-                  <option value="custom-embedding">Custom embedding</option>
-                  <option value="anthropic-compatible">Anthropic compatible</option>
-                </select>
-              </label>
-            ) : null}
-            {nodeForm.type === 'openai-compatible' ? (
-              <label className="field">
-                <span>API type</span>
-                <select
-                  className="select"
-                  value={nodeForm.apiType}
-                  onChange={(e) => setNodeForm((f) => ({ ...f, apiType: e.target.value }))}
-                >
-                  <option value="chat">Chat</option>
-                  <option value="responses">Responses</option>
-                </select>
-              </label>
-            ) : null}
-            {nodeForm.type === 'multi-compatible' ? <>
-              <label className="field"><span>OpenAI endpoint URL</span><input className="input" type="url" required value={nodeForm.openaiUrl} onChange={event => setNodeForm(value => ({ ...value, openaiUrl: event.target.value }))} /></label>
-              <label className="field"><span>Anthropic endpoint URL</span><input className="input" type="url" required value={nodeForm.anthropicUrl} onChange={event => setNodeForm(value => ({ ...value, anthropicUrl: event.target.value }))} /></label>
-              <label className="network-check"><input type="checkbox" checked={nodeForm.supportsResponses} onChange={event => setNodeForm(value => ({ ...value, supportsResponses: event.target.checked }))} /><span>Register the OpenAI Responses transport</span></label>
-              <p className="caption">Stores both endpoint formats. This local configuration does not establish provider support or send a validation request.</p>
-            </> : <label className="field">
-              <span>Base URL</span>
-              <input
-                className="input"
-                type="text"
-
-                value={nodeForm.baseUrl}
-                onChange={(e) => setNodeForm((f) => ({ ...f, baseUrl: e.target.value }))}
-              />
-            </label>}
-          </div>
-        ) : null}
-        {action?.kind === 'createPool' || action?.kind === 'editPool' ? (
-          <div className="network-form">
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                value={poolForm.name}
-                onChange={(e) => setPoolForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Proxy URL</span>
-              <input
-                className="input"
-                type="password"
-                autoComplete="off"
-                placeholder={
-                  action.kind === 'editPool'
-                    ? 'Leave empty to keep the current URL'
-                    : 'http://user:pass@host:port'
-                }
-                value={poolForm.proxyUrl}
-                onChange={(e) => setPoolForm((f) => ({ ...f, proxyUrl: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>No-proxy list</span>
-              <input
-                className="input"
-                type="text"
-                value={poolForm.noProxy}
-                onChange={(e) => setPoolForm((f) => ({ ...f, noProxy: e.target.value }))}
-              />
-            </label>
-            <label className="network-check">
-              <input
-                type="checkbox"
-                checked={poolForm.strictProxy}
-                onChange={(e) => setPoolForm((f) => ({ ...f, strictProxy: e.target.checked }))}
-              />
-              <span>
-                Strict: a connection or strategy bound here fails outright rather than falling back
-                to a direct connection
-              </span>
-            </label>
-          </div>
-        ) : null}
+        <p>{action?.node?.name || action?.pool?.name || nodeForm.name || poolForm.name || 'Global outbound path'}</p>
+        {action?.kind?.endsWith('Pool') ? <p>{poolForm.strictProxy ? 'Strict binding refuses direct fallback.' : 'The pool may allow direct fallback.'} Proxy credentials remain private.</p> : null}
       </Confirm>
     </>
   );

@@ -351,3 +351,29 @@ it.each([[null,'History preserved'],[45,'45 days retained'],[undefined,'Retentio
   await render();
   expect(container.querySelector('footer').textContent).toContain(label);
 });
+it('exposes all attempt measurements directly without an inner disclosure',async()=>{
+  await render();await click('[aria-label="Inspect attempt 101"]');
+  const dock=container.querySelector('[aria-label="Selection details"]');
+  expect(dock.textContent).toContain('Physical request101');
+  expect(dock.textContent).toContain('Recorded latency / first token');
+  expect([...dock.querySelectorAll('dt')].find(node=>node.textContent==='Physical request').closest('details')).toBeNull();
+});
+it('retains the direct history-policy draft across task and shared-scope changes',async()=>{
+  const original=fetchMock.getMockImplementation();
+  fetchMock.mockImplementation((url,options)=>url==='/api/settings'?Promise.resolve(response({statsRetentionMode:'preserve',statsRetentionDays:45})):original(url,options));
+  await render();await click('[aria-label="Inspect attempt 101"]');await clickText('History policy');
+  expect(container.querySelector('[aria-label="Selection details"]')).toBeNull();
+  const form=container.querySelector('[aria-label="History retention settings"]');
+  const select=form.querySelector('select');
+  await act(async()=>{select.value='window';select.dispatchEvent(new Event('change',{bubbles:true}));});
+  await clickText('Session tracks');
+  expect(form.closest('[role=tabpanel]').style.display).toBe('none');
+  state.workspace={...state.workspace,scope:{...initialScope,provider:'other-provider'}};
+  await render();await clickText('History policy');
+  expect(container.querySelector('[aria-label="History retention settings"]')).toBe(form);
+  expect(select.value).toBe('window');
+  expect(form.querySelector('input[type=checkbox]').checked).toBe(false);
+  expect(container.querySelector('[role=dialog]')).toBeNull();
+  expect(fetchMock.mock.calls.filter(([url])=>url==='/api/settings')).toHaveLength(1);
+  expect(fetchMock.mock.calls.some(([,options])=>options?.method==='PATCH')).toBe(false);
+});

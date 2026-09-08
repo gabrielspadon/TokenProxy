@@ -286,15 +286,27 @@ export default function TranslationPage() {
   // comes from or goes to; no input anywhere accepts a filename.
   const [snapshotText, setSnapshotText] = useState('');
   const [snapshotStatus, setSnapshotStatus] = useState({});
+  const [snapshotPending, setSnapshotPending] = useState({});
   const saveSnapshot = async (name) => {
+    if (snapshotPending[name]) return;
+    const content = snapshotText;
+    setSnapshotPending(s => ({ ...s, [name]: true }));
     const res = await call('/api/translator/save', {
       method: 'POST',
-      body: { file: name, content: snapshotText },
+      body: { file: name, content },
     });
+    const readback = res.ok && res.body?.success === true
+      ? await call(`/api/translator/load?file=${encodeURIComponent(name)}`)
+      : null;
     setSnapshotStatus((s) => ({
       ...s,
-      [name]: res.ok ? { tone: 'ok', title: 'Saved' } : refusal(res.status, res.body),
+      [name]: !res.ok || res.body?.success !== true
+        ? refusal(res.status, res.body || { error: 'The save returned no result.' })
+        : readback?.ok && readback.body?.success === true && readback.body.content === content
+          ? { tone: 'ok', title: 'Saved and read back' }
+          : { tone: 'warn', title: 'Save accepted; stored content was not verified.', next: 'Load the stored snapshot before another save. Do not automatically repeat the write.' },
     }));
+    setSnapshotPending(s => ({ ...s, [name]: false }));
   };
   const loadSnapshot = async (name) => {
     const res = await call(`/api/translator/load?file=${encodeURIComponent(name)}`);
@@ -545,7 +557,7 @@ export default function TranslationPage() {
                   <Icon name="i-refresh" />
                   Load
                 </Button>
-                <Button type="button" variant="default" onClick={() => saveSnapshot(name)}>
+                <Button type="button" variant="default" disabled={snapshotPending[name]} onClick={() => saveSnapshot(name)}>
                   <Icon name="i-edit" />
                   Save
                 </Button>

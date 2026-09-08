@@ -338,8 +338,8 @@ export default function CompatibilityPage() {
                 </p>
               ) : null}
             </div>
-            <details className={styles.editor} open={!catalog.fixtures.length || Boolean(editing)}>
-              <summary>{editing ? `Revise as revision ${editing.revision + 1}` : 'Create a fixture'}</summary>
+            <section className={styles.editor} aria-label="Fixture editor">
+              <h3>{editing ? `Revise as revision ${editing.revision + 1}` : 'Create a fixture'}</h3>
               <div className={styles.actions}>
                 {SAMPLE_FIXTURES.map((sample) => (
                   <Button
@@ -450,7 +450,7 @@ export default function CompatibilityPage() {
               >
                 {editing ? 'Save as new revision' : 'Save fixture'}
               </Button>
-            </details>
+            </section>
           </section>
           <section className={styles.inspector} aria-labelledby="compat-runs">
             <h2 id="compat-runs">Runs</h2>

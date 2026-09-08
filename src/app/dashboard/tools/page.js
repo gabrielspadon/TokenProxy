@@ -81,14 +81,14 @@ export default function ToolsPage() {
                       <code>{selected.endpoint ?? 'Unknown'}</code>
                     </dd>
                   </dl>
-                  {setup ? <details><summary>Client setup and declared tools</summary>
+                  {setup ? <section aria-label="Client setup and declared tools"><h3>Client setup and declared tools</h3>
                     <p>{setup.description}. Each attached client owns its extension process. Browser MCP permits one simultaneous client; other presets share the gateway’s 16-session ceiling.</p>
                     {setup.extensionUrl ? <p><a href={setup.extensionUrl} target="_blank" rel="noopener noreferrer">Install the browser extension</a></p> : null}
                     {setup.setupUrl ? <p><a href={setup.setupUrl} target="_blank" rel="noopener noreferrer">{setup.setupLabel || 'Installation prerequisites'}</a></p> : null}
                     <p>The gateway launches <code>{setup.command} {setup.args.join(' ')}</code> only when a client attaches. Package resolution may download software. This screen does not install or execute it.</p>
                     <p>Configure an SSE MCP server at this gateway’s origin plus <code>{selected.endpoint}</code>. Supply the machine CLI credential in <code>x-tp-cli-token</code>; an inference API key does not authorize this bridge. Keep that credential in your client’s private environment or secret store.</p>
                     <ul>{setup.toolNames.map(name => <li key={name}><code>{name}</code></li>)}</ul>
-                  </details> : null}
+                  </section> : null}
                   <p>
                     Process state does not establish package installation, tool execution or
                     upstream readiness. No start, installation or test is performed by inspection. A

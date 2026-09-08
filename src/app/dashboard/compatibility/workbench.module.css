@@ -162,5 +162,5 @@
   }
 }
 
-.editor summary { font-size: 18px; font-weight: 500; cursor: pointer; margin-bottom: 12px; }
+.editor h3 { font-size: 18px; font-weight: 500; margin-bottom: 12px; }
 .book, .inspector { padding: 16px; background: var(--raised); border: 1px solid var(--rule); border-radius: 8px; }

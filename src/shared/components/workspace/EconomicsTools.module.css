@@ -1,13 +1,27 @@
 .tool {min-width:0;color:var(--ink);font-size:14px;line-height:1.5;}
 .tool p {margin:0;color:var(--slate);}
-.fields {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:16px;}
+.fields {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px;}
 .scroll {max-width:100%;overflow:auto;}
 .scroll:focus-visible {outline:2px solid var(--signal);outline-offset:-2px;}
 .scroll table {border-collapse:collapse;width:100%;font-size:13px;}
 .scroll th,.scroll td {padding:8px 12px;text-align:start;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums;white-space:nowrap;}
 .scroll thead {background:var(--paper);}
 .scroll tr[data-selected] {background:var(--signal-wash);}
-.facts {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 16px;margin:0;}
+.facts {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:10px 18px;margin:0;}
+.facts > div {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:baseline;}
 .facts dt {color:var(--slate);}.facts dd {margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;}
 .id {font-family:var(--mono);overflow-wrap:anywhere;}
 .review {border-block:1px solid var(--rule);padding-block:16px;}
+
+.tasks { min-width:0; min-height:0; flex:1; display:flex; flex-direction:column; }
+.tasks > :global(.mantine-Tabs-list) { padding-inline:24px; flex-shrink:0; }
+.tasks :global(.mantine-Tabs-tab) { min-height:var(--op-control-min-height,36px); font-size:13px; }
+.analysisPanel { min-width:0; min-height:0; flex:1; margin:12px 24px 16px; }
+.taskPanel { min-width:0; overflow:auto; padding:18px 24px; }
+.toolHeading { margin-bottom:14px; }
+.toolHeading h2 { margin:0 0 6px; font-size:16px; font-weight:500; }
+.formActions { margin-top:16px; }
+.tool :global(.mantine-Input-input),.tool :global(.mantine-Button-root) { min-height:var(--op-control-min-height,36px); font-size:13px; }
+.tool :global(.mantine-InputWrapper-label),.tool :global(.mantine-InputWrapper-description) { font-size:13px; }
+.tool > :global(.mantine-Alert-root) { margin-block:12px; }
+@media(max-width:768px) { .tasks { flex:none; } .tasks > :global(.mantine-Tabs-list) { padding-inline:16px; } .analysisPanel { margin:12px 16px; } .taskPanel { padding:16px; } }

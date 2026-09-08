@@ -26,6 +26,25 @@
     padding-block: 12px;
     border-block: 1px solid var(--rule);
   }
+  .models-inline-editor {
+    margin-block: 12px;
+    padding: 14px;
+    border: 1px solid var(--rule);
+    background: var(--raised);
+  }
+  .models-inline-editor fieldset {
+    border: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+  }
+  .models-review-values > div {
+    display: grid;
+    grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+    gap: 12px;
+    padding-block: 6px;
+  }
+  .models-review-values dd { margin: 0; overflow-wrap: anywhere; }
 
   @media (min-width: 768px) {
     .models-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 10rem) auto; }

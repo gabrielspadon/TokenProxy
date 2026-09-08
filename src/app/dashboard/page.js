@@ -557,7 +557,7 @@ export default function CapacityPage() {
   const router = useRouter();
   const workspace = useWorkspace();
   const drains = useResource(DRAIN_ENDPOINT, { onSnapshot: workspace.observeSnapshot });
-  const refreshAccounts = () => { drains.refresh(); workspace.health.refresh(); };
+  const refreshAccounts = () => { drains.refresh(); workspace.refresh(); };
   const {
     accounts,
     quota,
@@ -574,7 +574,9 @@ export default function CapacityPage() {
   const [view, setView] = useState('control'),
     [query, setQuery] = useState(''),
     [stateFilter, setStateFilter] = useState(null),
-    [comparing, setComparing] = useState(false);
+    [comparisonOpen, setComparing] = useState(false);
+  const comparing = comparisonOpen && comparisonIds.length > 1;
+  if (comparisonOpen && comparisonIds.length < 2) setComparing(false);
   const [windowSelection, setSelectedScope] = useState(null);
   const [heldOrder, setHeldOrder] = useState({ key: null, ids: [] });
   const selectedScope=workspace.selectedRecord?.windowScope || windowSelection;
@@ -766,7 +768,7 @@ export default function CapacityPage() {
           ]}
         />
       </div>
-      <ScopeBar analysisActions={view !== 'control'} />
+      <ScopeBar showRefresh={view !== 'control'} />
       {view === 'accounts' && <ActivityBand />}
       <div className={`${styles.book} ${shared.lensContent}`}>
         <SelectionDock
@@ -804,6 +806,8 @@ export default function CapacityPage() {
           {view === 'control' ? <AccountControlPanel
             rows={rows} scope={scope} selectedAccountId={selectedAccountId}
             onSelect={select} onChanged={refreshAccounts} anchor={snapshot?.isolated ? anchor : undefined}
+            comparisonIds={comparisonIds} onComparisonChange={setComparisonIds}
+            onCompare={() => { setComparing(true); setSelectedAccountId(null); }}
           /> : <div className={styles.bookBody}>
             <div className={styles.bookToolbar}>
               <div className={styles.bookTitle}>

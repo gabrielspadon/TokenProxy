@@ -44,6 +44,10 @@ it.each(['models', 'overrides'])('keeps %s row controls linked only while the se
   await act(async () => buttons[0].click());
   const inspector = container.querySelector('#model-context-inspector');
   expect(inspector).not.toBeNull();
+  expect(inspector.closest('aside')).not.toBeNull();
+  expect(inspector.closest('[role="dialog"], dialog')).toBeNull();
+  expect(inspector.querySelector('[data-context-token-input]').disabled).toBe(false);
+  expect(document.activeElement).toBe(inspector.querySelector('[data-context-token-input]'));
   for (const button of buttons) {
     expect(document.getElementById(button.getAttribute('aria-controls'))).toBe(inspector);
   }
@@ -57,4 +61,5 @@ it.each(['models', 'overrides'])('keeps %s row controls linked only while the se
   expect(container.querySelector('#model-context-inspector')).toBeNull();
   expect(buttons.every(button => !button.hasAttribute('aria-controls'))).toBe(true);
   expect(buttons.every(button => !button.hasAttribute('aria-current'))).toBe(true);
+  expect(document.activeElement).toBe(buttons[1]);
 });

@@ -7,7 +7,6 @@ import {
   NumberInput,
   Select,
   Stack,
-  Tabs,
   Text,
   TextInput,
   Tooltip,
@@ -262,13 +261,8 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
     onChange(next);
   };
   return (
-    <Tabs defaultValue="plans" keepMounted={false}>
-      <Tabs.List>
-        <Tabs.Tab value="plans">Ordered plans ({document.combos.length})</Tabs.Tab>
-        <Tabs.Tab value="aliases">Aliases ({Object.keys(document.aliases).length})</Tabs.Tab>
-        <Tabs.Tab value="defaults">Routing defaults</Tabs.Tab>
-      </Tabs.List>
-      <Tabs.Panel value="plans">
+    <div className={styles.directEditor}>
+      <section aria-label="Ordered plans">
         <div className={styles.editorGrid} data-empty={document.combos.length === 0 || undefined}>
           <aside className={styles.planList} aria-label="Routing plans">
             <div className={styles.sectionHead}>
@@ -379,8 +373,9 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
             )}
           </div>
         </div>
-      </Tabs.Panel>
-      <Tabs.Panel value="aliases">
+      </section>
+      <section aria-labelledby="policy-aliases">
+        <h2 id="policy-aliases" className={styles.directSectionHeading}>Aliases ({Object.keys(document.aliases).length})</h2>
         <div className={styles.panelBody}>
           <Text size="sm" c="var(--slate)" mb="md">
             Aliases target one physical provider/model. Alias chains are not a routing capability.
@@ -441,8 +436,9 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
             </Button>
           </Group>
         </div>
-      </Tabs.Panel>
-      <Tabs.Panel value="defaults">
+      </section>
+      <section aria-labelledby="policy-defaults">
+        <h2 id="policy-defaults" className={styles.directSectionHeading}>Routing defaults</h2>
         <div className={styles.panelBody}>
           <div className={styles.overrideGrid}>
             <Select
@@ -489,7 +485,7 @@ export function PolicyEditor({ document, onChange, disabled = false, accounts = 
             disabled models, proxy settings and shaping options are preserved separately.
           </Text>
         </div>
-      </Tabs.Panel>
-    </Tabs>
+      </section>
+    </div>
   );
 }

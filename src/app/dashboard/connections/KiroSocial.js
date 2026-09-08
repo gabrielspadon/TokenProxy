@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Button, Group, Modal, NativeSelect, Stack, Textarea } from '@mantine/core';
+import { Button, Group, NativeSelect, Stack, Textarea } from '@mantine/core';
 import { call } from '@/shared/api';
 import { Notice } from '@/shared/components/Notice';
 
@@ -14,13 +14,14 @@ export function kiroSocialCode(callback, expectedState) {
   return code;
 }
 
-export default function KiroSocial({ onSaved }) {
-  const [opened, setOpened] = useState(false), [provider, setProvider] = useState('google');
+export default function KiroSocial({ onSaved, onBusyChange }) {
+  const [provider, setProvider] = useState('google');
   const [authUrl, setAuthUrl] = useState(''), [callback, setCallback] = useState(''), [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null), [savedId, setSavedId] = useState(null);
+  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
   const grant = useRef(null);
   useEffect(() => { const clear = () => { if (document.hidden) setCallback(''); }; document.addEventListener('visibilitychange', clear); return () => { grant.current = null; document.removeEventListener('visibilitychange', clear); }; }, []);
-  const close = () => { if (!busy) { grant.current = null; setOpened(false); setAuthUrl(''); setCallback(''); setNotice(null); setSavedId(null); } };
+  const close = () => { if (!busy) { grant.current = null; setAuthUrl(''); setCallback(''); setNotice(null); setSavedId(null); } };
   async function begin() {
     setBusy(true); setNotice(null); grant.current = null; setAuthUrl('');
     const result = await call(`/api/oauth/kiro/social-authorize?provider=${provider}`);
@@ -40,14 +41,13 @@ export default function KiroSocial({ onSaved }) {
     setBusy(false); setSavedId(id); onSaved?.();
     setNotice({ tone: read.ok && read.body?.connection?.id === id ? 'ok' : 'warn', title: read.ok && read.body?.connection?.id === id ? 'Kiro account saved and read back.' : 'Kiro accepted the sign-in, but the saved account was not confirmed.', next: 'Do not repeat the import. Stored credentials do not establish successful generation.' });
   }
-  return <><Button variant="default" onClick={() => setOpened(true)}>Kiro social sign-in</Button>
-    <Modal opened={opened} onClose={close} title="Kiro social sign-in" closeOnClickOutside={!busy} closeOnEscape={!busy}>
+  return <section aria-label="Kiro social sign-in"><h2>Kiro social sign-in</h2>
       <Stack gap="md"><p>Creates a new Kiro account using Google or GitHub. Finish the provider sign-in, then copy its complete kiro:// callback URL here. The callback is sensitive and is never logged or retained after submission.</p>
         {notice ? <Notice {...notice} /> : null}
         {!savedId ? <><NativeSelect label="Identity provider" value={provider} disabled={busy || Boolean(authUrl)} onChange={event => setProvider(event.currentTarget.value)} data={[{ value: 'google', label: 'Google' }, { value: 'github', label: 'GitHub' }]} />
           {!authUrl ? <Button onClick={begin} loading={busy}>Prepare sign-in</Button> : <><a href={authUrl} target="_blank" rel="noopener noreferrer">Open Kiro sign-in</a><form onSubmit={finish}><Stack><Textarea label="Kiro callback URL" value={callback} disabled={busy} onChange={event => setCallback(event.currentTarget.value)} autoComplete="off" required /><Button type="submit" loading={busy}>Complete account import</Button></Stack></form></>}
         </> : <Link href={`/dashboard/connections/${encodeURIComponent(savedId)}`}>Open saved Kiro account</Link>}
-        <Group justify="flex-end"><Button variant="default" disabled={busy} onClick={close}>Close</Button></Group>
+        <Group justify="flex-end"><Button variant="default" disabled={busy} onClick={close}>Reset task</Button></Group>
       </Stack>
-    </Modal></>;
+  </section>;
 }

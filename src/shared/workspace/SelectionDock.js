@@ -20,6 +20,7 @@ export function SelectionDock({
   minimumComparisonWidth = 760,
 }) {
   const desktop = useMediaQuery('(min-width: 90em)');
+  const phone = useMediaQuery('(max-width: 48em)');
   const { ref: containerRef, width } = useElementSize();
   const wide = width > 0 ? width >= minimumComparisonWidth + 388 : desktop;
   const reduceMotion = useReducedMotion();
@@ -94,7 +95,7 @@ export function SelectionDock({
         </>
       )}
     </Group>
-    {!wide && <Drawer opened={open} onClose={onClose} title={heading} size="100%" position="right" returnFocus={false}
+    {!wide && <Drawer opened={open} onClose={onClose} title={heading} size={phone ? '100%' : 'min(560px, 100vw)'} position="right" returnFocus={false}
       className={styles.detailDrawer} closeButtonProps={{ 'aria-label': 'Close selection details' }}
       removeScrollProps={{ shards: detailTarget ? [detailTarget] : [] }}
       transitionProps={{ duration: reduceMotion ? 0 : 200 }}>

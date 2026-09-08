@@ -5,12 +5,12 @@ import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 
-let root, container, wide = false, observers;
+let root, container, wide = false, phone = false, observers;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   observers = [];
   vi.stubGlobal('ResizeObserver', class { constructor(callback) { this.callback = callback; observers.push(this); } observe(target) { this.target = target; } unobserve() {} disconnect() {} });
-  vi.stubGlobal('matchMedia', vi.fn((query) => ({ matches: query === '(min-width: 90em)' && wide, addEventListener() {}, removeEventListener() {} })));
+  vi.stubGlobal('matchMedia', vi.fn((query) => ({ matches: query === '(min-width: 90em)' ? wide : query === '(max-width: 48em)' && phone, addEventListener() {}, removeEventListener() {} })));
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -19,6 +19,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   wide = false;
+  phone = false;
   vi.unstubAllGlobals();
 });
 
@@ -39,7 +40,7 @@ it('keeps closed comparison content-sized in a labelled local scroll region', as
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it('opens a full-width compact detail with an explicit return to the selected comparison', async () => {
+it('opens a bounded detail overlay with an explicit return to the selected comparison', async () => {
   await act(async () => root.render(<MantineProvider env="test"><Inventory /></MantineProvider>));
   const trigger = container.querySelector('button');
   trigger.focus();
@@ -47,10 +48,19 @@ it('opens a full-width compact detail with an explicit return to the selected co
   expect(trigger.isConnected).toBe(true);
   expect(document.querySelector('[role="dialog"]').textContent).toContain('attempt-101');
   expect(document.querySelector('[aria-label="Selection details"]').textContent).toContain('Evidence attempt-101');
+  expect(document.querySelector('.mantine-Drawer-root').style.getPropertyValue('--drawer-size')).toBe('min(560px, 100vw)');
   expect(document.querySelector('[aria-label="Resize detail panel"]')).toBeNull();
   const back = [...document.querySelectorAll('button')].find(button => button.textContent === 'Return to comparison');
   await act(async () => back.click());
   expect(container.querySelector('[aria-pressed="false"]')).not.toBeNull();
+});
+
+it('reserves a full-width detail flow for narrow screens', async () => {
+  phone = true;
+  await act(async () => root.render(<MantineProvider env="test"><Inventory /></MantineProvider>));
+  await act(async () => container.querySelector('button').click());
+  expect(document.querySelector('.mantine-Drawer-root').style.getPropertyValue('--drawer-size')).toBe('100%');
+  expect(document.querySelector('[aria-label="Selection details"]').textContent).toContain('Evidence attempt-101');
 });
 
 it('keeps wide comparison and detail mounted across selections and returns focus on close', async () => {

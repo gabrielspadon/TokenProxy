@@ -53,13 +53,13 @@ export function AccountModelAccess({ connection }) {
     {policy.error ? <Notice {...refusal(policy.status, policy.error)} /> : null}
     {receipt ? <Notice {...receipt} /> : null}
     <dl className="facts"><dt>Upstream entitlement</dt><dd>Unknown. This local policy check does not contact the provider.</dd><dt>Locally excluded</dt><dd>{policy.data ? ids.length ? ids.join(', ') : 'No local exclusions' : 'Not reported'}</dd></dl>
-    <details className="fold"><summary>Edit model access</summary>
+    <section aria-label="Edit model access"><h3>Edit model access</h3>
       <div className="connections-form">
         <label className="field"><span>Model ID to exclude</span><input className="input" value={model} onChange={event => setModel(event.target.value)} /></label>
         <button type="button" className="button quiet" disabled={!model.trim() || !!policy.error || !policy.data || busy || uncertain} onClick={() => { setError(null); setPending({ kind: 'disable', model: model.trim() }); }}>Exclude from this account</button>
         {ids.map(id => <div className="verb-row" key={id}><bdi>{id}</bdi><button type="button" className="button quiet" disabled={busy || uncertain || !!policy.error} onClick={() => { setError(null); setPending({ kind: 'enable', model: id }); }}>Allow {id}</button></div>)}
       </div>
-    </details>
+    </section>
     {uncertain || policy.error ? <button type="button" className="button quiet" onClick={refresh}>Refresh model policy</button> : null}
     <Confirm open={!!pending} busy={busy} refusal={error} title={pending?.kind === 'disable' ? 'Exclude model from this account' : 'Remove account model exclusion'} verb="Apply model policy"
       requires="An operator session. The account and model IDs are shown below."

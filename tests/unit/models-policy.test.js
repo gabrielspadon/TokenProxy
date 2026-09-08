@@ -19,6 +19,7 @@ vi.mock('@/shared/workspace/ScopeBar', () => ({
   },
 }));
 const { ModelsPolicy } = await import('../../src/shared/models-policy/ModelsPolicy');
+function DraftPanel() { return <label>Unsaved catalog draft<input aria-label="Unsaved catalog draft" defaultValue="" /></label>; }
 let container, root, current, draft, calls, handler;
 const id = '00000000-0000-4000-8000-000000000001';
 const hash = 'a'.repeat(64),
@@ -41,11 +42,11 @@ async function flush() {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
-async function render() {
+async function render(props = {}) {
   await act(async () =>
     root.render(
       <MantineProvider env="test">
-        <ModelsPolicy />
+        <ModelsPolicy {...props} />
       </MantineProvider>
     )
   );
@@ -54,6 +55,16 @@ async function render() {
 function button(name) {
   return [...document.querySelectorAll('button')].find((item) => item.textContent === name);
 }
+
+it('keeps a visited catalog draft mounted while operators switch model tasks', async () => {
+  await render({ catalogControls: <DraftPanel /> });
+  expect(document.querySelector('[aria-label="Unsaved catalog draft"]')).toBeNull();
+  await click('Catalog controls');
+  await input('[aria-label="Unsaved catalog draft"]', 'retain this alias');
+  await click('Plans');
+  await click('Catalog controls');
+  expect(document.querySelector('[aria-label="Unsaved catalog draft"]').value).toBe('retain this alias');
+});
 async function click(name) {
   const item = button(name);
   expect(item, name).toBeTruthy();
@@ -206,6 +217,11 @@ describe('Policy workbench controls', () => {
     await render();
     expect(state.analysisActions).toBe(false);
     expect(document.querySelector('[aria-label="Member 1 model"]').disabled).toBe(true);
+    expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(1);
+    expect(document.querySelector('[aria-label="Member 1 account"]').value).toBe('Synthetic account');
+    expect(document.querySelector('[aria-label="Target for shortcut"]').value).toBe('claude/model-a');
+    expect(container.querySelector('#policy-defaults').textContent).toBe('Routing defaults');
+    expect(container.querySelector('#policy-aliases').textContent).toBe('Aliases (1)');
     expect(calls.some((call) => call.method !== 'GET')).toBe(false);
   });
   it('stores ordered edits with the exact expected draft revision, then validates that stored revision', async () => {

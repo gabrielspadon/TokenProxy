@@ -1,7 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Button, Checkbox, Group, Modal, NativeSelect, Stack, Textarea, TextInput } from '@mantine/core';
+import { Button, Checkbox, Group, Stack, Textarea, TextInput } from '@mantine/core';
 import { call } from '@/shared/api';
+import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
 
 export const NETWORK_ACTIONS = [
@@ -31,24 +32,24 @@ export function buildNetworkOptions(action, values, selected = []) {
 }
 const stripSecrets = values => Object.fromEntries(Object.entries(values).filter(([key]) => !['document', 'apiToken', 'vercelToken', 'proxyUrl'].includes(key)));
 
-export default function NetworkOptions({ pools = [], onSaved }) {
-  const [opened, setOpened] = useState(false), [actionId, setActionId] = useState('adapter');
+export default function NetworkOptions({ pools = [], onSaved, actionId = 'adapter' }) {
+  const [reviewing, setReviewing] = useState(false);
   const [values, setValues] = useState({}), [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false), [submitted, setSubmitted] = useState(false), [notice, setNotice] = useState(null);
   const action = NETWORK_ACTIONS.find(item => item.id === actionId);
   useEffect(() => { const clear = () => { if (document.hidden) setValues(stripSecrets); }; document.addEventListener('visibilitychange', clear); return () => document.removeEventListener('visibilitychange', clear); }, []);
-  const close = () => { if (!busy) { setOpened(false); setValues({}); setSelected([]); setSubmitted(false); setNotice(null); } };
-  async function submit(event) {
-    event.preventDefault(); let body;
+  const close = () => { if (!busy) { setReviewing(false); setValues({}); setSelected([]); setSubmitted(false); setNotice(null); } };
+  async function submit() {
+    let body;
     try { body = buildNetworkOptions(action, values, selected); } catch (error) { setNotice({ tone: 'bad', title: error.message }); return; }
     setBusy(true); setNotice(null);
     const response = await call(action.path, { method: action.method || 'POST', ...(action.method === 'GET' ? {} : { body }) });
     setValues(stripSecrets);
-    if (!response.ok || response.body?.ok === false) { setBusy(false); setNotice({ tone: 'bad', title: `Operation refused${response.status ? ` (HTTP ${response.status})` : ''}.`, next: 'Check the fields, session permission and service prerequisites. Secret fields were cleared.' }); return; }
+    if (!response.ok || response.body?.ok === false) { setBusy(false); if (!response.status) { setSubmitted(true); setReviewing(false); setNotice({ tone: 'warn', title: 'The operation outcome is unknown.', next: 'Refresh the saved inventory before another action. Do not repeat the interrupted operation.' }); return; } setNotice({ tone: 'bad', title: `Operation refused${response.status ? ` (HTTP ${response.status})` : ''}.`, next: 'Check the fields, session permission and service prerequisites. Secret fields were cleared.' }); return; }
     if (action.id === 'export') {
       const objectUrl = URL.createObjectURL(new Blob([JSON.stringify(response.body, null, 2)], { type: 'application/json' }));
       const link = document.createElement('a'); link.href = objectUrl; link.download = 'provider-adapters.json'; link.click(); URL.revokeObjectURL(objectUrl);
-      setBusy(false); setSubmitted(true); setNotice({ tone: 'info', title: 'Private adapter download requested.', next: 'The browser controls file delivery. Credential-bearing headers are not displayed here.' }); return;
+      setBusy(false); setSubmitted(true); setReviewing(false); setNotice({ tone: 'info', title: 'Private adapter download requested.', next: 'The browser controls file delivery. Credential-bearing headers are not displayed here.' }); return;
     }
     let verified = true;
     if (action.read) {
@@ -57,19 +58,19 @@ export default function NetworkOptions({ pools = [], onSaved }) {
       else if (action.id === 'delete') verified = read.ok && selected.every(id => !(read.body?.proxyPools || []).some(pool => pool.id === id));
       else verified = read.ok && Boolean(response.body?.[action.result]?.id) && (read.body?.[action.collection] || []).some(item => item.id === response.body[action.result].id);
     }
-    setBusy(false); setSubmitted(true); onSaved?.();
+    setBusy(false); setSubmitted(true); setReviewing(false); onSaved?.();
     setNotice({ tone: verified ? 'ok' : 'warn', title: action.id === 'test' ? 'The proxy candidate test completed.' : verified ? 'Saved state read back.' : 'Saved state could not be fully confirmed.', next: action.id === 'test' ? `HTTP ${response.body?.status ?? 'not recorded'}. No routing policy was saved.` : 'Close and refresh before another change. Configuration does not establish upstream account readiness.' });
   }
-  return <><Button variant="default" onClick={() => setOpened(true)}>Advanced network setup</Button>
-    <Modal opened={opened} onClose={close} title="Advanced network setup" size="lg" closeOnClickOutside={!busy} closeOnEscape={!busy}>
-      <form onSubmit={submit}><Stack gap="md">
-        <NativeSelect label="Action" data={NETWORK_ACTIONS.map(item => ({ value: item.id, label: item.title }))} value={actionId} disabled={busy || submitted} onChange={event => { setActionId(event.currentTarget.value); setValues({}); setSelected([]); setNotice(null); }} />
+  return <section className="panel" aria-label={action.title}><h3>{action.title}</h3>
+      <form onSubmit={event => { event.preventDefault(); try { buildNetworkOptions(action, values, selected); setNotice(null); setReviewing(true); } catch (error) { setNotice({ tone: 'bad', title: error.message }); } }}><Stack gap="md">
+
         <p>{action.effect}</p>{notice ? <Notice {...notice} /> : null}
         {!submitted ? action.fields.map(([key, label, type]) => type === 'json'
-          ? <Textarea key={key} label={label} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} minRows={7} disabled={busy} autoComplete="off" description="Supports name, prefix, baseUrl, endpoints, headers and auth. Headers can contain credentials." />
-          : <TextInput key={key} label={label} type={type || 'text'} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} disabled={busy} autoComplete={type === 'password' ? 'off' : undefined} />) : null}
-        {action.id === 'delete' && !submitted ? pools.map(pool => <Checkbox key={pool.id} label={pool.name || pool.id} checked={selected.includes(pool.id)} disabled={busy} onChange={event => { const checked = event.currentTarget.checked; setSelected(current => checked ? [...current, pool.id] : current.filter(id => id !== pool.id)); }} />) : null}
-        <Group justify="flex-end"><Button variant="default" onClick={close} disabled={busy}>Close</Button>{!submitted ? <Button type="submit" color={action.id === 'delete' ? 'red' : undefined} loading={busy}>{action.title}</Button> : null}</Group>
+          ? <Textarea key={key} label={label} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} minRows={7} disabled={busy || reviewing} autoComplete="off" description="Supports name, prefix, baseUrl, endpoints, headers and auth. Headers can contain credentials." />
+          : <TextInput key={key} label={label} type={type || 'text'} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} disabled={busy || reviewing} autoComplete={type === 'password' ? 'off' : undefined} />) : null}
+        {action.id === 'delete' && !submitted ? pools.map(pool => <Checkbox key={pool.id} label={pool.name || pool.id} checked={selected.includes(pool.id)} disabled={busy || reviewing} onChange={event => { const checked = event.currentTarget.checked; setSelected(current => checked ? [...current, pool.id] : current.filter(id => id !== pool.id)); }} />) : null}
+        <Group justify="flex-end"><Button variant="default" onClick={close} disabled={busy || reviewing}>Reset task</Button>{!submitted ? <Button type="submit" color={action.id === 'delete' ? 'red' : undefined} loading={busy}>Review action</Button> : null}</Group>
       </Stack></form>
-    </Modal></>;
+    <Confirm open={reviewing} title={action.title} verb={action.title} changes={action.effect} requires="An authorized operator session and the stated service prerequisites." undo={['cloudflare', 'vercel'].includes(action.id) ? 'Remote resources remain until removed at the host. Removing the gateway pool does not remove the deployment.' : 'Review the saved state before another change. Provider authentication is separate.'} irreversible={action.id === 'delete'} busy={busy} refusal={notice} onConfirm={submit} onClose={() => { if (!busy) setReviewing(false); }} />
+    </section>;
 }

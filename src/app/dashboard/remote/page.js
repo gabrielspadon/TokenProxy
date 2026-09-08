@@ -643,13 +643,13 @@ export default function RemotePage() {
         </ul>
       </section>
 
-      <details className="fold"><summary>Host configuration for remote transports</summary>
+      <section aria-labelledby="remote-host-configuration"><h2 id="remote-host-configuration">Host configuration for remote transports</h2>
         <p>These startup options belong to the gateway service environment. They cannot be changed by saving a dashboard setting. After changing them, restart the gateway through its normal service manager and inspect the transport state above.</p>
         <dl className="facts"><dt>Cloudflare worker service</dt><dd><code>TUNNEL_WORKER_URL=https://your-worker.example</code> selects the registration service and the host used to construct its public address. It must provide the gateway’s worker protocol.</dd>
           <dt>Worker TLS verification</dt><dd><code>TUNNEL_WORKER_INSECURE=1</code> disables certificate verification for that worker host only. Leave this unset when the worker has a trusted certificate.</dd>
           <dt>Tailscale authorization</dt><dd>Set <code>TAILSCALE_AUTHKEY</code> in the gateway’s private service environment to supply the key when Tailscale starts. This page never reads, displays, or stores it. Without it, complete Tailscale’s interactive sign-in.</dd></dl>
         <p>A configured worker URL or auth key is not evidence that the transport runs or that a remote client can reach the gateway. Starting and testing transports remain separate explicit actions.</p>
-      </details>
+      </section>
 
       <section aria-labelledby="h-gap">
         <h2 id="h-gap">Not reported</h2>

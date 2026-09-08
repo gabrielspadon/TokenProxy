@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
 import { Notice } from '@/shared/components/Notice';
@@ -8,11 +8,9 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
-import { Tabs } from '@mantine/core';
 import { ModelsPolicy } from '@/shared/models-policy/ModelsPolicy';
 import { CatalogTools } from './CatalogTools';
 import { AutoRouting } from '@/shared/models-policy/AutoRouting';
-import policyStyles from '@/shared/models-policy/policy.module.css';
 import './styles.css';
 
 function pollFresh(p) {
@@ -34,20 +32,19 @@ const STRATEGIES = ['fallback', 'round-robin', 'fusion'];
 // Every disable/enable and combo-strategy write touches routing state a
 // request already in flight has read, so every mutation here carries the
 // same one-line consequence text.
+const REVIEW_LABELS = { alias: 'Alias', providerAlias: 'Provider', id: 'Model id', name: 'Name', kind: 'Kind', models: 'Members', vision: 'Vision', maxInputTokens: 'Context window', maxOutputTokens: 'Max output', comboStrategy: 'Default combo strategy', comboStickyRoundRobinLimit: 'Sticky round-robin limit' };
+
 const NEXT_REQUEST =
   'New requests take the change. A request already in flight keeps what it started with.';
 
 export default function ModelsPage() {
-  const [view, setView] = useState('policy');
-  return <Tabs value={view} onChange={setView} className={policyStyles.pageTabs}>
-    <Tabs.List><Tabs.Tab value="policy">Policy workbench</Tabs.Tab><Tabs.Tab value="auto-routing">Automatic routing</Tabs.Tab><Tabs.Tab value="catalog">Catalog controls</Tabs.Tab><Tabs.Tab value="catalog-tools">Catalog tools</Tabs.Tab></Tabs.List>
-    <Tabs.Panel value="policy"><ModelsPolicy /></Tabs.Panel>
-    <Tabs.Panel value="catalog">{view === 'catalog' && <CatalogControls />}</Tabs.Panel>
-    <Tabs.Panel value="catalog-tools">{view === 'catalog-tools' && <CatalogTools />}</Tabs.Panel>
-    <Tabs.Panel value="auto-routing">{view === 'auto-routing' && <AutoRouting />}</Tabs.Panel>
-  </Tabs>;
+  return <ModelsPolicy
+    automaticRouting={<AutoRouting />}
+    catalogControls={<CatalogControls />}
+    catalogTools={<CatalogTools />}
+  />;
 }
-function CatalogControls() {
+export function CatalogControls() {
   const models = usePoll('/api/models', 30000);
   const disabled = usePoll('/api/models/disabled', 30000);
   const custom = usePoll('/api/models/custom', 30000);
@@ -58,13 +55,19 @@ function CatalogControls() {
   const conns = usePoll('/api/admin/health/detail', 30000);
 
   const [q, setQ] = useState('');
-  const [pending, setPending] = useState(null); // {kind, ...} drives the Confirm dialog
+  const [pending, setPending] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const editorRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(null);
   const [done, setDone] = useState(null);
   const [form, setForm] = useState({});
+  const [settingsForm, setSettingsForm] = useState({});
   const [now] = useState(() => Date.now());
   const [showAll, setShowAll] = useState(false);
+  useEffect(() => {
+    editorRef.current?.querySelector('input:not(:disabled)')?.focus();
+  }, [editing]);
 
   const rows = models.data?.models || [];
   const filtered = useMemo(() => {
@@ -91,14 +94,13 @@ function CatalogControls() {
   const close = () => {
     setPending(null);
     setFailed(null);
-    setForm({});
   };
 
   const run = async () => {
     if (!pending) return;
     setBusy(true);
     setFailed(null);
-    const res = await pending.request(form);
+    const res = await pending.request(pending.values || {});
     setBusy(false);
     if (!res.ok) {
       setFailed(refusal(res.status, res.body));
@@ -106,7 +108,11 @@ function CatalogControls() {
     }
     setDone(pending.done);
     setPending(null);
-    setForm({});
+    if (pending.values && editing?.kind === pending.kind) {
+      setEditing(null);
+      setForm({});
+    }
+    if (pending.kind === 'comboDefaults' || pending.kind === 'capacity') setSettingsForm({});
     pending.refresh?.forEach((p) => p.refresh());
   };
 
@@ -114,7 +120,7 @@ function CatalogControls() {
   const openAlias = (m) => {
     setFailed(null);
     setForm({ alias: m.alias === m.model ? '' : m.alias });
-    setPending({
+    setEditing({
       kind: 'alias',
       model: m.fullModel,
       label: m.fullModel,
@@ -199,7 +205,7 @@ function CatalogControls() {
   const openAddCustom = () => {
     setFailed(null);
     setForm({ providerAlias: '', id: '', name: '', vision: false });
-    setPending({
+    setEditing({
       kind: 'addCustom',
       title: 'Register a custom model',
       verb: 'Register',
@@ -300,7 +306,7 @@ function CatalogControls() {
   const openCreateCombo = () => {
     setFailed(null);
     setForm({ name: '', models: '', kind: '' });
-    setPending({
+    setEditing({
       kind: 'createCombo',
       title: 'Create a combo',
       verb: 'Create',
@@ -326,7 +332,7 @@ function CatalogControls() {
   const openEditCombo = (c) => {
     setFailed(null);
     setForm({ name: c.name, models: (c.models || []).join(', '), kind: c.kind || '' });
-    setPending({
+    setEditing({
       kind: 'editCombo',
       id: c.id,
       label: c.name,
@@ -373,6 +379,7 @@ function CatalogControls() {
     setFailed(null);
     setPending({
       kind: 'comboDefaults',
+      values: { comboStrategy: settingsForm.comboStrategy ?? s.comboStrategy ?? 'fallback', comboStickyRoundRobinLimit: settingsForm.comboStickyRoundRobinLimit ?? s.comboStickyRoundRobinLimit ?? 1 },
       title: 'Save the default combo strategy',
       verb: 'Save',
       requires: OPERATOR,
@@ -406,6 +413,7 @@ function CatalogControls() {
     setFailed(null);
     setPending({
       kind: 'capacity',
+      values: Object.fromEntries(Object.entries(buildCapacityBody(s?.capacityAdapter, key, settingsForm)[key]).map(([name, value]) => [`${key}.${name}`, Array.isArray(value) ? value.join(', ') : value])),
       label: CAPACITY_KINDS.find((c) => c.key === key)?.label,
       capKey: key,
       title: `Save ${CAPACITY_KINDS.find((c) => c.key === key)?.label} auto-routing`,
@@ -423,12 +431,131 @@ function CatalogControls() {
     });
   };
 
+  const editor = editing && <form ref={editorRef} className="models-inline-editor" aria-label={editing.title} onSubmit={event => {
+    event.preventDefault();
+    if (!busy && !pending && event.currentTarget.reportValidity()) setPending({ ...editing, values: { ...form } });
+  }}>
+    <h3>{editing.title}</h3>
+    {editing.label && <p className="name id">{editing.label}</p>}
+    <fieldset disabled={busy || Boolean(pending)}>
+        {editing?.kind === 'alias' ? (
+          <label className="field">
+            <span>Alias</span>
+            <input
+              className="input"
+              type="text"
+              value={form.alias || ''}
+              onChange={(e) => setForm((f) => ({ ...f, alias: e.target.value }))}
+            />
+          </label>
+        ) : null}
+        {editing?.kind === 'addCustom' ? (
+          <div className="models-form">
+            <label className="field">
+              <span>Provider</span>
+              <input
+                className="input"
+                type="text"
+                value={form.providerAlias || ''}
+                onChange={(e) => setForm((f) => ({ ...f, providerAlias: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Model id</span>
+              <input
+                className="input"
+                type="text"
+                value={form.id || ''}
+                onChange={(e) => setForm((f) => ({ ...f, id: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Name</span>
+              <input
+                className="input"
+                type="text"
+                value={form.name || ''}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Context window</span>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                value={form.maxInputTokens || ''}
+                onChange={(e) => setForm((f) => ({ ...f, maxInputTokens: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Max output</span>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                value={form.maxOutputTokens || ''}
+                onChange={(e) => setForm((f) => ({ ...f, maxOutputTokens: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>
+                <input
+                  type="checkbox"
+                  checked={!!form.vision}
+                  onChange={(e) => setForm((f) => ({ ...f, vision: e.target.checked }))}
+                />{' '}
+                Vision
+              </span>
+            </label>
+          </div>
+        ) : null}
+        {editing?.kind === 'createCombo' || editing?.kind === 'editCombo' ? (
+          <div className="models-form">
+            <label className="field">
+              <span>Name</span>
+              <input
+                className="input"
+                type="text"
+                disabled={editing.kind === 'editCombo'}
+                value={form.name || ''}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Kind</span>
+              <input
+                className="input"
+                type="text"
+                value={form.kind || ''}
+                onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Members</span>
+              <input
+                className="input"
+                type="text"
+                value={form.models || ''}
+                onChange={(e) => setForm((f) => ({ ...f, models: e.target.value }))}
+              />
+            </label>
+            <p className="caption">One model id per entry, in order, separated by commas.</p>
+          </div>
+        ) : null}
+    </fieldset>
+    <div className="actions">
+      <button type="submit" className="button" disabled={busy || Boolean(pending)}>Review change</button>
+      <button type="button" className="button quiet" disabled={busy || Boolean(pending)} onClick={() => { setEditing(null); setForm({}); }}>Cancel edit</button>
+    </div>
+  </form>;
+
   const s6errors = models.error && !models.data ? refusal(models.status, models.error) : null;
 
   return (
     <>
       <div className="screen-head">
-        <h1>Models</h1>
+        <h2>Catalog controls</h2>
         <Freshness status={pollFresh(models)} lastDataAt={models.goodAt} />
       </div>
       {done ? <Notice tone="ok" title={done} /> : null}
@@ -480,6 +607,7 @@ function CatalogControls() {
             />
           </label>
         </div>
+        {editing?.kind === 'alias' && editor}
         {s6errors ? <Notice {...s6errors} /> : null}
         {models.loading && !models.data ? <p className="skeleton">Reading</p> : null}
         {models.data && filtered.length === 0 ? (
@@ -625,6 +753,7 @@ function CatalogControls() {
             Register a model
           </button>
         </div>
+        {editing?.kind === 'addCustom' && editor}
         {custom.error && !custom.data ? <Notice {...refusal(custom.status, custom.error)} /> : null}
         {custom.data && customRows.length === 0 ? (
           <p className="empty">No custom model is registered.</p>
@@ -796,6 +925,7 @@ function CatalogControls() {
             Create a combo
           </button>
         </div>
+        {(editing?.kind === 'createCombo' || editing?.kind === 'editCombo') && editor}
         {combos.error && !combos.data ? <Notice {...refusal(combos.status, combos.error)} /> : null}
         {combos.data && comboRows.length === 0 ? (
           <p className="empty">
@@ -861,8 +991,8 @@ function CatalogControls() {
                 <span>Default combo strategy</span>
                 <select
                   className="select"
-                  value={form.comboStrategy ?? s.comboStrategy}
-                  onChange={(e) => setForm((f) => ({ ...f, comboStrategy: e.target.value }))}
+                  value={settingsForm.comboStrategy ?? s.comboStrategy}
+                  onChange={(e) => setSettingsForm((f) => ({ ...f, comboStrategy: e.target.value }))}
                 >
                   {STRATEGIES.map((v) => (
                     <option key={v} value={v}>
@@ -877,9 +1007,9 @@ function CatalogControls() {
                   className="input"
                   type="number"
                   min="1"
-                  value={form.comboStickyRoundRobinLimit ?? s.comboStickyRoundRobinLimit}
+                  value={settingsForm.comboStickyRoundRobinLimit ?? s.comboStickyRoundRobinLimit}
                   onChange={(e) =>
-                    setForm((f) => ({ ...f, comboStickyRoundRobinLimit: e.target.value }))
+                    setSettingsForm((f) => ({ ...f, comboStickyRoundRobinLimit: e.target.value }))
                   }
                 />
               </label>
@@ -919,9 +1049,9 @@ function CatalogControls() {
                         <label>
                           <input
                             type="checkbox"
-                            checked={form[`${k.key}.enabled`] ?? cfg.enabled ?? false}
+                            checked={settingsForm[`${k.key}.enabled`] ?? cfg.enabled ?? false}
                             onChange={(e) =>
-                              setForm((f) => ({ ...f, [`${k.key}.enabled`]: e.target.checked }))
+                              setSettingsForm((f) => ({ ...f, [`${k.key}.enabled`]: e.target.checked }))
                             }
                           />{' '}
                           Enabled
@@ -929,9 +1059,9 @@ function CatalogControls() {
                         <label>
                           <input
                             type="checkbox"
-                            checked={form[`${k.key}.roundRobin`] ?? cfg.roundRobin ?? false}
+                            checked={settingsForm[`${k.key}.roundRobin`] ?? cfg.roundRobin ?? false}
                             onChange={(e) =>
-                              setForm((f) => ({ ...f, [`${k.key}.roundRobin`]: e.target.checked }))
+                              setSettingsForm((f) => ({ ...f, [`${k.key}.roundRobin`]: e.target.checked }))
                             }
                           />{' '}
                           Rotate among eligible models
@@ -941,9 +1071,9 @@ function CatalogControls() {
                         className="input"
                         type="text"
                         placeholder="eligible model ids, comma separated"
-                        value={form[`${k.key}.models`] ?? (cfg.models || []).join(', ')}
+                        value={settingsForm[`${k.key}.models`] ?? (cfg.models || []).join(', ')}
                         onChange={(e) =>
-                          setForm((f) => ({ ...f, [`${k.key}.models`]: e.target.value }))
+                          setSettingsForm((f) => ({ ...f, [`${k.key}.models`]: e.target.value }))
                         }
                       />
                     </span>
@@ -995,111 +1125,7 @@ function CatalogControls() {
             {pending.label}
           </p>
         ) : null}
-        {pending?.kind === 'alias' ? (
-          <label className="field">
-            <span>Alias</span>
-            <input
-              className="input"
-              type="text"
-              value={form.alias || ''}
-              onChange={(e) => setForm((f) => ({ ...f, alias: e.target.value }))}
-            />
-          </label>
-        ) : null}
-        {pending?.kind === 'addCustom' ? (
-          <div className="models-form">
-            <label className="field">
-              <span>Provider</span>
-              <input
-                className="input"
-                type="text"
-                value={form.providerAlias || ''}
-                onChange={(e) => setForm((f) => ({ ...f, providerAlias: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Model id</span>
-              <input
-                className="input"
-                type="text"
-                value={form.id || ''}
-                onChange={(e) => setForm((f) => ({ ...f, id: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                value={form.name || ''}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Context window</span>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                value={form.maxInputTokens || ''}
-                onChange={(e) => setForm((f) => ({ ...f, maxInputTokens: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Max output</span>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                value={form.maxOutputTokens || ''}
-                onChange={(e) => setForm((f) => ({ ...f, maxOutputTokens: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>
-                <input
-                  type="checkbox"
-                  checked={!!form.vision}
-                  onChange={(e) => setForm((f) => ({ ...f, vision: e.target.checked }))}
-                />{' '}
-                Vision
-              </span>
-            </label>
-          </div>
-        ) : null}
-        {pending?.kind === 'createCombo' || pending?.kind === 'editCombo' ? (
-          <div className="models-form">
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                disabled={pending.kind === 'editCombo'}
-                value={form.name || ''}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Kind</span>
-              <input
-                className="input"
-                type="text"
-                value={form.kind || ''}
-                onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Members</span>
-              <input
-                className="input"
-                type="text"
-                value={form.models || ''}
-                onChange={(e) => setForm((f) => ({ ...f, models: e.target.value }))}
-              />
-            </label>
-            <p className="caption">One model id per entry, in order, separated by commas.</p>
-          </div>
-        ) : null}
+        {pending?.values && <dl className="models-review-values">{Object.entries(pending.values).map(([key, value]) => <div key={key}><dt>{REVIEW_LABELS[key] || key}</dt><dd>{typeof value === 'boolean' ? value ? 'Enabled' : 'Disabled' : value || 'Not set'}</dd></div>)}</dl>}
       </Confirm>
     </>
   );

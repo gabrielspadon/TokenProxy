@@ -1,6 +1,6 @@
 'use client';
 import { Button, Input } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import './styles.css';
 import { usePoll } from '@/shared/hooks/usePoll';
@@ -62,6 +62,7 @@ export default function SystemPage() {
   const [done, setDone] = useState(null);
   const [password, setPassword] = useState('');
   const [file, setFile] = useState(null);
+  const importFileInput = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -95,9 +96,12 @@ export default function SystemPage() {
     setRefuse(null);
     setPassword('');
     setFile(null);
+    if (importFileInput.current) importFileInput.current.value = '';
   };
   const finish = (at, title, next) => {
     setOpen(null);
+    setFile(null);
+    if (importFileInput.current) importFileInput.current.value = '';
     setDone({ at, tone: 'ok', title, next });
   };
 
@@ -525,10 +529,22 @@ export default function SystemPage() {
         ) : null}
         <div className="panel" data-tone="danger">
           <h3>Controls</h3>
+          <label className="field">
+            <span>Backup file</span>
+            <Input
+              ref={importFileInput}
+              type="file"
+              accept="application/json,.json"
+              disabled={busy || open === 'import'}
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+            />
+          </label>
+          {file ? <p className="caption">Selected file {file.name}. Review the replacement scope before importing.</p> : null}
           <div className="verb-row">
             <Button
               type="button"
               color="red"
+              disabled={!file || busy}
               onClick={() => {
                 setDone(null);
                 setOpen('import');
@@ -662,15 +678,7 @@ export default function SystemPage() {
         onConfirm={doImport}
         onClose={close}
       >
-        <label className="field">
-          <span>Backup file</span>
-          <Input
-            type="file"
-            accept="application/json,.json"
-            required
-            onChange={(e) => setFile(e.target.files?.[0] || null)}
-          />
-        </label>
+        <p>Selected file <strong>{file?.name || 'No file selected'}</strong></p>
         <label className="field">
           <span>Dashboard password</span>
           <Input

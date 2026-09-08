@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
-import { accountControlState, accountLimitsPatch, accountWindows, accountWindowTime, mergeAccountControls, saveAccountControls } from '@/app/dashboard/accountControlPanelModel';
+import { accountControlBaseline, accountControlEvidence, accountControlState, accountDraftState, accountLimitsPatch, accountWindows, accountWindowStale, accountWindowTime, makeAccountDraft, mergeAccountControls, rebaseAccountDraft, saveAccountControls, sortAccountControls } from '@/app/dashboard/accountControlPanelModel';
 import { captureAccountControls } from '@/shared/utils/accountControls';
 
 const now = Date.parse('2026-09-07T20:00:00Z');
 const account = { id: 'one', provider: 'codex', authType: 'oauth', isActive: true, priority: 1, quotaPauseThresholds: { weekly: 10 } };
 describe('account panel quota evidence', () => {
+  it('keeps configured pause, recorded health and simultaneous local gates distinct', () => {
+    const evidence = accountControlEvidence({ ...account, isActive: false, status: 'healthy', isDraining: true, quotaPauseThresholds: { 'semanal / 周': 10 }, lastQuotaSnapshot: { windows: [{ key: 'semanal / 周', remainingPercentage: 5 }] } }, now);
+    expect(evidence).toMatchObject({ health: 'Recorded status healthy', gates: ['Quota pause at 5% remaining in semanal / 周 (threshold 10%)', 'Local drain is on'] });
+    expect(accountControlEvidence({ ...account }, now)).toMatchObject({ health: 'Provider health unknown', gates: [] });
+    expect(accountControlState({ ...account, status: 'drained' }, now)).toBe('Draining');
+  });
+  it('marks unknown, future, old and reset-passed observations as stale', () => {
+    for (const window of [{}, { observedAt: '2026-09-07T20:01:00Z' }, { observedAt: '2026-09-07T19:00:00Z' }, { observedAt: '2026-09-07T19:59:00Z', resetAt: '2026-09-07T20:00:00Z' }]) expect(accountWindowStale(window, now)).toBe(true);
+    expect(accountWindowStale({ observedAt: '2026-09-07T19:45:00Z' }, now)).toBe(false);
+  });
   it('distinguishes configured enablement from missing qualification and observed problems', () => {
     expect(accountControlState({ ...account, status: 'unqualified' }, now)).toBe('Not checked');
     expect(accountControlState({ ...account, status: 'degraded' }, now)).toBe('Needs attention');
@@ -43,7 +53,49 @@ describe('account panel quota evidence', () => {
     for (const threshold of [-1, 101, '', Infinity]) expect(accountLimitsPatch(1, { weekly: threshold })).toBeNull();
   });
 });
+describe('account panel local ordering', () => {
+  const observed = (id, remainingPercentage, resetAt, fetchedAt = '2026-09-07T19:59:00Z', unlimited = false) => ({ id, name: id, lastQuotaSnapshot: { fetchedAt, windows: [{ key: 'weekly', remainingPercentage, resetAt, unlimited }] } });
+  it('orders known fresh headroom and reset values before missing, stale or unlimited observations', () => {
+    const accounts = [observed('A stale', 0, '2026-09-07T20:01:00Z', '2026-09-07T19:00:00Z'), observed('B unlimited', 0, '2026-09-07T20:01:00Z', undefined, true), { id: 'C missing' }, observed('D less', 5, '2026-09-07T23:00:00Z'), observed('E sooner', 70, '2026-09-07T21:00:00Z')];
+    expect(sortAccountControls(accounts, 'headroom', now).map(item => item.id)).toEqual(['D less', 'E sooner', 'A stale', 'B unlimited', 'C missing']);
+    expect(sortAccountControls(accounts, 'reset', now).map(item => item.id)).toEqual(['E sooner', 'D less', 'A stale', 'B unlimited', 'C missing']);
+    expect(accounts[0].id).toBe('A stale');
+  });
+  it('uses stable name ties and excludes passed resets without inventing replenishment', () => {
+    const accounts = [observed('Z observed', 0, '2026-09-07T21:00:00Z'), observed('A reset passed', 0, '2026-09-07T19:59:00Z'), observed('Y observed', 0, '2026-09-07T21:00:00Z')];
+    expect(sortAccountControls(accounts, 'headroom', now).map(item => item.id)).toEqual(['Y observed', 'Z observed', 'A reset passed']);
+    expect(sortAccountControls(accounts, 'name', now).map(item => item.id)).toEqual(['A reset passed', 'Y observed', 'Z observed']);
+  });
+  it('can order an observed reset with unknown percentage without treating it as known headroom', () => {
+    const accounts = [observed('A reset only', null, '2026-09-07T20:10:00Z'), observed('Z known headroom', 20, '2026-09-07T21:00:00Z')];
+    expect(sortAccountControls(accounts, 'reset', now).map(item => item.id)).toEqual(['A reset only', 'Z known headroom']);
+    expect(sortAccountControls(accounts, 'headroom', now).map(item => item.id)).toEqual(['Z known headroom', 'A reset only']);
+  });
+});
 describe('account panel persistence', () => {
+  it('accepts only a validated persisted identity and complete policy snapshot', () => {
+    expect(accountControlBaseline(account, 'one')).toEqual({ id: 'one', ...captureAccountControls(account) });
+    for (const connection of [{ id: 'one' }, { ...account, priority: '1' }, { ...account, quotaPauseThresholds: [] }, { ...account, quotaPauseThresholds: { weekly: '10' } }, { ...account, id: 'other' }]) expect(accountControlBaseline(connection, 'one')).toBeNull();
+    expect(accountControlBaseline({ ...account, priority: null, quotaPauseThresholds: null }, 'one')).toMatchObject({ priority: null, quotaPauseThresholds: {} });
+  });
+  it('saves only changed policy fields and treats new zero thresholds as unchanged', () => {
+    const before = accountControlBaseline({ ...account, priority: null }, 'one');
+    const draft = makeAccountDraft(before, [{ key: 'weekly' }, { key: 'sessão / 週' }]);
+    expect(accountDraftState(draft)).toEqual({ dirty: false, patch: {} });
+    const changed = { ...draft, thresholds: { ...draft.thresholds, 'sessão / 週': 20 } };
+    expect(accountDraftState(changed)).toEqual({ dirty: true, patch: { quotaPauseThresholds: { weekly: 10, 'sessão / 週': 20 } } });
+    expect(accountDraftState({ ...changed, thresholds: { weekly: '' } })).toEqual({ dirty: true, patch: null });
+    expect(accountDraftState({ ...draft, priority: 0 })).toEqual({ dirty: true, patch: null });
+  });
+  it('rebases explicitly edited fields without overwriting new untouched policy', () => {
+    const before = accountControlBaseline(account, 'one');
+    const draft = { ...makeAccountDraft(before, [{ key: 'weekly' }]), thresholds: { weekly: 30 } };
+    const current = accountControlBaseline({ ...account, isActive: false, priority: 4, quotaPauseThresholds: { weekly: 20, monthly: 15 } }, 'one');
+    const rebased = rebaseAccountDraft(draft, current, [{ key: 'weekly' }, { key: 'monthly' }]);
+    expect(rebased).toMatchObject({ before: current, priority: 4, thresholds: { weekly: 30, monthly: 15 } });
+    expect(accountDraftState(rebased).patch).toEqual({ quotaPauseThresholds: { weekly: 30, monthly: 15 } });
+    expect(accountDraftState(rebaseAccountDraft(draft, { ...current, quotaPauseThresholds: { weekly: 30, monthly: 15 } }, [])).dirty).toBe(false);
+  });
   it('accepts server priority renumbering and removed zero thresholds only after matching readback', async () => {
     const current = { ...account, priority: 2, quotaPauseThresholds: {} };
     const request = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ connection: current }) });

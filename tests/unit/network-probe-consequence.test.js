@@ -75,6 +75,7 @@ beforeEach(async () => {
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root.render(<MantineProvider env="test"><NetworkPage /></MantineProvider>));
+  await act(async () => button('Pools').click());
 });
 afterEach(() => {
   act(() => root.unmount());

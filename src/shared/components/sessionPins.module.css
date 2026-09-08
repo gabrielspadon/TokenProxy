@@ -245,7 +245,20 @@
   overflow-wrap: anywhere;
 }
 .dockBody {
-  padding: 12px 20px 20px;
+  padding: 12px;
+}
+.pinLayout { display: grid; gap: 16px; min-width: 0; }
+.pinLayout[data-selected] { grid-template-columns: minmax(0, 1fr) minmax(320px, 390px); align-items: start; }
+.pinInventory { min-width: 0; grid-column: 1; grid-row: 1; }
+.pinEditor { min-width: 0; grid-column: 2; grid-row: 1; border: 1px solid var(--control-edge); border-radius: var(--radius); background: var(--raised); }
+.pinEditorHeader { display: flex; align-items: start; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--rule); }
+.pinEditorHeader > div { min-width: 0; overflow-wrap: anywhere; }
+.pinEditor .field { min-width: 0; max-width: 100%; }
+.pinEditor .field select, .pinEditor .field input { min-width: 0; max-width: 100%; }
+@media (max-width: 1100px) {
+  .pinLayout[data-selected] { grid-template-columns: minmax(0, 1fr); }
+  .pinEditor { grid-column: 1; grid-row: 1; }
+  .pinLayout[data-selected] .pinInventory { grid-row: 2; }
 }
 
 .attemptLink { display:block; margin-top:5px; color:var(--signal); font-size:13px; }

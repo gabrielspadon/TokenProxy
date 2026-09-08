@@ -128,6 +128,47 @@
   flex-direction: column;
   gap: 6px;
 }
+.ruleWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 14px;
+  align-items: start;
+}
+.ruleWorkspace[data-editing] {
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 1fr);
+}
+.ruleInventory,
+.ruleSelection {
+  min-width: 0;
+}
+.ruleInventory :global(.mantine-ScrollArea-viewport) {
+  max-height: 520px;
+}
+.ruleSelection .editor {
+  margin: 0;
+}
+.ruleSelection .editor :global(.mantine-InputWrapper-root) {
+  max-width: 100%;
+}
+.ruleEvidence {
+  border: 1px solid var(--rule);
+  border-top: 0;
+  padding: 14px 18px;
+}
+.ruleEvidence > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.ruleEvidence > summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+@media (max-width: 1050px) {
+  .ruleWorkspace[data-editing] { grid-template-columns: minmax(0, 1fr); }
+  .ruleSelection { grid-row: 1; }
+}
 
 .detail {
   margin-top: 0;

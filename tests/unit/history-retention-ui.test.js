@@ -26,12 +26,14 @@ beforeEach(() => {
 afterEach(async()=>{await act(async()=>root.unmount());container.remove();vi.unstubAllGlobals();});
 const button=text=>[...document.querySelectorAll('button')].find(node=>node.textContent===text);
 async function click(text){await act(async()=>button(text).click());}
-async function open(){await act(async()=>root.render(<MantineProvider env="test"><HistoryRetention onSaved={onSaved}/></MantineProvider>));await click('History retention');}
+async function open(){await act(async()=>root.render(<MantineProvider env="test"><HistoryRetention onSaved={onSaved}/></MantineProvider>));}
 async function mode(value){await act(async()=>{const select=document.querySelector('select');select.value=value;select.dispatchEvent(new Event('change',{bubbles:true}));});}
 async function acknowledge(){await act(async()=>document.querySelector('input[type="checkbox"]').click());}
-it('reads only when opened and defaults to preserving all history without saving',async()=>{
+it('shows the stored policy directly without a modal or an implicit write',async()=>{
   await act(async()=>root.render(<MantineProvider env="test"><HistoryRetention onSaved={onSaved}/></MantineProvider>));
-  expect(fetchMock).not.toHaveBeenCalled();await click('History retention');
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(document.querySelector('[role=dialog]')).toBeNull();
+  expect(document.querySelector('[aria-label="History retention settings"]')).not.toBeNull();
   expect(document.querySelector('select').value).toBe('preserve');
   expect(document.body.textContent).toContain('Previously deleted records cannot be recovered');
   expect(fetchMock.mock.calls.every(([,options])=>options?.method!=='PATCH')).toBe(true);
@@ -65,4 +67,23 @@ it('saves preservation without requiring deletion acknowledgement',async()=>{
 it('requires renewed acknowledgement after changing the selected policy',async()=>{
   await open();await mode('window');await acknowledge();expect(button('Save history policy').disabled).toBe(false);
   await mode('preserve');await mode('window');expect(button('Save history policy').disabled).toBe(true);
+});
+it('reads current policy without discarding a draft and returns focus after an explicit discard',async()=>{
+  await open();await mode('window');await acknowledge();
+  current={statsRetentionMode:'preserve',statsRetentionDays:90};
+  await click('Read current policy');
+  expect(document.querySelector('select').value).toBe('window');
+  expect(document.querySelector('input[type="text"]').value).toBe('45');
+  expect(button('Save history policy').disabled).toBe(true);
+  await click('Discard');
+  expect(document.querySelector('select').value).toBe('preserve');
+  expect(document.querySelector('input[type="text"]').value).toBe('90');
+  expect(document.activeElement).toBe(document.querySelector('select'));
+  expect(fetchMock.mock.calls.some(([,options])=>options?.method==='PATCH')).toBe(false);
+});
+it('fails closed on incomplete stored policy instead of inventing a default',async()=>{
+  current={statsRetentionMode:'preserve'};await open();
+  expect(document.body.textContent).toContain('No default policy was substituted');
+  expect(document.querySelector('select')).toBeNull();
+  expect(button('Save history policy')).toBeUndefined();
 });

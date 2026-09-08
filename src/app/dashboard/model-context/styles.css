@@ -1,7 +1,13 @@
 .model-context-page { color: var(--ink); font-family: var(--sans); font-size: 14px; min-width: 0; }
-.model-context-page { display: flex; flex-direction: column; height: calc(100dvh - 108px); }
+.model-context-page { display: flex; flex-direction: column; }
 .model-context-page > :not(.model-context-dock) { flex-shrink: 0; }
-.model-context-dock { flex: 1; min-height: 380px; }
+.model-context-dock { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.model-context-dock[data-selected] { grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); }
+.model-context-selection { border: 1px solid var(--rule); background: var(--raised); min-width: 0; }
+.model-context-selection-heading { display: flex; align-items: start; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.model-context-selection-heading > div { flex: 1; min-width: 0; }
+.model-context-selection-heading h2 { margin: 0 0 6px; font-size: 18px; }
+.model-context-bulk > div { padding: 14px; margin-top: 10px; background: var(--raised); border: 1px solid var(--rule); }
 .model-context-page h1 { font-size: 28px; margin: 6px 0; font-weight: 600; }
 .model-context-page p { margin: 8px 0; line-height: 1.55; }
 .model-context-page code { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -16,7 +22,7 @@
 .model-context-tools > span { font-size: 13px; color: var(--slate); }
 .model-context-caution { color: var(--slate); background: var(--paper); padding: 10px 14px; border-inline-start: 3px solid var(--signal); font-size: 13px; }
 .model-context-inventory { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--raised); border: 1px solid var(--rule); }
-.model-context-table-scroll { flex: 1; min-height: 0; overflow: auto; }
+.model-context-table-scroll { flex: 1; min-height: 0; max-height: min(640px, 65dvh); overflow: auto; }
 .model-context-table-scroll > p { padding: 16px; }
 .model-context-page table { width: 100%; border-collapse: collapse; text-align: start; }
 .model-context-page caption { text-align: start; padding: 10px 14px; font-size: 13px; color: var(--slate); background: var(--paper); }
@@ -44,7 +50,8 @@
 .model-context-page .mantine-InputWrapper-label, .model-context-page .mantine-InputWrapper-description, .model-context-page .mantine-InputWrapper-error, .model-context-page .mantine-Input-input, .model-context-page .mantine-Button-label { font-size: 14px; }
 @media (max-width: 760px) {
   .model-context-page { height: auto; }
-  .model-context-dock { flex: none; height: 760px; }
+  .model-context-dock[data-selected] { grid-template-columns: minmax(0, 1fr); }
+  .model-context-selection { grid-row: 1; }
   .model-context-heading, .model-context-tools { align-items: stretch; flex-direction: column; }
   .model-context-tools > :first-child { max-width: none; }
   .model-context-tools > span { margin-inline-start: 0; }

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Alert, Button } from '@mantine/core';
 import EconomicsTools from '@/shared/components/workspace/EconomicsTools';
 import EconomicsFilters from '@/shared/components/workspace/EconomicsFilters';
@@ -14,7 +14,8 @@ import { useResource } from '@/shared/workspace/useResource';
 import styles from '@/shared/workspace/workspace.module.css';
 
 export default function EconomicsPage() {
-  const router=useRouter();
+  const router=useRouter(), params=useSearchParams();
+  const analysisActive=!['filters','pricing','budgets'].includes(params?.get('tool'));
   const { scope, setScope, accounts, observeSnapshot, selectedRecord, setSelectedRecord, economicsView, setEconomicsView, setContextView } = useWorkspace();
   const groupBy=economicsView.groupBy;
   const setGroupBy=(value)=>setEconomicsView({groupBy:value,cohort:null});
@@ -92,16 +93,15 @@ export default function EconomicsPage() {
           <h1>Economics</h1>
           <p>Exact cost records, captured rates and attributed work</p>
         </div>
-        <EconomicsTools><EconomicsFilters value={economicsView.filters} onChange={filters=>setEconomicsView({filters})}/></EconomicsTools>
       </div>
       <ScopeBar />
       {filterError && <Alert color="red" mx={24}>{filterError}</Alert>}
       {retainedGroup && !compatible && <Alert color="orange" mx={24}>The retained cohort conflicts with the current filters. Its records are excluded from the current view. Clear the cohort or restore its matching scope before exporting.<Button size="sm" variant="default" mt="sm" onClick={()=>setEconomicsView({cohort:null})}>Clear retained cohort filter</Button></Alert>}
       {selectedRecord?.kind==='economics-record' && exactRecord.error && <Alert color="red" mx={26}>Selected completion evidence could not be read. {exactRecord.error}</Alert>}
       {selectedRecord?.kind==='economics-record' && exactRecord.data?.items?.length===0 && <Alert color="gray" mx={26}>The exact selected completion record is no longer retained. Its identity remains selected; no other record was substituted.</Alert>}
-      <div className={styles.lensContent} style={{ marginInline: 24 }}>
+      <EconomicsTools filterCount={Object.keys(economicsView.filters || {}).length} filters={<EconomicsFilters value={economicsView.filters} onChange={filters=>setEconomicsView({filters})}/>}>
         <SelectionDock
-          open={Boolean(inspected)}
+          open={analysisActive && Boolean(inspected)}
           title={title}
           subtitle="Completion ledger · estimates and upstream USD reports"
           onClose={() => setInspection(null)}
@@ -160,7 +160,7 @@ export default function EconomicsPage() {
             />
           </div>
         </SelectionDock>
-      </div>
+      </EconomicsTools>
     </div>
   );
 }

@@ -1,8 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { usePathname,useRouter } from 'next/navigation';
-import { Alert, Badge, Button, Group, Modal, Select, Stack, Text, TextInput, Tooltip } from '@mantine/core';
+import { Alert, Badge, Button, Group, Modal, Popover, Select, Stack, Text, TextInput } from '@mantine/core';
 import { providerIdentity } from '@/shared/components/ProviderMark';
+import { Icon } from '@/shared/components/Icon';
 import { useWorkspace } from './WorkspaceProvider';
 import { useResource } from './useResource';
 import { LENS_PATHS,selectionExcluded,selectionLens } from '@/lib/db/analytics/investigationModel.mjs';
@@ -81,6 +82,13 @@ export function Investigations() {
 export function SelectionEvidence() {
   const workspace=useWorkspace(), router=useRouter(), pathname=usePathname();
   const [open,setOpen]=useState(false),[mode,setMode]=useState('selected'),[busy,setBusy]=useState(false),[error,setError]=useState(null),[manifest,setManifest]=useState(null);
+  const [selectionOpen, setSelectionOpen] = useState(false);
+  const selectionTrigger = useRef(null), exportTrigger = useRef(null);
+  const clearRetained = (clear) => {
+    setSelectionOpen(false);
+    clear();
+    requestAnimationFrame(() => (selectionTrigger.current || exportTrigger.current)?.focus({ preventScroll: true }));
+  };
   const selected=workspace.selectedRecord;
   const account=selected?.kind==='account' ? workspace.accounts.find((row)=>row.connectionId===selected.id) : null;
   const selectedLabel=account ? `${account.displayName || account.provider} · ${providerIdentity(account.provider).name}`
@@ -89,6 +97,15 @@ export function SelectionEvidence() {
   const canExportPopulation=pathname!==LENS_PATHS.capacity;
   const canCompareAttempts=pathname===LENS_PATHS.context && selected?.kind==='context-attempt' && workspace.contextView.baseline && workspace.contextView.baseline.id!==selected.id;
   const lens=Object.entries(LENS_PATHS).find(([,path])=>path===pathname)?.[0] || 'capacity';
+  const selectedPath = selected ? LENS_PATHS[selectionLens(selected)] : null;
+  const excluded = selected && selectionExcluded(selected, workspace.scope);
+  const openExport = () => {
+    setSelectionOpen(false);
+    setMode(selected ? 'selected' : workspace.comparisonIds.length ? 'comparison' : canExportPopulation ? 'population' : null);
+    setError(null);
+    setManifest(null);
+    setOpen(true);
+  };
   async function download() {
     setBusy(true);setError(null);setManifest(null);
     try {
@@ -98,9 +115,27 @@ export function SelectionEvidence() {
       const anchor=document.createElement('a');anchor.href=url;anchor.download=`tokenproxy-evidence-${lens}-${new Date().toISOString().replaceAll(':','-')}.json`;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);setManifest(result.manifest);
     } catch(failure){setError(failure.message);}finally{setBusy(false);}
   }
-  return <div className={styles.selectionBar} data-empty={!selected && !workspace.comparisonIds.length || undefined} aria-label="Retained evidence selection">
-    <div>{selected ? <><Badge variant="light" c={selectionExcluded(selected,workspace.scope)?'var(--ember)':undefined} color={selectionExcluded(selected,workspace.scope)?'orange':'indigo'}>{selectionExcluded(selected,workspace.scope)?'Excluded by current scope':'Selection retained'}</Badge><Tooltip label={`Exact ${selected.kind} ID · ${selected.id}`} events={{hover:true,focus:true,touch:true}}><span tabIndex={0} className={styles.record} aria-label={`${selected.kind} · ${selected.id}`}>{selectedLabel}</span></Tooltip><Button size="compact-sm" variant="subtle" onClick={()=>router.push(LENS_PATHS[selectionLens(selected)])}>Open record lens</Button><Button size="compact-sm" variant="subtle" color="gray" onClick={()=>workspace.setSelectedRecord(null)}>Clear selection</Button></> : <Text size="sm" c="var(--slate)">Select evidence to keep it across lenses.</Text>}</div>
-    <Group gap="xs">{workspace.comparisonIds.length>0 && <Text size="sm">{workspace.comparisonIds.length} comparison accounts</Text>}<Button size="compact-sm" variant="subtle" onClick={()=>{setMode(selected?'selected':workspace.comparisonIds.length?'comparison':canExportPopulation?'population':null);setError(null);setManifest(null);setOpen(true);}}>Export evidence</Button></Group>
+  return <div className={styles.selectionBar} role="group" aria-label="Retained evidence selection">
+    {(selected || workspace.comparisonIds.length > 0) && <Popover opened={selectionOpen} onChange={setSelectionOpen} position="bottom-end" width={360} trapFocus returnFocus shadow="md">
+      <Popover.Target><Button ref={selectionTrigger} variant="light" className={styles.selectionTrigger} color={excluded ? 'orange' : undefined} onClick={() => setSelectionOpen(value => !value)} aria-label="Selected evidence" rightSection={<Icon name="i-chevron-down" />}>
+        <span className={styles.selectionLabel}>{excluded ? 'Outside scope' : selected ? 'Selected' : 'Comparison'}{selected ? ` · ${selectedLabel}` : ` · ${workspace.comparisonIds.length} accounts`}</span>
+      </Button></Popover.Target>
+      <Popover.Dropdown className={styles.selectionDetails}>
+        <Stack gap="sm">
+          {selected && <>
+            <div className={styles.selectionIdentity}><Text fw={600} size="sm">{selectedLabel}</Text><Text size="sm" c="dimmed" className={styles.record}>{selected.kind} · {selected.id}</Text></div>
+            <Text size="sm">{excluded ? 'This record is outside the current filters. Its exact evidence stays selected.' : 'This exact record stays selected when you move between views.'}</Text>
+            {selectedPath !== pathname && <Button variant="default" onClick={() => { setSelectionOpen(false); router.push(selectedPath); }}>Open record lens</Button>}
+          </>}
+          {workspace.comparisonIds.length > 0 && <Text size="sm">{workspace.comparisonIds.length} accounts retained for comparison.</Text>}
+          <Group gap="xs">
+            {selected && <Button variant="subtle" color="gray" onClick={() => clearRetained(() => workspace.setSelectedRecord(null))}>Clear selection</Button>}
+            {workspace.comparisonIds.length > 0 && <Button variant="subtle" color="gray" onClick={() => clearRetained(() => workspace.setComparisonIds([]))}>Clear comparison</Button>}
+          </Group>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>}
+    <Button ref={exportTrigger} variant="subtle" onClick={openExport}>Export evidence</Button>
     <Modal title="Export recorded evidence" opened={open} onClose={()=>{if(!busy)setOpen(false);}} closeButtonProps={{'aria-label':'Close evidence export'}}>
       <Stack><Select label="Evidence scope" value={mode} onChange={setMode} allowDeselect={false} data={[{value:'selected',label:selected?.kind==='economics-group'?'Selected cohort in shared scope':'Exact selected record',disabled:!selected},{value:'population',label:`Complete filtered ${lens} population`,disabled:!canExportPopulation},{value:'comparison',label:'Selected comparison accounts',disabled:!workspace.comparisonIds.length},{value:'attempt-comparison',label:'Exact selected attempt and baseline',disabled:!canCompareAttempts}]}/>{!canExportPopulation && <Text size="sm" c="var(--slate)">Capacity exports the chosen account or comparison accounts. Select an account before exporting its current persisted quota evidence.</Text>}<Text size="sm">Exports use one committed read snapshot. Exact record identities ignore current filters. Selected cohorts and population exports apply the fixed shared scope and recorded lens filters. Maximum 5,000 records and 8 MiB; larger exports are refused without a partial file.</Text><Text size="sm" c="var(--slate)">The file includes source, UTC boundaries, coverage, completeness and measurement caveats. It excludes credentials, request bodies, raw client identifiers and private session affinity hashes. Context exports retain the labeled opaque references and structural fingerprints.</Text>{error&&<Alert color="red" title="Export not produced">{error}</Alert>}{manifest&&<Alert color="teal" title="Evidence exported">{manifest.returnedRecords} of {manifest.totalRecords} matching records. {manifest.comparisonComplete===false ? `${manifest.missingAttempts.length} requested attempt identity is no longer retained; the comparison is incomplete.` : manifest.missingSelection?'The exact selected identity was not retained.':'Complete export.'}</Alert>}<Button loading={busy} disabled={!mode} onClick={download}>Download JSON evidence</Button></Stack>
     </Modal>
