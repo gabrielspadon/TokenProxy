@@ -7,6 +7,7 @@ import {
   scrubLongContextDepletion,
 } from "open-sse/config/errorConfig.js";
 import { checkFallbackError } from "open-sse/services/accountFallback.js";
+import { classifyAccountFailure } from "@/shared/utils/accountFailureClass.js";
 
 // Same ceiling chat.js uses to decide between a same-account replay and a
 // rotation; a depletion lock must clear it or mustWait blocks the pool.
@@ -75,5 +76,33 @@ describe("model credit 429: relayed, not scrubbed", () => {
     for (const text of upstreamShapes(marker)) {
       expect(scrubLongContextDepletion(text)).toBe(text);
     }
+  });
+});
+
+// markAccountUnavailable derives mustWait as `lockClass === 'rate' || 'transient'`
+// (src/sse/services/auth.js). A 'rate' class therefore returns the 429 to the
+// caller without rotating, which is what the classification fix alone left in
+// place: the cooldown lengthened to 120s but chat.js still short-circuited on
+// mustWait and the pool of alternates was never tried.
+describe("model credit 429: classified as quota so the request rotates", () => {
+  const mustWait = (cls) => cls === "rate" || cls === "transient";
+
+  it.each(MODEL_CREDIT_DEPLETION_MARKERS)("classifies %j as quota, not rate", (marker) => {
+    for (const text of upstreamShapes(marker)) {
+      const cls = classifyAccountFailure(429, text);
+      expect(cls).toBe("quota");
+      expect(mustWait(cls)).toBe(false);
+    }
+  });
+
+  it("still classifies an ordinary burst 429 as rate, which does hold the request", () => {
+    const cls = classifyAccountFailure(429, "This request would exceed your account's rate limit.");
+    expect(cls).toBe("rate");
+    expect(mustWait(cls)).toBe(true);
+  });
+
+  it("only applies on 429", () => {
+    const text = upstreamShapes(MODEL_CREDIT_DEPLETION_MARKERS[0])[0];
+    expect(classifyAccountFailure(500, text)).toBe("transient");
   });
 });
