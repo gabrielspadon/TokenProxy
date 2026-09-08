@@ -47,6 +47,68 @@ it('preserves missing token samples and sparse gaps instead of drawing measured 
   expect(option.series[3].connectNulls).toBe(false);
 });
 
+it('bounds both tracks to the full covered minute when only one bucket remains', () => {
+  const singleStart = Date.parse('2026-09-07T11:58:00.000Z');
+  const option = capacityActivityOption([{ bucketStartMs: singleStart, logicalRequests: 1, records: 1 }], 60000);
+  for (const axis of option.xAxis) {
+    expect(axis.min).toBe(singleStart);
+    expect(axis.max).toBe(Date.parse('2026-09-07T11:59:00.000Z'));
+    expect(axis.minInterval).toBe(60000);
+    expect(axis.splitNumber).toBe(4);
+    expect(axis.axisLabel.formatter(axis.min)).toBe('11:58');
+    expect(axis.axisLabel.formatter(axis.max)).toBe('11:59');
+  }
+  expect(option.series[0].data).toEqual([[singleStart, 1]]);
+});
+
+it('retains dates across UTC midnight even within a short interval', () => {
+  const midnight = Date.parse('2026-09-08T00:00:00Z');
+  const option = capacityActivityOption([{ bucketStartMs: midnight - 60000 }], 60000);
+  const axis = option.xAxis[1];
+  expect(axis.axisLabel.formatter(axis.min)).toBe('07 Sept, 23:59');
+  expect(axis.axisLabel.formatter(axis.max)).toBe('08 Sept, 00:00');
+});
+
+it('keeps multi-day ticks distinct and supports seconds only for sub-minute buckets', () => {
+  const days = capacityActivityOption([{ bucketStartMs: start }, { bucketStartMs: start + 2 * 86400000 }], 60000).xAxis[1];
+  expect(days.axisLabel.formatter(days.min)).toBe('07 Sept, 12:00');
+  expect(days.axisLabel.formatter(days.max)).toBe('09 Sept, 12:01');
+  const seconds = capacityActivityOption([{ bucketStartMs: start + 15000 }], 15000).xAxis[1];
+  expect(seconds.minInterval).toBe(15000);
+  expect(seconds.axisLabel.formatter(seconds.min)).toBe('12:00:15');
+  expect(seconds.axisLabel.formatter(seconds.max)).toBe('12:00:30');
+});
+
+it('includes the final bucket end across multiple sparse buckets without changing observations', () => {
+  const points = [{ bucketStartMs: start, records: 2 }, { bucketStartMs: start + 120000, records: 1 }];
+  const option = capacityActivityOption(points, 60000);
+  for (const axis of option.xAxis) {
+    expect(axis.min).toBe(start);
+    expect(axis.max).toBe(start + 180000);
+  }
+  expect(option.series[1].data).toEqual([[start, 2], [start + 60000, null], [start + 120000, 1]]);
+});
+
+it.each([0, -60000, null, undefined, NaN, Infinity])('leaves the time domain unset for invalid bucket width %s', bucketMs => {
+  const points = [{ bucketStartMs: start, records: 1 }, { bucketStartMs: start + 120000, records: 2 }];
+  const option = capacityActivityOption(points, bucketMs);
+  for (const axis of option.xAxis) {
+    expect(axis.min).toBeUndefined();
+    expect(axis.max).toBeUndefined();
+    expect(axis.minInterval).toBeUndefined();
+  }
+  expect(option.series[1].data).toEqual([[start, 1], [start + 120000, 2]]);
+});
+
+it('leaves empty or overflowing time domains unset', () => {
+  for (const option of [capacityActivityOption([], 60000), capacityActivityOption([{ bucketStartMs: Number.MAX_VALUE }], Number.MAX_VALUE)]) {
+    for (const axis of option.xAxis) {
+      expect(axis.min).toBeUndefined();
+      expect(axis.max).toBeUndefined();
+    }
+  }
+});
+
 it('offers the same clipped interval selection through the chart and a paginated inline table', async () => {
   await render();
   act(() => state.chart.onEvents.click({ value: [start, 2] }));
