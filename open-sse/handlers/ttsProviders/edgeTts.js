@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // Microsoft Edge / Bing TTS (no auth) — via Bing translator endpoint
 import { Buffer } from "node:buffer";
 import { UA } from "./_base.js";

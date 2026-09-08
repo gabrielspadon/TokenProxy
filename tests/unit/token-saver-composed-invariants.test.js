@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// Formatting and signed-ledger assertions observe the transport boundary;
+// async-log-output.test.js separately verifies native bounded stdout writes.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({ logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}) }));
 
 // Composed-pipeline no-loss proof: RTK + headroom + caveman injection + memory
 // tool pruning + context compaction + cache anchoring all run on one rich

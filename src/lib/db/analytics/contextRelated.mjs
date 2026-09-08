@@ -16,10 +16,19 @@ const amount = (value) => typeof value === 'number' && Number.isFinite(value) &&
 // These projections run within their caller's read transaction. IDs come only
 // from the selected request rows; no content or timestamp-based joins are used.
 export function readContextRelated(db, ids) {
-  const structures = new Map(), costs = new Map();
+  const structures = new Map(), costs = new Map(), handoffs = new Map();
   let rejectedStructures = 0;
   for (let offset = 0; offset < ids.length; offset += 100) {
     const page = ids.slice(offset, offset + 100), placeholders = page.map(() => '?').join(',');
+    for (const row of db.all(`SELECT a.requestId,a.handoffId,a.executionRequestId,a.logicalRequestId,a.appliedAt,
+      h.sourceRequestId,h.targetRequestId,h.projectId,h.contentHash,h.expiresAt,h.revokedAt,
+      source.contextSessionId AS sourceSessionId,target.contextSessionId AS targetSessionId
+      FROM contextHandoffApplications a JOIN shapingHandoffs h ON h.id=a.handoffId JOIN requestStats r ON r.id=a.requestId
+      LEFT JOIN requestStats source ON source.id=h.sourceRequestId LEFT JOIN requestStats target ON target.id=h.targetRequestId
+      WHERE a.requestId IN (${placeholders}) AND a.logicalRequestId=r.logicalRequestId ORDER BY a.appliedAt,a.handoffId`, page)) {
+      if (!handoffs.has(row.requestId)) handoffs.set(row.requestId, []);
+      handoffs.get(row.requestId).push(row);
+    }
     for (const row of db.all(`SELECT requestId,boundary,data FROM contextStructures WHERE requestId IN (${placeholders})`, page)) {
       try {
         const value = normalizeContextStructure(JSON.parse(row.data));
@@ -39,5 +48,5 @@ export function readContextRelated(db, ids) {
     }
   }
   for (const values of structures.values()) values.sort((a,b) => CONTEXT_BOUNDARIES.indexOf(a.boundary)-CONTEXT_BOUNDARIES.indexOf(b.boundary));
-  return { structures, costs, rejectedStructures };
+  return { structures, costs, handoffs, rejectedStructures };
 }

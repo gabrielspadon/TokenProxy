@@ -21,8 +21,9 @@ export function dispatchBudgetBounds({ url, body } = {}) {
 export async function requireBudgetDispatchCoverage(apiKey, supported) {
   if (!apiKey || supported) return;
   const db = await getAdapter();
-  const key = db.get("SELECT maxPromptTokens,maxCompletionTokens,maxCostUsd FROM apiKeys WHERE key=?", [apiKey]);
-  if (key && [key.maxPromptTokens, key.maxCompletionTokens, key.maxCostUsd].some(v => v != null)) {
+  const key = db.get("SELECT id,maxPromptTokens,maxCompletionTokens,maxCostUsd FROM apiKeys WHERE key=?", [apiKey]);
+  if (key && ([key.maxPromptTokens, key.maxCompletionTokens, key.maxCostUsd].some(v => v != null)
+    || db.get('SELECT id FROM projectBindings WHERE apiKeyId=? LIMIT 1', [key.id]))) {
     throw new BudgetAdmissionError("budget-dispatch-coverage-unavailable", "This generation path does not yet support durable budget admission for every upstream attempt. No generation was dispatched.");
   }
 }
@@ -37,7 +38,7 @@ export function budgetErrorResult(error, rid) {
 export async function beginBudgetDispatch(context, apiKey, wire) {
   const reservation = await reserveBudget({ apiKey, requestId: context.requestId, logicalRequestId: context.logicalRequestId,
     snapshot: context.pricingSnapshot, dispatchCoverage: "physical-dispatch", bounds: dispatchBudgetBounds(wire),
-    onPrincipal: (id) => { context.apiKeyId = id; } });
+    explicitIdentity: context.explicitIdentity, onPrincipal: (id) => { context.apiKeyId = id; } });
   if (reservation) {
     context.budgetReservationId = reservation.requestId;
     await markBudgetDispatched(reservation.requestId);

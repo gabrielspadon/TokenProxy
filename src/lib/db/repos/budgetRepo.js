@@ -1,24 +1,13 @@
 import { getAdapter } from "../driver.js";
 import { persistUsagePricing } from "./usagePricing.js";
 import { isLocalTransportPoolRefusal } from "../../../../open-sse/utils/dispatcherCache.js";
+import { resolveProjectBinding, trustedProjectIdentity } from '../projectIdentity.js';
+import { recordProjectBudgetHour, recordProjectBudgetAlert } from '../projectBudgetEvidence.js';
+import { BUDGET_DIMENSIONS as DIMENSIONS, BUDGET_POLICY_EXPLANATIONS, budgetAmount as amount,
+  budgetCapped as capped, effectiveBudgetPolicy, validateBudgetPolicy, reservationAmounts } from '../budgetPolicy.js';
+export { BUDGET_POLICY_EXPLANATIONS, effectiveBudgetPolicy, validateBudgetPolicy } from '../budgetPolicy.js';
 
 const LIVE = "state IN ('reserved','dispatched','uncertain')";
-const DIMENSIONS = [
-  ["promptTokens", "maxPromptTokens", "PromptTokens", "unknownPromptRows"],
-  ["completionTokens", "maxCompletionTokens", "CompletionTokens", "unknownCompletionRows"],
-  ["costUsd", "maxCostUsd", "CostUsd", "unknownCostRows"],
-];
-export const BUDGET_POLICY_EXPLANATIONS = Object.freeze({
-  strict: "Refuses generation unless every capped quantity has a verified upper bound. Recorded application costs are estimates, not confirmed provider charges.",
-  "reserve-remaining": "Best-effort protection. An unknown-bound request reserves the remaining allowance and blocks overlapping exposure. Its actual usage or charge may exceed that allowance; this is not a hard cap or invoice guarantee.",
-});
-export function effectiveBudgetPolicy(key) { return key?.budgetPolicy ?? "reserve-remaining"; }
-export function validateBudgetPolicy(value) {
-  if (value !== null && !Object.hasOwn(BUDGET_POLICY_EXPLANATIONS, value)) throw new TypeError("budgetPolicy must be strict or reserve-remaining");
-  return value;
-}
-const amount = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : null;
-const capped = (key) => DIMENSIONS.some(([, limit]) => key[limit] != null);
 const now = () => new Date().toISOString();
 
 export class BudgetAdmissionError extends Error {
@@ -46,9 +35,12 @@ function durableTransaction(db, callback) {
 
 // Called within the owning mutation transaction, before inserting new usage or
 // rotating raw key material. History is never pruned; this baseline runs once.
-export function initializeBudgetAccount(db, key) {
+export function initializeBudgetAccount(db, key, project = false) {
   if (!key) return null;
-  const existing = db.get("SELECT * FROM apiKeyBudgetAccounts WHERE apiKeyId=?", [key.id]);
+  const table = project ? 'projectBudgetAccounts' : 'apiKeyBudgetAccounts';
+  const idField = project ? 'projectId' : 'apiKeyId';
+  const historyField = project ? 'projectId' : 'apiKey';
+  const existing = db.get(`SELECT * FROM ${table} WHERE ${idField}=?`, [key.id]);
   if (existing) return existing;
   const baseline = db.get(`SELECT COALESCE(SUM(promptTokens),0) AS promptTokens,
     COALESCE(SUM(completionTokens),0) AS completionTokens, COALESCE(SUM(cost),0) AS costUsd,
@@ -59,35 +51,38 @@ export function initializeBudgetAccount(db, key) {
       COALESCE(json_extract(tokens,'$.output_tokens_present'),
         json_type(tokens,'$.completion_tokens') IN ('integer','real') OR json_type(tokens,'$.output_tokens') IN ('integer','real'),0)=0 THEN 1 ELSE 0 END),0) AS unknownCompletion,
     COALESCE(SUM(CASE WHEN cost IS NULL OR usageSource='estimated' OR costSource IS NULL OR costSource='unknown' THEN 1 ELSE 0 END),0) AS unknownCost,
-    COALESCE(MAX(id),0) AS throughId FROM usageHistory WHERE apiKey=?`, [key.key]);
-  db.run(`INSERT INTO apiKeyBudgetAccounts(apiKeyId,recordedPromptTokens,recordedCompletionTokens,recordedCostUsd,
+    COALESCE(MAX(id),0) AS throughId FROM usageHistory WHERE ${historyField}=?`, [project ? key.id : key.key]);
+  db.run(`INSERT INTO ${table}(${idField},recordedPromptTokens,recordedCompletionTokens,recordedCostUsd,
     unknownPromptRows,unknownCompletionRows,unknownCostRows,initializedAt,historyThroughId)
-    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(apiKeyId) DO NOTHING`,
+    VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(${idField}) DO NOTHING`,
   [key.id, baseline.promptTokens, baseline.completionTokens, baseline.costUsd, baseline.unknownPrompt,
     baseline.unknownCompletion, baseline.unknownCost, now(), baseline.throughId]);
-  return db.get("SELECT * FROM apiKeyBudgetAccounts WHERE apiKeyId=?", [key.id]);
+  return db.get(`SELECT * FROM ${table} WHERE ${idField}=?`, [key.id]);
 }
 
-function outstanding(db, id) {
+export function outstandingBudget(db, id, project = false) {
+  const prefix = project ? 'projectReserved' : 'reserved';
+  const field = project ? 'projectId' : 'apiKeyId';
   return db.get(`SELECT COUNT(*) AS requests,
-    COALESCE(SUM(MAX(COALESCE(reservedPromptTokens,0)-COALESCE(actualPromptTokens,0),0)),0) AS promptTokens,
-    COALESCE(SUM(MAX(COALESCE(reservedCompletionTokens,0)-COALESCE(actualCompletionTokens,0),0)),0) AS completionTokens,
-    COALESCE(SUM(MAX(COALESCE(reservedCostUsd,0)-COALESCE(actualCostUsd,0),0)),0) AS costUsd,
-    COALESCE(SUM(reservedPromptTokens IS NULL),0) AS unknownPromptRows,
-    COALESCE(SUM(reservedCompletionTokens IS NULL),0) AS unknownCompletionRows,
-    COALESCE(SUM(reservedCostUsd IS NULL),0) AS unknownCostRows
-    FROM apiKeyBudgetReservations WHERE apiKeyId=? AND ${LIVE}`, [id]);
+    COALESCE(SUM(MAX(COALESCE(${prefix}PromptTokens,0)-COALESCE(actualPromptTokens,0),0)),0) AS promptTokens,
+    COALESCE(SUM(MAX(COALESCE(${prefix}CompletionTokens,0)-COALESCE(actualCompletionTokens,0),0)),0) AS completionTokens,
+    COALESCE(SUM(MAX(COALESCE(${prefix}CostUsd,0)-COALESCE(actualCostUsd,0),0)),0) AS costUsd,
+    COALESCE(SUM(${prefix}PromptTokens IS NULL),0) AS unknownPromptRows,
+    COALESCE(SUM(${prefix}CompletionTokens IS NULL),0) AS unknownCompletionRows,
+    COALESCE(SUM(${prefix}CostUsd IS NULL),0) AS unknownCostRows
+    FROM apiKeyBudgetReservations WHERE ${field}=? AND ${LIVE}`, [id]);
 }
+const outstanding = outstandingBudget;
 
 // bounds is produced by the server's verified wire-contract resolver. Never
 // pass client declarations or character-based estimates into this interface.
-export async function reserveBudget({ apiKey, requestId, logicalRequestId = null, bounds = {}, snapshot = null, dispatchCoverage = null, onPrincipal }) {
+export async function reserveBudget({ apiKey, requestId, logicalRequestId = null, bounds = {}, snapshot = null, dispatchCoverage = null, onPrincipal, explicitIdentity }) {
   if (!apiKey) return null;
   const db = await getAdapter();
   const key = db.get("SELECT * FROM apiKeys WHERE key=?", [apiKey]);
   if (!key) refuse("budget-key-unavailable", "API key is no longer available.");
   onPrincipal?.(key.id);
-  if (!capped(key)) return null;
+  if (!capped(key) && !db.get('SELECT id FROM projectBindings WHERE apiKeyId=? LIMIT 1', [key.id])) return null;
   durable(db);
   if (!requestId) refuse("budget-identity-required", "Generation requires an exact attempt identity.");
   let reservation;
@@ -95,9 +90,10 @@ export async function reserveBudget({ apiKey, requestId, logicalRequestId = null
     // Read policy again under the same transaction as the allowance decision.
     const current = db.get("SELECT * FROM apiKeys WHERE id=? AND key=?", [key.id, apiKey]);
     if (!current || !current.isActive || (current.expiresAt && Date.parse(current.expiresAt) <= Date.now())) refuse("budget-key-unavailable", "API key is no longer active.");
+    const projectContext = resolveProjectBinding(db, current.id, explicitIdentity, refuse);
     const prior = db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=?", [requestId]);
     if (prior) {
-      if (prior.apiKeyId !== current.id || prior.logicalRequestId !== logicalRequestId) refuse("budget-identity-conflict", "Attempt identity already belongs to another request.");
+      if (prior.apiKeyId !== current.id || prior.logicalRequestId !== logicalRequestId || (prior.projectId ?? null) !== (projectContext?.project.id ?? null)) refuse("budget-identity-conflict", "Attempt identity already belongs to another request.");
       reservation = prior;
       return;
     }
@@ -105,19 +101,10 @@ export async function reserveBudget({ apiKey, requestId, logicalRequestId = null
     const held = outstanding(db, current.id);
     const policy = effectiveBudgetPolicy(current);
     validateBudgetPolicy(policy);
-    const values = {};
-    for (const [dimension, limit, column, unknown] of DIMENSIONS) {
-      const bound = amount(bounds[dimension]);
-      values[dimension] = current[limit] == null ? null : bound;
-      if (current[limit] == null) continue;
-      if (held[unknown] > 0) refuse("budget-unresolved-exposure", `Outstanding ${dimension} exposure has no verified bound.`);
-      if (policy === "strict" && (bound === null || account[unknown] > 0)) {
-        refuse("budget-bound-unavailable", `Strict ${dimension} protection requires a verified bound and complete recorded usage.`);
-      }
-      const remaining = current[limit] - account[`recorded${column}`] - held[dimension];
-      if (remaining <= 0 || (bound !== null && bound > remaining)) refuse("api_key_budget_exceeded", `${dimension} allowance is exhausted or already reserved.`);
-      values[dimension] = bound ?? remaining;
-    }
+    const values = reservationAmounts({ policy: current, account, held, bounds, refuse });
+    const projectValues = projectContext ? reservationAmounts({ policy: projectContext.project,
+      account: initializeBudgetAccount(db, projectContext.project, true), held: outstanding(db, projectContext.project.id, true),
+      bounds, refuse, exceededCode: 'project_budget_exceeded' }) : {};
     const stamp = now();
     const rateSnapshotId = persistUsagePricing(db, snapshot);
     db.run(`INSERT INTO apiKeyBudgetReservations(requestId,logicalRequestId,apiKeyId,createdAt,updatedAt,state,policy,
@@ -127,6 +114,13 @@ export async function reserveBudget({ apiKey, requestId, logicalRequestId = null
       values.costUsd, rateSnapshotId, dispatchCoverage, JSON.stringify({ ...bounds.evidence,
         source: bounds.evidence?.source ?? "unknown",
         unknownCappedDimensions: DIMENSIONS.filter(([dimension, limit]) => current[limit] != null && amount(bounds[dimension]) === null).map(([dimension]) => dimension) })]);
+    const identity = trustedProjectIdentity(explicitIdentity, current.id);
+    const fields = { ...identity, projectId: projectContext?.project.id ?? null,
+      projectBindingId: projectContext?.binding.id ?? null, projectPolicyRevision: projectContext?.project.revision ?? null,
+      projectBudgetPolicy: projectContext?.project.budgetPolicy ?? null, projectBudgetMode: projectContext?.project.budgetMode ?? null,
+      projectReservedPromptTokens: projectValues.promptTokens ?? null, projectReservedCompletionTokens: projectValues.completionTokens ?? null,
+      projectReservedCostUsd: projectValues.costUsd ?? null };
+    db.run(`UPDATE apiKeyBudgetReservations SET ${Object.keys(fields).map(name => `${name}=?`).join(',')} WHERE requestId=?`, [...Object.values(fields), requestId]);
     reservation = db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=?", [requestId]);
   });
   return reservation;
@@ -185,15 +179,21 @@ export function recordBudgetUsage(db, { apiKeyId, requestId, usageRowId, promptT
   const recordedValues = [recorded.promptTokens ?? values[0], recorded.completionTokens ?? values[1], recorded.costUsd ?? values[2]];
   const oldValues = previous ? [previous.actualPromptTokens, previous.actualCompletionTokens, previous.actualCostUsd] : null;
   const oldRecorded = previous ? [previous.promptTokens, previous.completionTokens, previous.cost] : null;
-  db.run(`UPDATE apiKeyBudgetAccounts SET recordedPromptTokens=recordedPromptTokens+?,
+  const row = requestId ? db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=? AND apiKeyId=?", [requestId, apiKeyId]) : null;
+  const accounts = [['apiKeyBudgetAccounts', 'apiKeyId', apiKeyId]];
+  if (row?.projectId) accounts.push(['projectBudgetAccounts', 'projectId', row.projectId]);
+  for (const [table, field, id] of accounts) db.run(`UPDATE ${table} SET recordedPromptTokens=recordedPromptTokens+?,
     recordedCompletionTokens=recordedCompletionTokens+?,recordedCostUsd=recordedCostUsd+?,
     unknownPromptRows=unknownPromptRows+?,unknownCompletionRows=unknownCompletionRows+?,unknownCostRows=unknownCostRows+?,
-    historyThroughId=MAX(historyThroughId,?) WHERE apiKeyId=?`,
+    historyThroughId=MAX(historyThroughId,?) WHERE ${field}=?`,
   [...recordedValues.map((v, i) => (amount(v) ?? 0) - (amount(oldRecorded?.[i]) ?? 0)),
-    ...values.map((v, i) => (v === null ? 1 : 0) - (oldValues && oldValues[i] === null ? 1 : 0)), usageRowId, apiKeyId]);
-  const row = requestId ? db.get("SELECT * FROM apiKeyBudgetReservations WHERE requestId=? AND apiKeyId=?", [requestId, apiKeyId]) : null;
+    ...values.map((v, i) => (v === null ? 1 : 0) - (oldValues && oldValues[i] === null ? 1 : 0)), usageRowId, id]);
+  if (row?.projectId) {
+    recordProjectBudgetHour(db, { projectId: row.projectId, usageRowId, values, recordedValues, previous });
+    recordProjectBudgetAlert(db, row.projectId);
+  }
   if (!row || (row.usageRowId != null && !previous)) return;
-  const complete = final && DIMENSIONS.every(([, , column], i) => row[`reserved${column}`] == null || values[i] !== null);
+  const complete = final && DIMENSIONS.every(([, , column], i) => (row[`reserved${column}`] == null && row[`projectReserved${column}`] == null) || values[i] !== null);
   db.run(`UPDATE apiKeyBudgetReservations SET state=?,updatedAt=?,actualPromptTokens=?,actualCompletionTokens=?,actualCostUsd=?,
     usageRowId=?,resolutionEvidence=? WHERE requestId=?`,
   [complete ? "settled" : "uncertain", now(), ...values, usageRowId,

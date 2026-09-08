@@ -111,13 +111,15 @@ const click = (text) => act(async () => button(text).click());
 
 it('mounts the fixture book, queue contract and empty inspector from retained state', async () => {
   await render();
+  if (runsBody.items.length) await click('Runs');
   expect(container.textContent).toContain('Fixture book');
   expect(container.textContent).toContain('Synthetic tool round trip');
   expect(container.textContent).toContain('4');
+  expect(button('Run revision 3')).toBeTruthy();
+  await click('Runs');
   expect(container.textContent).toContain('waiting slots');
   expect(container.textContent).toContain('Select a retained run');
   expect(container.textContent).toContain('No run is retained yet');
-  expect(button('Run revision 3')).toBeTruthy();
 });
 
 it('submits a pinned revision, renders the queued run identity, then the terminal receipt', async () => {
@@ -130,6 +132,7 @@ it('submits a pinned revision, renders the queued run identity, then the termina
     return { ok: true, status: 200, body: { ...baseRun, status: 'queued' } };
   };
   await render();
+  if (runsBody.items.length) await click('Runs');
   await click('Run revision 3');
   expect(container.textContent).toContain('queued');
   expect(container.textContent).toContain('abc123de');
@@ -198,6 +201,7 @@ it('cancel is offered on a live run, calls the cancel route, and a cancelled rec
     return { ok: true, status: 200, body: runsBody.items[0] };
   };
   await render();
+  if (runsBody.items.length) await click('Runs');
   await act(async () =>
     container.querySelector(`[aria-label="Inspect run ${baseRun.id}"]`).click()
   );
@@ -237,14 +241,15 @@ it('renders honest terminal failures: deadline, missing edge and result_unretain
       pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 },
     };
     await render();
+  if (runsBody.items.length) await click('Runs');
     await act(async () =>
       container.querySelector(`[aria-label="Inspect run ${baseRun.id}"]`).click()
     );
     expect(container.querySelector('[role="alert"]').textContent).toContain(error.message);
     expect(container.textContent).toContain('The terminal receipt is retained');
     expect(button('Cancel run')).toBeUndefined();
+    expect(container.textContent).toContain(terminal(error).status);
   }
-  expect(container.textContent).toContain('timed-out');
 });
 
 it('queue refusal surfaces as an explicit notice and schedules nothing', async () => {
@@ -257,9 +262,11 @@ it('queue refusal surfaces as an explicit notice and schedules nothing', async (
     },
   });
   await render();
+  if (runsBody.items.length) await click('Runs');
   await click('Run revision 3');
   expect(container.textContent).toContain('Queue full, run refused');
   expect(container.textContent).toContain('Nothing was scheduled');
+  await click('Runs');
   expect(container.textContent).toContain('Select a retained run');
 });
 
@@ -277,6 +284,7 @@ it('unknown identity fields render unknown, never a guessed value', async () => 
     pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 },
   };
   await render();
+  if (runsBody.items.length) await click('Runs');
   const row = container.querySelector('table tbody tr');
   expect(row.textContent).toContain('unknown');
   expect(row.textContent).toContain('interrupted');
@@ -285,6 +293,7 @@ it('unknown identity fields render unknown, never a guessed value', async () => 
 it('a disconnected submission reports unknown acceptance and never replays the run', async () => {
   state.routes['POST /api/admin/compatibility/runs'] = () => ({ ok: false, status: 0, body: { code: 'network' } });
   await render();
+  if (runsBody.items.length) await click('Runs');
   await click('Run revision 3');
   expect(container.textContent).toContain('Run acceptance is unknown');
   expect(container.textContent).toContain('may have been accepted');
@@ -294,6 +303,7 @@ it('a disconnected submission reports unknown acceptance and never replays the r
 it('missing retained measurements remain unknown and do not crash the result inspector', async () => {
   runsBody = { items: [{ ...baseRun, status: 'succeeded', result: { sourceFormat: 'openai', targetFormat: 'claude', route: { mode: 'direct' }, checks: [], quantities: { inputBytes: 0, outputBytes: null, translatorDurationMs: null } } }], pagination: { page: 1, pageSize: 25, total: 1, totalPages: 1 } };
   await render();
+  if (runsBody.items.length) await click('Runs');
   await act(async () => container.querySelector(`[aria-label="Inspect run ${baseRun.id}"]`).click());
   expect(container.textContent).toContain('Input 0 B');
   expect(container.textContent).toContain('Output Unknown B');
@@ -310,6 +320,7 @@ it('archives an exact fixture revision with confirmation and readback without ru
   };
   state.routes[`GET /api/admin/compatibility/fixtures/${fixture.id}`] = () => ({ ok: true, status: 200, body: stored });
   await render();
+  if (runsBody.items.length) await click('Runs');
   await click('Archive fixture');
   expect(state.calls.some(call => call.method === 'PATCH')).toBe(false);
   const confirm = [...document.querySelectorAll('button')].find(button => button.textContent === 'Confirm archive');

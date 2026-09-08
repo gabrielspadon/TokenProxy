@@ -23,7 +23,8 @@ export function refreshProxyOptions(credentials) {
   };
 }
 
-import { dedupRefresh, tokenFingerprint, chainPeers, connsLabel } from "./dedup.js";
+import { credentialContentRevision } from "./credentialRevision.js";
+import { dedupRefresh, getRefreshContext, tokenFingerprint, chainPeers, connsLabel } from "./dedup.js";
 import { decide } from "../../../src/shared/observability/decide.js";
 
 // A refresh runs inline on the chat request that triggered it, so an upstream
@@ -41,7 +42,7 @@ function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   return unboundedProxyFetch(
     url,
     { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS), ...options },
-    proxyOptions,
+    getRefreshContext()?.credentials ? refreshProxyOptions(getRefreshContext().credentials) : proxyOptions,
   );
 }
 
@@ -56,7 +57,7 @@ export async function refreshXaiToken(refreshToken, log) {
         const mod = await import("../../../src/lib/oauth/services/xai.js");
         _xaiServiceSingleton = new mod.XaiService();
       }
-      const tokens = await _xaiServiceSingleton.refreshAccessToken(refreshToken);
+      const tokens = await _xaiServiceSingleton.refreshAccessToken(refreshToken, {fetcher:proxyAwareFetch});
       return {
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token || refreshToken,
@@ -283,7 +284,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
     });
     return null;
   }
-  }, log, conn);
+  }, log, conn, credentialContentRevision(credentials));
 }
 
 // CLIProxyAPI DeviceFlowClient.RefreshToken: form body (no client_secret) + X-Msh-* headers
@@ -328,7 +329,7 @@ export async function refreshGoogleToken(refreshToken, clientId, clientSecret, l
     log?.error?.("TOKEN_REFRESH", `Network error refreshing Google token: ${error.message}`);
     return null;
   }
-  }, log);
+  }, log, null, credentialContentRevision({providerSpecificData:{clientId,clientSecret}}));
 }
 
 export function classifyOAuthRefreshError(errorText = "", status = 0) {
@@ -564,7 +565,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
     expiresIn: tokens.expiresIn,
     ...(await resolveKiroProfileArnPatch(providerSpecificData, tokens.accessToken, tokens.profileArn)),
   };
-  }, log);
+  }, log, null, credentialContentRevision({providerSpecificData:{...providerSpecificData,refreshTransport:proxyOptions}}));
 }
 
 // iFlow: Basic Auth + client_id+client_secret in body. Delegate to refreshAccessToken("iflow", ...).
@@ -632,6 +633,7 @@ export async function refreshCopilotToken(githubAccessToken, log) {
 // One implementation, both callers.
 export async function refreshClineToken(refreshToken, proxyOptions = null, log = null) {
   if (!refreshToken) return null;
+  return dedupRefresh("cline", refreshToken, async () => {
   try {
     const response = await proxyAwareFetch(PROVIDERS.cline.refreshUrl, {
       method: "POST",
@@ -655,6 +657,7 @@ export async function refreshClineToken(refreshToken, proxyOptions = null, log =
     log?.error?.("TOKEN_REFRESH", "Error refreshing Cline token", { error: error.message });
     return null;
   }
+  }, log, null, credentialContentRevision({providerSpecificData:proxyOptions}));
 }
 
 export async function refreshCodebuddyToken(refreshToken, log) {
@@ -845,7 +848,7 @@ export async function refreshTraeToken(refreshToken, credentials, log) {
       log?.error?.("TOKEN_REFRESH", `Error refreshing Trae token: ${error.message}`);
       return null;
     }
-  }, log);
+  }, log, null, credentialContentRevision(credentials));
 }
 
 // Zed access_token is long-lived; auth flow returns no refresh_token.

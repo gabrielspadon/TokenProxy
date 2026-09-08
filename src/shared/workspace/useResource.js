@@ -35,6 +35,7 @@ export function useResource(url, { onSnapshot, interval } = {}) {
     const controller = new AbortController();
     let timer;
     let historical = false;
+    let suggestedInterval = 0;
     async function read() {
       requestIdentity.complete = false;
       try {
@@ -50,6 +51,8 @@ export function useResource(url, { onSnapshot, interval } = {}) {
               : {}),
           });
         }
+        const suggested = Number(response.headers.get('x-tokenproxy-refresh-after-ms'));
+        suggestedInterval = Number.isFinite(suggested) && suggested >= 0 ? Math.min(120000, suggested) : 0;
         const body = await response.json();
         if (controller.signal.aborted) return;
         if (!response.ok)
@@ -74,7 +77,7 @@ export function useResource(url, { onSnapshot, interval } = {}) {
         }));
       }
       requestIdentity.complete = true;
-      if (intervalMs && !historical && !controller.signal.aborted) timer = setTimeout(read, intervalMs);
+      if (intervalMs && !historical && !controller.signal.aborted) timer = setTimeout(read, Math.max(intervalMs, suggestedInterval));
     }
     read();
     return () => {

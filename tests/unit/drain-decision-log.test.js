@@ -99,3 +99,8 @@ describe('DRAIN decision lines (D-11)', () => {
     expect(begin.split('conn=')[1]).toBe(end.split('conn=')[1]);
   });
 });
+
+// Isolate decision semantics from the separately qualified asynchronous transport.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

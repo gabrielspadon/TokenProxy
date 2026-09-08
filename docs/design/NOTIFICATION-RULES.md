@@ -1,7 +1,8 @@
 # Notification rules
 
 Bounded, operator-controlled alerting over measurements TokenProxy already
-retains. Schema 16.
+retains. Rule definitions and revisions begin at schema 16; delivery and
+execution provenance are retained by the current schema.
 
 ## The boundary: notifications only
 
@@ -34,6 +35,8 @@ a plausible-sounding name.
 | `stale_telemetry` | `quotaObservations` | sustained | newest observation older than N min |
 | `repeated_fallback` | `accountSwitches` | window | N or more switches in the window |
 | `operation_failure` | `operationEvents` | window | N or more failed terminals in the window |
+| `compression_saver_failure` | `contextStages` | window | N or more explicitly failed executions |
+| `compatibility_regression` | `compatibilityRuns` | window | N or more exact passed-to-failed check transitions |
 
 Three deliberate exclusions inside those conditions:
 
@@ -47,25 +50,33 @@ Three deliberate exclusions inside those conditions:
   value rather than a guessed one, and an unmeasured observation is counted as
   retained but not as measured, so the gap stays visible.
 
-### Unavailable: compression / token-saver failure
+### Transformation execution failures
 
-Not implemented, because no failure is recorded to detect.
+The gateway records `failed` and `cancelled` outcomes where optional stages
+execute, alongside a closed error code and `outcomeSource = execution`.
+Only explicit `failed` execution outcomes qualify. Skipped, unchanged, applied,
+cancelled and historical byte-derived outcomes never establish failure.
+The alert unit is failed transformation stages. Two failed stages in one
+request count as two failures, while a retry copying the same preparation
+ledger contributes no additional execution. `executionRequestId` preserves
+the originating request; copied stages remain inspectable on each attempt.
+The evidence link carries the exact originating request, stage ordinal and
+retained session identity. A missing session identity yields no invented link.
 
-`contextStages.outcome` is written by `normalizeContextStages`
-(`src/lib/db/repos/contextRepo.js:26`) with the domain `skipped | unchanged |
-applied`. None of those is a failure. The RTK hooks are fail-open by contract:
-on error they return `null` and leave the body untouched without writing a
-stage row. A saver that threw is therefore indistinguishable in retained data
-from one that deliberately chose to skip.
+### Compatibility regressions
 
-Implementing it would mean inferring failure from a `skipped` row, which would
-alert on correct behaviour. It would first require a failure outcome persisted
-on the stage ledger, distinct from a deliberate skip, written where the hooks
-currently swallow the error.
+Only completed runs with the same fixture fingerprint, target, operation,
+model and test scope can establish a changed check. A comparable predecessor
+may predate the rule window. Cancelled, interrupted, timed-out, malformed,
+contradictory and unknown evidence cannot establish a regression. The retained
+event links to both run IDs and the specific check. Controlled executor and
+gateway tests describe the tested implementation, not live provider health.
+Rules may cover all tests or a provider. Account scope is refused because
+controlled fixtures carry no account identity. The query selects bounded
+check metadata and never copies retained request or response bodies.
 
-The condition is listed in `UNAVAILABLE_CONDITIONS` and rendered in the UI with
-its reason, because a missing condition an operator expects is worse than a
-stated one.
+Operation alerts link to the exact event ID through the paginated Operations
+query. Historical events remain addressable outside the default 30-day range.
 
 ## Duration and cooldown
 
@@ -151,7 +162,33 @@ beside the operator's own values, never silently overwritten. An alert records
 the revision that produced it, so a later edit does not rewrite history, and
 alerts plus the version log both survive deletion of the rule.
 
-## Files
+## Delivery and recovery
+
+Retained rule firings enqueue subscribed webhook destinations in their source
+transaction. Project budget alerts retain event-time destination identifiers
+and URL fingerprints beside the source evidence. Destination URLs and signing
+secrets are absent from this intent. A later delivery-materialization failure
+therefore leaves both accounting and the original authorized intent intact.
+The idle drainer recovers at most 20 due intents per pass with bounded retry
+backoff. A later subscription never authorizes exporting an earlier alert.
+Unknown historical authorization remains unknown and is not reconstructed.
+
+The shared outbox permits at most two simultaneous sends and 1,000 queued
+deliveries. Overflow is a retained failure. Its stable delivery identifier
+deduplicates alert/destination pairs. Before sending, the drainer verifies the
+destination is still active, subscribed and unchanged. A disabled or changed
+destination is cancelled. An interrupted or abandoned send becomes uncertain
+and is not replayed automatically. The 30-second idle watcher drives delivery
+and health checks; retained rule evaluation runs every five minutes. Shutdown
+aborts outstanding work and removes the watcher before database closure.
+
+Project spending alerts use the project's own versioned threshold and budget
+evidence. Their preparation state, retry age, attempts and errors remain
+inspectable even when destination materialization fails. This is separate
+from claiming that a webhook reached the operator, which requires a delivered
+receipt.
+
+## Implementation files
 
 - `src/lib/notifications/conditions.mjs` — catalogue, including the unavailable ones
 - `src/lib/notifications/evaluate.mjs` — pure evaluator (duration, cooldown, staleness)

@@ -6,10 +6,12 @@ vi.mock("@/lib/localDb", () => ({
   getSettings: vi.fn(),
   getProviderConnections: vi.fn(),
   updateProviderConnection: vi.fn(),
+  updateConnectionProxyPoolSnapshotIfBound: vi.fn(),
 }));
 
 vi.mock("@/lib/network/connectionProxy", () => ({
   resolveConnectionProxyConfig: vi.fn(),
+  toConnectionProxyOptions: vi.fn(),
 }));
 
 vi.mock("@/app/api/usage/[connectionId]/route.js", () => ({
@@ -109,12 +111,12 @@ describe("quota auto-ping", () => {
           ? getCodexUsage(connection.accessToken)
           : getClaudeUsage(connection.accessToken)),
       getExecutor: vi.fn(() => ({
-        execute: vi.fn().mockResolvedValue({ response: { ok: true, text: codexResponseText } }),
+        execute: vi.fn().mockResolvedValue({ response: { ok: true, status: 200, text: codexResponseText } }),
       })),
     };
     codexResponseText = vi.fn().mockResolvedValue("");
     getExecutor.mockReturnValue({
-      execute: vi.fn().mockResolvedValue({ response: { ok: true, text: codexResponseText } }),
+      execute: vi.fn().mockResolvedValue({ response: { ok: true, status: 200, text: codexResponseText } }),
     });
     state = { running: false, resetCache: {}, failureCache: {} };
     vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));

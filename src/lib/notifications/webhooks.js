@@ -13,6 +13,7 @@
 // retried.
 
 import { createHmac } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { getSettings, updateSettings } from "@/lib/db/repos/settingsRepo.js";
 import { fetchPublicUrl, findBlockedError, assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
 
@@ -22,6 +23,8 @@ export const WEBHOOK_EVENTS = [
   "provider.unhealthy",
   "provider.recovered",
   "high.error.rate",
+  "rule.fired",
+  "project.budget.alert",
 ];
 
 // Issue's contract: 3 retries after the first attempt, 1s / 5s / 30s.
@@ -97,7 +100,7 @@ export function signPayload(secret, body) {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms, signal) => delay(ms, undefined, { signal });
 
 function recordDelivery(entry) {
   g.history.unshift(entry);
@@ -129,10 +132,15 @@ export async function deliver(endpoint, event, data, options = {}) {
     "user-agent": "tokenproxy-webhook/1",
     "x-tp-event": event,
   };
+  if (options.deliveryId) headers["x-tp-delivery-id"] = options.deliveryId;
   if (endpoint.secret) headers["x-tp-signature"] = signPayload(endpoint.secret, body);
 
   let lastError = null;
   for (let attempt = 0; ; attempt += 1) {
+    if (options.signal?.aborted) return {
+      ok: false, cancelled: attempt === 0, uncertain: attempt > 0,
+      status: null, attempts: attempt, error: "Delivery cancelled",
+    };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
@@ -140,8 +148,9 @@ export async function deliver(endpoint, event, data, options = {}) {
         method: "POST",
         headers,
         body,
-        signal: controller.signal,
+        signal: options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal,
       });
+      await res.body?.cancel().catch(() => {});
       if (res.ok) return { ok: true, status: res.status, attempts: attempt + 1, error: null };
       // 4xx other than 429 is the receiver rejecting the payload — retrying an
       // unauthorized or malformed POST just multiplies the noise.
@@ -150,6 +159,10 @@ export async function deliver(endpoint, event, data, options = {}) {
       }
       lastError = `HTTP ${res.status}`;
     } catch (err) {
+      if (options.signal?.aborted) return {
+        ok: false, uncertain: true, status: null, attempts: attempt + 1,
+        error: "Delivery interrupted before confirmation",
+      };
       if (findBlockedError(err)) {
         return {
           ok: false,
@@ -158,7 +171,7 @@ export async function deliver(endpoint, event, data, options = {}) {
           error: "blocked: endpoint does not resolve to a public address",
         };
       }
-      lastError = err?.name === "AbortError" ? `timeout after ${REQUEST_TIMEOUT_MS}ms` : (err?.message || String(err));
+      lastError = controller.signal.aborted ? `timeout after ${REQUEST_TIMEOUT_MS}ms` : "Delivery transport failed";
     } finally {
       clearTimeout(timer);
     }
@@ -166,7 +179,12 @@ export async function deliver(endpoint, event, data, options = {}) {
     if (attempt >= retries) {
       return { ok: false, status: null, attempts: attempt + 1, error: lastError };
     }
-    await wait(delays[Math.min(attempt, delays.length - 1)]);
+    try {
+      await wait(delays[Math.min(attempt, delays.length - 1)], options.signal);
+    } catch {
+      return { ok: false, uncertain: true, status: null, attempts: attempt + 1,
+        error: "Delivery interrupted during retry delay" };
+    }
   }
 }
 
@@ -178,8 +196,12 @@ export async function dispatch(event, data, options = {}) {
   const targets = config.endpoints.filter((e) => e.active && e.events.includes(event));
   if (targets.length === 0) return { delivered: 0, skipped: "no-subscribers" };
 
-  const results = await Promise.all(
-    targets.map(async (endpoint) => {
+  const results = new Array(targets.length);
+  let index = 0;
+  await Promise.all(Array.from({ length: Math.min(2, targets.length) }, async () => {
+    while (index < targets.length) {
+      const slot = index++;
+      const endpoint = targets[slot];
       const result = await deliver(endpoint, event, data, options);
       recordDelivery({
         at: new Date().toISOString(),
@@ -190,9 +212,9 @@ export async function dispatch(event, data, options = {}) {
         attempts: result.attempts,
         error: result.error,
       });
-      return result;
-    }),
-  );
+      results[slot] = result;
+    }
+  }));
   return { delivered: results.filter((r) => r.ok).length, results };
 }
 

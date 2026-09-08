@@ -3,6 +3,10 @@
 // Max bytes accepted from a remote image fetch (reject larger to prevent memory DoS).
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
 
+// Per-request decoded remote-image expansion, counting repeated occurrences.
+export const MAX_REMOTE_MEDIA_BYTES = 32 * 1024 * 1024;
+export const REMOTE_MEDIA_CONCURRENCY = 4;
+
 // Fetch timeout for remote media.
 export const FETCH_TIMEOUT_MS = 10000;
 

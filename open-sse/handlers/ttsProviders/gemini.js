@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // Gemini TTS — generateContent with AUDIO modality returns PCM L16, wrap as WAV
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "../../providers/index.js";

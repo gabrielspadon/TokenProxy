@@ -281,9 +281,9 @@ export async function autocompact(body, options = {}) {
   try {
     summary = await summarizeFn(dropped);
   } catch {
-    return unchanged(messages, "summary_failed"); // fail closed: never drop turns without a summary
+    return { ...unchanged(messages, "summary_failed"), outcome: "failed", errorCode: "invalid_response" }; // fail closed: never drop turns without a summary
   }
-  if (typeof summary !== "string" || !summary.trim()) return unchanged(messages, "summary_failed");
+  if (typeof summary !== "string" || !summary.trim()) return { ...unchanged(messages, "summary_failed"), outcome: "failed", errorCode: "invalid_response" };
 
   const note = {
     role: ROLE.USER,

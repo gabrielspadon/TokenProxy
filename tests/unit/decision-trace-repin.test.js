@@ -128,3 +128,8 @@ describe('decideRepin exposes trigger/reason/from/to for every outcome', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+// Isolate decision semantics from the separately qualified asynchronous transport.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

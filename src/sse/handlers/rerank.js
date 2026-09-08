@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { getRequestIdentity } from "../services/requestIdentity.js";
 import { createUsageAttemptTracker } from "../services/usageAttempt.js";
@@ -33,6 +35,10 @@ import { recordApiKeyDevice } from "@/sse/services/apiKeyDevices.js";
  * @param {Request} request
  */
 export async function handleRerank(request) {
+  return withResourceAdmission(request, () => handleRerankAdmitted(request));
+}
+
+async function handleRerankAdmitted(request) {
   let body;
   try {
     body = await request.json();
@@ -141,6 +147,7 @@ async function handleSingleModelRerank(body, modelStr, apiKey, endpoint, resolve
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is

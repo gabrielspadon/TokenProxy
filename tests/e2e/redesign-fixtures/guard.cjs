@@ -119,7 +119,13 @@ net.connect = net.createConnection = blockNetwork;
 tls.connect = blockNetwork;
 dgram.Socket.prototype.send = dgram.Socket.prototype.connect = blockNetwork;
 http.request = http.get = https.request = https.get = blockNetwork;
-global.fetch = async () => { throw denied('outboundBlocked'); };
+const compatibilityMarkerPath = path.join(preview, 'compatibility-gateway.json');
+const compatibilityGateway = fs.existsSync(compatibilityMarkerPath);
+if (compatibilityGateway) {
+  const { validateMarker, createPreviewTransport } = require('../../../src/lib/compatibility/previewTransport.cjs');
+  validateMarker(JSON.parse(fs.readFileSync(compatibilityMarkerPath, 'utf8')), marker);
+  global.fetch = createPreviewTransport(global.__tokenproxyPreviewGuard, denied);
+} else global.fetch = async () => { throw denied('outboundBlocked'); };
 // Node's numeric listen host still passes through lookup. Keep the native
 // literal fast path so callback family/all options retain their usual shape.
 const literalLoopback = hostname => hostname === '127.0.0.1' || hostname === '::1';
@@ -209,6 +215,8 @@ http.Server.prototype.emit = function(event,...args) {
       response.end(JSON.stringify({ runId: marker.runId, pid: process.pid, clock: auth.capturedAt, guard: global.__tokenproxyPreviewGuard }));
       return true;
     }
+    const controlledGatewayRequest = compatibilityGateway && method === 'POST' && pathname === '/v1/chat/completions';
+    const clientEventRequest = method === 'POST' && pathname === '/api/v1/context/events';
     const read = ['GET','HEAD','OPTIONS'].includes(method);
     const syntheticAccount = fixtureIds.has(decodeURIComponent(pathname.split('/').at(-1)));
     const localControl = method === 'POST' && /^\/api\/admin\/investigations(?:\/export)?$/.test(pathname)
@@ -218,7 +226,20 @@ http.Server.prototype.emit = function(event,...args) {
       || method === 'DELETE' && pathname === '/api/proxy-pools'
       || ['PATCH','DELETE'].includes(method) && pathname === '/api/pricing'
       || method === 'POST' && pathname === '/api/admin/budgets'
+      || method === 'POST' && pathname === '/api/admin/projects'
+      || method === 'PATCH' && /^\/api\/admin\/projects\/[a-f0-9-]{36}$/.test(pathname)
+      || method === 'POST' && /^\/api\/admin\/projects\/[a-f0-9-]{36}\/bindings$/.test(pathname)
+      || method === 'DELETE' && /^\/api\/admin\/projects\/[a-f0-9-]{36}\/bindings\/[a-f0-9-]{36}$/.test(pathname)
       || method === 'POST' && pathname === '/api/admin/auto-routing'
+      || method === 'POST' && pathname === '/api/admin/configuration-domains/drafts'
+      || method === 'PATCH' && /^\/api\/admin\/configuration-domains\/drafts\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(pathname)
+      || method === 'POST' && /^\/api\/admin\/configuration-domains\/drafts\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/(?:validate|activate)$/.test(pathname)
+      || method === 'POST' && /^\/api\/admin\/configuration-domains\/versions\/[1-9]\d*\/(?:restore|rollback)$/.test(pathname)
+      || method === 'POST' && pathname === '/api/admin/notification-actions'
+      || method === 'POST' && pathname === '/api/admin/quota/scenario'
+      || clientEventRequest
+      || method === 'PUT' && pathname === '/api/system/admission'
+      || method === 'POST' && ['/api/admin/routing-simulator/capture', '/api/admin/routing-simulator/simulate', '/api/admin/routing-simulator/validate'].includes(pathname)
       || method === 'PATCH' && /^\/api\/context\/sessions\/\d+$/.test(pathname)
       || ['PUT','DELETE'].includes(method) && /^\/api\/(?:access-profiles|keys|proxy-pools|provider-nodes)\/[^/]+$/.test(pathname)
       || method === 'POST' && /^\/api\/keys\/[^/]+\/(?:reveal|rotate|profile|connectivity)$/.test(pathname)
@@ -235,11 +256,11 @@ http.Server.prototype.emit = function(event,...args) {
       || method === 'PATCH' && /^\/api\/admin\/compatibility\/fixtures\/[^/]+$/.test(pathname)
       || ['POST','DELETE'].includes(method) && pathname === '/api/models/disabled';
     const allowedMutation = method === 'POST' && pathname === '/api/auth/login'
-      || method === 'POST' && /^\/api\/admin\/shaping\/(?:profiles|experiments|promote|rollback|controls|plans|runtime)$/.test(pathname)
+      || method === 'POST' && /^\/api\/admin\/shaping\/(?:profiles|experiments|promote|rollback|controls|plans|runtime|evaluation-sets|handoffs|revoke-handoff)$/.test(pathname)
       || method === 'PATCH' && pathname === '/api/settings'
       || ['POST', 'PUT', 'DELETE'].includes(method) && pathname === '/api/model-context'
       || localControl;
-    if (!read && !allowedMutation || /^\/(?:api\/)?(?:v1|v1beta|responses|codex)(?:\/|$)/.test(pathname)) {
+    if ((!read && !allowedMutation || /^\/(?:api\/)?(?:v1|v1beta|responses|codex)(?:\/|$)/.test(pathname)) && !controlledGatewayRequest && !clientEventRequest) {
       global.__tokenproxyPreviewGuard.mutationBlocked++;
       response.writeHead(403, {'content-type':'application/json','cache-control':'no-store'});
       response.end(JSON.stringify({error:'Synthetic redesign preview; live actions and inference are disabled',code:'preview_isolated'}));

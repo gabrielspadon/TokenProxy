@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 // Error/edge-path coverage for the web search + web fetch SSE handlers.
 // All collaborators mocked; providers replaced by a synthetic registry so no
 // assertion depends on a real provider's catalog. Zero network.
@@ -78,8 +79,10 @@ vi.mock('@/shared/constants/providers.js', () => {
   };
 });
 
-import { handleSearch } from '@/sse/handlers/search.js';
-import { handleFetch } from '@/sse/handlers/fetch.js';
+import { handleSearch as rawhandleSearch } from '@/sse/handlers/search.js';
+const handleSearch = trackResponseLifetime(rawhandleSearch);
+import { handleFetch as rawhandleFetch } from '@/sse/handlers/fetch.js';
+const handleFetch = trackResponseLifetime(rawhandleFetch);
 
 const CREDS = {
   connectionId: 'conn-1',
@@ -167,7 +170,8 @@ describe('shared request validation (search + fetch)', () => {
     mocks.refuseDisallowedModel.mockResolvedValue(barred);
     const res = await handleSearch(searchReq({ provider: 'prov-search', query: 'q' }));
     expect(mocks.recordApiKeyDevice).toHaveBeenCalledWith('good', expect.anything());
-    expect(res).toBe(barred);
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe("no");
   });
 
   it('fetch: allowlist refusal short-circuits too', async () => {
@@ -177,7 +181,8 @@ describe('shared request validation (search + fetch)', () => {
     const res = await handleFetch(
       fetchReq({ provider: 'prov-search', url: 'https://example.com/' })
     );
-    expect(res).toBe(barred);
+    expect(res.status).toBe(403);
+    expect(await res.text()).toBe("no");
   });
 
   it.each([

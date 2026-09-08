@@ -6,7 +6,7 @@ export const OPERATION_EVENTS_DEFAULT_DAYS = 30;
 export const OPERATION_EVENTS_MAX_PAGE = 200;
 
 const FILTERS = [
-  "operationId", "phase", "state", "source", "actorClass",
+  "eventId", "operationId", "phase", "state", "source", "actorClass",
   "subjectKind", "subjectId", "provider", "connectionId",
 ];
 const text = (v) => (typeof v === "string" && v.length <= 512 && v.trim() ? v : null);
@@ -43,6 +43,7 @@ export function parseOperationEventsQuery(params, { now = Date.now() } = {}) {
     if (!params.has(key)) continue;
     const value = text(params.get(key));
     if (!value) throw new TypeError(`Invalid ${key}`);
+    if (key === 'eventId' && (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) throw new TypeError('Invalid eventId');
     filters[key] = value;
   }
   return { start, end, page, pageSize, filters };
@@ -69,7 +70,7 @@ export function readOperationEvents(db, query) {
   const clauses = ["capturedAt >= ?", "capturedAt < ?"];
   const values = [start, end];
   for (const [key, value] of Object.entries(filters)) {
-    clauses.push(`${key} = ?`);
+    clauses.push(`${key === 'eventId' ? 'id' : key} = ?`);
     values.push(value);
   }
   const where = clauses.join(" AND ");

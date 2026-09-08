@@ -14,6 +14,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 
+vi.mock('@/lib/db/analytics/refreshPolicy.js', () => ({ analyticsRefreshPolicy: () => ({ mode: 'normal', reason: 'fixture', streamIntervalMs: 250, refreshAfterMs: 15000 }) }));
+
 const statsEmitter = new EventEmitter();
 
 /** Per-test overrides for the two DB reads the route performs. */

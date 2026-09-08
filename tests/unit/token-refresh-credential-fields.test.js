@@ -112,7 +112,7 @@ describe('checkAndRefreshToken: needsProjectId false branch and creds.id fallbac
     }));
     const fresh = await import('@/sse/services/tokenRefresh.js');
     await fresh.checkAndRefreshToken('claude', { id: 'conn-fallback', accessToken: 'old' });
-    expect(updateProviderConnection).toHaveBeenCalledWith('conn-fallback', expect.anything());
+    expect(updateProviderConnection).toHaveBeenCalledWith('conn-fallback', expect.anything(), expect.objectContaining({expectedCredentials:expect.objectContaining({id:'conn-fallback',accessToken:'old'})}));
   });
 });
 

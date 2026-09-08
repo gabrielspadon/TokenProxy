@@ -434,7 +434,8 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     ...streamController,
     handleComplete: () => {
       streamController?.handleComplete?.();
-      deliverNormalCompletion();
+      try { deliverNormalCompletion(); }
+      finally { Promise.resolve(reqLogger?.close?.()).catch(() => {}); }
     },
   };
   const { transformStream, emittedFormat } = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, model, connectionId, body, onStreamComplete: captureTransformCompletion, apiKey, streamState });

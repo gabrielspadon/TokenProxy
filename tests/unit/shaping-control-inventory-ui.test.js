@@ -28,7 +28,7 @@ it('keeps evidence in one optional layer without a second editor or inspector', 
   await act(async () => compare.click());
   expect(investigate).toHaveBeenCalledOnce();
 });
-it.each(['memoryHandoffEnabled', 'headroomLossless'])('preserves %s compatibility state and explains the missing runtime', async key => {
+it.each(['headroomLossless'])('preserves %s compatibility state and explains the missing runtime', async key => {
   await render(key);
   expect(container.textContent).toContain('Runtime unavailable');
   expect(container.textContent).toContain('preserved for compatibility');

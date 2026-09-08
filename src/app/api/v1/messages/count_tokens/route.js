@@ -1,3 +1,4 @@
+import { encodingForModel, localTokenizer } from '../../../../../../open-sse/utils/localTokenizer.js';
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -11,14 +12,8 @@ export async function OPTIONS() {
   return new Response(null, { headers: CORS_HEADERS });
 }
 
-// A media block costs roughly its pixel count in tokens, not its encoded
-// length. A 1 MB base64 screenshot is about 1,600 tokens and about 1,400,000
-// characters, so counting it by length reported it as ~350,000 tokens — three
-// orders of magnitude out, and enough on its own to convince a client that a
-// conversation carrying two screenshots had filled a million-token window.
-// Clients call this endpoint to decide when to compact, so the overcount made
-// them compact almost immediately on any session with images in it. Charged
-// flat instead: wrong by a factor of two at worst rather than a thousand.
+// Media content uses an explicit heuristic; provider-specific image/document
+// processing and message framing cannot be verified by a text tokenizer.
 const MEDIA_TOKENS = 1600;
 const CHARS_PER_TOKEN = 4;
 const MEDIA_CHARS = MEDIA_TOKENS * CHARS_PER_TOKEN;
@@ -43,88 +38,121 @@ function isMediaBlock(block) {
   );
 }
 
-function countValueChars(value) {
+function countValueChars(value, state, depth = 0) {
+  if (++state.nodes > 8192 || depth > 32) throw new RangeError("Content structure exceeds counting limits");
   if (value == null) return 0;
-  if (typeof value === "string") return value.length;
+  if (typeof value === "string") { state.texts.push(value); return value.length; }
   if (typeof value === "number" || typeof value === "boolean") {
-    return String(value).length;
+    state.texts.push(String(value)); return String(value).length;
   }
   if (Array.isArray(value)) {
-    return value.reduce((total, item) => total + countValueChars(item), 0);
+    return value.reduce((total, item) => total + countValueChars(item, state, depth + 1), 0);
   }
   if (typeof value === "object") {
     // Checked before the recursion, so a media block nested inside a
     // tool_result is charged flat rather than walked down to its base64.
-    if (isMediaBlock(value)) return MEDIA_CHARS;
+    if (isMediaBlock(value)) { state.media++; return MEDIA_CHARS; }
     return Object.entries(value).reduce((total, [key, item]) => {
-      return total + key.length + countValueChars(item);
+      state.texts.push(key); return total + key.length + countValueChars(item, state, depth + 1);
     }, 0);
   }
   return 0;
 }
 
-function countContentBlockChars(block) {
+function countContentBlockChars(block, state) {
+  if (++state.nodes > 8192) throw new RangeError('Content structure exceeds counting limits');
   if (block == null) return 0;
-  if (typeof block === "string") return block.length;
-  if (typeof block !== "object") return countValueChars(block);
-  if (isMediaBlock(block)) return MEDIA_CHARS;
+  if (typeof block === "string") return countValueChars(block, state);
+  if (typeof block !== "object") return countValueChars(block, state);
+  if (isMediaBlock(block)) { state.media++; return MEDIA_CHARS; }
 
   switch (block.type) {
     case "text":
-      return countValueChars(block.text);
+      return countValueChars(block.text, state);
     case "tool_use":
-      return countValueChars(block.name) + countValueChars(block.input);
+      return countValueChars(block.name, state) + countValueChars(block.input, state);
     case "tool_result":
-      return countValueChars(block.content);
+      return countValueChars(block.content, state);
     case "thinking":
-      return countValueChars(block.thinking);
+      return countValueChars(block.thinking, state);
     default:
-      return countValueChars(block);
+      return countValueChars(block, state);
   }
 }
 
-function countMessageChars(message) {
+function countMessageChars(message, state) {
+  if (++state.nodes > 8192) throw new RangeError('Content structure exceeds counting limits');
   if (!message || typeof message !== "object") return 0;
   const content = message.content;
 
-  if (typeof content === "string") return content.length;
+  if (typeof content === "string") return countValueChars(content, state);
   if (Array.isArray(content)) {
-    return content.reduce((total, block) => total + countContentBlockChars(block), 0);
+    return content.reduce((total, block) => total + countContentBlockChars(block, state), 0);
   }
-  return countValueChars(content);
+  return countValueChars(content, state);
 }
 
-export function estimateAnthropicInputTokens(body = {}) {
+function collectInput(body = {}) {
+  const state = { texts: [], media: 0, nodes: 0 };
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  let totalChars = countValueChars(body.system) + countValueChars(body.tools);
+  let totalChars = countValueChars(body.system, state) + countValueChars(body.tools, state);
 
   for (const msg of messages) {
-    totalChars += countMessageChars(msg);
+    totalChars += countMessageChars(msg, state);
   }
 
-  return Math.ceil(totalChars / CHARS_PER_TOKEN);
+  return { ...state, estimate: Math.ceil(totalChars / CHARS_PER_TOKEN) };
 }
 
-/**
- * POST /v1/messages/count_tokens - Mock token count response
- */
-export async function POST(request) {
-  let body;
+export function estimateAnthropicInputTokens(body = {}) { return collectInput(body).estimate; }
+
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
+let readers = 0;
+const response = (body, status = 200) => Response.json(body, { status, headers: CORS_HEADERS });
+
+async function readBody(request) {
+  if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) throw Object.assign(new Error('Body exceeds 4 MiB'), { status: 413 });
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error('JSON body is required');
+  const chunks = []; let size = 0;
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10000)]);
+  const abort = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener('abort', abort, { once: true });
   try {
-    body = await request.json();
-  } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS }
-    });
-  }
-
-  const inputTokens = estimateAnthropicInputTokens(body);
-
-  return new Response(JSON.stringify({
-    input_tokens: inputTokens
-  }), {
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS }
-  });
+    if (signal.aborted) throw Object.assign(new Error('Counting cancelled'), { status: 408 });
+    while (true) {
+      const { value, done } = await reader.read();
+      if (signal.aborted) throw Object.assign(new Error('Counting cancelled'), { status: 408 });
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) throw Object.assign(new Error('Body exceeds 4 MiB'), { status: 413 });
+      chunks.push(value);
+    }
+    return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+  } finally { signal.removeEventListener('abort', abort); void reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
+export async function POST(request) {
+  if (readers >= 16) return response({ error: 'Token counting capacity exhausted' }, 503);
+  readers++;
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return response({ error: 'JSON object is required' }, 400);
+    const input = collectInput(body);
+    const encoding = encodingForModel(body.model);
+    const counted = encoding ? await localTokenizer.count(input.texts, { encoding, signal: request.signal }) : null;
+    return response({ input_tokens: counted ? counted.tokens + input.media * MEDIA_TOKENS : input.estimate,
+      estimated: true,
+      estimation: { method: counted ? 'local_bpe_text_with_unverified_framing' : 'character_heuristic',
+        encoding, tokenizer: counted?.tokenizer || null, text_tokens: counted?.tokens ?? null,
+        media_blocks: input.media, media_tokens_per_block: input.media ? MEDIA_TOKENS : null,
+        limitations: ['Provider message and tool framing are unverified',
+          ...(!encoding ? ['Model encoding is unverified; text uses 4 characters per token'] : []),
+          ...(input.media ? ['Media processing is unverified; 1600 tokens per block is a heuristic without an error bound'] : [])],
+        scope: 'input_estimate_only', provider_calls: 0 } });
+  } catch (error) {
+    const status = error.status || ({ input_too_large: 413, overloaded: 503, timeout: 408, aborted: 408,
+      tokenizer_failed: 503, tokenizer_closed: 503 }[error.code]) || 400;
+    return response({ error: status === 400 ? 'Invalid JSON body or content structure' : error.message }, status);
+  } finally { readers--; }
+}

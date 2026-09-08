@@ -37,7 +37,7 @@ describe('releaseConnection', () => {
 describe('updateProviderCredentials: field-by-field merge', () => {
   it('writes accessToken only when present, not when absent', async () => {
     await updateProviderCredentials('c1', { accessToken: 'tok' });
-    expect(updateProviderConnection).toHaveBeenCalledWith('c1', { accessToken: 'tok' });
+    expect(updateProviderConnection).toHaveBeenCalledWith('c1', { accessToken: 'tok' }, {});
   });
 
   it('restarts refreshTokenIssuedAt/Fp when the refresh token actually rotated', async () => {

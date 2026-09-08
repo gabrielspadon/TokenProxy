@@ -54,7 +54,7 @@ describe('Persistent operator workspaces',()=>{
       expect(()=>store.create(saved({definition:definition({schemaVersion:2,economics:{...v2economics,...economicsPatch}})}))).toThrow();
     for(const cohort of [{projectRef:'raw'},{missing:'projectRef',projectRef:reference},{missing:'apiKey'},{sessionId:0}])
       expect(()=>store.create(saved({definition:definition({schemaVersion:3,economics:{...economics,cohort}})}))).toThrow();
-    expect(()=>store.create(saved({definition:definition({schemaVersion:5})}))).toThrow(/version/);
+    expect(()=>store.create(saved({definition:definition({schemaVersion:6})}))).toThrow(/version/);
   });
   it('rejects lost updates and stale deletes without changing stored bytes',()=>{
     const row=store.create(saved());

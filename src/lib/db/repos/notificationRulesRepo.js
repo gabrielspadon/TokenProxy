@@ -5,6 +5,8 @@ import { readContextAnalytics } from '../analytics/client.js';
 import { validateNotificationEvidenceQuery } from '../analytics/notificationRuleQueries.mjs';
 import { CONDITIONS, conditionFor } from '../../notifications/conditions.mjs';
 import { evaluateRule } from '../../notifications/evaluate.mjs';
+import { enqueueNotificationEvent } from '../../notifications/outbox.mjs';
+import { enqueueAuthorizedAction } from '../../notifications/remediation.mjs';
 
 // Rules are operator configuration; alerts are evidence about a moment. The
 // split matters on edit: changing a rule writes a new revision and leaves every
@@ -41,6 +43,9 @@ export function validateRuleInput(input) {
   const scopeKind = input?.scopeKind;
   if (!['global', 'connection', 'provider'].includes(scopeKind)) {
     throw new RuleValidationError('Unsupported scope.');
+  }
+  if (condition.allowedScopes && !condition.allowedScopes.includes(scopeKind)) {
+    throw new RuleValidationError('This condition has no evidence for the selected scope.');
   }
   const scopeId = scopeKind === 'global' ? null : String(input?.scopeId ?? '').trim();
   if (scopeKind !== 'global' && (!scopeId || scopeId.length > 512)) {
@@ -211,6 +216,13 @@ export async function getRuleVersions(ruleId) {
 
 const toEvent = (row) => row && { ...row, evidence: JSON.parse(row.evidence), ...(row.ruleDefinition ? { ruleDefinition: JSON.parse(row.ruleDefinition) } : {}) };
 
+export async function getRuleEvent(id) {
+  const db=await getAdapter();
+  return toEvent(db.get(`SELECT events.*,versions.definition AS ruleDefinition FROM notificationRuleEvents events
+    LEFT JOIN notificationRuleVersions versions ON versions.ruleId=events.ruleId AND versions.revision=events.ruleRevision
+    WHERE events.id=?`,[id])) || null;
+}
+
 export async function listRuleEvents({ ruleId, outcome, limit = 100 } = {}) {
   const db = await getAdapter();
   const clauses = [];
@@ -262,7 +274,8 @@ export async function recordFiring(rule, firing, scopeKey) {
     }),
   };
   try {
-    db.run(
+    db.transaction(() => {
+      db.run(
       `INSERT INTO notificationRuleEvents(id, ruleId, ruleRevision, scopeKey, firedAt,
          breachStartedAt, observedValue, evidence, outcome)
        VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'firing')`,
@@ -276,10 +289,19 @@ export async function recordFiring(rule, firing, scopeKey) {
         row.observedValue,
         row.evidence,
       ]
-    );
-  } catch {
-    // Lost the race against another evaluator; the winner's alert stands.
-    return null;
+      );
+      enqueueNotificationEvent(db, 'rule.fired', row.id, {
+        alertId: row.id, ruleId: row.ruleId, ruleRevision: row.ruleRevision,
+        condition: rule.conditionKind, scopeKey, firedAt: row.firedAt,
+        observedValue: row.observedValue, evidence: JSON.parse(row.evidence),
+      });
+      enqueueAuthorizedAction(db, row);
+    });
+  } catch (error) {
+    // Only a winning concurrent alert explains a duplicate refusal. An I/O or
+    // outbox failure must reach the evaluator's failure receipt.
+    if (db.get("SELECT id FROM notificationRuleEvents WHERE ruleId=? AND scopeKey=? AND outcome='firing'", [rule.id,scopeKey])) return null;
+    throw error;
   }
   return toEvent({ ...row, outcome: 'firing', acknowledgedAt: null, snoozedUntil: null });
 }
@@ -420,6 +442,7 @@ export async function dryRunRule(input, { start, end, signal, asOf } = {}) {
  * dry run and every existing caller are unchanged.
  */
 export async function evaluateEnabledRules({ start, end, signal, asOf, notBefore } = {}) {
+  signal?.throwIfAborted();
   const notBeforeAt = notBefore ? Date.parse(notBefore) : NaN;
   const db = await getAdapter();
   const rules = db
@@ -427,15 +450,18 @@ export async function evaluateEnabledRules({ start, end, signal, asOf, notBefore
     .map(toRule);
   const produced = [];
   for (const rule of rules) {
+    signal?.throwIfAborted();
     let evidence;
     try {
       evidence = await evidenceFor(rule, { start, end, signal });
     } catch {
+      signal?.throwIfAborted();
       // Evidence unavailable is not a breach. A rule that cannot be evaluated
       // stays silent rather than firing on the absence of its own input.
       continue;
     }
     if (!evidence.complete) continue;
+    signal?.throwIfAborted();
     const at = asOf || evidence.timeRange.end;
     for (const group of evidence.groups) {
       const previous = db.get(
@@ -456,6 +482,7 @@ export async function evaluateEnabledRules({ start, end, signal, asOf, notBefore
       if (Number.isFinite(notBeforeAt) && Date.parse(latest.firedAt) < notBeforeAt) continue;
       const snoozedUntil = previous?.snoozedUntil ? Date.parse(previous.snoozedUntil) : null;
       if (Number.isFinite(snoozedUntil) && Date.parse(latest.firedAt) < snoozedUntil) continue;
+      signal?.throwIfAborted();
       const event = await recordFiring(rule, latest, group.scopeKey);
       if (event) produced.push(event);
     }

@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
@@ -103,7 +104,8 @@ vi.mock("@/sse/services/accountLeaseRegistry.js", () => ({
   releaseAccountLeaseOnResponse: vi.fn((r) => r),
 }));
 
-const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
+const { handleChat: rawHandleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
+const handleChat = trackResponseLifetime(rawHandleChat);
 
 const PAIRS = [{ strong: "anthropic/claude-sonnet-4-6", cheap: "anthropic/claude-haiku-4-5" }];
 const STRONG = "anthropic/claude-sonnet-4-6";

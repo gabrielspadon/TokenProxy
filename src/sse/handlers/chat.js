@@ -1,3 +1,4 @@
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import "open-sse/index.js";
 import { getRequestIdentity } from "../services/requestIdentity.js";
 
@@ -211,7 +212,8 @@ function queueReliefMs(state, now) {
  * body (releaseAccountLeaseOnResponse is the shape) if stream-duration
  * concurrency ever needs bounding too.
  */
-function acquireAdmission(key) {
+function acquireAdmission(key, signal) {
+  if (signal?.aborted) return Promise.resolve({ admitted: false, why: "aborted", waitedMs: 0 });
   const now = Date.now();
   sweepAdmissionKeys(now);
   let state = admissionKeys.get(key);
@@ -241,6 +243,7 @@ function acquireAdmission(key) {
       if (waiter.settled) return;
       waiter.settled = true;
       clearTimeout(waiter.timer);
+      signal?.removeEventListener("abort", waiter.onAbort);
       const at = state.queue.indexOf(waiter);
       if (at !== -1) state.queue.splice(at, 1);
       const endedAt = Date.now();
@@ -253,7 +256,7 @@ function acquireAdmission(key) {
       if (state.active === 0 && state.queue.length === 0) state.idleSince = endedAt;
       resolve({
         admitted: false,
-        why: "wait-timeout",
+        why: signal?.aborted ? "aborted" : "wait-timeout",
         waitedMs,
         retryAfterMs: queueReliefMs(state, endedAt),
         queued: state.queue.length,
@@ -264,6 +267,9 @@ function acquireAdmission(key) {
     // A queued request is never the reason a process refuses to exit.
     waiter.timer?.unref?.();
     state.queue.push(waiter);
+    waiter.onAbort = () => waiter.settle(false);
+    signal?.addEventListener("abort", waiter.onAbort, { once: true });
+    if (signal?.aborted) waiter.onAbort();
   });
 }
 
@@ -318,6 +324,15 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
+  if (Number.isFinite(options.deadline)) {
+    const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(options.deadline - Date.now())));
+    const caller = options.signal || request?.signal;
+    options = { ...options, signal: caller ? AbortSignal.any([caller, timeout]) : timeout };
+  }
+  return withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline });
+}
+
+async function handleChatAdmitted(request, clientRawRequest = null, options = {}) {
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
   if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const apiKey = resolvedApiKey.valid ? resolvedApiKey.apiKey : null;
@@ -364,8 +379,9 @@ export async function handleChat(request, clientRawRequest = null, options = {})
 
   // AUTHENTICATED: shaped, not refused. A wait is the answer; a 429 is only
   // what is left when the queue itself is out of room.
-  const slot = await acquireAdmission(rateLimitKey);
+  const slot = await acquireAdmission(rateLimitKey, options.signal || request?.signal);
   if (!slot.admitted) {
+    if (slot.why === "aborted") return errorResponse(499, "Request aborted");
     decide("ADM", "evicted", {
       rid,
       key: keyTag,

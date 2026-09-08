@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // Xiaomi MiMo TTS — via OpenAI-compatible chat completions (non-streaming).
 // Docs: https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5
 // Message contract: target text in `role: assistant` content, style/voice

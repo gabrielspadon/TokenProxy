@@ -1,3 +1,4 @@
+import { requestFetch as fetch, requestDelay } from '../utils/requestLifetime.js';
 import { Buffer } from "node:buffer";
 import { createErrorResult, parseUpstreamError } from "../utils/error.js";
 import { isReplaySafeRejection } from "../utils/replaySafety.js";
@@ -79,7 +80,7 @@ async function transcribeAssemblyAI(cfg, file, model, token, formData) {
 
   const start = Date.now();
   while (Date.now() - start < 120_000) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await requestDelay(2000);
     const poll = await fetch(`${cfg.baseUrl}/${id}`, { headers: auth });
     if (!poll.ok) { discardResponseBody(poll); continue; }
     const r = await poll.json();

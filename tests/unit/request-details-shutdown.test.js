@@ -70,3 +70,19 @@ it('joins an in-flight flush and subsequent buffered work before allowing adapte
   await shutdown;
   expect(events).toEqual(['write:already-flushing', 'write:queued-during-flush', 'adapter-close']);
 });
+
+it('bounds shutdown of a stuck adapter and never writes after the adapter-close boundary', async () => {
+  vi.stubEnv('OBSERVABILITY_BATCH_SIZE', '1');
+  gate = new Promise(resolve => { release = resolve; });
+  const repo = await loadRepository();
+  await repo.saveRequestDetail({ ...detail('stalled'), request: { password: 'secret', content: 'x'.repeat(1000000) } });
+  for (let n = 0; n < 100; n++) await repo.saveRequestDetail(detail(`queued-${n}`));
+  expect(repo.__test__.bufferStatus().retainedBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+  const result = await repo.__test__.shutdown();
+  expect(result.drained).toBe(false);
+  expect(repo.__test__.bufferSize()).toBe(0);
+  release(adapter);
+  await new Promise(setImmediate);
+  expect(writes).toEqual([]);
+  expect(repo.__test__.bufferStatus().retainedBytes).toBe(0);
+});

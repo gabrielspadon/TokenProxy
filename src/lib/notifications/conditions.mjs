@@ -14,6 +14,19 @@
 //   'window'    — the condition counts qualifying records inside a trailing
 //     window of that length. The count IS the measurement.
 export const CONDITIONS = Object.freeze({
+  compatibility_regression: {
+    kind: 'compatibility_regression', label: 'Compatibility check regressions',
+    source: 'compatibilityRuns', durationRole: 'window', unit: 'regressed checks',
+    thresholdRange: [1, 10000], direction: 'atLeast', scopeKeyKind: 'compatibility-target',
+    evidenceKind: 'compatibilityComparison', allowedScopes: ['global', 'provider'],
+    description: 'Counts completed checks that changed from passed to failed for the same exact fixture, target and test scope. Controlled tests do not establish live provider health. Cancelled, interrupted, timed-out and incomparable runs are excluded.',
+  },
+  compression_saver_failure: {
+    kind: 'compression_saver_failure', label: 'Context transformation failures',
+    source: 'contextStages', durationRole: 'window', unit: 'failed transformation stages',
+    thresholdRange: [1, 10000], direction: 'atLeast', scopeKeyKind: 'connection', evidenceKind: 'contextStage',
+    description: 'Counts explicitly recorded failed transformation stages. Cancelled, skipped, unchanged and historical byte-derived outcomes are excluded. Two failed stages in one request count as two stage failures.',
+  },
   quota_risk: {
     kind: 'quota_risk',
     label: 'Quota headroom below threshold',
@@ -84,16 +97,7 @@ export const CONDITIONS = Object.freeze({
 // Listed, not implemented. Each entry names what is missing and what would have
 // to be recorded first. These appear in the operator surface so the absence is
 // visible and explained rather than merely absent.
-export const UNAVAILABLE_CONDITIONS = Object.freeze([
-  {
-    kind: 'compression_saver_failure',
-    label: 'Compression / token-saver failure',
-    reason:
-      'Failed context reductions cannot currently be distinguished from deliberately skipped reductions in the retained evidence. An unchanged request does not establish whether a reduction failed, so it cannot reliably trigger a failure alert.',
-    wouldRequire:
-      'A recorded failure outcome for each affected transformation, kept separate from deliberate skips and unchanged results.',
-  },
-]);
+export const UNAVAILABLE_CONDITIONS = Object.freeze([]);
 
 export const CONDITION_KINDS = Object.freeze(Object.keys(CONDITIONS));
 

@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { claudeClientSettings } from '../../src/lib/clientSetup/claudeAdapter.mjs';
+const artifacts=resolve(process.argv[2]);
+const root=mkdtempSync(join(tmpdir(),'tokenproxy-client-native-'));
+mkdirSync(join(root,'config'));mkdirSync(join(root,'work'));
+const adapter=resolve('scripts/tokenproxy-client-events.mjs');
+const quote=s=>`'${s.replaceAll("'", "'\\''")}'`;
+const settings=claudeClientSettings({}, {scriptPath:adapter,nodePath:process.execPath,baseUrl:'http://127.0.0.1:9',clientId:'native-init-only'});
+settings.hooks.SessionStart=[{matcher:'startup',hooks:[{type:'command',command:`${settings.hooks.PostCompact[0].hooks[0].command} 2>> ${quote(join(root,'hook.jsonl'))}`,timeout:5}]}];
+writeFileSync(join(root,'settings.json'),JSON.stringify(settings));
+writeFileSync(join(root,'no-network.sb'),'(version 1) (allow default) (deny network*) (deny file-read* (subpath "/Users/gabrielspadon/.claude") (subpath "/Users/gabrielspadon/.ssh")) (deny process-exec (literal "/usr/bin/security"))');
+const binary='/Users/gabrielspadon/.local/share/claude/versions/2.1.263';
+const args=['-f',join(root,'no-network.sb'),binary,'--init-only','--settings',join(root,'settings.json'),'--setting-sources','','--strict-mcp-config','--mcp-config','{"mcpServers":{}}'];
+const env={PATH:process.env.PATH,TMPDIR:process.env.TMPDIR,CLAUDE_CONFIG_DIR:join(root,'config'),DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',DISABLE_ERROR_REPORTING:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
+let output;try{output=execFileSync('/usr/bin/sandbox-exec',args,{cwd:join(root,'work'),env,encoding:'utf8',timeout:30000,maxBuffer:1024*1024});}catch(error){writeFileSync(join(artifacts,'native-init-error.txt'),String(error.stdout)+'\n'+String(error.stderr));throw error;}
+const lines=readFileSync(join(root,'hook.jsonl'),'utf8').trim().split('\n');
+const hook=JSON.parse(lines.at(-1));assert.equal(hook.observedHook,'SessionStart');assert.equal(hook.emitted,false);
+writeFileSync(join(artifacts,'native-init.json'),JSON.stringify({binary,args,root,hook,exitCode:0,output,networkPolicy:'OS sandbox deny network*',scope:'native SessionStart invocation only; no native compaction or conversation',providerRequests:0},null,2));
+console.log('PASS native Claude init-only invoked adapter hook under OS network denial; no event fabricated');

@@ -18,6 +18,20 @@ beforeAll(async()=>{
  id=(await getContextOverview()).sessions[0].id;
 });
 describe("context operator API boundary",()=>{
+ it("runs project, interval and routing projections through the real bounded worker",async()=>{
+  for(const query of ['view=projects&projectSearch=Research','view=interval-comparison&baselineFrom=2026-09-05T00:00:00Z&baselineUntil=2026-09-06T00:00:00Z&from=2026-09-06T00:00:00Z&until=2026-09-07T00:00:00Z']) {
+   expect((await overview(req(`/api/context?${query}`))).status).toBe(401);
+   const result=await overview(req(`/api/context?${query}`,{operator:true}));
+   expect(result.status).toBe(200);
+   const body=await result.json();expect(body.freshness.source).toBe('committed-sqlite');expect(JSON.stringify(body)).not.toContain('a'.repeat(32));
+   if(body.view==='projects')expect(body.pagination.totalItems).toBeTypeOf('number');
+   else {expect(body.baseline.period.start).toBe('2026-09-05T00:00:00.000Z');expect(body.selected.period.end).toBe('2026-09-07T00:00:00.000Z');}
+  }
+  const result=await session(req(`/api/context/sessions/${id}?view=routing`,{operator:true}),{params:Promise.resolve({id:String(id)})});
+  expect(result.status).toBe(200);expect(await result.json()).toMatchObject({view:'routing',sessionId:id,items:[],pagination:{totalItems:0,hasMore:false}});
+  expect((await overview(req('/api/context?view=routing',{operator:true}))).status).toBe(400);
+  expect((await overview(req('/api/context?view=interval-comparison',{operator:true}))).status).toBe(400);
+ });
  it("rejects anonymous and inference keys without disclosing or changing context",async()=>{
   const before=JSON.stringify(db.all("SELECT * FROM contextSessions"));
   for(const handler of [overview,session,patch]){

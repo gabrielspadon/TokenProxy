@@ -20,6 +20,16 @@ import { NOTIFICATION_RULE_TABLES } from './notificationRuleSchema.js';
 import { ACCESS_PROFILE_KEY_COLUMNS, ACCESS_PROFILE_TABLES } from './accessProfileSchema.js';
 import { KEY_ROTATION_COLUMNS, KEY_ROTATION_TABLES } from './keyRotationSchema.js';
 import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
+import { NOTIFICATION_DELIVERY_TABLES, PROJECT_NOTIFICATION_COLUMNS } from './notificationDeliverySchema.js';
+import { NOTIFICATION_AUTOMATION_TABLES } from './notificationAutomationSchema.js';
+import { CONTEXT_STAGE_OUTCOME_COLUMNS } from './contextStageOutcomeSchema.js';
+import {
+  PROJECT_TABLES,
+  USAGE_PROJECT_COLUMNS,
+  PROJECT_RESERVATION_COLUMNS,
+  PROJECT_USAGE_INDEXES,
+  PROJECT_RESERVATION_INDEXES,
+} from './projectSchema.js';
 
 // 14 = operation events (durable operation evidence). 15 is reserved for
 // project identity/budgets - do not reuse it. 16 = notification rules,
@@ -28,7 +38,15 @@ import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
 // 19 = counterfactual dollar-cost ledger (costLedger).
 // 20 = cost-ledger saver/cache attribution split (saverSavedUsd, cacheSavedUsd).
 // 21 = exact server completion binding between usageHistory and costLedger.
-export const SCHEMA_VERSION = 21;
+// 22 = durable project attribution and shared project/key reservations.
+// 23 = exact quota-check target outcomes; historical evidence remains unknown.
+// 24 = bounded retained notification delivery and uncertain crash outcomes.
+// 25 = durable metadata-check schedules and stale-owner protection.
+// 26 = event-time project notification intent and recoverable delivery creation.
+// 27 = explicit transformation outcome provenance; historical rows stay unknown.
+// 28 = exact preparation execution origins and indexed failure evidence.
+// 29 = controlled compatibility scopes and retained operator evaluation sets.
+export const SCHEMA_VERSION = 33;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -48,12 +66,33 @@ export const TABLES = {
   ...CONFIG_VERSION_TABLES,
   ...CONTEXT_EVIDENCE_TABLES,
   ...BUDGET_TABLES,
+  apiKeyBudgetReservations: {
+    ...BUDGET_TABLES.apiKeyBudgetReservations,
+    columns: {
+      ...BUDGET_TABLES.apiKeyBudgetReservations.columns,
+      ...PROJECT_RESERVATION_COLUMNS,
+    },
+    indexes: [
+      ...BUDGET_TABLES.apiKeyBudgetReservations.indexes,
+      ...PROJECT_RESERVATION_INDEXES,
+    ],
+  },
+  ...PROJECT_TABLES,
+  projectBudgetAlerts: {
+    ...PROJECT_TABLES.projectBudgetAlerts,
+    columns: { ...PROJECT_TABLES.projectBudgetAlerts.columns, ...PROJECT_NOTIFICATION_COLUMNS },
+    indexes: [ ...PROJECT_TABLES.projectBudgetAlerts.indexes,
+      'CREATE INDEX IF NOT EXISTS idx_project_notification_retry ON projectBudgetAlerts(notificationRetryAt,firedAt,id) WHERE notificationQueuedAt IS NULL AND notificationTargets IS NOT NULL',
+    ],
+  },
   ...INVESTIGATION_TABLES,
   ...SESSION_PIN_TABLES,
   ...SHAPING_TABLES,
   ...COMPATIBILITY_TABLES,
   ...OPERATION_TABLES,
   ...NOTIFICATION_RULE_TABLES,
+  ...NOTIFICATION_DELIVERY_TABLES,
+  ...NOTIFICATION_AUTOMATION_TABLES,
   ...ACCESS_PROFILE_TABLES,
   ...KEY_ROTATION_TABLES,
   ...COST_LEDGER_TABLES,
@@ -187,6 +226,7 @@ export const TABLES = {
       usageSource: 'TEXT',
       estimatedCostUsd: 'REAL',
       reportedCostUsd: 'REAL',
+      ...USAGE_PROJECT_COLUMNS,
     },
     indexes: [
       'CREATE INDEX IF NOT EXISTS idx_uh_ts ON usageHistory(timestamp DESC)',
@@ -201,6 +241,7 @@ export const TABLES = {
       'CREATE INDEX IF NOT EXISTS idx_uh_logical ON usageHistory(logicalRequestId, id)',
       'CREATE INDEX IF NOT EXISTS idx_uh_session ON usageHistory(contextSessionId, id)',
       'CREATE INDEX IF NOT EXISTS idx_uh_project ON usageHistory(projectId, id)',
+      ...PROJECT_USAGE_INDEXES,
     ],
   },
   usageRateSnapshots: {
@@ -275,6 +316,7 @@ export const TABLES = {
   },
   contextStages: {
     columns: {
+      ...CONTEXT_STAGE_OUTCOME_COLUMNS,
       requestId: 'TEXT NOT NULL REFERENCES requestStats(id) ON DELETE CASCADE',
       ordinal: 'INTEGER NOT NULL',
       stage: 'TEXT NOT NULL',
@@ -285,6 +327,9 @@ export const TABLES = {
       risk: 'TEXT NOT NULL',
     },
     primaryKey: 'PRIMARY KEY (requestId, ordinal)',
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_context_execution_failure ON contextStages(requestId,ordinal) WHERE outcomeSource='execution' AND outcome='failed'",
+    ],
   },
   requestStats: {
     columns: {

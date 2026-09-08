@@ -1,11 +1,13 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { call } from '@/shared/api';
 import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
 import { controlLabel } from './controlCatalog';
 import { UNAVAILABLE_CONTROLS } from '@/lib/shaping/runtimeSupport';
 import { normalizeProfileDefaults } from '@/lib/shaping/profileDefaults';
+import { EvaluationSets } from './EvaluationSets';
+import { Handoffs } from './Handoffs';
 
 const label = controlLabel;
 const signed = value => `${value > 0 ? '+' : ''}${value.toLocaleString()} B`;
@@ -19,6 +21,9 @@ export function ShapingWorkbench({ onSettingsChanged }) {
   const [baseline, setBaseline] = useState(null), [candidate, setCandidate] = useState(null), [fixtureSetId, setFixtureSetId] = useState('');
   const [experiment, setExperiment] = useState(null), [history, setHistory] = useState([]), [receipts, setReceipts] = useState([]), [review, setReview] = useState(null);
   const [busy, setBusy] = useState(false), [notice, setNotice] = useState(null), [reviewConsent, setReviewConsent] = useState(false), [unsupportedConsent, setUnsupportedConsent] = useState(false);
+  const experimentAbort = useRef(null);
+  const [running, setRunning] = useState(false), [evidenceId, setEvidenceId] = useState('');
+  useEffect(() => () => experimentAbort.current?.abort(), []);
   const applyRecords = useCallback(responses => {
     const failed = responses.find(r => !r.ok);
     if (failed) { setNotice({ tone: 'warn', title: 'Workbench unavailable', children: failed.body?.code || 'The saved records could not be read.' }); return; }
@@ -49,18 +54,35 @@ export function ShapingWorkbench({ onSettingsChanged }) {
     if (result) { setEditing(result.version); setCandidate(result.version); setConsent(false); }
   }
   async function run() {
-    const result = await mutate('experiments', { baselineVersionId: baseline.id, candidateVersionId: candidate.id, fixtureSetId }, 'Offline comparison retained. Live settings were not changed.');
-    if (result) setExperiment(result);
+    const controller = new AbortController(); experimentAbort.current = controller;
+    setBusy(true); setRunning(true); setNotice(null);
+    try {
+      const response = await call('/api/admin/shaping/experiments', { method: 'POST', signal: controller.signal,
+        body: { baselineVersionId: baseline.id, candidateVersionId: candidate.id, fixtureSetId } });
+      if (response.ok) {
+        setExperiment(response.body); setEvidenceId('');
+        setNotice(response.body.result.status === 'failed' ? { tone: 'warn', title: 'Comparison failed', children: response.body.result.errorCode } : { tone: 'ok', title: 'Offline comparison retained' });
+      } else setNotice({ tone: 'warn', title: response.body?.code === 'cancelled' ? 'Cancellation requested' : 'Comparison unavailable', children: response.body?.code === 'cancelled' ? 'The worker is being stopped. Refresh retained comparisons to verify its recorded outcome.' : response.body?.code });
+      await refresh();
+    } finally { experimentAbort.current = null; setRunning(false); setBusy(false); }
+  }
+  function exportCase(row) {
+    const baselineRow = experiment.result.baseline.results.find(value => value.fixtureId === row.fixtureId);
+    const data = { experimentId: experiment.id, evaluationSet: experiment.result.evaluationSet, baseline: baselineRow, candidate: row, comparison: experiment.result.comparison };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = `shaping-${row.fixtureId}.json`; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
   async function inspectExperiment(id) {
     const response = await call(`/api/admin/shaping/experiments/${id}`);
     if (response.ok) {
-      setExperiment(response.body);
+      setExperiment(response.body); setEvidenceId('');
+      setFixtureSetId(response.body.fixtureSetId);
       const versions = await Promise.all([call(`/api/admin/shaping/profiles/${response.body.baselineVersionId}`), call(`/api/admin/shaping/profiles/${response.body.candidateVersionId}`)]);
       if (versions.every(r => r.ok)) { setBaseline(versions[0].body); setCandidate(versions[1].body); }
     } else setNotice({ tone: 'warn', title: 'Comparison could not be read' });
   }
-  const resultMatches = experiment && candidate?.id === experiment.candidateVersionId && baseline?.id === experiment.baselineVersionId;
+  const resultMatches = experiment && (!experiment.result.status || experiment.result.status === 'completed') && candidate?.id === experiment.candidateVersionId && baseline?.id === experiment.baselineVersionId && fixtureSetId === experiment.fixtureSetId;
   async function confirm() {
     const body = review.rollback ? { rollbackReceiptId: review.rollback.id, expectedCurrent: review.currentHash, consent: reviewConsent ? acknowledged(review.settings) : [] } : { versionId: candidate.id, experimentId: experiment.id, expectedCurrent: review.currentHash, consent: reviewConsent ? acknowledged(review.settings) : [], acknowledgeUnsupported: unsupportedConsent ? experiment.result.candidate.unsupported : [] };
     const result = await mutate(review.rollback ? 'rollback' : 'promote', body, review.rollback ? 'Previous Shaping settings restored.' : 'Profile promoted for new requests.');
@@ -70,7 +92,7 @@ export function ShapingWorkbench({ onSettingsChanged }) {
   if (!current || !draft) return <section><h2>Profiles and offline experiments</h2>{notice ? <Notice {...notice} /> : <p>Reading saved profiles.</p>}</section>;
   return <section className="shaping-workbench" aria-labelledby="shaping-workbench-title">
     <div className="panel-head"><h2 id="shaping-workbench-title">Profiles and offline experiments</h2><button className="button quiet" onClick={refresh} disabled={busy}>Refresh records</button></div>
-    <p>Compare local transformations on a reusable synthetic set before applying a named profile. Smaller requests do not establish better answers, fewer billed tokens, or lower cost.</p>
+    <p>Compare local transformations on explicitly selected cases before applying a named profile. Smaller requests do not establish better answers, fewer billed tokens, or lower cost.</p>
     {notice ? <Notice {...notice} /> : null}
     <div className="shaping-workspace-grid">
       <div className="shaping-library"><h3>Saved versions</h3><p className="caption">{pagination?.total || 0} versions. Selecting one does not change live traffic.</p>
@@ -95,23 +117,30 @@ export function ShapingWorkbench({ onSettingsChanged }) {
     </div>
     <div className="shaping-comparison"><h3>Offline comparison</h3><div className="shaping-comparison-controls">
       <p>Baseline <strong>{baseline ? `${baseline.name} v${baseline.revision}` : 'Choose a saved version'}</strong></p><p>Candidate <strong>{candidate ? `${candidate.name} v${candidate.revision}` : 'Choose a saved version'}</strong></p>
-      <label>Synthetic fixture set<select value={fixtureSetId} onChange={e => setFixtureSetId(e.target.value)}><option value="">Select a reusable set</option>{current.fixtureSets.map(set => <option key={set.id} value={set.id}>{set.name} v{set.revision} ({set.count} cases)</option>)}</select></label>
       <button className="button" disabled={busy || !baseline || !candidate || !fixtureSetId} onClick={run}>Run offline comparison</button>
+      {running ? <button className="button quiet" onClick={() => experimentAbort.current?.abort()}>Cancel comparison</button> : null}
     </div>
+    <EvaluationSets builtins={current.fixtureSets} selected={fixtureSetId} onSelect={setFixtureSetId} disabled={busy} />
     {resultMatches ? <><p className="caption">Stage evaluator only. No provider calls. Token counts, cost, task quality and provider cache billing are unmeasured. Local execution {experiment.result.localExecutionMs.toFixed(2)} ms.</p>
+      {experiment.result.comparison ? <div className="shaping-comparison-verdict"><strong>{experiment.result.comparison.disposition.replaceAll('-', ' ')}</strong><p>{experiment.result.comparison.explanation}</p><span>{experiment.result.comparison.failedFixtures} of {experiment.result.comparison.fixtureCount} cases failed integrity checks. {experiment.result.comparison.latency.uncertainty}</span></div> : null}
       {experiment.result.candidate.unsupported.length ? <Notice tone="warn" title={`Unsupported candidate stages: ${experiment.result.candidate.unsupported.join(', ')}`} >These services or runtime states were not simulated or contacted.</Notice> : null}
       <div className="shaping-table-scroll"><table><thead><tr><th>Fixture</th><th>Baseline bytes</th><th>Candidate bytes</th><th>Candidate − baseline</th><th>Local time, baseline / candidate</th><th>Integrity checks</th></tr></thead><tbody>{experiment.result.candidate.results.map((row, i) => <tr key={row.fixtureId}><th>{row.fixtureId}</th><td>{experiment.result.baseline.results[i].afterBytes.toLocaleString()}</td><td>{row.afterBytes.toLocaleString()}</td><td>{signed(row.afterBytes - experiment.result.baseline.results[i].afterBytes)}</td><td>{experiment.result.baseline.results[i].latencyMs.toFixed(2)} / {row.latencyMs.toFixed(2)} ms</td><td>{good(row) ? 'Passed fixture checks' : 'Failed, inspect evidence'}</td></tr>)}</tbody></table></div>
-      <details><summary>Inspect stage outcomes and retained request evidence</summary>{experiment.result.candidate.results.map(row => <section key={row.fixtureId} aria-label={`${row.fixtureId} evidence`}><h4>{row.fixtureId}</h4><div className="shaping-table-scroll"><table><thead><tr><th>Stage</th><th>Outcome</th><th>Signed bytes</th><th>Local time</th><th>Coverage</th></tr></thead><tbody>{row.stages.map(stage => <tr key={stage.stage}><th>{stage.stage}</th><td>{stage.status}</td><td>{signed(stage.deltaBytes)}</td><td>{stage.latencyMs.toFixed(2)} ms</td><td>{stage.reason || stage.error || 'Local implementation'}</td></tr>)}</tbody></table></div><p>{row.validity.schemaValidation}</p><pre className="shaping-log">{JSON.stringify({ validity: row.validity, beforeHash: row.beforeHash, afterHash: row.afterHash, output: row.output }, null, 2)}</pre></section>)}</details>
+      <details><summary>Inspect stage outcomes and retained request evidence</summary>
+        <label>Case evidence<select value={evidenceId || experiment.result.candidate.results[0]?.fixtureId || ''} onChange={event => setEvidenceId(event.target.value)}>{experiment.result.candidate.results.map(row => <option key={row.fixtureId} value={row.fixtureId}>{row.fixtureId}</option>)}</select></label>
+        {experiment.result.candidate.results.filter(row => row.fixtureId === (evidenceId || experiment.result.candidate.results[0]?.fixtureId)).map(row => <section key={row.fixtureId} aria-label={`${row.fixtureId} evidence`}><h4>{row.fixtureId}</h4><div className="shaping-table-scroll"><table><thead><tr><th>Stage</th><th>Outcome</th><th>Signed bytes</th><th>Local time</th><th>Coverage</th></tr></thead><tbody>{row.stages.map(stage => <tr key={stage.stage}><th>{stage.stage}</th><td>{stage.status}</td><td>{signed(stage.deltaBytes)}</td><td>{stage.latencyMs.toFixed(2)} ms</td><td>{stage.reason || stage.error || 'Local implementation'}</td></tr>)}</tbody></table></div><p>{row.validity.schemaValidation}</p><pre className="shaping-log">{JSON.stringify({ validity: row.validity, beforeHash: row.beforeHash, afterHash: row.afterHash }, null, 2)}</pre><button className="button quiet" onClick={() => exportCase(row)}>Export selected evidence</button></section>)}
+      </details>
       <button className="button" disabled={busy || !experiment.result.candidate.results.every(good)} onClick={() => openReview(candidate.settings)}>Review promotion</button>
     </> : <p>Choose saved versions and a fixture set. Each comparison is retained and can be reopened below.</p>}
-    <details><summary>Recent retained comparisons ({history.length})</summary>{history.map(item => <button className="button quiet" key={item.id} onClick={() => inspectExperiment(item.id)}>{item.createdAt} · {item.fixtureSetId} · records {item.baselineVersionId} / {item.candidateVersionId}</button>)}</details>
+    {experiment?.result.status && experiment.result.status !== 'completed' ? <Notice tone="warn" title={`Comparison ${experiment.result.status}`}>{experiment.result.errorCode || 'Completion has not been recorded. Do not assume an interrupted comparison finished.'}</Notice> : null}
+    <details><summary>Recent retained comparisons ({history.length})</summary>{history.map(item => <button className="button quiet" key={item.id} onClick={() => inspectExperiment(item.id)}>{item.createdAt} · {item.status || 'historical'} · {item.fixtureSetId} · records {item.baselineVersionId} / {item.candidateVersionId}</button>)}</details>
     </div>
+    <Handoffs enabled={current.settings.memoryHandoffEnabled} />
     <h3>Promotion and rollback receipts</h3><p>{current.coverage.takesEffect} Service endpoints, routing policy and per-plan overrides are outside this profile.</p>
     {receipts.length ? receipts.map(receipt => <div className="shaping-profile-row" key={receipt.id}><span>{receipt.action} · {receipt.createdAt}<span className="sub">{diff(receipt.beforeSettings, receipt.afterSettings).length} changed settings</span></span><button className="button quiet" onClick={() => openReview(receipt.beforeSettings, receipt)}>Review rollback</button></div>) : <p>No profile has been promoted. Existing live settings remain in use.</p>}
-    <Confirm open={!!review} title={review?.rollback ? 'Restore previous Shaping settings' : 'Promote this profile'} verb={review?.rollback ? 'Restore settings' : 'Promote profile'} requires="Signed-in local operator; current settings must match this review." changes={current.coverage.takesEffect} undo="Use the retained receipt to review a rollback. Removed request content cannot be recovered." busy={busy || !reviewConsent || (!review?.rollback && experiment?.result.candidate.unsupported.length > 0 && !unsupportedConsent)} refusal={notice?.tone === 'warn' ? notice : null} onConfirm={confirm} onClose={() => setReview(null)}>
+    <Confirm open={!!review} title={review?.rollback ? 'Restore previous Shaping settings' : 'Promote this profile'} verb={review?.rollback ? 'Restore settings' : 'Promote profile'} requires="Signed-in local operator; current settings must match this review." changes={current.coverage.takesEffect} undo="Use the retained receipt to review a rollback. Removed request content cannot be recovered." busy={busy || !reviewConsent || (!review?.rollback && experiment?.result.candidate?.unsupported?.length > 0 && !unsupportedConsent)} refusal={notice?.tone === 'warn' ? notice : null} onConfirm={confirm} onClose={() => setReview(null)}>
       <p>Only the following global settings change.</p><div className="shaping-table-scroll"><table><thead><tr><th>Setting</th><th>Current</th><th>Proposed</th></tr></thead><tbody>{diff(review?.before, review?.settings).map(key => <tr key={key}><th>{label(key)}</th><td>{JSON.stringify(review.before[key])}</td><td>{JSON.stringify(review.settings[key])}</td></tr>)}</tbody></table></div>
       <label className="shaping-consent"><input type="checkbox" checked={reviewConsent} onChange={e => setReviewConsent(e.target.checked)} />I consent to the reviewed content changes for new requests.</label>
-      {!review?.rollback && experiment?.result.candidate.unsupported.length ? <label className="shaping-consent"><input type="checkbox" checked={unsupportedConsent} onChange={e => setUnsupportedConsent(e.target.checked)} />I understand {experiment.result.candidate.unsupported.join(', ')} were not evaluated. No task-quality or cost improvement has been established.</label> : null}
+      {!review?.rollback && experiment?.result.candidate?.unsupported?.length ? <label className="shaping-consent"><input type="checkbox" checked={unsupportedConsent} onChange={e => setUnsupportedConsent(e.target.checked)} />I understand {experiment.result.candidate.unsupported.join(', ')} were not evaluated. No task-quality or cost improvement has been established.</label> : null}
     </Confirm>
   </section>;
 }

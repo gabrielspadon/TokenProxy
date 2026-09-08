@@ -1,3 +1,4 @@
+import { analyticsRefreshPolicy } from '@/lib/db/analytics/refreshPolicy.js';
 import { requireAdmin } from '@/lib/admin/guard.js';
 import { adminError, adminJson } from '@/lib/admin/policy.js';
 import { getAdapter } from '@/lib/db/driver.js';
@@ -21,7 +22,13 @@ export async function GET(request) {
     }
     const query = validateActivityQuery(input);
     const writer = await getAdapter();
-    return adminJson(await readContextAnalytics(query,{file:DATA_FILE,driver:writer.driver,signal:request.signal}));
+    const body = await readContextAnalytics(query,{file:DATA_FILE,driver:writer.driver,signal:request.signal,authorizedScope:'dashboard-admin'});
+    const refresh = analyticsRefreshPolicy();
+    const response = adminJson({ ...body, projection: { ...refresh, source: body.freshness?.source || 'analytics-snapshot',
+      computedAt: body.freshness?.snapshotCompletedAt || body.freshness?.observedAt || null } });
+    response.headers.set('x-tokenproxy-refresh-after-ms', String(refresh.refreshAfterMs));
+    response.headers.set('x-tokenproxy-refresh-reason', refresh.reason);
+    return response;
   } catch (error) {
     if (error instanceof ActivityQueryError) return adminError(400,'invalid_request',error.message);
     if (error instanceof ContextAnalyticsError) return adminError(503,'state_unavailable','Analytics are busy or temporarily unavailable. Retry shortly.');

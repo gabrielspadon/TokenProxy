@@ -1,3 +1,4 @@
+import { configurationDomainMutation } from '../../configuration/configurationDomains.js';
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
 import { parseJson, stringifyJson } from '../helpers/jsonCol.js';
@@ -6,6 +7,7 @@ import { PROFILE_COVERAGE, UNAVAILABLE_CONTROLS, projectSettings, settingsHash, 
 import { resolveComboTokenSaver } from '../../../../open-sse/services/combo.js';
 import { FIXTURE_SETS } from '../../shaping/fixtures.mjs';
 import { runExperiment } from '../../shaping/runExperiment.js';
+import { resolveEvaluationSet } from './shapingEvaluationRepo.js';
 
 const now = () => new Date().toISOString();
 function rawSettings(db) {
@@ -34,7 +36,7 @@ export async function shapingCurrent() {
 export async function updateShapingControls({ patch, expectedCurrent, consent }) {
   if (typeof expectedCurrent !== 'string' || !/^[a-f0-9]{64}$/.test(expectedCurrent)) throw new ShapingError('expected_current_required');
   const db = await getAdapter();
-  const result = db.transaction(() => {
+  const result = db.transaction(configurationDomainMutation(db, 'repo.shaping.update', () => {
     const before = current(db), beforeHash = settingsHash(before);
     if (beforeHash !== expectedCurrent) throw new ShapingError('settings_conflict', 409, { currentHash: beforeHash });
     const { after, acknowledged } = validateControlPatch(before, patch, consent), afterHash = settingsHash(after);
@@ -44,7 +46,7 @@ export async function updateShapingControls({ patch, expectedCurrent, consent })
     const inserted = db.run('INSERT INTO shapingProfileVersions(profileId, name, revision, settings, consent, contentHash, createdAt) VALUES(?, ?, 1, ?, ?, ?, ?)', [randomUUID(), 'Direct control edit', stringifyJson(after), stringifyJson(acknowledged), afterHash, createdAt]);
     db.run('INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data=excluded.data', [stringifyJson({ ...rawSettings(db), ...after })]);
     return { outcome: 'applied', versionId: Number(inserted.lastInsertRowid), beforeHash, afterHash, settings: after, diff: changes, createdAt, coverage: PROFILE_COVERAGE };
-  });
+  }));
   return finish(db, result);
 }
 
@@ -72,7 +74,7 @@ export async function updateShapingRuntimeSettings({ patch, expectedCurrent, ack
   if (typeof expectedCurrent !== 'string' || !/^[a-f0-9]{64}$/.test(expectedCurrent)) throw new ShapingError('expected_current_required');
   if (acknowledgeRequestData !== true) throw new ShapingError('runtime_effect_acknowledgement_required', 422);
   const db = await getAdapter();
-  const result = db.transaction(() => {
+  const result = db.transaction(configurationDomainMutation(db, 'repo.shaping.update', () => {
     const raw = rawSettings(db), before = mergeWithDefaults(raw), beforeHash = runtimeSettingsHash(before);
     if (expectedCurrent !== beforeHash) throw new ShapingError('runtime_settings_conflict', 409);
     const after = { ...before, ...patch }, afterHash = runtimeSettingsHash(after);
@@ -82,7 +84,7 @@ export async function updateShapingRuntimeSettings({ patch, expectedCurrent, ack
     db.run('INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data', [stringifyJson({ ...raw, ...patch })]);
     db.run('INSERT INTO kv(scope,key,value) VALUES(?,?,?)', ['shapingRuntimeReceipts', id, stringifyJson(receipt)]);
     return { outcome: 'applied', receipt, afterHash };
-  });
+  }));
   return finish(db, result);
 }
 export async function shapingRuntimeReceipt(id) {
@@ -98,7 +100,7 @@ export async function updateShapingPlanControls({ name, patch, expectedCurrent, 
   if (typeof expectedCurrent !== 'string' || !/^[a-f0-9]{64}$/.test(expectedCurrent)) throw new ShapingError('expected_current_required');
   if (typeof expectedSettings !== 'string' || !/^[a-f0-9]{64}$/.test(expectedSettings)) throw new ShapingError('expected_settings_required');
   const db = await getAdapter();
-  const result = db.transaction(() => {
+  const result = db.transaction(configurationDomainMutation(db, 'repo.shaping.update', () => {
     if (!db.get('SELECT id FROM combos WHERE name=?', [name])) throw new ShapingError('plan_not_found', 404);
     const raw = rawSettings(db), strategies = raw.comboStrategies ?? {}, entry = Object.hasOwn(strategies, name) ? strategies[name] : {}, before = entry?.tokenSaver;
     if (!strategies || typeof strategies !== 'object' || Array.isArray(strategies) || !entry || typeof entry !== 'object' || Array.isArray(entry) || (before != null && typeof before !== 'boolean' && (typeof before !== 'object' || Array.isArray(before)))) throw new ShapingError('plan_controls_unreadable', 422);
@@ -117,7 +119,7 @@ export async function updateShapingPlanControls({ name, patch, expectedCurrent, 
     db.run('INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data', [stringifyJson(updated)]);
     db.run('INSERT INTO kv(scope,key,value) VALUES(?,?,?)', ['shapingPlanReceipts', id, stringifyJson(receipt)]);
     return { outcome: 'applied', receipt, effective };
-  });
+  }));
   return finish(db, result);
 }
 export async function shapingVersion(id) { return version(await getAdapter(), id); }
@@ -133,7 +135,7 @@ export async function shapingList(resource, { page = 1, pageSize = 20 } = {}) {
   }
   const choices = {
     profiles: ['shapingProfileVersions', '*', 'id DESC'],
-    experiments: ['shapingExperiments', 'id, baselineVersionId, candidateVersionId, fixtureSetId, createdAt', 'createdAt DESC, id'],
+    experiments: ['shapingExperiments', "id, baselineVersionId, candidateVersionId, fixtureSetId, createdAt, json_extract(result,'$.status') AS status", 'createdAt DESC, id'],
     receipts: ['shapingReceipts', '*', 'createdAt DESC, id'],
   };
   if (!Object.hasOwn(choices, resource)) throw new ShapingError('resource_not_found', 404);
@@ -164,18 +166,32 @@ export async function shapingExperiment(id) {
   return { ...row, result: parseJson(row.result) };
 }
 export async function createShapingExperiment({ baselineVersionId, candidateVersionId, fixtureSetId }, { signal } = {}) {
-  if (!FIXTURE_SETS.some(set => set.id === fixtureSetId)) throw new ShapingError('fixture_set_required');
-  const db = await getAdapter(), baseline = version(db, baselineVersionId), candidate = version(db, candidateVersionId);
-  const result = await runExperiment({ baseline: validateProfile(baseline.settings), candidate: validateProfile(candidate.settings), fixtureSetId }, { signal });
+  if (typeof fixtureSetId !== 'string' || !fixtureSetId) throw new ShapingError('fixture_set_required');
+  const db = await getAdapter(), baseline = version(db, baselineVersionId), candidate = version(db, candidateVersionId), evaluation = await resolveEvaluationSet(fixtureSetId);
+  const baselineSettings = validateProfile(baseline.settings), candidateSettings = validateProfile(candidate.settings);
   const id = randomUUID(), createdAt = now();
-  db.run('INSERT INTO shapingExperiments(id, baselineVersionId, candidateVersionId, fixtureSetId, result, createdAt) VALUES(?, ?, ?, ?, ?, ?)', [id, baselineVersionId, candidateVersionId, fixtureSetId, stringifyJson(result), createdAt]);
-  return finish(db, { id, baselineVersionId, candidateVersionId, fixtureSetId, result, createdAt, effectiveSettingsChanged: false });
+  const provenance = { evaluationSet: { id: evaluation.id, name: evaluation.name, revision: evaluation.revision, contentHash: evaluation.contentHash, count: evaluation.count, provenance: evaluation.provenance },
+    baselineHash: settingsHash(baselineSettings), candidateHash: settingsHash(candidateSettings) };
+  db.run('INSERT INTO shapingExperiments(id, baselineVersionId, candidateVersionId, fixtureSetId, result, createdAt) VALUES(?, ?, ?, ?, ?, ?)', [id, baselineVersionId, candidateVersionId, fixtureSetId, stringifyJson({ status: 'running', ...provenance }), createdAt]);
+  db.flush?.();
+  const started = performance.now();
+  let result;
+  try {
+    result = { ...await runExperiment({ baseline: baselineSettings, candidate: candidateSettings, fixtureSetId, fixtures: evaluation.fixtures }, { signal }), ...provenance };
+  } catch (error) {
+    const code = error instanceof ShapingError ? error.code : 'experiment_failed';
+    result = { status: code === 'experiment_cancelled' ? 'cancelled' : 'failed', errorCode: code, ...provenance,
+      providerCalls: 0, taskQuality: null, cost: null, localExecutionMs: performance.now() - started, completedAt: now() };
+  }
+  db.run('UPDATE shapingExperiments SET result=? WHERE id=?', [stringifyJson(result), id]);
+  return finish(db, { id, baselineVersionId, candidateVersionId, fixtureSetId, result, createdAt,
+    outcome: result.status === 'completed' ? 'completed' : result.status, effectiveSettingsChanged: false });
 }
 export async function promoteShapingProfile({ versionId, expectedCurrent, consent, experimentId, acknowledgeUnsupported = [], rollbackReceiptId }) {
   if (typeof expectedCurrent !== 'string' || !/^[a-f0-9]{64}$/.test(expectedCurrent)) throw new ShapingError('expected_current_required');
   if (!Array.isArray(acknowledgeUnsupported) || acknowledgeUnsupported.some(x => typeof x !== 'string')) throw new ShapingError('invalid_unsupported_acknowledgement');
   const db = await getAdapter();
-  const result = db.transaction(() => {
+  const result = db.transaction(configurationDomainMutation(db, 'repo.shaping.update', () => {
     const before = current(db), beforeHash = settingsHash(before);
     if (beforeHash !== expectedCurrent) throw new ShapingError('settings_conflict', 409, { currentHash: beforeHash });
     let target, action = 'promote';
@@ -188,7 +204,8 @@ export async function promoteShapingProfile({ versionId, expectedCurrent, consen
       target = version(db, versionId).settings;
       const row = typeof experimentId === 'string' && db.get('SELECT * FROM shapingExperiments WHERE id = ? AND candidateVersionId = ?', [experimentId, versionId]);
       if (!row) throw new ShapingError('candidate_experiment_required', 422);
-      const evidence = parseJson(row.result).candidate;
+      const experiment = parseJson(row.result), evidence = experiment.candidate;
+      if ((experiment.status && experiment.status !== 'completed') || !Array.isArray(evidence?.results) || evidence.results.length === 0) throw new ShapingError('completed_candidate_experiment_required', 422);
       const failed = evidence.results.some(r => r.stages.some(s => s.status === 'error') || !r.validity.toolTransactionsValid || !r.validity.currentPreserved || !r.validity.liveThinkingPreserved || !r.validity.errorEvidencePreserved);
       if (failed) throw new ShapingError('candidate_integrity_failed', 422);
       if (evidence.unsupported.some(stage => !acknowledgeUnsupported.includes(stage))) throw new ShapingError('unsupported_stage_acknowledgement_required', 422, { unsupported: evidence.unsupported });
@@ -198,6 +215,6 @@ export async function promoteShapingProfile({ versionId, expectedCurrent, consen
     db.run('INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data', [stringifyJson({ ...rawSettings(db), ...after })]);
     db.run('INSERT INTO shapingReceipts(id, action, versionId, experimentId, beforeSettings, afterSettings, beforeHash, afterHash, consent, createdAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [id, action, versionId, experimentId, stringifyJson(before), stringifyJson(after), beforeHash, afterHash, stringifyJson({ contentChanging: acknowledged, unsupported: acknowledgeUnsupported }), createdAt]);
     return { outcome: 'applied', id, action, beforeSettings: before, afterSettings: after, beforeHash, afterHash, diff: settingsDiff(before, after), createdAt, coverage: PROFILE_COVERAGE };
-  });
+  }));
   return finish(db, result);
 }

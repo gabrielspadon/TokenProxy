@@ -13,6 +13,7 @@
  * selection and still run the real, cheap, side-effect-free release path.
  */
 
+import { resourceAdmission, releaseOnResponse } from './resourceAdmission.js';
 import { createLeaseRegistry } from '@/shared/utils/accountLease.js';
 
 /**
@@ -36,12 +37,48 @@ const UNGATED_CAPACITY = 0;
 
 const capacityByConnection = new Map();
 
-export const leaseRegistry = createLeaseRegistry({
+const accountRegistry = createLeaseRegistry({
   capacityOf: (connectionId) => capacityByConnection.get(connectionId) ?? UNGATED_CAPACITY,
 });
 
+const providerByConnection = new Map();
+const providerPermits = new WeakMap();
+const providerRefusals = new Map();
+const providerOnlyLeases = new WeakSet();
+export function reserveProviderLease(provider, limit) {
+  const permit = resourceAdmission.reserveProvider(provider, limit);
+  if (!permit) return null;
+  const lease = Object.freeze({ provider });
+  providerOnlyLeases.add(lease); providerPermits.set(lease, permit);
+  return lease;
+}
+export const leaseRegistry = {
+  ...accountRegistry,
+  reserve(connectionId) {
+    const metadata = providerByConnection.get(connectionId);
+    const permit = metadata ? resourceAdmission.reserveProvider(metadata.provider, metadata.limit) : null;
+    if (metadata && !permit) {
+      const state = resourceAdmission.snapshot().providers[metadata.provider];
+      providerRefusals.set(connectionId, { held: state.active, cap: state.effectiveLimit, retryAfterMs: 1000, scope: 'provider' });
+      return null;
+    }
+    providerRefusals.delete(connectionId);
+    const lease = accountRegistry.reserve(connectionId);
+    if (!lease) { permit?.release(); return null; }
+    if (permit) providerPermits.set(lease, permit);
+    return lease;
+  },
+  lastRefusal(connectionId) { return providerRefusals.get(connectionId) ?? accountRegistry.lastRefusal(connectionId); },
+  release(lease) {
+    const freed = providerOnlyLeases.delete(lease) || accountRegistry.release(lease);
+    if (freed) { providerPermits.get(lease)?.release(); providerPermits.delete(lease); }
+    return freed;
+  },
+};
+
 /** Record what a candidate's ceiling is, before anything reserves against it. */
-export function registerAccountCapacity(connectionId, limit) {
+export function registerAccountCapacity(connectionId, limit, provider = null, providerLimit = null) {
+  if (provider) providerByConnection.set(connectionId, { provider, limit: providerLimit });
   capacityByConnection.set(connectionId, limit);
 }
 
@@ -90,42 +127,7 @@ export function releaseAccountLease(lease) {
  *
  * @returns {Response} the response to hand back, body replaced by the tracked one.
  */
-export function releaseAccountLeaseOnResponse(response, lease) {
+export function releaseAccountLeaseOnResponse(response, lease, signal) {
   if (!lease) return response;
-  if (!response?.body) {
-    leaseRegistry.release(lease);
-    return response;
-  }
-  const reader = response.body.getReader();
-  let done = false;
-  const finish = () => {
-    if (done) return;
-    done = true;
-    leaseRegistry.release(lease);
-  };
-  const tracked = new ReadableStream({
-    async pull(controller) {
-      try {
-        const next = await reader.read();
-        if (next.done) {
-          finish();
-          controller.close();
-          return;
-        }
-        controller.enqueue(next.value);
-      } catch (error) {
-        finish();
-        controller.error(error);
-      }
-    },
-    cancel(reason) {
-      finish();
-      return reader.cancel(reason);
-    },
-  });
-  return new Response(tracked, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: response.headers,
-  });
+  return releaseOnResponse(response, () => leaseRegistry.release(lease), signal);
 }

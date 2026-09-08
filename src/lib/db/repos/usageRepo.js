@@ -4,6 +4,7 @@ import { getAdapter } from "../driver.js";
 import { isCompletionId } from "../completionIdentity.mjs";
 import { captureUsagePricing, persistUsagePricing, priceUsage, usageQuantityPresence } from "./usagePricing.js";
 import { prepareBudgetUsage, recordBudgetUsage } from "./budgetRepo.js";
+import { usageProjectIdentity } from '../projectIdentity.js';
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 // periodCutoffIso gives the oldest timestamp a period includes,
 // or null for "all", which is an unbounded range. It lives in
@@ -554,6 +555,9 @@ export async function saveRequestUsage(entry) {
       }
       const rateSnapshotId = persistUsagePricing(db, snapshot);
       const budgetKeyId = prepareBudgetUsage(db, entry.apiKey, requestId, context?.apiKeyId);
+      const principal = budgetKeyId ?? context?.apiKeyId ?? (entry.apiKey ? db.get('SELECT id FROM apiKeys WHERE key=?', [entry.apiKey])?.id : null);
+      const identity = usageProjectIdentity(db, { requestId, context, apiKeyId: principal, logicalRequestId, attempt,
+        provider: entry.provider, model: entry.model, connectionId: entry.connectionId });
       const session = requestId && context?.identitySource === "explicit" ? db.get(`SELECT r.contextSessionId FROM requestStats r
         JOIN contextSessions s ON s.id=r.contextSessionId WHERE r.id=? AND s.identitySource='explicit' AND s.sessionHash=?`, [requestId, context.sessionHash]) : null;
       const insertedUsage = db.run(
@@ -564,10 +568,15 @@ export async function saveRequestUsage(entry) {
           promptTokens, completionTokens, entry.cost, entry.status || "ok", stringifyJson(tokens),
           stringifyJson({ requestedModel: entry.requestedModel || null, reasoningEffort: entry.reasoningEffort || null,
             ...(entry.receiptEvidence ? { reconciliation: entry.receiptEvidence } : {}) }),
-          requestId, logicalRequestId, attempt, session?.contextSessionId ?? null, null, rateSnapshotId, snapshot.capturedAt,
+          requestId, logicalRequestId, attempt, session?.contextSessionId ?? null, identity.projectId, rateSnapshotId, snapshot.capturedAt,
           entry.costSource, entry.costEvidence ? stringifyJson(entry.costEvidence) : null, usageSource, entry.estimatedCostUsd, entry.reportedCostUsd, ["physical-dispatch", "executor-invocation"].includes(context?.dispatchCoverage) ? context.dispatchCoverage : null,
           isCompletionId(entry.completionId) ? entry.completionId : null]
       );
+      // The scalar identity snapshot has its own lifetime, independent of the
+      // optional request/structure retention policy. No historical backfill.
+      const identityColumns = Object.entries(identity).filter(([field]) => field !== 'projectId');
+      if (identityColumns.length) db.run(`UPDATE usageHistory SET ${identityColumns.map(([field]) => `${field}=?`).join(',')} WHERE id=?`,
+        [...identityColumns.map(([, value]) => value), insertedUsage.lastInsertRowid]);
 
       recordBudgetUsage(db, { apiKeyId: budgetKeyId, requestId, usageRowId: insertedUsage.lastInsertRowid,
         promptTokens: presence.input && usageSource !== "estimated" ? promptTokens : null,

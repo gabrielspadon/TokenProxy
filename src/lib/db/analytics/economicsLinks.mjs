@@ -11,16 +11,24 @@ export function economicsLedgerSource(db, columns) {
   const exact = linked ? `r.id IS NOT NULL AND ${agreement}` : '0';
   const identity = requestColumns.has('clientIdentitySource') && requestColumns.has('clientKeyId')
     ? `(${exact}) AND r.clientIdentitySource='client-reported' AND r.clientKeyId IS NOT NULL` : '0';
-  const fields = CLIENT_REFERENCE_FIELDS.map(field=>linked && requestColumns.has(field)
-    ? `CASE WHEN ${identity} AND length(r.${field})=69 AND substr(r.${field},1,5)='ctx1_' AND substr(r.${field},6) NOT GLOB '*[^a-f0-9]*' THEN r.${field} END AS ${field}`
-    : `NULL AS ${field}`);
+  const durableIdentity = columns.has('clientIdentitySource') && columns.has('clientKeyId')
+    ? "u.clientIdentitySource='client-reported' AND u.clientKeyId IS NOT NULL" : '0';
+  const fields = CLIENT_REFERENCE_FIELDS.map(field => {
+    const retained = linked && requestColumns.has(field)
+      ? `CASE WHEN ${identity} AND length(r.${field})=69 AND substr(r.${field},1,5)='ctx1_' AND substr(r.${field},6) NOT GLOB '*[^a-f0-9]*' THEN r.${field} END` : 'NULL';
+    return `${columns.has(field) ? `CASE WHEN ${durableIdentity} THEN CASE WHEN length(u.${field})=69 AND substr(u.${field},1,5)='ctx1_' AND substr(u.${field},6) NOT GLOB '*[^a-f0-9]*' THEN u.${field} END ELSE ${retained} END` : retained} AS ${field}`;
+  });
   const meta = columns.has('meta') ? "CASE WHEN json_valid(u.meta) THEN CASE WHEN json_type(u.meta)='object' THEN u.meta ELSE '{}' END ELSE '{}' END" : "'{}'";
-  return `ledger AS (SELECT u.*,
+  // Explicit projection avoids duplicate-name columns when a migrated ledger
+  // now owns fields previously supplied solely by the request-side join.
+  const baseFields = [...columns].filter(field => !['clientKeyId','clientIdentitySource',...CLIENT_REFERENCE_FIELDS].includes(field)).map(field => `u.${field}`).join(',');
+  const identityField = field => columns.has(field) ? `COALESCE(u.${field},${linked && requestColumns.has(field) ? `CASE WHEN ${exact} THEN r.${field} END` : 'NULL'})` : linked && requestColumns.has(field) ? `CASE WHEN ${exact} THEN r.${field} END` : 'NULL';
+  return `ledger AS (SELECT ${baseFields},
     ${linked ? `CASE WHEN u.requestId IS NULL THEN 'unattributed' WHEN r.id IS NULL THEN 'unavailable' WHEN ${agreement} THEN 'linked' ELSE 'conflict' END` : "'unattributed'"} AS requestLink,
     CASE WHEN json_type(${meta},'$.requestedModel')='text' AND length(json_extract(${meta},'$.requestedModel'))<=200 THEN json_extract(${meta},'$.requestedModel') END AS requestedModel,
     ${columns.has('completionId') ? '' : 'NULL AS completionId,'}
-    ${linked && requestColumns.has('clientKeyId') ? `CASE WHEN ${exact} THEN r.clientKeyId END` : 'NULL'} AS clientKeyId,
-    ${linked && requestColumns.has('clientIdentitySource') ? `CASE WHEN ${exact} THEN r.clientIdentitySource END` : 'NULL'} AS clientIdentitySource,
+    ${identityField('clientKeyId')} AS clientKeyId,
+    ${identityField('clientIdentitySource')} AS clientIdentitySource,
     ${fields.join(',')},
     ${linked && requestColumns.has('latencyTotal') ? `CASE WHEN ${exact} THEN r.latencyTotal END` : 'NULL'} AS linkedLatency,
     ${linked && requestColumns.has('latencyTtft') ? `CASE WHEN ${exact} THEN r.latencyTtft END` : 'NULL'} AS linkedTtft

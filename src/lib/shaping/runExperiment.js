@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { ShapingError } from './profile.js';
+import { normalizeEvaluationFixtures } from './evaluationSets.mjs';
 let active = false;
 function workerPath() {
   // Use the traced runtime source, as the analytics worker does. A static
@@ -16,6 +17,10 @@ function workerPath() {
 }
 export async function runExperiment(input, { signal } = {}) {
   if (signal?.aborted) throw new ShapingError('experiment_cancelled', 499);
+  if (input.fixtures) {
+    try { input = { ...input, fixtures: normalizeEvaluationFixtures(input.fixtures) }; }
+    catch (error) { throw new ShapingError(error.code || 'evaluation_input_invalid', error.status || 422); }
+  }
   if (active) throw new ShapingError('experiment_busy', 409);
   active = true;
   let worker, scratch, abort;
@@ -26,7 +31,9 @@ export async function runExperiment(input, { signal } = {}) {
       if (signal?.aborted) { abort(); return; }
       signal?.addEventListener('abort', abort, { once: true });
       worker = new Worker(workerPath(), {
-        workerData: input, env: { ...process.env, DATA_DIR: scratch },
+        workerData: input, env: { NODE_ENV: process.env.NODE_ENV || 'production', DATA_DIR: scratch,
+          ...(process.env.TOKENPROXY_PREVIEW_ISOLATED === '1' ? { TOKENPROXY_PREVIEW_ISOLATED: '1', TOKENPROXY_REDESIGN_ROOT: process.env.TOKENPROXY_REDESIGN_ROOT } : {}) },
+        resourceLimits: { maxOldGenerationSizeMb: 256 },
         // Node 20.18.1 exposes syntax detection behind this flag. The stage
         // dependency dataDir.js is ESM in the root's mixed-module package.
         execArgv: [...process.execArgv, '--experimental-detect-module'],

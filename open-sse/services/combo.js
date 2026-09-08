@@ -380,6 +380,19 @@ export function peekRotatedModels(models, comboName, strategy) {
   return rotateModelsFromIndex(models, index % models.length);
 }
 
+/** Immutable cursor evidence for offline next-request planning. */
+export function snapshotComboRotation(comboName) {
+  const state = comboRotationState.get(comboName || "__default__");
+  return typeof state === "number" ? { index: state, consecutiveUseCount: 0 }
+    : { index: state?.index || 0, consecutiveUseCount: state?.consecutiveUseCount || 0 };
+}
+
+/** Stable fit ordering shared by dispatch and captured-state simulation. */
+export function orderComboEntries(entries, { contextTokens = 0, required = new Set(), autoSwitch = true } = {}) {
+  if (!autoSwitch) return entries;
+  return reorderModelEntriesByCapabilities(reorderEntriesByContextFit(entries, contextTokens), required);
+}
+
 function advanceRotationAfterSuccessfulFallback(models, comboName, strategy, servedModelIndex) {
   if (!models || models.length <= 1 || strategy !== "round-robin") return;
   if (!Number.isInteger(servedModelIndex) || servedModelIndex < 0 || servedModelIndex >= models.length) return;
@@ -701,27 +714,11 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     comboStickyLimit,
   );
 
-  // Auto-switch: float models that satisfy the request's required capabilities to the front.
-  if (autoSwitch) {
-    // Context-aware rotation runs first so it only breaks ties within a
-    // capability tier (stable sort) -- a hard modality requirement (vision/pdf/
-    // ...) still wins over context fit, matching how reorderByCapabilities
-    // itself prioritizes hard over soft (#1089).
-    const requiredContextTokens = estimateRequestContextTokens(body);
-    if (requiredContextTokens > 0) {
-      rotatedModels = reorderEntriesByContextFit(rotatedModels, requiredContextTokens);
-    }
+  const required = detectRequiredCapabilities(body);
+  rotatedModels = orderComboEntries(rotatedModels, {
+    contextTokens: estimateRequestContextTokens(body), required, autoSwitch,
+  });
 
-    const required = detectRequiredCapabilities(body);
-    if (required.size > 0) {
-      const reordered = reorderModelEntriesByCapabilities(rotatedModels, required);
-      if (reordered[0].modelStr !== rotatedModels[0].modelStr) {
-        log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${reordered[0].modelStr}`);
-      }
-      rotatedModels = reordered;
-    }
-  }
-  
   let lastError = null;
   let earliestRetryAfter = null;
   let lastStatus = null;

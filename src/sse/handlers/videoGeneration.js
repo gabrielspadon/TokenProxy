@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
@@ -127,6 +129,10 @@ function providerOwnsVideoRequest(provider, requestId) {
  * POST /v1/videos/{generations|edits|extensions} — async job creation proxy.
  */
 export async function handleVideoCreate(request, action) {
+  return withResourceAdmission(request, () => handleVideoCreateAdmitted(request, action));
+}
+
+async function handleVideoCreateAdmitted(request, action) {
   const auth = await requireValidApiKey(request);
   if (auth.error) return auth.error;
   const budgetRefusal = await refuseUncoveredBudget(auth.apiKey);
@@ -162,6 +168,7 @@ export async function handleVideoCreate(request, action) {
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is
@@ -242,6 +249,10 @@ export async function handleVideoCreate(request, action) {
  * caller pins the creating account via the returned connection header.
  */
 export async function handleVideoGet(request, requestId) {
+  return withResourceAdmission(request, () => handleVideoGetAdmitted(request, requestId));
+}
+
+async function handleVideoGetAdmitted(request, requestId) {
   const auth = await requireValidApiKey(request);
   if (auth.error) return auth.error;
 

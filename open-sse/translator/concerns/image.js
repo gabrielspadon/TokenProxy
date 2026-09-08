@@ -85,6 +85,7 @@ export function splitToolResultMedia(content) {
 import { lookup } from "node:dns/promises";
 import { Agent } from "undici";
 import { MAX_IMAGE_BYTES, FETCH_TIMEOUT_MS, IMAGE_SIGNATURES, BLOCKED_HOSTS } from "../../config/mediaConfig.js";
+import { preparationSignal, waitForPreparation } from "../../utils/preparationAbort.js";
 
 // True if an IPv4/IPv6 address is private/reserved (SSRF target).
 function isPrivateIp(ip) {
@@ -137,46 +138,47 @@ function detectImageMime(buf) {
  * Fetch a remote image URL and return it as a base64 data URI.
  * Hardened against SSRF (private/metadata IPs), memory DoS (size cap),
  * and disguised non-image payloads (magic-byte verification).
- * Returns null on any failure or rejection.
+ * Returns null on fetch/validation failure; caller cancellation propagates.
  *
  * @param {string} imageUrl - HTTP(S) URL of the image
- * @param {object} options - { signal, timeoutMs, maxBytes }
- * @returns {Promise<{url: string, mimeType: string}|null>}
+ * @param {object} options - { signal, timeoutMs, maxBytes, consumeBytes }
+ * @returns {Promise<{url: string, mimeType: string, byteLength: number}|null>}
  */
 export async function fetchImageAsBase64(imageUrl, options = {}) {
-  const { signal, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_IMAGE_BYTES } = options;
+  const { signal, timeoutMs = FETCH_TIMEOUT_MS, maxBytes = MAX_IMAGE_BYTES, consumeBytes } = options;
+  signal?.throwIfAborted();
   if (!imageUrl || (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://"))) {
     return null;
   }
 
   let url;
   try { url = new URL(imageUrl); } catch { return null; }
-  const pinnedIps = await resolvePinnedIps(url.hostname);
-  if (!pinnedIps) return null;
-
-  const controller = new AbortController();
-  const timeout = signal ? null : setTimeout(() => controller.abort(), timeoutMs);
-  const fetchSignal = signal || controller.signal;
-
-  // Pin connect to the validated IP so no second DNS resolution can rebind (TOCTOU fix).
-  const dispatcher = new Agent({
-    connect: { lookup: (_h, _o, cb) => cb(null, [{ address: pinnedIps[0].address, family: pinnedIps[0].family }]) },
-  });
-
+  const fetchSignal = preparationSignal(signal, timeoutMs);
+  let dispatcher, reader, response, complete = false;
   try {
+    const pinnedIps = await waitForPreparation(resolvePinnedIps(url.hostname), fetchSignal);
+    fetchSignal.throwIfAborted();
+    if (!pinnedIps) return null;
+    // Pin connect to the validated IP so no second DNS resolution can rebind.
+    dispatcher = new Agent({
+      connect: { lookup: (_h, _o, cb) => cb(null, [{ address: pinnedIps[0].address, family: pinnedIps[0].family }]) },
+    });
     // redirect:"manual" prevents a public URL redirecting to a private one (SSRF bypass).
-    const response = await fetch(imageUrl, { signal: fetchSignal, redirect: "manual", dispatcher });
+    response = await waitForPreparation(fetch(imageUrl, { signal: fetchSignal, redirect: "manual", dispatcher }), fetchSignal,
+      late => late.body?.cancel());
     if (!response.ok || !response.body) return null;
 
     // Stream-read with a hard byte cap to avoid loading huge payloads into memory.
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const chunks = [];
     let total = 0;
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const { done, value } = await waitForPreparation(reader.read(), fetchSignal);
+      fetchSignal.throwIfAborted();
+      if (done) { complete = true; break; }
       total += value.length;
-      if (total > maxBytes) { try { await reader.cancel(); } catch { /* ignore */ } return null; }
+      if (total > Math.min(maxBytes, MAX_IMAGE_BYTES)) return null;
+      consumeBytes?.(value.length);
       chunks.push(value);
     }
 
@@ -184,11 +186,17 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
     const mimeType = detectImageMime(buf);
     if (!mimeType) return null; // not a recognized image — reject disguised payloads
 
-    return { url: `data:${mimeType};base64,${buf.toString("base64")}`, mimeType };
+    return { url: `data:${mimeType};base64,${buf.toString("base64")}`, mimeType, byteLength: total };
   } catch {
+    signal?.throwIfAborted();
     return null;
   } finally {
-    if (timeout) clearTimeout(timeout);
-    dispatcher.close().catch(() => {});
+    if (!complete) {
+      try { await (reader ? reader.cancel() : response?.body?.cancel()); } catch { /* transport already aborted */ }
+    }
+    try { reader?.releaseLock?.(); } catch { /* no owned lock remains */ }
+    if (dispatcher) {
+      try { await (complete ? dispatcher.close() : dispatcher.destroy()); } catch { /* already closed */ }
+    }
   }
 }

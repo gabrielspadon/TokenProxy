@@ -30,7 +30,19 @@ export function collectClientApiKeyCandidates(request) {
  * that the gateway recognizes. Callers must use a valid result for downstream
  * attribution and never log the raw candidates.
  */
-export async function resolveClientApiKey(request, validate) {
+const admissionResolutions = new WeakMap();
+// Admission identity is immutable only for this Request and validator. Normal
+// handler authorization always revalidates, including after a queue wait.
+export async function resolveClientApiKey(request, validate, { admission = false } = {}) {
+  if (!admission || !request || typeof request !== 'object') return resolveCurrentClientApiKey(request, validate);
+  let byValidator = admissionResolutions.get(request);
+  if (!byValidator) { byValidator = new WeakMap(); admissionResolutions.set(request, byValidator); }
+  let result = byValidator.get(validate);
+  if (!result) { result = resolveCurrentClientApiKey(request, validate); byValidator.set(validate, result); }
+  return result;
+}
+
+async function resolveCurrentClientApiKey(request, validate) {
   const candidates = collectClientApiKeyCandidates(request);
   for (const apiKey of candidates) {
     if (await validate(apiKey)) return { apiKey, valid: true };

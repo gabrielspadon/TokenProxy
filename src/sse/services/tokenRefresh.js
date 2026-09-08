@@ -1,6 +1,7 @@
 // Re-export from open-sse with local logger
 import * as log from "../utils/logger.js";
 import { getProviderConnectionById, updateProviderConnection } from "../../lib/localDb.js";
+import { credentialRevision, waitForRefresh } from "open-sse/services/tokenRefresh/credentialRevision.js";
 import { tokenFingerprint } from "open-sse/services/tokenRefresh/dedup.js";
 import {
   getProjectIdForConnection,
@@ -122,16 +123,22 @@ function needsProjectId(provider) {
  * @param {string} connectionId
  * @param {string} accessToken
  */
-function _refreshProjectId(provider, connectionId, accessToken) {
-  if (!needsProjectId(provider) || !connectionId || !accessToken) return;
+function _refreshProjectId(provider, connectionId, accessToken, options = {}) {
+  if (!needsProjectId(provider) || !connectionId || !accessToken || options.signal?.aborted) return;
 
   const verificationHooks = provider === "antigravity"
     ? createAntigravityVerificationHooks(connectionId)
     : {};
-  getProjectIdForConnection(connectionId, accessToken, provider, verificationHooks)
+  if (options.signal) {
+    for (const name of ['onValidationRequired','onVerificationSuccess']) {
+      const callback = verificationHooks[name];
+      if (callback) verificationHooks[name] = (...args) => options.signal.aborted ? false : callback(...args);
+    }
+  }
+  return getProjectIdForConnection(connectionId, accessToken, provider, verificationHooks)
     .then((projectId) => {
-      if (!projectId) return;
-      updateProviderCredentials(connectionId, { projectId }).catch((err) => {
+      if (!projectId || options.signal?.aborted) return;
+      return updateProviderCredentials(connectionId, { projectId }, options).catch((err) => {
         log.debug("TOKEN_REFRESH", "Failed to persist refreshed projectId", {
           connectionId,
           error: err?.message ?? err,
@@ -156,7 +163,8 @@ function _refreshProjectId(provider, connectionId, accessToken) {
  * @param {object} newCredentials
  * @returns {Promise<boolean>}
  */
-export async function updateProviderCredentials(connectionId, newCredentials) {
+export async function updateProviderCredentials(connectionId, newCredentials, options = {}) {
+  options.signal?.throwIfAborted();
   try {
     const updates = {};
 
@@ -200,13 +208,15 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
     }
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
 
-    const result = await updateProviderConnection(connectionId, updates);
+    options.signal?.throwIfAborted();
+    const result = await updateProviderConnection(connectionId, updates, options);
     log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
       connectionId,
       success: !!result
     });
     return !!result;
   } catch (error) {
+    if (options.signal?.aborted || error.code === "CREDENTIAL_CONFLICT") throw error;
     log.error("TOKEN_REFRESH", "Error updating credentials in localDb", {
       connectionId,
       error: error.message,
@@ -233,6 +243,31 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
     creds.connectionId = creds.id;
   }
 
+  const signal = options.signal;
+  const waitSignal = options.waitForSettled ? undefined : signal;
+  signal?.throwIfAborted();
+  const stored = creds.connectionId ? await getProviderConnectionById(creds.connectionId) : null;
+  signal?.throwIfAborted();
+  if (options.requireCurrent && !stored) return creds;
+  if (stored?.isActive === false || stored?.provider && stored.provider !== provider || stored?.authType && stored.authType !== 'oauth') return stored;
+  if (stored) {
+    const selectedTransport = !options.requireCurrent && credentials._connection
+      && credentialRevision(credentials._connection) === credentialRevision(stored)
+      ? credentials.providerSpecificData : null;
+    creds = {...creds,...stored};
+    if (selectedTransport) {
+      creds.providerSpecificData = {...stored.providerSpecificData};
+      for (const key of ['connectionProxyEnabled','connectionProxyUrl','connectionNoProxy','connectionProxyPoolId','vercelRelayUrl','strictProxy','resolutionKind']) {
+        if (Object.hasOwn(selectedTransport,key)) creds.providerSpecificData[key] = selectedTransport[key];
+      }
+    } else if (stored.providerSpecificData?.proxyPoolId) {
+      const {resolveConnectionProxyConfig,toConnectionProxyOptions} = await import('@/lib/network/connectionProxy');
+      const proxy = await resolveConnectionProxyConfig(stored.providerSpecificData);
+      signal?.throwIfAborted();
+      if (proxy.kind !== 'usable') return creds;
+      creds.providerSpecificData = {...stored.providerSpecificData,...toConnectionProxyOptions(proxy)};
+    }
+  }
   const force = options?.force === true;
 
   // ── 1. Regular access-token expiry ────────────────────────────────────────
@@ -248,7 +283,8 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       lastRefreshAt: creds.lastRefreshAt || null,
     });
 
-    const newCreds = await _refreshProviderCredentials(provider, creds, log);
+    const newCreds = await waitForRefresh(_refreshProviderCredentials(provider, creds, log, {signal:waitSignal}), waitSignal);
+    signal?.throwIfAborted();
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
       const mergedCreds = {
         ...newCreds,
@@ -256,7 +292,12 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       };
 
       // Persist to DB (non-blocking path continues below)
-      await updateProviderCredentials(creds.connectionId, mergedCreds);
+      try {
+        await updateProviderCredentials(creds.connectionId, mergedCreds, {expectedCredentials:stored || creds,signal});
+      } catch (error) {
+        if (error.code !== "CREDENTIAL_CONFLICT") throw error;
+        return await getProviderConnectionById(creds.connectionId) || credentials;
+      }
 
       creds = {
         ...creds,
@@ -270,11 +311,20 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       };
 
       // Non-blocking: fetch projectId only when the connection has none
-      if (!creds.projectId) _refreshProjectId(provider, creds.connectionId, creds.accessToken);
+      if (!creds.projectId && needsProjectId(provider)) {
+        const current = await getProviderConnectionById(creds.connectionId);
+        signal?.throwIfAborted();
+        if (!current || current.isActive !== false && current.accessToken === creds.accessToken) {
+          const projectWork = _refreshProjectId(provider, creds.connectionId, creds.accessToken, {expectedCredentials:current || creds,signal});
+          if (options.waitForSettled) await projectWork;
+          signal?.throwIfAborted();
+        }
+      }
     }
   }
 
   // ── 2. GitHub Copilot token expiry ────────────────────────────────────────
+  signal?.throwIfAborted();
   if (provider === "github") {
     const copilotToken = creds.providerSpecificData?.copilotToken;
     const copilotExpiresAt = creds.providerSpecificData?.copilotTokenExpiresAt
@@ -289,7 +339,13 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
         expiresIn: copilotToken ? Math.round(remaining / 1000) : "missing",
       });
 
-      const copilotTokenResult = await refreshCopilotToken(creds.accessToken);
+      const copilotSnapshot = creds.connectionId ? await getProviderConnectionById(creds.connectionId) : creds;
+      signal?.throwIfAborted();
+      if (stored && !copilotSnapshot) return creds;
+      if (copilotSnapshot?.isActive === false || copilotSnapshot?.provider && copilotSnapshot.provider !== provider) return copilotSnapshot;
+      if (copilotSnapshot) creds = {...creds,...copilotSnapshot};
+      const copilotTokenResult = await waitForRefresh(refreshCopilotToken(creds.accessToken),waitSignal);
+      signal?.throwIfAborted();
       if (copilotTokenResult) {
         const updatedSpecific = {
           ...creds.providerSpecificData,
@@ -297,9 +353,12 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
           copilotTokenExpiresAt: copilotTokenResult.expiresAt,
         };
 
-        await updateProviderCredentials(creds.connectionId, {
-          providerSpecificData: updatedSpecific,
-        });
+        try {
+          await updateProviderCredentials(creds.connectionId, {providerSpecificData:updatedSpecific}, {expectedCredentials:copilotSnapshot || creds,signal});
+        } catch (error) {
+          if (error.code !== "CREDENTIAL_CONFLICT") throw error;
+          return await getProviderConnectionById(creds.connectionId) || credentials;
+        }
 
         creds.providerSpecificData = updatedSpecific;
         creds.copilotToken = copilotTokenResult.token;

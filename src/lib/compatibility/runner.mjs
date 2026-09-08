@@ -55,7 +55,7 @@ export function executeLocalFixture(definition) {
   }
   const inputJson = JSON.stringify(input.payload), outputJson = JSON.stringify(output);
   const result = {
-    scope: 'local-translation', implementationVersion: IMPLEMENTATION_VERSION, sourceFormat: input.sourceFormat, targetFormat: input.targetFormat,
+    scope: 'local-translation', model: input.model, implementationVersion: IMPLEMENTATION_VERSION, sourceFormat: input.sourceFormat, targetFormat: input.targetFormat,
     operation: input.operation, route, checks, input: input.payload, output,
     quantities: { inputBytes: new TextEncoder().encode(inputJson).byteLength, outputBytes: new TextEncoder().encode(outputJson).byteLength, inputEvents: input.operation === 'stream' ? input.payload.length : null, outputEvents: input.operation === 'stream' ? output.length : null, translatorDurationMs: performance.now() - started },
     comparison: input.operation === 'request' ? { addedKeys: Object.keys(output).filter(key => !Object.hasOwn(input.payload, key)), removedKeys: Object.keys(input.payload).filter(key => !Object.hasOwn(output, key)), changedKeys: Object.keys(output).filter(key => Object.hasOwn(input.payload, key) && JSON.stringify(input.payload[key]) !== JSON.stringify(output[key])) } : { eventTypes: [...new Set(output.map(event => event.type || event.object || 'untyped'))] },

@@ -1,3 +1,6 @@
+import { configurationDomainMutation } from '../../configuration/configurationDomains.js';
+import { readRoutingConfig, recordConfigMutation } from '../helpers/configHistory.js';
+import { notifyQuotaPolicyChange } from './connectionsRepo.js';
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
@@ -99,9 +102,12 @@ export async function deleteProviderNode(id) {
 export async function deleteProviderNodeCascade(id) {
   const db = await getAdapter();
   let removed = null;
-  db.transaction(() => {
+  let deletedAccountIds = [];
+  db.transaction(configurationDomainMutation(db, 'repo.connections.delete', () => {
     const row = db.get(`SELECT * FROM providerNodes WHERE id = ?`, [id]);
     if (!row) return;
+    const routingBefore = readRoutingConfig(db);
+    deletedAccountIds = db.all('SELECT id FROM providerConnections WHERE provider = ?', [id]).map(row => row.id);
     const encodedAliasPrefix = stringifyJson(`${id}/`).slice(0, -1);
     db.run(`DELETE FROM providerConnections WHERE provider = ?`, [id]);
     db.run(
@@ -112,6 +118,8 @@ export async function deleteProviderNodeCascade(id) {
     );
     db.run(`DELETE FROM providerNodes WHERE id = ?`, [id]);
     removed = rowToNode(row);
-  });
+    recordConfigMutation(db, routingBefore, 'repo.aliases.delete');
+  }));
+  for (const connectionId of deletedAccountIds) await notifyQuotaPolicyChange(connectionId);
   return removed;
 }

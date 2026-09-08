@@ -1,3 +1,4 @@
+import { logOutput, flushLogOutput, logOutputStatus } from '../../../open-sse/utils/asyncLogOutput.js';
 /**
  * Agent-efficient decision log — the emitter.
  *
@@ -27,7 +28,9 @@
  */
 
 import { createHash } from 'node:crypto';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
+import { createBoundedLogSink } from '../../../open-sse/utils/boundedLogSink.js';
+import { registerShutdownFlusher } from '../../lib/shutdown.js';
 import path from 'node:path';
 // RELATIVE, not 'open-sse/...': this module is also reached from plain-node
 // open-sse importers (tokenRefresh/dedup.js), where the bare 'open-sse'
@@ -92,7 +95,9 @@ const STORM_WINDOW_MS = 60 * 1000;
 const STORM_LIMIT = 200;
 
 // D-2: 8MB held roughly 3h at 500 req/min; 64MB holds ~24h. The env override stays.
-const SINK_MAX_BYTES = Number(process.env.TOKENPROXY_LOG_DECISIONS_MAX_BYTES) || 64 * 1024 * 1024;
+const requestedSinkBytes = Number(process.env.TOKENPROXY_LOG_DECISIONS_MAX_BYTES);
+const SINK_MAX_BYTES = Number.isSafeInteger(requestedSinkBytes) && requestedSinkBytes > 0
+  ? Math.min(requestedSinkBytes, 256 * 1024 * 1024) : 64 * 1024 * 1024;
 
 function enabled() {
   const raw = process.env.TOKENPROXY_LOG_DECISIONS;
@@ -221,6 +226,7 @@ function scalar(value, key = null) {
   if (t === 'bigint') return String(value);
   if (t !== 'string') return '[non-scalar]';
   if (value === '') return null;
+  if (value.length > 4096) return '[omitted:retention-limit]';
   // save=/save_tok= ride in the same machine-token grammar as path= (an
   // 8-stage save list is ~84 chars) so they share its wider cap; free-text
   // values stay at MAX_VALUE_CHARS.
@@ -247,11 +253,13 @@ function orderedEntries(fields) {
     if (seen.has(k) || !Object.hasOwn(fields, k)) return;
     if (!/^[a-z_][a-z0-9_-]{0,15}$/.test(k)) return;
     seen.add(k);
-    const v = scalar(fields[k], k);
+    const descriptor = Object.getOwnPropertyDescriptor(fields, k);
+    const v = scalar(descriptor && 'value' in descriptor ? descriptor.value : '[accessor]', k);
     if (v !== null) out.push([k, v]);
   };
   for (const k of LEAD_KEYS) push(k);
-  for (const k of Object.keys(fields)) if (!TRAIL_KEYS.includes(k)) push(k);
+  let visited = 0;
+  for (const k in fields) { if (++visited > 64) break; if (!TRAIL_KEYS.includes(k)) push(k); }
   for (const k of TRAIL_KEYS) push(k);
   return out;
 }
@@ -330,7 +338,7 @@ function foldKey(cls, verdict, fields) {
   const f = fields || {};
   // D-6: status is part of the fact; a 400->500 transition must not fold
   // into one rep line.
-  return [cls, verdict, f.conn ?? '', f.model ?? '', f.prov ?? '', f.key ?? '', f.why ?? '', f.status ?? ''].join('\u0000');
+  return [cls, verdict, ...['conn', 'model', 'prov', 'key', 'why', 'status'].map(key => scalar(f[key]) ?? '')].join('\u0000');
 }
 
 // --------------------------------------------------------------- backstop ---
@@ -390,44 +398,39 @@ export function sinkFile() {
 
 /** Size-capped with three generations of rollover (D-2). A log that can fill
  *  a disk is a worse outage than the one it was written to diagnose. */
-function appendNdjson(record, nowMs = Date.now()) {
-  if (sinkDisabled) return;
-  if (sinkDead && nowMs - sinkDeadAt < SINK_RETRY_MS) return;
+const decisionSink = createBoundedLogSink({ maxRecords: 1024, maxBytes: 1024 * 1024, async write({ text, nowMs }) {
+  if (sinkDisabled || (sinkDead && nowMs - sinkDeadAt < SINK_RETRY_MS)) return false;
   try {
     const file = sinkFile();
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const size = fs.statSync(file, { throwIfNoEntry: false })?.size ?? 0;
-    if (size >= SINK_MAX_BYTES) {
-      // D-2: keep .1/.2/.3, oldest dropped — retention is 4x the cap, and the
-      // env override still wins when an operator needs more.
-      fs.rmSync(`${file}.3`, { force: true });
-      for (const g of [2, 1]) {
-        if (fs.existsSync(`${file}.${g}`)) fs.renameSync(`${file}.${g}`, `${file}.${g + 1}`);
-      }
-      fs.renameSync(file, `${file}.1`);
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+    const size = await fs.stat(file).then(value => value.size, error => { if (error.code === 'ENOENT') return 0; throw error; });
+    if (size && size + Buffer.byteLength(text) > SINK_MAX_BYTES) {
+      await fs.rm(`${file}.3`, { force: true });
+      for (const g of [2, 1]) await fs.rename(`${file}.${g}`, `${file}.${g + 1}`).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      await fs.rename(file, `${file}.1`);
     }
-    fs.appendFileSync(file, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    // SEC-5b: mode applies at creation only; chmod-on-open fixes a pre-existing
-    // file with looser permissions. Best-effort, never throws into the caller.
-    try { fs.chmodSync(file, 0o600); } catch { /* best-effort */ }
-    if (sinkDead) {
-      // D-9: the re-probe append succeeded — the sink is back.
-      sinkDead = false;
-      console.log(formatLine('LOG', 'resumed', { why: 'sink-recovered' }, nowMs));
-    }
+    if (Buffer.byteLength(text) > SINK_MAX_BYTES) return false;
+    await fs.appendFile(file, text, { mode: 0o600 });
+    await fs.chmod(file, 0o600);
+    if (sinkDead) { sinkDead = false; logOutput(formatLine('LOG', 'resumed', { why: 'sink-recovered' })); }
   } catch (e) {
-    // Fail soft and say so once. A decision log that can throw into a request
-    // path has traded the fault it was recording for one of its own.
     sinkDead = true;
     sinkDeadAt = nowMs;
-    console.log(formatLine('LOG', 'sink-failed', { why: 'ndjson-append-threw', err: e?.code || e?.message }));
+    logOutput(formatLine('LOG', 'sink-failed', { why: 'ndjson-append-threw', err: e?.code }));
+    throw e;
   }
+} });
+registerShutdownFlusher(() => decisionSink.close(), 0);
+function appendNdjson(record, nowMs = Date.now()) {
+  if (sinkDisabled) return;
+  const text = JSON.stringify(record) + '\n';
+  decisionSink.enqueue({ text, nowMs }, Buffer.byteLength(text) + 32);
 }
 
 function write(cls, verdict, fields, nowMs) {
   const entries = orderedEntries(fields);
   const line = formatLine(cls, verdict, fields, nowMs);
-  console.log(line);
+  logOutput(line);
   appendNdjson({ ts: new Date(nowMs).toISOString(), cls, verdict, ...Object.fromEntries(entries) }, nowMs);
   return line;
 }
@@ -498,10 +501,11 @@ function sweepPaths(nowMs) {
 
 /** Record one folded fork for a request: notePath(rid, 'XFORM.headroom-skip'). */
 export function notePath(rid, code, nowMs = Date.now()) {
-  if (typeof rid !== 'string' || rid === '' || typeof code !== 'string' || code === '') return;
+  if (typeof rid !== 'string' || rid === '' || rid.length > 128 || typeof code !== 'string' || code === '' || code.length > 160) return;
   sweepPaths(nowMs);
   let entry = paths.get(rid);
   if (!entry) {
+    if (paths.size >= PATH_MAP_SWEEP_AT) paths.delete(paths.keys().next().value);
     entry = { codes: [], at: nowMs };
     paths.set(rid, entry);
   }
@@ -570,7 +574,11 @@ export function reqSummary(verdict, fields = {}, nowMs = Date.now()) {
 // Test seam: folding and the backstop are process-wide singletons, so a suite
 // needs a way to start from empty without reaching into the maps.
 export const __decide = {
+  flush: async () => { await decisionSink.flush(); return flushLogOutput(); },
+  outputStatus: logOutputStatus,
+  sinkStatus: () => decisionSink.status(),
   resetState() {
+    decisionSink.discard();
     foldState.clear();
     paths.clear();
     storm.windowAt = 0;

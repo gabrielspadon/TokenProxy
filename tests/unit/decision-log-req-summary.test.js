@@ -11,6 +11,8 @@ import path from "node:path";
 
 const harness = vi.hoisted(() => ({
   executeMock: vi.fn(),
+  closeRequestLog: vi.fn(async () => {}),
+  cancelRequestLog: vi.fn(),
   saveRequestDetailMock: vi.fn(),
   headroom: {
     compressWithHeadroom: vi.fn(async () => null),
@@ -36,6 +38,8 @@ vi.mock("../../open-sse/rtk/headroom.js", () => harness.headroom);
 
 vi.mock("../../open-sse/utils/requestLogger.js", () => ({
   createRequestLogger: async () => ({
+    close: harness.closeRequestLog,
+    cancel: harness.cancelRequestLog,
     logClientRawRequest: vi.fn(),
     logRawRequest: vi.fn(),
     logTargetRequest: vi.fn(),
@@ -103,6 +107,8 @@ beforeEach(() => {
     d.id ||= "row-123";
   });
   harness.executeMock.mockReset();
+  harness.closeRequestLog.mockClear();
+  harness.cancelRequestLog.mockClear();
 });
 
 afterEach(() => {
@@ -240,6 +246,7 @@ describe("handleChatCore REQ.failed at terminal provider errors", () => {
     });
     const result = await handleChatCore(baseArgs({ requestId: "abcdef1234" }));
     expect(result.response.status).toBe(500);
+    expect(harness.closeRequestLog).toHaveBeenCalledTimes(1);
     expect(result.response.headers.get(RID_HEADER)).toBe("abcdef1234");
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
@@ -681,3 +688,30 @@ function claudeArgs({ requestId, anchors }) {
     requestId,
   };
 }
+
+// Schema/folding tests capture admitted lines; bounded asynchronous transport has its own suite.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));
+
+
+describe('request-log lifecycle integration', () => {
+  it('closes bounded retention after forced-stream JSON completion', async () => {
+    const result = await handleChatCore(baseArgs());
+    await result.response.text();
+    expect(harness.closeRequestLog).toHaveBeenCalledTimes(1);
+  });
+  it('keeps retention open while an SSE response lives and closes on consumption', async () => {
+    const result = await handleChatCore(baseArgs({ body: { model: 'openai/gpt-4o', stream: true, messages: [{ role: 'user', content: 'hello' }] }, stream: true }));
+    expect(harness.closeRequestLog).not.toHaveBeenCalled();
+    await result.response.text();
+    expect(harness.closeRequestLog).toHaveBeenCalledTimes(1);
+  });
+  it('does not turn asynchronous logger failure into a failed request', async () => {
+    harness.closeRequestLog.mockRejectedValueOnce(new Error('controlled log failure'));
+    const result = await handleChatCore(baseArgs());
+    expect(result.success).toBe(true);
+    await result.response.text();
+    await new Promise(setImmediate);
+  });
+});

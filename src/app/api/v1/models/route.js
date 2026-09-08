@@ -18,17 +18,6 @@ import {
 } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AUTO_ROUTER_MODEL_ID } from "@/sse/services/autoRouter.js";
-import { resolveKiroModels } from "open-sse/services/kiroModels.js";
-import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
-import { resolveQoderModels } from "open-sse/services/qoderModels.js";
-import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
-import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
-import { resolveClineModels } from "open-sse/services/clineModels.js";
-import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
-import { resolveCursorModels } from "open-sse/services/cursorModels.js";
-import { resolveZedModels } from "open-sse/shared/zedAuth.js";
-import { discoverDevinModels } from "open-sse/services/devinModels.js";
-import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import {
   isRequiredProxyUnavailableError,
   resolveConnectionProxyConfig,
@@ -40,10 +29,6 @@ import { getSettings } from "@/lib/localDb";
 import { readClaudeCompat, rewriteModelsListForClaude } from "@/lib/claudeCompat";
 import { buildCodexCatalog } from "@/lib/codexCatalog";
 // Authenticated OpenAI/Codex catalogs, shared with the provider detail route (#2654).
-import {
-  resolveLiveCodexModels,
-  resolveLiveOpenAIModels,
-} from "@/app/api/providers/[id]/models/liveCatalog.js";
 import { detectClientTool } from "open-sse/utils/clientDetector.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -51,7 +36,7 @@ import { detectClientTool } from "open-sse/utils/clientDetector.js";
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
   kiro: async (conn) => {
-    const result = await resolveKiroModels({
+    const result = await (await import("open-sse/services/kiroModels.js")).resolveKiroModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
@@ -59,7 +44,7 @@ const LIVE_MODEL_RESOLVERS = {
     return result?.models?.length ? { models: result.models } : null;
   },
   qoder: async (conn) => {
-    const result = await resolveQoderModels({
+    const result = await (await import("open-sse/services/qoderModels.js")).resolveQoderModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       email: conn.email,
@@ -72,7 +57,7 @@ const LIVE_MODEL_RESOLVERS = {
     };
   },
   kimchi: async (conn) => {
-    const result = await resolveKimchiModels({
+    const result = await (await import("open-sse/services/kimchiModels.js")).resolveKimchiModels({
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
       providerSpecificData: conn.providerSpecificData || {}
@@ -80,14 +65,14 @@ const LIVE_MODEL_RESOLVERS = {
     return result?.models?.length ? { models: result.models } : null;
   },
   github: async (conn) => {
-    const result = await resolveCopilotModels({
+    const result = await (await import("open-sse/services/copilotModels.js")).resolveCopilotModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
     }, {
       log: console,
       onCredentialsRefreshed: async (refreshed) => {
-        await updateProviderCredentials(conn.id, {
+        await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           copilotToken: refreshed.copilotToken,
           copilotTokenExpiresAt: refreshed.copilotTokenExpiresAt,
           existingProviderSpecificData: conn.providerSpecificData || {},
@@ -97,7 +82,7 @@ const LIVE_MODEL_RESOLVERS = {
     return result?.models?.length ? { models: result.models } : null;
   },
   clinepass: async (conn) => {
-    const result = await resolveClinepassModels({
+    const result = await (await import("open-sse/services/clinepassModels.js")).resolveClinepassModels({
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
     });
@@ -105,7 +90,7 @@ const LIVE_MODEL_RESOLVERS = {
   },
   cline: async (conn) => {
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
-    const result = await resolveClineModels({
+    const result = await (await import("open-sse/services/clineModels.js")).resolveClineModels({
       log: console,
       proxyOptions: {
         connectionProxyEnabled: proxy?.connectionProxyEnabled === true,
@@ -119,7 +104,7 @@ const LIVE_MODEL_RESOLVERS = {
   },
   "grok-cli": async (conn) => {
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
-    const result = await resolveGrokCliModels({
+    const result = await (await import("open-sse/services/grokCliModels.js")).resolveGrokCliModels({
       ...conn,
       connectionId: conn.id,
     }, {
@@ -132,7 +117,7 @@ const LIVE_MODEL_RESOLVERS = {
         strictProxy: proxy.strictProxy === true,
       },
       onCredentialsRefreshed: async (refreshed) => {
-        await updateProviderCredentials(conn.id, {
+        await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           ...refreshed,
           existingProviderSpecificData: conn.providerSpecificData || {},
         });
@@ -141,14 +126,14 @@ const LIVE_MODEL_RESOLVERS = {
     return result?.models?.length ? { models: result.models } : null;
   },
   cursor: async (conn, proxyOptions) => {
-    const result = await resolveCursorModels({
+    const result = await (await import("open-sse/services/cursorModels.js")).resolveCursorModels({
       accessToken: conn.accessToken,
       providerSpecificData: conn.providerSpecificData || {},
     }, { log: console, proxyOptions });
     return result?.models?.length ? { models: result.models } : null;
   },
   zed: async (conn) => {
-    const result = await resolveZedModels({
+    const result = await (await import("open-sse/shared/zedAuth.js")).resolveZedModels({
       accessToken: conn.accessToken,
       providerSpecificData: conn.providerSpecificData || {},
     });
@@ -164,7 +149,7 @@ const LIVE_MODEL_RESOLVERS = {
     };
   },
   devin: async (conn) => {
-    const models = await discoverDevinModels(conn.accessToken);
+    const models = await (await import("open-sse/services/devinModels.js")).discoverDevinModels(conn.accessToken);
     return models.length ? { models } : null;
   },
   // The provider detail page already fetched these two per connection, so the
@@ -172,8 +157,8 @@ const LIVE_MODEL_RESOLVERS = {
   // and every downstream client still read the static registry (#2654). Both
   // resolve per connection and fail open to that registry, so an expired key or
   // a slow upstream costs a stale listing rather than an empty one.
-  openai: (conn) => resolveLiveOpenAIModels(conn),
-  codex: (conn) => resolveLiveCodexModels(conn),
+  openai: async (conn) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveOpenAIModels(conn),
+  codex: async (conn) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveCodexModels(conn),
 };
 
 function cursorSnapshotOwner(connection) {

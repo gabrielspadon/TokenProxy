@@ -253,7 +253,7 @@ describe("header master switch matrix", () => {
   it("header absent → every enabled saver runs", async () => {
     const res = await handleChatCore(baseArgs());
     expect(res).toBeDefined();
-    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), true, { allowLossy: false });
+    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), true, { allowLossy: false, diagnostics: expect.any(Object) });
     expect(mocks.headroom.compressWithHeadroom).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ enabled: true })
@@ -268,7 +268,7 @@ describe("header master switch matrix", () => {
     await handleChatCore(baseArgs({
       clientRawRequest: { headers: { "x-tokenproxy-token-saver": "off" }, body: {} },
     }));
-    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), false, { allowLossy: false });
+    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), false, { allowLossy: false, diagnostics: expect.any(Object) });
     expect(mocks.onTokenSaverEvent).not.toHaveBeenCalled();
   });
 
@@ -298,7 +298,7 @@ describe("header master switch matrix", () => {
     await handleChatCore(baseArgs({
       clientRawRequest: { headers: { "x-tokenproxy-token-saver": value }, body: {} },
     }));
-    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), false, { allowLossy: false });
+    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), false, { allowLossy: false, diagnostics: expect.any(Object) });
     expect(mocks.caveman.injectCaveman).not.toHaveBeenCalled();
     expect(mocks.onTokenSaverEvent).not.toHaveBeenCalled();
   });
@@ -331,7 +331,7 @@ describe("header master switch matrix", () => {
       headroomEnabled: resolved.headroomEnabled,
       cavemanEnabled: resolved.cavemanEnabled,
     }));
-    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), false, { allowLossy: false });
+    expect(mocks.rtk.compressMessages).toHaveBeenCalledWith(expect.anything(), false, { allowLossy: false, diagnostics: expect.any(Object) });
     expect(mocks.headroom.compressWithHeadroom).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ enabled: true })

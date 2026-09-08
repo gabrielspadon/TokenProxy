@@ -1,18 +1,21 @@
 'use client';
-import { Button, Input, Textarea, Modal } from '@mantine/core';
+import { Button, Input, Textarea, Modal, Tabs } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { Notice } from '@/shared/components/Notice';
 import { CompatibilityResult } from '@/shared/compatibility/CompatibilityResult';
 import { SAMPLE_FIXTURES } from '@/shared/compatibility/samples';
-import { TERMINAL } from '@/lib/compatibility/model.mjs';
+import { CONTROLLED_PROVIDERS, CONTROLLED_SCENARIOS, SCOPES, TERMINAL } from '@/lib/compatibility/model.mjs';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
 import styles from './workbench.module.css';
 
 const short = (value) => (value ? `${value.slice(0, 8)}…` : 'unknown');
 const when = (value) => (value ? value.replace('T', ' ').slice(0, 19) : 'unknown');
 const emptyDraft = {
+  scope: 'local-translation',
+  provider: 'openai',
+  scenario: 'native-fields',
   name: '',
   sourceFormat: 'openai',
   targetFormat: 'claude',
@@ -23,6 +26,9 @@ const emptyDraft = {
 };
 
 export default function CompatibilityPage() {
+  const [view, setView] = useState('fixtures');
+  const [baseline, setBaseline] = useState('');
+  const [highlightedCheck, setHighlightedCheck] = useState('');
   const [catalog, setCatalog] = useState(null);
   const [refused, setRefused] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -80,22 +86,40 @@ export default function CompatibilityPage() {
     void readCatalog();
   }, [readCatalog]);
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('runId'), previous = params.get('compareRunId');
+    if (!id) return;
+    let stale = false;
+    const requestId = ++packetRequest.current;
+    void call(`/api/admin/compatibility/runs/${encodeURIComponent(id)}${previous ? `?baseline=${encodeURIComponent(previous)}` : ''}`).then(response => { if (!stale && requestId === packetRequest.current) { setView('runs'); setBaseline(previous || ''); setHighlightedCheck(params.get('checkId') || ''); applyPacket(response); } });
+    return () => { stale = true; };
+  }, [applyPacket]);
+  useEffect(() => {
     void readRuns();
   }, [readRuns]);
   // Poll only while the selected run has not reached a terminal receipt.
   useEffect(() => {
-    if (!packet || TERMINAL.includes(packet.run.status)) return undefined;
+    if (!packet) return undefined;
+    if (TERMINAL.includes(packet.run.status)) {
+      void readRuns();
+      void readCatalog();
+      return undefined;
+    }
     const timer = setInterval(() => {
       void readPacket(packet.run.id);
       void readRuns();
+      void readCatalog();
     }, 1000);
     return () => clearInterval(timer);
-  }, [packet, readPacket, readRuns]);
+  }, [packet, readPacket, readRuns, readCatalog]);
 
   function loadFixture(fixture) {
     setEditing({ id: fixture.id, revision: fixture.revision, archived: fixture.archived });
     setConsent(false);
     setDraft({
+      scope: fixture.definition.scope || 'local-translation',
+      provider: fixture.definition.provider || 'openai',
+      scenario: fixture.definition.scenario || 'native-fields',
       name: fixture.name,
       sourceFormat: fixture.definition.sourceFormat,
       targetFormat: fixture.definition.targetFormat,
@@ -109,6 +133,9 @@ export default function CompatibilityPage() {
     setEditing(null);
     setConsent(false);
     setDraft({
+      scope: sample.definition.scope || 'local-translation',
+      provider: sample.definition.provider || 'openai',
+      scenario: sample.definition.scenario || 'native-fields',
       name: sample.name,
       sourceFormat: sample.definition.sourceFormat,
       targetFormat: sample.definition.targetFormat,
@@ -134,6 +161,8 @@ export default function CompatibilityPage() {
       version: 1,
       origin: draft.origin,
       suitable: consent,
+      scope: draft.scope,
+      ...(draft.scope !== 'local-translation' ? { provider: draft.provider, scenario: draft.scenario, fixtureVersion: 'controlled-v1' } : {}),
       operation: draft.operation,
       sourceFormat: draft.sourceFormat,
       targetFormat: draft.targetFormat,
@@ -209,6 +238,7 @@ export default function CompatibilityPage() {
       return;
     }
     await readRuns();
+    setView('runs');
     await readPacket(response.body.id);
   }
   async function cancelRun(id) {
@@ -237,6 +267,12 @@ export default function CompatibilityPage() {
     setBusy(false);
     await readCatalog();
   }
+  async function compareBaseline() {
+    if (!packet || !baseline) return;
+    const response = await call(`/api/admin/compatibility/runs/${packet.run.id}?baseline=${encodeURIComponent(baseline)}`);
+    if (response.ok) setPacket(response.body);
+    else setNotice(refusal(response.status, response.body));
+  }
   function exportPacket() {
     if (!packet) return;
     const blob = new Blob([JSON.stringify(packet, null, 2)], { type: 'application/json' });
@@ -256,38 +292,18 @@ export default function CompatibilityPage() {
         <h1>Compatibility</h1>
       </div>
       <p>
-        Retained local translation runs on explicitly suitable fixtures. No provider is called, no
+        Versioned translation, controlled executor and gateway routing fixtures. No provider is called, no
         credential is read, and no result establishes upstream readiness.
       </p>
       {refused ? <Notice {...refused} /> : null}
       {notice ? <Notice {...notice} /> : null}
       {!catalog && !refused ? <p className="skeleton">Reading retained fixtures</p> : null}
+      <Tabs value={view} onChange={setView} keepMounted={false}>
+        <Tabs.List aria-label="Compatibility workspace"><Tabs.Tab value="fixtures">Fixtures</Tabs.Tab><Tabs.Tab value="runs">Runs</Tabs.Tab><Tabs.Tab value="matrix">Evidence matrix</Tabs.Tab></Tabs.List>
       {catalog ? (
         <div className={styles.grid}>
-          <section className={styles.book} aria-labelledby="compat-fixtures">
-            <details className={styles.scopes}>
-              <summary>Run targets and evidence limits</summary>
-              <ul>
-                <li>
-                  Local translation runs supported format conversion and structural checks. No
-                  provider calls or credential reads.
-                </li>
-                <li>
-                  Authenticated executor and complete gateway runs are unavailable in this retained
-                  workbench. A local pass does not establish either.
-                </li>
-                <li>
-                  Request shape and ordered synthetic event checks are supported. Full provider
-                  schema, transport completion and semantic equivalence remain unverified.
-                </li>
-                <li>
-                  Input budget {catalog.limits.definitionBytes ?? 'unknown'} bytes; result budget{' '}
-                  {catalog.limits.resultBytes ?? 'unknown'} bytes; event budget{' '}
-                  {catalog.limits.events ?? 'unknown'}. Overflow is refused without truncating
-                  retained evidence.
-                </li>
-              </ul>
-            </details>
+          <Tabs.Panel value="fixtures"><section className={styles.book} aria-labelledby="compat-fixtures">
+            <p className={styles.scopes}>Controlled scopes use the maintained executor and gateway format router with a fixed in-memory upstream. Authenticated provider acceptance and full HTTP gateway admission remain separate evidence. Budget {catalog.limits.definitionBytes} B input, {catalog.limits.resultBytes} B result, one active run and {catalog.limits.queued} queued runs.</p>
             <h2 id="compat-fixtures">Fixture book</h2>
             <p className="caption">
               {catalog.fixtures.length} fixtures of {catalog.limits.fixtureIds} retained. A run pins
@@ -366,6 +382,8 @@ export default function CompatibilityPage() {
                 ) : null}
               </div>
               <div className={styles.editorGrid}>
+                <label>Execution scope<Input component="select" aria-label="Execution scope" value={draft.scope} onChange={e => setDraft({ ...draft, scope: e.target.value, operation: 'request' })}>{SCOPES.map(scope => <option key={scope}>{scope}</option>)}</Input></label>
+                {draft.scope !== 'local-translation' && <><label>Exact controlled provider<Input component="select" aria-label="Exact controlled provider" value={draft.provider} onChange={e => setDraft({ ...draft, provider: e.target.value, targetFormat: e.target.value })}>{CONTROLLED_PROVIDERS.map(provider => <option key={provider}>{provider}</option>)}</Input></label><label>Versioned scenario<Input component="select" aria-label="Versioned scenario" value={draft.scenario} onChange={e => setDraft({ ...draft, scenario: e.target.value })}>{CONTROLLED_SCENARIOS.map(scenario => <option key={scenario}>{scenario}</option>)}</Input></label></>}
                 <label>
                   Fixture name
                   <Input
@@ -452,7 +470,7 @@ export default function CompatibilityPage() {
               </Button>
             </section>
           </section>
-          <section className={styles.inspector} aria-labelledby="compat-runs">
+          </Tabs.Panel><Tabs.Panel value="runs"><section className={styles.inspector} aria-labelledby="compat-runs">
             <h2 id="compat-runs">Runs</h2>
             <p className={styles.queue} aria-live="polite">
               One isolated worker, <b>{catalog.limits.queued}</b> waiting slots,{' '}
@@ -509,8 +527,10 @@ export default function CompatibilityPage() {
                 <CompatibilityResult
                   key={packet?.run.id}
                   packet={packet}
+                  highlightedCheck={highlightedCheck}
                   onExport={exportPacket}
                   onCancel={() => packet && cancelRun(packet.run.id)}
+                  comparisonControl={<div className={styles.actions}><label>Exact baseline<Input component="select" aria-label="Exact baseline" value={baseline} onChange={e => setBaseline(e.target.value)}><option value="">Choose a retained run</option>{(runs?.items || []).filter(run => run.id !== packet?.run.id && ['succeeded','failed'].includes(run.status)).map(run => <option key={run.id} value={run.id}>{short(run.id)} · {run.scope} · {run.status}</option>)}</Input></label><Button variant="default" disabled={!baseline} onClick={compareBaseline}>Compare baseline</Button></div>}
                 />
               }
             >
@@ -596,12 +616,13 @@ export default function CompatibilityPage() {
               ) : null}
               {!packet && <CompatibilityResult packet={null} />}
             </SelectionDock>
-          </section>
+          </section></Tabs.Panel>
         </div>
       ) : null}
       {catalog ? (
-        <section aria-labelledby="compat-evidence">
+        <Tabs.Panel value="matrix"><section aria-labelledby="compat-evidence">
           <h2 id="compat-evidence">Capability evidence</h2>
+          {catalog.regressions?.map(item => <p key={item.currentRunId} role="status">Observed regression · {item.scope} · {item.regressions.map(check => check.checkId).join(', ')} <Button variant="subtle" onClick={() => { setView('runs'); void readPacket(item.currentRunId); }}>Inspect exact current run</Button></p>)}
           <p className="caption">{catalog.evidenceBasis}</p>
           <div
             className={styles.tableScroll}
@@ -612,6 +633,7 @@ export default function CompatibilityPage() {
             <table className={styles.table}>
               <thead>
                 <tr>
+                  <th scope="col">Scope / target / version</th>
                   <th scope="col">Source</th>
                   <th scope="col">Target</th>
                   <th scope="col">Operation</th>
@@ -619,13 +641,14 @@ export default function CompatibilityPage() {
                   <th scope="col">Passed</th>
                   <th scope="col">Failed</th>
                   <th scope="col">Other terminal</th>
-                  <th scope="col">Pending</th>
+                  <th scope="col">Pending / unknown</th>
                   <th scope="col">Last run (UTC)</th>
                 </tr>
               </thead>
               <tbody>
                 {catalog.evidence.map((edge) => (
-                  <tr key={`${edge.sourceFormat}:${edge.targetFormat}:${edge.operation}`}>
+                  <tr key={`${edge.fixtureHash}:${edge.implementationHash}:${edge.scope}`}>
+                    <td>{edge.scope}<br />{edge.provider} / {edge.model}<br />{edge.scenario} · {edge.fixtureVersion}<br /><code>{short(edge.fixtureHash)} · {short(edge.implementationHash)}</code></td>
                     <td>{edge.sourceFormat || 'unknown'}</td>
                     <td>{edge.targetFormat || 'unknown'}</td>
                     <td>{edge.operation || 'unknown'}</td>
@@ -633,7 +656,7 @@ export default function CompatibilityPage() {
                     <td>{edge.passed}</td>
                     <td>{edge.failed}</td>
                     <td>{edge.other}</td>
-                    <td>{edge.pending ?? 'unknown'}</td>
+                    <td>{edge.pending ?? 'unknown'} / {edge.unknown ?? 'unknown'}</td>
                     <td>{when(edge.lastRunAt)}</td>
                   </tr>
                 ))}
@@ -646,8 +669,9 @@ export default function CompatibilityPage() {
               </p>
             ) : null}
           </div>
-        </section>
+        </section></Tabs.Panel>
       ) : null}
+      </Tabs>
       <Modal opened={Boolean(archiveTarget)} onClose={() => { if (!busy) { setArchiveTarget(null); setArchiveRefusal(null); } }} title={archiveTarget?.archived ? 'Restore this fixture' : 'Archive this fixture'} closeOnClickOutside={!busy} closeOnEscape={!busy}>
         <p>{archiveTarget?.name} · revision {archiveTarget?.revision}</p>
         <p>{archiveTarget?.archived ? 'Allows new local runs. Existing run evidence and your unsaved editor draft remain unchanged.' : 'Prevents new runs of every revision. Existing evidence and your unsaved editor draft are retained. Restore the fixture to allow new runs again.'}</p>

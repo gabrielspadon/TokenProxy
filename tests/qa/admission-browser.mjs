@@ -1,0 +1,55 @@
+import { chromium } from 'playwright';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import assert from 'node:assert/strict';
+import { authenticateRedesign, installRedesignBrowser } from '../e2e/redesign-fixtures/browser.mjs';
+const root = process.argv[2], output = resolve(process.argv[3]);
+const runtimeReceipt = JSON.parse(await readFile(join(root,'process.json'),'utf8'));
+await mkdir(output,{recursive:true});
+const browser = await chromium.launch({headless:true});
+try {
+  const context = await browser.newContext({serviceWorkers:'block',reducedMotion:'reduce'});
+  await authenticateRedesign(context,root);
+  const page = await context.newPage();
+  const fixture = await installRedesignBrowser(page,{baseUrl:runtimeReceipt.url,runtimeReceipt});
+  await page.goto(`${runtimeReceipt.url}/dashboard/system`,{waitUntil:'domcontentloaded',timeout:120000});
+  await page.getByRole('heading',{name:'Request capacity'}).waitFor({timeout:120000});
+  const max = page.getByLabel('Maximum streams',{exact:true});
+  await max.fill('95'); await max.fill('96'); await page.getByRole('button',{name:'Save request capacity'}).click();
+  await page.getByRole('status').filter({hasText:'Admission policy saved.'}).waitFor();
+  await page.reload({waitUntil:'domcontentloaded'}); await max.waitFor();
+  assert.equal(await max.inputValue(),'96');
+  await page.getByRole('combobox',{name:'Capacity mode',exact:true}).click();
+  await page.getByRole('option',{name:'Temporary override',exact:true}).click();
+  await page.getByLabel('Override streams',{exact:true}).fill('10');
+  await page.getByRole('button',{name:'Save request capacity'}).click();
+  await page.getByRole('status').filter({hasText:'Admission policy saved.'}).waitFor();
+  const override = await (await context.request.get(`${runtimeReceipt.url}/api/system/admission`)).json();
+  assert.equal(override.effectiveStreams,10);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByLabel('Override streams',{exact:true}).waitFor();
+  assert.equal(await page.getByLabel('Override streams',{exact:true}).inputValue(),'10');
+  await page.getByRole('combobox',{name:'Capacity mode',exact:true}).click();
+  await page.getByRole('option',{name:'Adaptive',exact:true}).click();
+  await page.getByRole('button',{name:'Save request capacity'}).click();
+  await page.getByRole('status').filter({hasText:'Admission policy saved.'}).waitFor();
+  const anonymous = await browser.newContext();
+  assert.equal((await anonymous.request.get(`${runtimeReceipt.url}/api/system/admission`)).status(),401);
+  await anonymous.close();
+  const policy = await context.request.get(`${runtimeReceipt.url}/api/system/admission`);
+  const saved = await policy.json(); assert.equal(saved.policy.maxStreams,96); assert.equal(saved.scope,'process');
+  const bad = await context.request.put(`${runtimeReceipt.url}/api/system/admission`,{data:{minStreams:100,maxStreams:2}}); assert.equal(bad.status(),400);
+  const viewports=[];
+  for(const [width,height] of [[1440,1000],[1920,1080],[390,844]]) {
+    await page.setViewportSize({width,height});
+    await page.getByRole('heading',{name:'Request capacity'}).evaluate(node=>node.scrollIntoView({block:'start'}));
+    await page.evaluate(()=>window.scrollBy(0,-72));
+    const file=join(output,`admission-${width}x${height}.png`);
+    await page.screenshot({path:file,fullPage:false});
+    const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth);
+    assert.equal(overflow,false); viewports.push({width,height,file,overflow});
+  }
+  assert.equal(fixture.outboundFailures.length,0);
+  const receipt={runtimeReceipt,viewports,persistedMaximum:96,invalidBoundsStatus:400,unauthenticatedStatus:401,persistedOverride:10,outboundFailures:fixture.outboundFailures,synthetic:true,latencyQualification:false};
+  await writeFile(join(output,'browser-receipt.json'),JSON.stringify(receipt,null,2)); console.log(JSON.stringify({passed:true,viewports:viewports.length,persistedMaximum:96,outboundFailures:0}));
+} finally {await browser.close();}

@@ -29,10 +29,16 @@ vi.mock("@/lib/localDb", () => ({
   validateApiKey: vi.fn(),
 }));
 
-// The logger stays REAL: part of the point is that the old reasonless
-// `log.warn("AUTH", ...)` line is gone, and a stray reintroduction fails here.
+// Isolate the output transport while keeping the decision logger real. Native
+// asynchronous writes are covered by the bounded-output and runtime suites.
+vi.mock("../../open-sse/utils/asyncLogOutput.js", () => ({
+  logOutput: line => console.log(line),
+  flushLogOutput: async () => {},
+  logOutputStatus: () => ({}),
+}));
 
 import { __decide } from "@/shared/observability/decide.js";
+import { refreshAdmissionPolicy } from "@/sse/services/resourceAdmission.js";
 import { handleChat, __rateLimiter, __admissionQueue } from "@/sse/handlers/chat.js";
 
 let lines = [];
@@ -131,12 +137,17 @@ describe("chat.js API-key gate", () => {
 
     // Park the request inside the handler, downstream of admission, so the slot
     // it holds is observable rather than already released.
-    settingsMocks.getSettings.mockReturnValue(new Promise(() => {}));
-    const pending = handleChat(chatRequest({ authorization: `Bearer ${key}` }));
+    await refreshAdmissionPolicy();
+    let releaseSettings;
+    settingsMocks.getSettings.mockReturnValue(new Promise(resolve => { releaseSettings = resolve; }));
+    const pending = handleChat(chatRequest({ authorization: `Bearer ${key}` }), null, { body: { messages: [] } });
     await vi.waitFor(() => expect(__admissionQueue.stateOf(key)).toEqual({ active: 1, queued: 0 }));
 
     expect(lines.filter((l) => l.includes("ADM.ratelimited"))).toHaveLength(0);
     expect(lines.filter((l) => l.includes("REQ.refused"))).toHaveLength(0);
     expect(pending).toBeInstanceOf(Promise);
+    releaseSettings({ requireApiKey: true });
+    const response = await pending;
+    await response.body?.cancel();
   });
 });

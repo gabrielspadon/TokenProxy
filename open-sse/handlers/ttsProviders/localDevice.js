@@ -1,3 +1,4 @@
+import { requestSignal } from '../../utils/requestLifetime.js';
 // Local device TTS — macOS `say` + Windows SAPI + ffmpeg
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -69,8 +70,8 @@ async function synthesizeMacOrWin(text, voiceId) {
   const mp3Path = join(dir, "out.mp3");
   try {
     const args = voiceId ? ["-v", voiceId, "-o", aiffPath, text] : ["-o", aiffPath, text];
-    await execFileAsync("say", args);
-    await execFileAsync("ffmpeg", ["-y", "-i", aiffPath, "-codec:a", "libmp3lame", "-qscale:a", "4", mp3Path]);
+    await execFileAsync("say", args, { signal: requestSignal() });
+    await execFileAsync("ffmpeg", ["-y", "-i", aiffPath, "-codec:a", "libmp3lame", "-qscale:a", "4", mp3Path], { signal: requestSignal() });
     const buf = await readFile(mp3Path);
     return buf.toString("base64");
   } finally {

@@ -139,9 +139,7 @@ test('compatible fixtures retain exact revisions, local results and terminal can
   await preflight(page);
   const response = await page.goto('/dashboard/compatibility');
   assertSynthetic(response);
-  const createFixture = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Create a fixture' }) });
-  await expect(createFixture).toBeVisible();
-  if (await createFixture.getAttribute('open') === null) await createFixture.locator('summary').click();
+  await expect(page.getByRole('region', { name: 'Fixture editor', exact: true })).toBeVisible();
   await page
     .getByRole('button', { name: /Insert .*tool/i })
     .first()

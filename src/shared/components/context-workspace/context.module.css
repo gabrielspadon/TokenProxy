@@ -197,6 +197,15 @@
 .trace > .workspace { flex: 1; min-height: 0; }
 .traceActions { padding: 10px 24px; }
 .historyPanel { min-width: 0; overflow: auto; padding: 18px 24px; }
+.intervalComparison { min-width: 0; }
+.intervalFields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.intervalFields fieldset { border: 1px solid var(--rule); border-radius: 8px; min-width: 0; padding: 12px; }
+.intervalFields legend { padding-inline: 4px; font-size: 13px; }
+.intervalFields :global(.mantine-InputWrapper-root) + :global(.mantine-InputWrapper-root) { margin-top: 8px; }
+.intervalComparison .tableScroll { overflow-x: auto; }
+.routing .tableScroll { overflow-x: auto; }
+.intervalComparison small { display: block; color: var(--slate); }
+@media (max-width: 600px) { .intervalFields { grid-template-columns: minmax(0,1fr); } }
 .retention { color: var(--ink); font-size: 13px; }
 .retention:focus { outline: none; }
 .retentionTitle { font-size: 16px; font-weight: 500; margin: 0 0 12px; }

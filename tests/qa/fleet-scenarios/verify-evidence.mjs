@@ -1,0 +1,17 @@
+import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { resolve, join } from 'node:path';
+import assert from 'node:assert/strict';
+const directory = resolve(process.argv[2]);
+const receipt = JSON.parse(await readFile(join(directory, 'browser-evidence.json'), 'utf8'));
+assert.equal(receipt.synthetic, true);
+assert.deepEqual(receipt.viewports, ['1440x1000', '1920x1080', '390x1000']);
+assert.equal(receipt.demand, 2); assert.equal(receipt.projectionHours, 6); assert.equal(receipt.recordsLinked, 1);
+for (const key of ['exclusionApplied', 'reloadRestored', 'failureClearsResult', 'recoverySucceeded']) assert.equal(receipt[key], true);
+assert.deepEqual(receipt.pageErrors, []); assert.deepEqual(receipt.outboundFailures, []); assert.equal(receipt.providerCalls, 0);
+assert.ok(receipt.api.some(call => call.status === 503));
+assert.equal(receipt.api.at(-1).status, 200);
+for (const dimensions of receipt.viewports) for (const prefix of ['fleet', 'fleet-products']) assert.ok((await stat(join(directory, `${prefix}-${dimensions}.png`))).size > 10000);
+const sources = JSON.parse(await readFile(join(directory, 'source-hashes.json'), 'utf8'));
+for (const [path, expected] of Object.entries(sources)) assert.equal(createHash('sha256').update(await readFile(path)).digest('hex'), expected, `Evidence source changed ${path}`);
+console.log('Fleet browser evidence verified: 3 viewports, exact record, reload, keyboard, exclusion, failure recovery, source hashes current; synthetic only.');

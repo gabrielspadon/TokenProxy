@@ -15,6 +15,10 @@ import { dropOldestPairs } from "../../../open-sse/utils/pairDropper.js";
 import { reorderByRelevance } from "../../../open-sse/utils/embedReorder.js";
 import { injectBoundaryNote, composeBoundaryNote } from "../../../open-sse/utils/midPrefixInject.js";
 import { compressWithHeadroom } from "../../../open-sse/rtk/headroom.js";
+import { compressWithPxpipe } from "../../../open-sse/rtk/pxpipe.js";
+import { pruneExpiredToolResults } from "../../../open-sse/utils/dietPrune.js";
+import { compressBlobs } from "../../../open-sse/utils/linguaCompress.js";
+import { microcompact, autocompact, placeholderEpochSummarizer } from "../../../open-sse/utils/epochCompact.js";
 import { jsonCompact } from "../../../open-sse/rtk/filters/jsonCompact.js";
 import { isErrorResult } from "../../../open-sse/rtk/errorFlags.js";
 import { compressMessages } from "../../../open-sse/rtk/index.js";
@@ -22,6 +26,7 @@ import { injectCaveman } from "../../../open-sse/rtk/caveman.js";
 import { injectPonytail } from "../../../open-sse/rtk/ponytail.js";
 import { redactOutbound } from "../../../open-sse/utils/privacyFilter.js";
 import { applyMemoryEnhancements } from "../../../open-sse/services/memory/index.js";
+import { injectHandoffPackets } from "../../../open-sse/services/memory/handoffStore.js";
 import { measureContextPressure, estimateRequestTokens } from "../../../open-sse/services/memory/contextBudget.js";
 import { anchorClaudeCache } from "../../../open-sse/translator/formats/claude.js";
 import { defaultClaudeToolType } from "../../../open-sse/translator/concerns/toolCall.js";
@@ -30,8 +35,8 @@ import { ELIDE_MARKER_RE } from "../../../open-sse/rtk/filters/elide.js";
 // The production order after the audit: deterministic stages, then the
 // pressure rungs least-loss first, then the tail note.
 export const CANONICAL_ORDER = [
-  "tools", "schema", "thinking", "rtk", "privacy", "inject",
-  "mem", "headroom", "qac", "pairs", "reorder", "midinject",
+  "tools", "schema", "thinking", "rtk", "privacy", "inject", "pxpipe",
+  "mem", "headroom", "qac", "pairs", "diet", "lingua", "epochMicro", "epochAuto", "reorder", "midinject", "handoff",
 ];
 
 // Per-session memos, keyed the way chatCore keys them (one per session).
@@ -93,6 +98,67 @@ function pressureOf(body, ctx) {
 // --- stages -----------------------------------------------------------------
 
 export const STAGES = {
+  handoff: {
+    async run(body, ctx) {
+      if (!ctx.settings.memoryHandoffEnabled) return;
+      const result = injectHandoffPackets(body, [{ id: '12345678-1234-4234-9234-123456789abc', summary: 'Operator approved fixture summary.' }]);
+      ctx.serviceFixtures.push({ stage: 'handoff', applied: result.injected, identity: 'explicit fixture packet; repository eligibility and capacity refusal have separate gateway tests' });
+    },
+  },
+  pxpipe: {
+    mock: true,
+    async run(body, ctx) {
+      const result = await compressWithPxpipe(body, { enabled: true, allowLossy: ctx.settings.pxpipeAllowLossy === true,
+        format: 'claude', model: body.model, minChars: 1,
+        transform: async ({ body: encoded }) => {
+          const value = JSON.parse(new TextDecoder().decode(encoded));
+          for (const message of value.messages.slice(0, -4)) for (const block of Array.isArray(message.content) ? message.content : []) {
+            if (block.type !== 'tool_result' || isErrorResult(block) || typeof block.content !== 'string' || block.content.length < 2048) continue;
+            const compressedChars = block.content.length;
+            block.content = [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==' } }];
+            return { applied: true, body: new TextEncoder().encode(JSON.stringify(value)), info: { imageCount: 1, compressedChars, imageTokens: 1 } };
+          }
+          return { applied: false, reason: 'no_eligible_fixture_content' };
+        } });
+      ctx.serviceFixtures.push({ stage: 'pxpipe', outcome: result.summary.outcome, applied: result.summary.applied, quality: 'unmeasured; stub image does not encode source content' });
+      if (result.summary.outcome === 'failed') ctx.errors.push(`pxpipe:${result.summary.errorCode}`);
+      if (result.body) Object.assign(body, result.body);
+    },
+  },
+  diet: {
+    async run(body, ctx) {
+      if (!ctx.settings.epochConsent) return;
+      const result = pruneExpiredToolResults(body, { epochCutIndex: Math.max(0, body.messages.length - 8), minAgeTurns: 8, minBlockChars: 2048, referenceScanTurns: 3 });
+      if (result.applied) { body.messages = result.messages; ctx.prefixRewritten = true; ctx.note({ kind: 'diet', text: `pruned ${result.prunedBlocks} fixture blocks` }); }
+    },
+  },
+  lingua: {
+    mock: true,
+    async run(body, ctx) {
+      if (!ctx.settings.epochConsent) return;
+      const result = await compressBlobs(body, { epochCutIndex: Math.max(0, body.messages.length - 8), endpoint: 'http://127.0.0.1:1',
+        fetchImpl: async (_url, init) => Response.json({ text: JSON.parse(init.body).text.replace(/\s{2,}/g, ' ') }) });
+      ctx.serviceFixtures.push({ stage: 'lingua', applied: result.applied, quality: 'unmeasured; deterministic whitespace stub' });
+      if (result.outcome === 'failed') ctx.errors.push(`lingua:${result.errorCode}`);
+      if (result.applied) { body.messages = result.messages; ctx.prefixRewritten = true; ctx.note({ kind: 'lingua', text: `compressed ${result.compressedBlocks} fixture blocks` }); }
+    },
+  },
+  epochMicro: {
+    async run(body, ctx) {
+      if (!ctx.settings.epochConsent) return;
+      const result = microcompact(body, { epochCutIndex: Math.max(0, body.messages.length - 8), keepLastTurns: 4 });
+      if (result.applied) { body.messages = result.messages; ctx.prefixRewritten = true; ctx.note({ kind: 'epochMicro', text: `cleared ${result.clearedBlocks} fixture blocks` }); }
+    },
+  },
+  epochAuto: {
+    async run(body, ctx) {
+      if (!ctx.settings.epochConsent) return;
+      const result = await autocompact(body, { epochCutIndex: Math.max(0, body.messages.length - 8), keepRecentTurns: 6,
+        windowTokens: ctx.contextWindow, usedTokens: estimateRequestTokens(body), summarizeFn: placeholderEpochSummarizer });
+      if (result.outcome === 'failed') ctx.errors.push(`epochAuto:${result.errorCode}`);
+      if (result.applied) { body.messages = result.messages; ctx.prefixRewritten = true; ctx.note({ kind: 'epochAuto', text: `compacted ${result.droppedTurns} fixture turns` }); }
+    },
+  },
   tools: {
     async run(body, ctx) {
       if (!Array.isArray(body.tools) || body.tools.length === 0) return;
@@ -210,7 +276,7 @@ export const STAGES = {
   mem: {
     async run(body, ctx) {
       const res = await applyMemoryEnhancements(body, {
-        settings: ctx.settings, targetFormat: "claude", contextWindow: ctx.contextWindow,
+        settings: ctx.settings, targetFormat: "claude", contextWindow: ctx.contextWindow, handoffs: ctx.settings.handoffs || [],
       });
       ctx.memStats = res.stats;
       const st = res.stats || {};
@@ -254,7 +320,7 @@ export function anchor(body) {
 export function newCtx({ sid, connectionId, settings, contextWindow, order = [] }) {
   const ctx = {
     sid, connectionId, settings, contextWindow, order,
-    prefixNotes: [], prefixTurnIndices: [], errors: [], memStats: null, prefixRewritten: false,
+    prefixNotes: [], prefixTurnIndices: [], errors: [], memStats: null, prefixRewritten: false, serviceFixtures: [],
   };
   ctx.note = (n) => { if (ctx.prefixNotes.length < 12) ctx.prefixNotes.push(n); };
   return ctx;
@@ -269,19 +335,21 @@ export async function runPipeline(entryBody, order, ctx) {
   const entryBytes = bytes(body);
   let prev = entryBytes;
   const deltas = {};
+  const ledger = [];
   const t0 = performance.now();
   for (const name of order) {
     const stage = STAGES[name];
     if (!stage) throw new Error(`unknown stage ${name}`);
     await stage.run(body, ctx);
     const at = bytes(body);
+    ledger.push({ stage: name, beforeBytes: prev, afterBytes: at, deltaBytes: at - prev, outcome: at === prev ? 'unchanged' : 'applied' });
     if (at !== prev) deltas[name] = at - prev;
     prev = at;
   }
   anchor(body);
   const finalBytes = bytes(body);
   return {
-    body, entryBytes, finalBytes, deltas,
+    body, entryBytes, finalBytes, deltas, ledger, anchorDeltaBytes: finalBytes - prev,
     cacheString: cacheString(body),
     ms: performance.now() - t0,
   };

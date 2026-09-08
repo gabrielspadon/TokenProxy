@@ -177,7 +177,9 @@ describe('generic refreshAccessToken edges', () => {
   it('evicts the oldest issue record past the registry bound', async () => {
     respondWith({ access_token: 'ea', expires_in: 60 });
     const base = Date.now();
+    vi.useFakeTimers();
     for (let i = 0; i < 513; i++) {
+      if (i % 100 === 0) await vi.advanceTimersByTimeAsync(11000);
       await mod.refreshAccessToken(
         genericProvider,
         `evict-${base}-${i}`,
@@ -185,6 +187,8 @@ describe('generic refreshAccessToken edges', () => {
         null
       );
     }
+    await vi.advanceTimersByTimeAsync(11000);
+    vi.useRealTimers();
     expect(proxyFetch).toHaveBeenCalledTimes(513);
   });
 });

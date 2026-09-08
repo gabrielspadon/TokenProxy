@@ -255,3 +255,12 @@
 .audit { padding-inline-start: 20px; font-size: 13px; line-height: 1.6; }
 .audit li { list-style: decimal; margin-block: 10px; }
 .audit p { margin: 4px 0; }
+.automation { border: 1px solid var(--rule); border-top: 0; padding: 14px 18px; }
+.automationForm { display: grid; gap: 12px; min-width: 0; }
+.automationFields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.automationForm p { margin: 0; }
+.automationHistory { border-top: 1px solid var(--rule); margin-top: 16px; padding-top: 12px; }
+.automation a { overflow-wrap: anywhere; }
+.automation summary { cursor: pointer; font-size: 12px; margin-top: 6px; }
+.automation summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+@media (max-width: 600px) { .automationFields { grid-template-columns: minmax(0, 1fr); } }

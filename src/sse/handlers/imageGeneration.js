@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission, withPublicProviderAdmission } from '../services/resourceAdmission.js';
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   getProviderCredentials,
@@ -7,7 +9,7 @@ import {
 } from "../services/auth.js";
 // Lease release lives in its own module, not in auth.js: a handler test that
 // partially mocks account SELECTION must still run the real release path.
-import { releaseAccountLease } from "../services/accountLeaseRegistry.js";
+import { releaseAccountLease, releaseAccountLeaseOnResponse } from "../services/accountLeaseRegistry.js";
 import { resolveClientApiKey } from "@/lib/auth/clientApiKey";
 import { getSettings } from "@/lib/localDb";
 import { isInternalModelTestAuthorized } from "@/lib/auth/internalCliToken";
@@ -30,6 +32,10 @@ const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
  * @param {Request} request
  */
 export async function handleImageGeneration(request) {
+  return withResourceAdmission(request, () => handleImageGenerationAdmitted(request));
+}
+
+async function handleImageGenerationAdmitted(request) {
   let body;
   try {
     body = await request.json();
@@ -120,14 +126,14 @@ async function handleSingleModelImage(body, modelStr, {
 
   // noAuth providers — no credential needed
   if (NO_AUTH_PROVIDERS.has(provider)) {
-    const result = await handleImageGenerationCore({
+    const result = await withPublicProviderAdmission(provider, () => handleImageGenerationCore({
       body,
       modelInfo: { provider, model },
       credentials: null,
       binaryOutput,
       connectTimeout,
       signal,
-    });
+    }));
     if (result.success) return result.response;
     return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Image generation failed"), result.failureMetadata?.safeToReplay);
   }
@@ -138,15 +144,17 @@ async function handleSingleModelImage(body, modelStr, {
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is
     // what makes that exhaustive rather than a list that goes stale. Release is
     // idempotent (accountLease.js), so a double release frees nothing. This
-    // core buffers its whole response before returning, so unlike the chat
-    // stream there is no body still reading after the return.
+    // Codex can return an SSE body. Successful responses transfer ownership
+    // to the consumer; retry and failure paths release at this attempt boundary.
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId });
     const accountLease = credentials?.accountLease || null;
+    let leaseTransferred = false;
     try {
 
       if (!credentials || credentials.allRateLimited) {
@@ -189,7 +197,11 @@ async function handleSingleModelImage(body, modelStr, {
         }
       });
 
-      if (result.success) return result.response;
+      if (result.success) {
+        const response = releaseAccountLeaseOnResponse(result.response, accountLease, signal);
+        leaseTransferred = true;
+        return response;
+      }
 
       if (result.status === 499) return result.response;
 
@@ -206,7 +218,7 @@ async function handleSingleModelImage(body, modelStr, {
 
       return withReplaySafety(result.response, true);
     } finally {
-      releaseAccountLease(accountLease);
+      if (!leaseTransferred) releaseAccountLease(accountLease);
     }
   }
 }

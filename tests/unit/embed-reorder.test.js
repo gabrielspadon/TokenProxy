@@ -215,7 +215,7 @@ describe("reorderByRelevance", () => {
       messages,
       moved: 0,
       notes: [],
-      error: "embed http 500",
+      error: "service_http_error", outcome: "failed", errorCode: "service_http_error",
     });
   });
 
@@ -236,7 +236,7 @@ describe("reorderByRelevance", () => {
     const res = await reorderByRelevance(messages, OPTS);
     expect(res.messages).toBe(messages);
     expect(res.moved).toBe(0);
-    expect(res.error).toBe("timed out");
+    expect(res.error).toBe("service_timeout");
   });
 
   it("fails open on malformed response", async () => {
@@ -254,7 +254,7 @@ describe("reorderByRelevance", () => {
     const res = await reorderByRelevance(messages, OPTS);
     expect(res.messages).toBe(messages);
     expect(res.moved).toBe(0);
-    expect(res.error).toBe("embed malformed response");
+    expect(res.error).toBe("invalid_response");
   });
 
   it("fails open on zero vectors", async () => {
@@ -281,7 +281,7 @@ describe("reorderByRelevance", () => {
     const res = await reorderByRelevance(messages, OPTS);
     expect(res.messages).toBe(messages);
     expect(res.moved).toBe(0);
-    expect(res.error).toBe("embed zero vector");
+    expect(res.error).toBe("invalid_response");
   });
 
   it("skips the fetch entirely on full cache hit", async () => {

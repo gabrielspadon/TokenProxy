@@ -223,3 +223,8 @@ describe('lease registry verdicts', () => {
     expect(registry.inFlight('conn_a')).toBe(0);
   });
 });
+
+// Isolate decision semantics from the separately qualified asynchronous transport.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

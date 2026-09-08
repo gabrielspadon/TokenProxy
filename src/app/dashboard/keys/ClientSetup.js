@@ -6,6 +6,7 @@ import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum } from '@/shared/format';
 import { Button, TextInput } from '@mantine/core';
+import { NativeClientBoundary } from './NativeClientBoundary';
 
 // The two tiers an operator can actually run, and what each one settles. The
 // third is described and deliberately not offered, because running it spends
@@ -217,6 +218,7 @@ function ClientSetupForKey({ record }) {
             ))}
           </dl>
           <Outcome outcome={outcome} />
+          <NativeClientBoundary />
           {/* Stated, not offered. An operator should know the check exists and
               know that nothing here will run it for them. */}
           <p className="caption">

@@ -78,7 +78,7 @@ describe("fail-open failure modes (body untouched, no throw)", () => {
     const { b, result, diagnostics } = await call();
     expect(result).toBeNull();
     expect(b.messages[0].content).toBe(BIG);
-    expect(JSON.stringify(diagnostics)).toContain("unexpected error");
+    expect(diagnostics).toMatchObject({ outcome: "failed", errorCode: "invalid_response" });
   });
 
   it("proxy returns object without messages[] → null, body unchanged", async () => {

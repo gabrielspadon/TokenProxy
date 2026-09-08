@@ -5,10 +5,12 @@ import { getAdapter } from "../driver.js";
 import { getSettings } from "./settingsRepo.js";
 
 import { normalizeContextIdentity, saveContextStructures } from "./contextEvidenceRepo.js";
+import { STAGE_OUTCOMES, STAGE_ERROR_CODES } from "../../../../open-sse/utils/stageOutcome.js";
+import { saveHandoffApplications } from './shapingHandoffsRepo.js';
 
 const DAY_MS = 86400000;
-const STAGE_NAMES = new Set(["tools", "schema", "thinking", "rtk", "privacy", "inject", "pxpipe", "mem", "headroom", "qac", "pairs", "reorder", "midinject", "diet", "lingua", "epochMicro", "epochAuto", "final"]);
-const CONTROL_NAMES = new Set(["contextStructure", "rtk", "rtkAllowLossy", "schema", "schemaAllowLossy", "thinking", "privacy", "caveman", "ponytail", "pxpipe", "pxpipeAllowLossy", "memory", "headroom", "headroomAllowLossy", "qac", "pairs", "reorder", "midinject", "diet", "lingua", "epochMicro", "epochAuto", "adaptiveCacheTtl", "clientOptOut"]);
+const STAGE_NAMES = new Set(["tools", "schema", "thinking", "rtk", "privacy", "inject", "pxpipe", "mem", "headroom", "qac", "pairs", "reorder", "midinject", "diet", "lingua", "epochMicro", "epochAuto", "handoff", "final"]);
+const CONTROL_NAMES = new Set(["contextStructure", "rtk", "rtkAllowLossy", "schema", "schemaAllowLossy", "thinking", "privacy", "caveman", "ponytail", "pxpipe", "pxpipeAllowLossy", "memory", "headroom", "headroomAllowLossy", "qac", "pairs", "reorder", "midinject", "diet", "lingua", "epochMicro", "epochAuto", "handoff", "adaptiveCacheTtl", "clientOptOut"]);
 const TERMINAL = new Set(["success", "error", "cancelled", "aborted"]);
 const number = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 const present = (...values) => values.some((v) => number(v) !== null);
@@ -22,8 +24,18 @@ export function normalizeContextStages(stages) {
     if (!STAGE_NAMES.has(s.stage) || number(s.in) === null || number(s.out) === null) throw new Error("Invalid context stage");
     if (previous !== null && previous !== s.in) throw new Error("Context stage boundaries do not reconcile");
     previous = s.out;
+    const explicit = s.outcomeSource === "execution";
+    if (explicit && (!STAGE_OUTCOMES.has(s.outcome) ||
+      (["failed", "cancelled"].includes(s.outcome) ? !STAGE_ERROR_CODES.has(s.errorCode) : s.errorCode != null))) {
+      throw new Error("Invalid context stage outcome");
+    }
+    if (explicit && ((s.outcome === "cancelled") !== (s.errorCode === "caller_cancelled"))) throw new Error("Invalid stage cancellation evidence");
+    if (explicit && s.executionRequestId != null &&
+      (typeof s.executionRequestId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(s.executionRequestId))) throw new Error("Invalid stage execution identity");
     return { ordinal, stage: s.stage, beforeBytes: s.in, afterBytes: s.out, deltaBytes: s.out - s.in,
-      outcome: s.ran === false ? "skipped" : s.in === s.out ? "unchanged" : "applied",
+      outcome: explicit ? s.outcome : s.ran === false ? "skipped" : s.in === s.out ? "unchanged" : "applied",
+      errorCode: explicit ? s.errorCode ?? null : null, outcomeSource: explicit ? "execution" : null,
+      executionRequestId: explicit ? s.executionRequestId ?? null : null,
       risk: s.stage === "rtk" && s.semanticPreserving ? "semantic-preserving" : ["tools", "final"].includes(s.stage) ? "normalization" : "content-changing" };
   });
 }
@@ -43,6 +55,7 @@ export function saveContextMetrics(db, detail) {
     db.run(`UPDATE requestStats SET ${fields.map((field) => `${field}=COALESCE(${field},?)`).join(",")} WHERE id=?`, [...Object.values(identity), detail.id]);
   }
   saveContextStructures(db, detail.id, c.structures);
+  saveHandoffApplications(db, detail);
   const controls = Object.fromEntries(Object.entries(c.controls || {}).filter(([k,v]) => CONTROL_NAMES.has(k) && typeof v === "boolean"));
   const at = detail.timestamp;
   const identitySource = ["explicit", "inferred", "routing"].includes(c.identitySource) ? c.identitySource : "request";
@@ -75,10 +88,10 @@ export function saveContextMetrics(db, detail) {
   for (const s of stages) {
     const stored = storedStages.get(s.ordinal);
     if (stored && Object.entries(s).every(([field, value]) => stored[field] === value)) continue;
-    db.run(`INSERT INTO contextStages(requestId, ordinal, stage, beforeBytes, afterBytes, deltaBytes, outcome, risk) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+    db.run(`INSERT INTO contextStages(requestId, ordinal, stage, beforeBytes, afterBytes, deltaBytes, outcome, risk, errorCode, outcomeSource, executionRequestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(requestId,ordinal) DO UPDATE SET stage=excluded.stage,beforeBytes=excluded.beforeBytes,afterBytes=excluded.afterBytes,
-        deltaBytes=excluded.deltaBytes,outcome=excluded.outcome,risk=excluded.risk`,
-      [detail.id, s.ordinal, s.stage, s.beforeBytes, s.afterBytes, s.deltaBytes, s.outcome, s.risk]);
+        deltaBytes=excluded.deltaBytes,outcome=excluded.outcome,risk=excluded.risk,errorCode=excluded.errorCode,outcomeSource=excluded.outcomeSource,executionRequestId=excluded.executionRequestId`,
+      [detail.id, s.ordinal, s.stage, s.beforeBytes, s.afterBytes, s.deltaBytes, s.outcome, s.risk, s.errorCode, s.outcomeSource, s.executionRequestId]);
   }
   if ([...storedStages.keys()].some((ordinal) => ordinal >= stages.length)) {
     db.run(`DELETE FROM contextStages WHERE requestId=? AND ordinal>=?`, [detail.id, stages.length]);
@@ -95,6 +108,7 @@ export function shouldIgnorePending(existing, detail) {
 export { ContextQueryError, parseContextFilter } from "../analytics/contextQueries.mjs";
 
 export async function getContextOverview(f = {}, options = {}) {
+  if (f.view === "routing") throw new ContextQueryError("Routing history requires an exact session");
   const db = await getAdapter();
   const settings = await getSettings();
   return readContextAnalytics({ operation: "overview", filter: f, retainedDays: retentionDays(settings) },
@@ -102,6 +116,7 @@ export async function getContextOverview(f = {}, options = {}) {
 }
 
 export async function getContextSession(id, f = {}, options = {}) {
+  if (["projects", "interval-comparison"].includes(f.view)) throw new ContextQueryError("This projection uses the Context population endpoint");
   const db = await getAdapter();
   return readContextAnalytics({ operation: "session", sessionId: validId(id), filter: f },
     { ...options, file: DATA_FILE, driver: db.driver });

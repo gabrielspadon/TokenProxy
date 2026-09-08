@@ -2,7 +2,7 @@ import { publicTurn } from './contextQueries.mjs';
 import { publicContextEvent } from './contextEvents.mjs';
 import { CONTEXT_STRUCTURE_DEFINITIONS, OWNED_EVENT_LINK, readContextRelated } from './contextRelated.mjs';
 
-const CONTROL_KEYS = ['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroom','headroomAllowLossy','pxpipe','pxpipeAllowLossy','thinking','privacy','memory','qac','pairs','reorder','midinject','diet','lingua','epochMicro','epochAuto','adaptiveCacheTtl','caveman','ponytail','clientOptOut','contextStructure'];
+const CONTROL_KEYS = ['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroom','headroomAllowLossy','pxpipe','pxpipeAllowLossy','thinking','privacy','memory','qac','pairs','reorder','midinject','diet','lingua','epochMicro','epochAuto','handoff','adaptiveCacheTtl','caveman','ponytail','clientOptOut','contextStructure'];
 export function readContextEvidenceExport(db, definition, mode, limit) {
   const selection = mode === 'selected' ? definition.selection : null;
   const scope = definition.scope, clauses = ['r.contextSessionId IS NOT NULL'], args = [];
@@ -30,7 +30,7 @@ export function readContextEvidenceExport(db, definition, mode, limit) {
   const related = readContextRelated(db, rows.map((row) => row.id)), stages = new Map();
   for (let offset=0;offset<rows.length;offset+=100) {
     const ids=rows.slice(offset,offset+100).map((row)=>row.id);
-    for (const {requestId,...stage} of db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk FROM contextStages WHERE requestId IN (${ids.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,ids)) {
+    for (const {requestId,...stage} of db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk,outcomeSource,errorCode,executionRequestId FROM contextStages WHERE requestId IN (${ids.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,ids)) {
       if (!stages.has(requestId)) stages.set(requestId,[]);
       stages.get(requestId).push(stage);
     }
@@ -38,7 +38,7 @@ export function readContextEvidenceExport(db, definition, mode, limit) {
   const items = rows.map((row) => {
     const turn = publicTurn(row);
     return {...turn,controls:Object.fromEntries(Object.entries(turn.controls).filter(([key,value])=>CONTROL_KEYS.includes(key)&&typeof value==='boolean')),
-      stages:stages.get(row.id)||[],structures:related.structures.get(row.id)||[],costRecords:related.costs.get(row.id)||[]};
+      stages:stages.get(row.id)||[],structures:related.structures.get(row.id)||[],costRecords:related.costs.get(row.id)||[],handoffs:related.handoffs.get(row.id)||[]};
   });
   return { items,totalRecords,requestedAttempts,missingAttempts:requestedAttempts?.filter(item=>!rows.some(row=>row.id===item.id&&row.contextSessionId===item.sessionId)) || [],clientEvents:db.all(`SELECT e.* ${eventJoin} ORDER BY e.occurredAt,e.id`,args).map(publicContextEvent),
     coverage:{attributedAttempts:totalRecords,contextOnly:true,reconstruction:false,

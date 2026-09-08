@@ -1,3 +1,4 @@
+import { requestFetch as fetch, throwIfRequestAborted } from '../utils/requestLifetime.js';
 import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { BudgetAdmissionError } from "../../src/lib/db/repos/budgetRepo.js";
 import { budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
@@ -72,6 +73,7 @@ export async function handleEmbeddingsCore({
   let serialized;
   try {
     serialized = JSON.stringify(requestBody);
+    throwIfRequestAborted();
     if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url });
     providerResponse = await fetch(url, {
       method: "POST",
@@ -90,6 +92,7 @@ export async function handleEmbeddingsCore({
   }
 
   // Handle 401/403 — try token refresh (skip for noAuth providers)
+  throwIfRequestAborted();
   const executor = getExecutor(provider);
   if (
     !executor?.noAuth &&
@@ -112,7 +115,8 @@ export async function handleEmbeddingsCore({
         discardResponseBody(providerResponse);
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
-        if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: retryUrl });
+        throwIfRequestAborted();
+    if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: retryUrl });
         providerResponse = await fetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,

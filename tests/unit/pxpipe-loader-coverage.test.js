@@ -49,6 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  loader?.unloadPxpipe();
   fs.rmSync(stubDir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -123,6 +124,15 @@ describe('loadPxpipe', () => {
 });
 
 describe('unloadPxpipe', () => {
+  it('invalidates an in-flight load so stop cannot silently restart its worker', async () => {
+    await freshLoader({ entry: goodStub() });
+    const pending = loader.loadPxpipe();
+    loader.unloadPxpipe();
+    await expect(pending).rejects.toMatchObject({ code: 'LOAD_CANCELLED' });
+    expect(loader.getLoadedInfo()).toEqual({ loaded: false });
+    await expect(loader.loadPxpipe()).resolves.toMatchObject({ version: '1.0.0' });
+  });
+
   it('returns whether a module was loaded and clears the cache', async () => {
     await freshLoader({ entry: goodStub() });
     expect(loader.unloadPxpipe()).toBe(false);
@@ -137,8 +147,8 @@ describe('getTransform', () => {
   it('returns the transform function when loadable', async () => {
     await freshLoader({ entry: goodStub() });
     const transform = await loader.getTransform();
-    const { module: mod } = await loader.loadPxpipe();
-    expect(transform).toBe(mod.transformAnthropicMessages);
+    const body = new TextEncoder().encode('{}');
+    expect(await transform({ body })).toMatchObject({ reason: 'stub-ok', body });
   });
 
   it('returns null on a cold cache when autoLoad is off, without loading', async () => {

@@ -205,4 +205,28 @@ describe('history queries and operator boundary', () => {
     expect((await getQuotaHistory(params({ kind: 'checks', eventType: 'failed' }))).total).toBe(1);
     await expect(recordQuotaCheckEvent({ ...event, code: 'PRIVATE-CREDENTIAL' })).rejects.toThrow('Invalid quota check code');
   });
+  it('joins warming outcomes to the exact observed resource and filters before pagination', async () => {
+    const sample = usage({ unit: 'requests', resourceType: 'request-limit' });
+    await captureQuotaUsage(conn, sample, { capturedAt });
+    const firstId = quotaObservationsFromUsage(conn, sample, { capturedAt })[0].id;
+    const wallet = usage({ unit: 'USD', resourceType: 'monetary-budget' });
+    await captureQuotaUsage(conn, wallet, { capturedAt });
+    const secondId = quotaObservationsFromUsage(conn, wallet, { capturedAt })[0].id;
+    const event = { connectionId: conn.id, provider: conn.provider, scope: 'weekly', eventType: 'warm-outcome', code: 'http_200', outcome: 'accepted', targetModel: 'fixture-model', capturedAt };
+    for (const observationId of [firstId, firstId, secondId]) {
+      await recordQuotaCheckEvent({ ...event, observationId, unit: 'forged', resourceType: 'forged' });
+    }
+    const first = await getQuotaHistory(params({ kind: 'checks', unit: 'requests', resourceType: 'request-limit', outcome: 'accepted', targetModel: 'fixture-model', pageSize: '1' }));
+    const second = await getQuotaHistory(params({ kind: 'checks', observationId: firstId, pageSize: '1', page: '2' }));
+    expect(first.total).toBe(2); expect(first.hasMore).toBe(true);
+    expect(second.total).toBe(2); expect(second.hasMore).toBe(false);
+    expect(first.items[0].id).not.toBe(second.items[0].id);
+    expect(first.items[0]).toMatchObject({ observationId: firstId, unit: 'requests', resourceType: 'request-limit' });
+    expect((await getQuotaHistory(params({ kind: 'checks', unit: 'USD' }))).items[0].observationId).toBe(secondId);
+    for (const mismatch of [{ connectionId: 'another-account' }, { scope: 'session' }, { provider: 'codex' }, { observationId: '0'.repeat(64) }]) {
+      await expect(recordQuotaCheckEvent({ ...event, observationId: firstId, ...mismatch })).rejects.toThrow('Quota observation does not match check target');
+    }
+    await recordQuotaCheckEvent({ ...event, checkId: 'without-link' });
+    expect((await getQuotaHistory(params({ kind: 'checks', checkId: 'without-link' }))).items[0]).toMatchObject({ observationId: null, resourceType: null, unit: null });
+  });
 });

@@ -176,15 +176,13 @@ describe("Antigravity auto-ping is opt-in (#2564)", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("pokes one model per quota family once the connection is switched on", async () => {
+  it("pokes only the cold quota family once the connection is switched on", async () => {
     deps.getSettings.mockResolvedValue({ antigravityAutoPing: { connections: { "ag-1": true } } });
     await runQuotaAutoPingTick(deps, state);
 
     expect(getAntigravityUsage).toHaveBeenCalledWith("token", undefined, expect.anything(), expect.anything());
-    expect(execute).toHaveBeenCalledTimes(QUOTA_AUTOPING_CONFIG.providers.antigravity.quotaKeys.length);
-    expect(execute.mock.calls.map(([call]) => call.model)).toEqual(
-      QUOTA_AUTOPING_CONFIG.providers.antigravity.quotaKeys,
-    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls.map(([call]) => call.model)).toEqual(['gemini-3.5-flash-extra-low']);
   });
 
   it("records the governing reset, not whichever family came first in the map", async () => {
@@ -251,30 +249,27 @@ describe("an account-level refusal does not walk the other families (#2564)", ()
     // Poking on would fire a second request at an endpoint already refusing this
     // account, which is exactly what a limiter is asking us not to do.
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    expect(deps.updateProviderConnection.mock.calls.some(([, patch]) => patch.lastPingAt)).toBe(false);
     expect(state.failureCache["antigravity:ag-1"]).toBeTruthy();
   });
 
-  it("keeps going past a model-scoped or transport failure", async () => {
-    // Google's transport commonly answers 5xx after processing the request, and a
-    // 404 is about that one model — neither says anything about the other family.
+  it("does not continue to another family after an uncertain transport outcome", async () => {
+    getAntigravityUsage.mockResolvedValue({ quotas: {} });
     execute
       .mockResolvedValueOnce({ response: okResponse(503) })
       .mockResolvedValueOnce({ response: okResponse(200) });
     await runQuotaAutoPingTick(deps, state);
 
-    expect(execute).toHaveBeenCalledTimes(2);
-    expect(deps.updateProviderConnection).toHaveBeenCalledWith(
-      "ag-1",
-      expect.objectContaining({ lastPingedResetAt: GEMINI_RESET }),
-    );
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(deps.updateProviderConnection.mock.calls.some(([, patch]) => patch.lastPingAt)).toBe(false);
   });
 
-  it("counts the tick as failed when every family threw", async () => {
+  it("retains uncertainty when the first family throws without sending another family", async () => {
     execute.mockRejectedValue(new Error("socket hang up"));
     await runQuotaAutoPingTick(deps, state);
 
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(deps.updateProviderConnection.mock.calls.some(([, patch]) => patch.lastPingAt)).toBe(false);
     expect(state.failureCache["antigravity:ag-1"]).toBeTruthy();
   });
 });

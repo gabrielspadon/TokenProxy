@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 /**
  * Unit tests for the app-side video handler (src/sse/handlers/videoGeneration.js)
  *
@@ -37,7 +38,9 @@ vi.mock("@/sse/services/tokenRefresh.js", () => tokenMocks);
 vi.mock("@/lib/localDb", () => localDbMocks);
 vi.mock("@/sse/utils/logger.js", () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));
 
-import { handleVideoCreate, handleVideoGet } from "@/sse/handlers/videoGeneration.js";
+import { handleVideoCreate as rawhandleVideoCreate, handleVideoGet as rawhandleVideoGet } from "@/sse/handlers/videoGeneration.js";
+const handleVideoCreate = trackResponseLifetime(rawhandleVideoCreate);
+const handleVideoGet = trackResponseLifetime(rawhandleVideoGet);
 
 const originalFetch = global.fetch;
 

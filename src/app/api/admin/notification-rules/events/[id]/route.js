@@ -4,10 +4,21 @@ import {
   RuleValidationError,
   acknowledgeEvent,
   snoozeEvent,
+  getRuleEvent,
 } from '@/lib/db/repos/notificationRulesRepo.js';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+export async function GET(request,{params}) {
+  const denied=await requireAdmin(request); if (denied) return denied;
+  const {id}=await params;
+  if (typeof id!=='string' || !/^[a-zA-Z0-9._:-]{1,128}$/.test(id)) return adminError(400,'invalid_identity','Invalid alert identity.');
+  try {
+    const event=await getRuleEvent(id);
+    return event?adminJson({event}):adminError(404,'event_not_found','This alert is not retained.');
+  } catch { return adminError(503,'event_unavailable','The selected alert could not be read.'); }
+}
 
 // The only two dispositions an operator can record. Neither changes any
 // provider-facing state; both annotate the alert row.

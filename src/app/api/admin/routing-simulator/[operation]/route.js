@@ -1,6 +1,7 @@
+import { validateRoutePlanSimulation, simulateRoutePlan } from '@/lib/routingPlanSimulation.js';
 import { requireAdmin } from '@/lib/admin/guard.js';
 import { adminError, adminJson } from '@/lib/admin/policy.js';
-import { captureRoutingState } from '@/lib/admin/routingCapture.js';
+import { captureRoutingState, captureRoutePlanState, assertRouteCaptureFresh } from '@/lib/admin/routingCapture.js';
 import { SimulationError, SIMULATOR_LIMITS, validateSimulation, simulateRouting } from '@/lib/routingSimulation.js';
 
 export const dynamic = 'force-dynamic';
@@ -35,8 +36,18 @@ export async function POST(request, context) {
   try {
     const operation = (await context?.params)?.operation;
     if (!['capture', 'validate', 'simulate'].includes(operation)) return adminError(404, 'simulation_route_not_found', 'Simulation operation not found.');
-    const body = await readBody(request, operation === 'capture' ? ['input', 'sessionHash'] : ['capture', 'input', 'draft']);
-    if (operation === 'capture') return adminJson(await captureRoutingState(body));
+    const body = await readBody(request, operation === 'capture' ? ['input', 'sessionHash', 'draft', 'scope'] : ['capture', 'input', 'draft', 'sessionPolicy']);
+    if (operation === 'capture') {
+      if (body.scope !== undefined && body.scope !== 'route') throw new SimulationError('invalid_capture_scope');
+      return adminJson(await (body.scope === 'route' ? captureRoutePlanState(body) : captureRoutingState(body)));
+    }
+    if (body.capture?.version === 2) {
+      const validated = validateRoutePlanSimulation(body);
+      await assertRouteCaptureFresh(validated.state);
+      if (operation === 'simulate') return adminJson(simulateRoutePlan(body));
+      return adminJson({ valid: true, version: 2, captureId: validated.state.captureId, policyVersion: validated.state.policyVersion,
+        draftPreview: validated.includeDraft ? { valid: true, accountSimulationAppliesDraft: true } : null });
+    }
     if (operation === 'simulate') return adminJson(simulateRouting(body));
     const validated = validateSimulation(body);
     return adminJson({ valid: true, version: validated.state.version, captureId: validated.state.captureId,

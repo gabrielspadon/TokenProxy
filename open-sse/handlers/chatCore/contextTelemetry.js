@@ -7,6 +7,9 @@ export function createContextTelemetry(fields) {
   const requestId = randomUUID();
   const routingHash = /^[a-f0-9]{32,64}$/.test(fields.sessionHash || "") ? fields.sessionHash : null;
   return { ...fields, requestId,
+    stages: fields.stages?.map(stage => stage.outcomeSource === "execution"
+      ? { ...stage, executionRequestId: stage.executionRequestId || requestId } : stage),
+    handoffs: fields.handoffs?.map(item => ({ ...item, executionRequestId: item.executionRequestId || requestId })),
     attempt: typeof fields.nextAttempt === "function" ? fields.nextAttempt() : fields.attempt ?? 1,
     sessionHash: routingHash || createHash("sha256").update(requestId).digest("hex"),
     identitySource: routingHash ? (["explicit", "inferred"].includes(fields.sessionIdentitySource) ? fields.sessionIdentitySource : "routing") : "request",

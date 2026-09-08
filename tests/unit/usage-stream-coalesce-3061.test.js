@@ -16,6 +16,8 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+vi.mock('@/lib/db/analytics/refreshPolicy.js', () => ({ analyticsRefreshPolicy: () => ({ mode: 'normal', reason: 'fixture', streamIntervalMs: 250, refreshAfterMs: 15000 }) }));
+
 const statsEmitter = new EventEmitter();
 statsEmitter.setMaxListeners(50);
 
@@ -57,7 +59,7 @@ function makeRequest(period = 'today') {
 // start() subscribes only after its first awaited send resolves.
 async function waitForSubscription() {
   for (let i = 0; i < 200; i++) {
-    if (statsEmitter.listenerCount('update') > 0) return;
+    if (statsEmitter.listenerCount('update') > 0 && calls.stats > 0 && concurrent === 0) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   throw new Error('stream never subscribed to statsEmitter');
@@ -99,8 +101,9 @@ describe('the usage stream never stacks stats recalculations (#3061, #3029)', ()
 
     const baseline = calls.stats;
     statsEmitter.emit('update'); // runs
-    statsEmitter.emit('update'); // skipped, queued
-    await settle(250);
+    await settle(270); // the shared cadence has started the first recalc
+    statsEmitter.emit('update'); // invalidates while that read is running
+    await settle(400);
 
     expect(calls.stats - baseline).toBe(2);
     controller.abort();

@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // OpenAI TTS — model format: "tts-model/voice"
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA } from "../../providers/index.js";

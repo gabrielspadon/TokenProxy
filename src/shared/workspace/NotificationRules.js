@@ -31,6 +31,7 @@ import {
   scopeLabel,
 } from './notificationRulesModel';
 import styles from './notificationRules.module.css';
+import { NotificationAutomation } from './NotificationAutomation';
 
 const ENDPOINT = '/api/admin/notification-rules';
 
@@ -138,6 +139,7 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
             const next = conditions.find((entry) => entry.kind === value);
             set({
               conditionKind: value,
+              ...(next?.allowedScopes && !next.allowedScopes.includes(draft.scopeKind) ? { scopeKind: 'global', scopeId: null } : {}),
               // Snap the threshold into the new condition's declared range
               // rather than carrying an out-of-range value across.
               threshold: next
@@ -162,7 +164,7 @@ function RuleEditor({ rule, conditions, onCancel, onSaved, onStale }) {
             { value: 'global', label: 'Every subject' },
             { value: 'connection', label: 'One account' },
             { value: 'provider', label: 'One provider' },
-          ]}
+          ].filter(option => !condition?.allowedScopes || condition.allowedScopes.includes(option.value))}
           w={200}
         />
         {draft.scopeKind !== 'global' && (
@@ -402,6 +404,12 @@ function DryRun({ rule, conditions }) {
                       {ruleNumber(firing.sampleCount)}{' '}
                       {EVIDENCE_LABEL[condition?.evidenceKind] || 'record'}
                       {firing.sampleCount === 1 ? '' : 's'}.
+                      <Group gap="xs" mt="xs">
+                        {(firing.refs || []).map((ref, index) => {
+                          const href = evidenceHref(condition?.evidenceKind, ref, { scopeKey: group.scopeKey });
+                          return href ? <Link key={ref} href={href}>Inspect evidence {index + 1}</Link> : <code key={ref}>{ref}</code>;
+                        })}
+                      </Group>
                     </li>
                   ))
                 )}
@@ -454,7 +462,8 @@ function AlertRow({ event, conditions, rules, onChanged }) {
       setBusy(false);
     }
   };
-  const href = evidenceHref(event.evidence?.kind, event.evidence?.refs?.[0], event);
+  const refs = event.evidence?.refs || [];
+  const href = evidenceHref(event.evidence?.kind, refs[0], event);
   return (
     <Table.Tr data-state={state}>
       <Table.Td>{ruleTimestamp(event.firedAt)}</Table.Td>
@@ -486,7 +495,14 @@ function AlertRow({ event, conditions, rules, onChanged }) {
           being emitted bare. */}
       <Table.Td data-unknown={event.evidence?.refs?.length ? undefined : true}>
         {event.evidence?.refs?.length ? (
-          href ? (
+          refs.length > 1 ? (
+            <details><summary>{ruleNumber(refs.length)} {EVIDENCE_LABEL[event.evidence.kind] || 'record'}s</summary>
+              <ul>{refs.map((ref, index) => {
+                const link = evidenceHref(event.evidence.kind, ref, event);
+                return <li key={ref}>{link ? <Link href={link}>Inspect evidence {index + 1}</Link> : <code>{ref}</code>}</li>;
+              })}</ul>
+            </details>
+          ) : href ? (
             <Link href={href}>
               {ruleNumber(event.evidence.refs.length)}{' '}
               {EVIDENCE_LABEL[event.evidence.kind] || 'record'}
@@ -558,8 +574,9 @@ function AlertRow({ event, conditions, rules, onChanged }) {
   );
 }
 
-export function NotificationRules() {
+export function NotificationRules({ selectedEventId = null }) {
   const resource = useResource(ENDPOINT);
+  const selectedEvent=useResource(selectedEventId?`${ENDPOINT}/events/${encodeURIComponent(selectedEventId)}`:null);
   const [editing, setEditing] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const selectionOrigin = useRef(null);
@@ -589,8 +606,8 @@ export function NotificationRules() {
         <div>
           <h3>Notification rules</h3>
           <p className={styles.note}>
-            Rules watch retained measurements and raise an alert for an operator to read. They never
-            change a route, an account or a profile, and they never contact a provider.
+            Rules watch retained measurements and raise alerts. Account actions require a separately
+            enabled policy with limits and rollback receipts. Evaluating rules never contacts a provider.
           </p>
         </div>
         <Group gap="sm">
@@ -619,6 +636,25 @@ export function NotificationRules() {
       {resource.error && <Alert color="orange" title="Notification rules unavailable">{resource.error}</Alert>}
       {resource.data && (
         <>
+          {selectedEventId && <section id="selected-alert" className={styles.editor} aria-label="Selected triggering alert">
+            <h4>Selected triggering alert</h4>
+            {selectedEvent.loading&&<Loader size="sm"/>}
+            {selectedEvent.error&&<Alert color="orange">{selectedEvent.error}</Alert>}
+            {selectedEvent.data?.event&&<>
+              <Facts rows={[
+                ['Alert',selectedEvent.data.event.id],
+                ['Rule',selectedEvent.data.event.ruleDefinition?.name||UNKNOWN],
+                ['Fired (UTC)',ruleTimestamp(selectedEvent.data.event.firedAt)],
+                ['Account or scope',selectedEvent.data.event.scopeKey],
+                ['State',alertState(selectedEvent.data.event)],
+                ['Observed value',ruleNumber(selectedEvent.data.event.observedValue)],
+              ]}/>
+              <ul>{(selectedEvent.data.event.evidence?.refs||[]).map((ref,index)=>{
+                const href=evidenceHref(selectedEvent.data.event.evidence.kind,ref,selectedEvent.data.event);
+                return <li key={ref}>{href?<Link href={href}>Inspect evidence {index+1}</Link>:<code>{ref}</code>}</li>;
+              })}</ul>
+            </>}
+          </section>}
           <div className={styles.ruleWorkspace} data-editing={Boolean(editing) || undefined}>
             <div className={styles.ruleInventory}>
             {!rules.length ? (
@@ -698,6 +734,7 @@ export function NotificationRules() {
               onStale={resource.refresh}
             />
           )}
+              {selected && <NotificationAutomation key={selected.id} rule={selected}/>}
               {selected && <details className={styles.ruleEvidence}>
                 <summary>Saved rule evidence and audit</summary>
                 <div className={styles.detail}>

@@ -44,9 +44,11 @@ export const SHAPING_WORKER_FILES = [
   "./open-sse/utils/privacyFilter.js",
   "./open-sse/utils/queryAwareCompress.js",
   "./open-sse/utils/schemaDistiller.js",
+  "./open-sse/utils/stageOutcome.js",
   "./open-sse/utils/thinkingStrip.js",
   "./src/lib/dataDir.js",
   "./src/lib/shaping/evaluate.mjs",
   "./src/lib/shaping/fixtures.mjs",
+  "./src/lib/shaping/recommendations.mjs",
   "./src/lib/shaping/worker.mjs"
 ];

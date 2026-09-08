@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 import { Buffer } from "node:buffer";
 
 function hexToBase64(audioHex) {

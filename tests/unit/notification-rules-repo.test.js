@@ -49,7 +49,7 @@ afterEach(async () => {
 describe('rule validation', () => {
   it('refuses a condition with no truthful data source behind it', async () => {
     await expect(
-      repo.createRule({ ...RULE, conditionKind: 'compression_saver_failure' })
+      repo.createRule({ ...RULE, conditionKind: 'unrecorded_condition' })
     ).rejects.toThrow(/Unsupported condition/);
   });
 

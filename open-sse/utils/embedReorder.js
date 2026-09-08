@@ -1,3 +1,4 @@
+import { stageErrorCode } from "./stageOutcome.js";
 // Embedding-based reordering of historical chat turns (#token-savers).
 //
 // Within the movable region before the kept-recent tail, whole text-only
@@ -11,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { textKey } from "../services/memory/sessionMemo.js";
+import { preparationSignal, waitForPreparation } from "./preparationAbort.js";
 
 const CACHE_MAX = 512;
 const internalCache = new Map(); // module-level LRU, first-key eviction
@@ -84,34 +86,42 @@ function cosine(a, b) {
 }
 
 function failOpen(messages, reason) {
-  return { messages, moved: 0, notes: [], error: reason };
+  return { messages, moved: 0, notes: [], error: reason, outcome: "skipped", errorCode: null };
 }
 
-async function fetchEmbeddings({ embedUrl, embedModel, input, timeoutMs }) {
-  const res = await fetch(embedUrl, {
+async function fetchEmbeddings({ embedUrl, embedModel, input, timeoutMs, signal }) {
+  signal?.throwIfAborted();
+  const deadline = preparationSignal(signal, timeoutMs);
+  const res = await waitForPreparation(fetch(embedUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: embedModel, input }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) throw new Error(`embed http ${res.status}`);
-  const body = await res.json();
-  if (!body || !Array.isArray(body.data)) throw new Error("embed malformed response");
+    signal: deadline,
+  }), deadline, late => late.body?.cancel());
+  let body;
+  try {
+    if (!res.ok) throw Object.assign(new Error("embed http error"), { code: "service_http_error" });
+    body = await waitForPreparation(res.json(), deadline);
+    deadline.throwIfAborted();
+  } finally {
+    try { await res.body?.cancel(); } catch { /* already consumed or aborted */ }
+  }
+  if (!body || !Array.isArray(body.data)) throw Object.assign(new Error("embed malformed response"), { code: "invalid_response" });
   const sorted = [...body.data];
   if (sorted.some((d) => d && typeof d.index === "number")) {
     sorted.sort((x, y) => (x.index || 0) - (y.index || 0));
   }
   const out = sorted.map((d) => {
-    if (!d || !Array.isArray(d.embedding)) throw new Error("embed malformed entry");
+    if (!d || !Array.isArray(d.embedding)) throw Object.assign(new Error("embed malformed entry"), { code: "invalid_response" });
     return d.embedding;
   });
-  if (out.length !== input.length) throw new Error("embed count mismatch");
+  if (out.length !== input.length) throw Object.assign(new Error("embed count mismatch"), { code: "invalid_response" });
   const dim = out[0] ? out[0].length : 0;
-  if (out.some((e) => !e.length || e.length !== dim)) {
-    throw new Error("embed dimension mismatch");
+  if (out.some((e) => !e.length || e.length !== dim || e.some(value => typeof value !== "number" || !Number.isFinite(value)))) {
+    throw Object.assign(new Error("embed dimension mismatch"), { code: "invalid_response" });
   }
   if (out.some((e) => e.every((v) => v === 0))) {
-    throw new Error("embed zero vector");
+    throw Object.assign(new Error("embed zero vector"), { code: "invalid_response" });
   }
   return out;
 }
@@ -175,6 +185,7 @@ function applyOrder(messages, runs, orderFor) {
  * replaced. Without a memo every call recomputes, as before.
  */
 export async function reorderByRelevance(messages, options = {}) {
+  options.signal?.throwIfAborted();
   if (!Array.isArray(messages) || messages.length === 0) {
     return { messages, moved: 0, notes: [] };
   }
@@ -252,10 +263,12 @@ export async function reorderByRelevance(messages, options = {}) {
     }
     let embeddings;
     try {
-      embeddings = await fetchEmbeddings({ embedUrl, embedModel, input: batch, timeoutMs });
+      embeddings = await fetchEmbeddings({ embedUrl, embedModel, input: batch, timeoutMs, signal: options.signal });
     } catch (err) {
-      return failOpen(messages, err && err.message ? err.message : "embed request failed");
+      options.signal?.throwIfAborted();
+      return { ...failOpen(messages, stageErrorCode(err)), outcome: "failed", errorCode: stageErrorCode(err) };
     }
+    options.signal?.throwIfAborted();
     for (let s = 0; s < slots.length; s++) {
       cacheSet(cache, slots[s].key, embeddings[s]);
       if (slots[s].kind === "query") queryVec = embeddings[s];

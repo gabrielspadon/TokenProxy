@@ -67,6 +67,7 @@ describe('dedupRefresh coalescing', () => {
 
     const p1 = dedupRefresh('prov', token, fn, log, 'conn0000');
     const p2 = dedupRefresh('prov', token, fn, log, 'conn1111');
+    await Promise.resolve();
     resolveFn('fresh');
     await expect(p1).resolves.toBe('fresh');
     await expect(p2).resolves.toBe('fresh');

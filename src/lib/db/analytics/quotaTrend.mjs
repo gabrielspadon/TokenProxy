@@ -1,3 +1,4 @@
+import { quotaIntervalEvidence } from './quotaReplenishment.mjs';
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 export const QUOTA_TREND_METHOD = Object.freeze({
@@ -52,6 +53,7 @@ export function analyzeQuotaSeries(rows, { asOf, measurement = 'absolute' } = {}
     resetAt: null,
     increases: [],
     conflictingTimes: [],
+    evidence: quotaIntervalEvidence(rows, { asOf, measurement }),
     state: 'insufficient_samples',
   };
   if (!rows.length) return result;

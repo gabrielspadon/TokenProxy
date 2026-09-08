@@ -102,6 +102,8 @@ function makeSettings(regime) {
     cavemanLevel: "full",
     ponytailLevel: "full",
     memoryCompactionEnabled: regime === "tight-compact",
+    pxpipeAllowLossy: true,
+    epochConsent: true,
   };
 }
 

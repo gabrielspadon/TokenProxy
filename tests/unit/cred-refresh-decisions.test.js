@@ -252,3 +252,8 @@ describe("issue-record age rendering", () => {
     expect(emitted[0]).toContain("age=3h");
   });
 });
+
+// Isolate decision semantics from the separately qualified asynchronous transport.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

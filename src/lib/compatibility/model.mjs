@@ -1,5 +1,8 @@
 export const OWNER_SCOPE = 'installation-operator';
-export const IMPLEMENTATION_VERSION = 'local-compatibility-v1';
+export const IMPLEMENTATION_VERSION = 'compatibility-v2';
+export const SCOPES = ['local-translation', 'controlled-executor', 'controlled-gateway-routing'];
+export const CONTROLLED_PROVIDERS = ['openai', 'claude'];
+export const CONTROLLED_SCENARIOS = ['native-fields', 'tool-ordering', 'cache-accounting', 'sse-terminal', 'slow-consumer', 'proxy-configuration', 'abort-before-dispatch', 'interrupted-stream'];
 export const LIMITS = Object.freeze({ definitionBytes: 65536, resultBytes: 524288, events: 256, depth: 24, fixtureIds: 200, revisions: 2000, runs: 2000, queued: 4, timeoutMs: 3000 });
 export const FORMATS = ['openai', 'claude', 'gemini', 'openai-responses'];
 export const TERMINAL = ['succeeded', 'failed', 'cancelled', 'timed-out', 'interrupted'];
@@ -25,7 +28,12 @@ export function boundedJson(value, maxBytes) {
 }
 export function validateDefinition(input) {
   object(input, 'Fixture definition');
-  keys(input, ['version', 'origin', 'suitable', 'operation', 'sourceFormat', 'targetFormat', 'model', 'payload']);
+  keys(input, ['version', 'origin', 'suitable', 'operation', 'sourceFormat', 'targetFormat', 'model', 'payload', 'scope', 'provider', 'scenario', 'fixtureVersion']);
+  if (input.scope !== undefined && !SCOPES.includes(input.scope)) throw new CompatibilityError('Unsupported evidence scope.');
+  if (input.scope && input.scope !== 'local-translation') {
+    if (!CONTROLLED_PROVIDERS.includes(input.provider) || !CONTROLLED_SCENARIOS.includes(input.scenario) || input.fixtureVersion !== 'controlled-v1') throw new CompatibilityError('Select an exact controlled provider, scenario and fixture version.');
+    if (input.operation !== 'request') throw new CompatibilityError('Controlled scenarios accept a request payload; their upstream stream is fixed synthetic data.');
+  } else if (input.provider !== undefined || input.scenario !== undefined || input.fixtureVersion !== undefined) throw new CompatibilityError('Controlled target fields require a controlled scope.');
   if (input.version !== 1 || !['synthetic', 'operator-submitted'].includes(input.origin) || input.suitable !== true) throw new CompatibilityError('Confirm this is synthetic or suitable operator-submitted test content with no credentials or private production traffic.');
   if (!['request', 'stream'].includes(input.operation) || !FORMATS.includes(input.sourceFormat) || !FORMATS.includes(input.targetFormat)) throw new CompatibilityError('Choose a supported local operation and format.');
   if (typeof input.model !== 'string' || !input.model.trim() || input.model.length > 160 || /[\x00-\x1f]/.test(input.model)) throw new CompatibilityError('A model label of1–160 characters is required. It does not select an account.');
@@ -40,7 +48,7 @@ export function validateDefinition(input) {
       visit(child, depth + 1);
     }
   };
-  visit(input.payload);
+  visit(input);
   boundedJson(input, LIMITS.definitionBytes);
   return structuredClone(input);
 }

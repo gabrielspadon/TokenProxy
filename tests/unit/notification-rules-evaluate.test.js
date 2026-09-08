@@ -250,14 +250,11 @@ describe('condition honesty', () => {
     }
   });
 
-  it('compression/saver failure is declared unavailable with its reason and requirement', () => {
+  it('compression failure uses explicit execution evidence and counts failed stages', () => {
     const saver = UNAVAILABLE_CONDITIONS.find(
       (entry) => entry.kind === 'compression_saver_failure'
     );
-    expect(saver).toBeDefined();
-    expect(saver.reason).toMatch(/fail-open|skipped/i);
-    expect(saver.wouldRequire).toBeTruthy();
-    // It must not be silently offered as a usable condition.
-    expect(CONDITIONS.compression_saver_failure).toBeUndefined();
+    expect(saver).toBeUndefined();
+    expect(CONDITIONS.compression_saver_failure).toMatchObject({ source: 'contextStages', durationRole: 'window', unit: 'failed transformation stages' });
   });
 });

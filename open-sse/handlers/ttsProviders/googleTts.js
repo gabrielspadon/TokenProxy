@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // Google Translate TTS (no auth) — scrape token + batchexecute RPC
 import { UA } from "./_base.js";
 

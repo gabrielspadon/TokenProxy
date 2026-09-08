@@ -142,7 +142,7 @@ export async function saveRequestStats(detail) {
         ]
       );
       const coverage = detail.contextTelemetry?.dispatchCoverage;
-      if (["physical-dispatch", "executor-invocation"].includes(coverage) && existing?.dispatchCoverage !== coverage) {
+      if (["physical-dispatch", "executor-invocation", "preparation-only"].includes(coverage) && existing?.dispatchCoverage !== coverage) {
         db.run(`UPDATE requestStats SET dispatchCoverage=? WHERE id=?`, [coverage, detail.id]);
       }
       const snapshot = detail.contextTelemetry?.pricingSnapshot;

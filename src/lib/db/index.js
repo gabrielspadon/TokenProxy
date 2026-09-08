@@ -1,4 +1,5 @@
 // Public API barrel — all DB functions
+import { randomUUID } from "node:crypto";
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 import { decryptSecretJson, encryptSecretJson } from "./helpers/secretCol.js";
@@ -178,7 +179,7 @@ export async function importDb(payload) {
       const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
       db.run(
         `INSERT OR REPLACE INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, provider, importedAuthType(authType, provider, providerCatalog), name || null, email || null, priority || null, isActive === false ? 0 : 1, encryptSecretJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
+        [id, provider, importedAuthType(authType, provider, providerCatalog), name || null, email || null, priority || null, isActive === false ? 0 : 1, encryptSecretJson({...rest, credentialRevisionId:randomUUID()}), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
     for (const n of payload.providerNodes || []) {

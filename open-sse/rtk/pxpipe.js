@@ -1,9 +1,11 @@
+import { stageErrorCode } from "../utils/stageOutcome.js";
 // PXPIPE: render bulky Claude-format context as dense PNGs via pxpipe-proxy's
 // library API (transformAnthropicMessages). Fail-open like every token saver:
 // any error/timeout returns { body: null, summary } and leaves the request untouched.
 import { FORMATS } from "../translator/formats.js";
 import { isErrorResult } from "./errorFlags.js";
 import { currentUserRequestMatches } from "./contentPolicy.js";
+import { waitForPreparation } from "../utils/preparationAbort.js";
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MIN_CHARS = 25000;
@@ -24,7 +26,13 @@ function estTokens(chars) {
 }
 
 function skipped(reason, extra = {}) {
-  return { body: null, summary: { applied: false, reason, saver: "pxpipe", ...extra } };
+  const failures = {
+    timeout: "service_timeout", transform_error: "transform_exception", protected_fields_changed: "protected_content_changed",
+    invalid_transform_shape: "invalid_response", tool_evidence_changed: "protected_content_changed", current_user_changed: "protected_content_changed",
+    invalid_image_count: "invalid_response", invalid_transform_metrics: "invalid_response",
+  };
+  const errorCode = failures[reason];
+  return { body: null, summary: { applied: false, reason, saver: "pxpipe", outcome: errorCode ? "failed" : "skipped", errorCode: errorCode || null, ...extra } };
 }
 
 function toolEvidence(messages) {
@@ -57,7 +65,8 @@ function countImages(value) {
 // { body: <new body object> | null, summary } — body is null when nothing changed.
 // opts.transform is injected by the host (src side) so open-sse stays free of
 // filesystem/install concerns and remains usable standalone.
-export async function compressWithPxpipe(body, { enabled, allowLossy = false, format, model, minChars, timeoutMs, transform } = {}) {
+export async function compressWithPxpipe(body, { enabled, allowLossy = false, format, model, minChars, timeoutMs, transform, signal } = {}) {
+  signal?.throwIfAborted();
   if (!enabled) return skipped("disabled");
   if (!allowLossy) return skipped("lossy_opt_in_required");
   if (typeof transform !== "function") return skipped("not_installed");
@@ -72,19 +81,21 @@ export async function compressWithPxpipe(body, { enabled, allowLossy = false, fo
   }
 
   let timeout;
+  const controller = new AbortController();
+  const workSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   try {
     const encoded = new TextEncoder().encode(JSON.stringify(body));
     const budget = Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_TIMEOUT_MS;
-    // transformAnthropicMessages is local CPU work and can't be aborted; race a
-    // timer and discard the result if it loses (input body is never mutated).
-    const result = await Promise.race([
-      transform({
+    timeout = setTimeout(() => controller.abort(new DOMException('PXPIPE deadline exceeded', 'TimeoutError')), budget);
+    // The host's worker adapter terminates owned work on this signal. Custom
+    // injected functions receive it too; late results never mutate the body.
+    const result = await waitForPreparation(transform({
         body: encoded,
         model,
         options: { minCompressChars: threshold },
-      }),
-      new Promise((resolve) => { timeout = setTimeout(() => resolve(null), budget); }),
-    ]);
+        signal: workSignal,
+      }), workSignal);
+    workSignal.throwIfAborted();
     if (!result) return skipped("timeout", { originalChars, durationMs: Date.now() - startedAt });
     if (!result.applied) {
       return skipped(result.reason || "passthrough", {
@@ -157,7 +168,9 @@ export async function compressWithPxpipe(body, { enabled, allowLossy = false, fo
       : 0;
     return { body: newBody, summary };
   } catch (e) {
-    return skipped("transform_error", { detail: e?.message || String(e), originalChars, durationMs: Date.now() - startedAt });
+    signal?.throwIfAborted();
+    if (controller.signal.aborted) return skipped('timeout', { originalChars, durationMs: Date.now() - startedAt });
+    return skipped("transform_error", { detail: stageErrorCode(e), errorCode: stageErrorCode(e), originalChars, durationMs: Date.now() - startedAt });
   } finally {
     clearTimeout(timeout);
   }

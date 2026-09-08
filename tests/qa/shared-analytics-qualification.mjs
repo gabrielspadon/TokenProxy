@@ -1,0 +1,17 @@
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve, join } from 'node:path';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
+const output=resolve(process.argv[2]);mkdirSync(output,{recursive:true});
+const tests=['shared-analytics-projections','context-analytics-worker','usage-stream-coalesce-3061','usage-stream-listener-leak','workspace-observation-policy','activity-analytics','activity-analytics-api','usage-date-range-3442','antigravity-verification-privacy','analytics-diagnostics','key-usage-analytics'].map(name=>`unit/${name}.test.js`);
+const sources=['src/lib/db/analytics/client.js','src/lib/db/analytics/refreshPolicy.js','src/lib/db/analytics/usageProjection.js','src/app/api/analytics/route.js','src/app/api/usage/stream/route.js','src/shared/workspace/useResource.js','src/shared/hooks/useEventStream.js','src/shared/components/Freshness.js','src/shared/components/Strap.js','src/app/dashboard/sessions/page.js'];
+const files=[...sources,...tests.map(path=>`tests/${path}`),'tests/qa/shared-analytics-browser.mjs','tests/qa/shared-analytics-qualification.mjs','tests/qa/shared-analytics-evidence.mjs','docs/operations/shared-analytics.md'];
+const run=(name,args,cwd)=>{const result=spawnSync(process.execPath,args,{cwd,encoding:'utf8',maxBuffer:32*1024*1024});writeFileSync(join(output,`${name}.log`),(result.stdout||'')+(result.stderr||''));if(result.status!==0)throw Error(`${name} failed; inspect ${join(output,`${name}.log`)}`);};
+run('tests',[join(root,'tests/node_modules/vitest/vitest.mjs'),'run',...tests,'--reporter=json',`--outputFile=${join(output,'tests.json')}`],join(root,'tests'));
+run('lint',[join(root,'node_modules/eslint/bin/eslint.js'),...sources],root);
+const results=JSON.parse(readFileSync(join(output,'tests.json'),'utf8'));
+const sourceHashes=Object.fromEntries(files.map(file=>[file,createHash('sha256').update(readFileSync(join(root,file))).digest('hex')]));
+const receipt={passed:true,passedTests:results.numPassedTests,failedTests:results.numFailedTests,testFiles:tests.length,sourceHashes,qualifiedAt:new Date().toISOString(),paidUpstreamCalls:0,scope:'process-local shared display projections; accounting and P01 latency excluded'};
+writeFileSync(join(output,'qualification.json'),JSON.stringify(receipt,null,2));console.log(`SHARED ANALYTICS QUALIFIED ${receipt.passedTests} passed, ${receipt.failedTests} failed; lint exit 0`);

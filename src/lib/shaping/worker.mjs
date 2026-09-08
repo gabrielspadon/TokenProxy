@@ -4,8 +4,11 @@ import { parentPort, workerData } from 'node:worker_threads';
 globalThis.fetch = async () => { throw new Error('Offline experiments cannot contact services'); };
 try {
   const { evaluateSettings } = await import('./evaluate.mjs');
+  const { compareEvaluationEvidence } = await import('./recommendations.mjs');
   const started = performance.now();
-  const baseline = await evaluateSettings(workerData.baseline, workerData.fixtureSetId);
-  const candidate = await evaluateSettings(workerData.candidate, workerData.fixtureSetId);
-  parentPort.postMessage({ baseline, candidate, localExecutionMs: performance.now() - started, evaluatorVersion: 1 });
+  const options = workerData.fixtures ? { fixtures: workerData.fixtures } : {};
+  const baseline = await evaluateSettings(workerData.baseline, workerData.fixtureSetId, options);
+  const candidate = await evaluateSettings(workerData.candidate, workerData.fixtureSetId, options);
+  parentPort.postMessage({ status: 'completed', baseline, candidate, localExecutionMs: performance.now() - started,
+    evaluatorVersion: 2, runtime: process.version, comparison: compareEvaluationEvidence(baseline, candidate) });
 } catch { parentPort.postMessage({ error: 'offline_evaluation_failed' }); }

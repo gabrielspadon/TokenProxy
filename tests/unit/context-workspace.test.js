@@ -38,7 +38,15 @@ beforeEach(() => {
   fixture = contextFixture(); state.chart = null;
   router = { pathname: '/dashboard/context', asPath: '/dashboard/context', push: vi.fn(), replace: vi.fn(), prefetch: vi.fn().mockResolvedValue(undefined) };
   state.workspace = { scope: { ...initialScope }, setScope: vi.fn(), accounts: [{ connectionId: 'synthetic-account', displayName: 'Synthetic account' }], snapshot: null, observeSnapshot: vi.fn() };
-  fetchMock = vi.fn(async (url, options) => options?.method === 'PATCH' ? response({ updated: true }) : response(String(url).includes('/sessions/') ? {...fixture.detail,turns:fixture.detail.turns.map(row=>({...row,contextSessionId:fixture.detail.session.id}))} : fixture.overview));
+  fetchMock = vi.fn(async (url, options) => {
+    const query = new URL(String(url),'http://test.local').searchParams;
+    if (query.get('view') === 'routing') {
+      const pins = query.get('routingKind') === 'pins';
+      return response({view:'routing',sessionId:fixture.detail.session.id,kind:pins?'pins':'switches',items:pins?fixture.detail.pins:fixture.detail.switches,
+        scope:fixture.detail.routingScope,pagination:{totalItems:1,hasMore:false,nextCursor:null}});
+    }
+    return options?.method === 'PATCH' ? response({ updated:true }) : response(String(url).includes('/sessions/') ? {...fixture.detail,turns:fixture.detail.turns.map(row=>({...row,contextSessionId:fixture.detail.session.id}))} : fixture.overview);
+  });
   vi.stubGlobal('fetch', fetchMock);
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
 });
@@ -186,7 +194,7 @@ describe('Context workspace', () => {
     fixture.overview.sessions = [fixture.overview.sessions[0]];
     fixture.detail = { ...fixture.detail, turns: [], summary: { ...fixture.detail.summary, attempts: 0 }, trend: { ...fixture.detail.trend, points: [] } };
     await render();
-    expect(fetchMock.mock.calls.at(-1)[0]).toContain('/sessions/8?page=1');
+    expect(fetchMock.mock.calls.filter(([url])=>String(url).includes('/sessions/')).at(-1)[0]).toContain('/sessions/8?page=1');
     expect(container.textContent).toContain('Selected session #8 has no attempts in this scope');
     expect(container.textContent).toContain('Exact attempt #101 is not retained. No neighboring attempt is substituted');
     expect(container.querySelector('table[aria-label="Session request attempts"]')).toBeNull();
@@ -196,12 +204,21 @@ describe('Context workspace', () => {
     expect(container.querySelector('[aria-label="Selection details"]')).not.toBeNull();
     expect(container.textContent).toContain('Chosen investigation');
   });
+  it('returns the cohort to page one when a shared project scope changes',async()=>{
+    fixture.overview.pagination={page:1,totalPages:3,totalItems:60,hasNext:true,hasPrev:false};
+    await render();await click('[aria-label="Next sessions page"]');
+    expect(fetchMock.mock.calls.filter(([url])=>String(url).startsWith('/api/context?')&&!String(url).includes('view=projects')).at(-1)[0]).toContain('page=2');
+    state.workspace={...state.workspace,scope:{...initialScope,projectId:'project-exact'}};
+    await render();
+    const url=fetchMock.mock.calls.filter(([url])=>String(url).startsWith('/api/context?')&&!String(url).includes('view=projects')).at(-1)[0];
+    expect(url).toContain('page=1');expect(url).toContain('projectId=project-exact');
+  });
   it('keeps the initial session when a shared filter changes the cohort order', async () => {
     await render();
     fixture.overview.sessions = [{ ...fixture.detail.session, id: 9, projectLabel: 'Different cohort leader' }, fixture.detail.session];
     state.workspace = { ...state.workspace, scope: { ...initialScope, model: 'different-model' } };
     await render();
-    expect(fetchMock.mock.calls.at(-1)[0]).toContain('/sessions/7?page=1');
+    expect(fetchMock.mock.calls.filter(([url])=>String(url).includes('/sessions/')).at(-1)[0]).toContain('/sessions/7?page=1');
     expect(container.querySelector('[aria-pressed="true"]').textContent).toContain('Synthetic research');
   });
   it('paginates attempts on the server without replacing a still-returned selected identity', async () => {
@@ -283,7 +300,8 @@ describe('Context workspace', () => {
     await click('input[value="routing"]');
     expect(container.textContent).toContain('independent of the turn time filter');
     expect(container.textContent).toContain('Synthetic cooldown receipt');
-    expect(container.textContent).toContain('Stored account pins');
+    await click('input[value="pins"]');
+    expect(container.querySelector('[aria-label="Stored account pins"]')).not.toBeNull();
     expect(container.textContent).not.toContain('Active pin');
   });
   it('retains an explicitly chosen comparison baseline after another attempt and scope are selected', async () => {

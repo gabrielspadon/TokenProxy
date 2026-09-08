@@ -1,3 +1,6 @@
+import { requestSignal, throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { waitForPreparation } from '../../../open-sse/utils/preparationAbort.js';
+import { resourceAdmission } from './resourceAdmission.js';
 import {
   getProviderConnections,
   validateApiKey,
@@ -43,6 +46,7 @@ import { createSchedulerRepos } from './schedulerRepos.js';
 import {
   leaseRegistry,
   registerAccountCapacity,
+  reserveProviderLease,
   releaseAccountLease,
   releaseAccountLeaseOnResponse,
   lastLeaseRefusal,
@@ -389,9 +393,12 @@ export async function getProviderCredentials(
   const { promise: nextQueue, resolve: releaseQueue } = Promise.withResolvers();
   providerSelectionQueues.set(providerId, nextQueue);
   let pendingLease = null;
+  let selectionAcquired = false;
 
   try {
-    await currentQueue;
+    await waitForPreparation(currentQueue, requestSignal());
+    throwIfRequestAborted();
+    selectionAcquired = true;
     const commandRepos = isNoAuthProvider(providerId) ? null : await createSchedulerRepos({ now: Date.now() });
     const pendingPinAction = commandRepos?.transaction(() => commandRepos.getPendingPinAction?.({
       sessionHash: routingSessionHash, model: model || MODEL_ANY,
@@ -455,7 +462,10 @@ export async function getProviderCredentials(
       });
       if (resolvedProxy.kind !== 'usable') return null;
       const proxyOptions = toConnectionProxyOptions(resolvedProxy);
+      const publicLease = reserveProviderLease(providerId, settings?.providerStrategies?.[providerId]?.maxConcurrent);
+      if (!publicLease) return { allRateLimited: true, mustWait: true, lastError: 'Provider at capacity', retryAfter: new Date(Date.now() + 1000).toISOString(), retryAfterHuman: '1s' };
       return {
+        accountLease: publicLease,
         id: 'noauth',
         // Executors key their upstream session id on connectionId. Without it
         // deriveSessionId() falls through to a fresh random id on every call, so
@@ -606,6 +616,7 @@ export async function getProviderCredentials(
         // upgrade a window from the synthetic percentage scale to the
         // provider's own absolute remaining/limit.
         const evidence = q.snapshot || c.lastQuotaSnapshot || null;
+        resourceAdmission.recordQuota(c.id, evidence, q.paused);
         const windows = toRankerWindows(evidence, q.rawUsage || null, { now: nowMs });
         persistWindows(c.id, windows, { hasEvidence: Boolean(evidence) });
         return { connection: c, windows };
@@ -695,7 +706,7 @@ export async function getProviderCredentials(
     // registry's capacityOf sees the configured ceiling rather than the
     // fail-open sentinel on this account's first ever selection.
     for (const c of routedConnections) {
-      registerAccountCapacity(c.id, effectiveCapacity(c, { settings, provider: providerId }).limit);
+      registerAccountCapacity(c.id, effectiveCapacity(c, { settings, provider: providerId }).limit, providerId, settings?.providerStrategies?.[providerId]?.maxConcurrent);
     }
 
     if (connection) {
@@ -979,10 +990,13 @@ export async function getProviderCredentials(
     if (pendingLease) leaseRegistry.release(pendingLease);
     throw error;
   } finally {
-    releaseQueue();
-    if (providerSelectionQueues.get(providerId) === nextQueue) {
-      providerSelectionQueues.delete(providerId);
-    }
+    const finishQueue = () => {
+      releaseQueue();
+      if (providerSelectionQueues.get(providerId) === nextQueue) providerSelectionQueues.delete(providerId);
+    };
+    // Cancelling a waiter must not unlock its still-running predecessor.
+    if (selectionAcquired) finishQueue();
+    else currentQueue.then(finishQueue, finishQueue);
   }
 }
 
@@ -1077,6 +1091,7 @@ export async function markAccountUnavailable(
     ...fields,
   });
   const numStatus = Number(status);
+  if (numStatus === 429 && failureMetadata?.failurePhase !== "admission") resourceAdmission.providerThrottle(resolveProviderId(provider));
   let lockClass = classifyAccountFailure(numStatus, errorText, failureMetadata);
   const connections = await getProviderConnections({ provider });
   const conn = connections.find((c) => c.id === connectionId);

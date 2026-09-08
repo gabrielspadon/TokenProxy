@@ -72,6 +72,21 @@ export const ALERT_STATE_LABEL = {
 // record is reachable rather than merely named.
 export function evidenceHref(kind, ref, event) {
   if (!ref) return null;
+  if (kind === 'compatibilityComparison') {
+    try {
+      const [previous, current, check] = JSON.parse(ref);
+      const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+      if (!uuid.test(previous) || !uuid.test(current) || typeof check !== 'string' || !check || check.length > 256) return null;
+      return `/dashboard/compatibility?${new URLSearchParams({ runId: current, compareRunId: previous, checkId: check })}`;
+    } catch { return null; }
+  }
+  if (kind === 'contextStage') {
+    try {
+      const [id, ordinal, sessionId] = JSON.parse(ref);
+      if (typeof id !== 'string' || !id || !Number.isSafeInteger(ordinal) || ordinal < 0 || !Number.isSafeInteger(sessionId) || sessionId < 1) return null;
+      return `/dashboard/context?${new URLSearchParams({ selected: JSON.stringify({ kind: 'context-attempt', id, sessionId }) })}`;
+    } catch { return null; }
+  }
   const connectionId = String(event?.scopeKey || '').split('::')[0];
   // Only routes that exist, with the scope param WorkspaceProvider reads.
   // A link to a surface this build does not ship is worse than no link: it
@@ -80,12 +95,15 @@ export function evidenceHref(kind, ref, event) {
     return `/dashboard?connectionId=${encodeURIComponent(connectionId)}`;
   }
   if (kind === 'accountSwitch') return '/dashboard/sessions';
-  // Operation events have no operator surface yet, so say so by linking nowhere
-  // rather than inventing /dashboard/operations.
+  if (kind === 'operationEvent' && /^[1-9]\d*$/.test(String(ref)) && Number.isSafeInteger(Number(ref))) {
+    return `/dashboard/operations?${new URLSearchParams({ eventId: String(ref), event: String(ref), start: '1970-01-01T00:00:00.000Z', end: '9999-12-31T23:59:59.999Z' })}`;
+  }
   return null;
 }
 
 export const EVIDENCE_LABEL = {
+  compatibilityComparison: 'compatibility check comparison',
+  contextStage: 'failed transformation stage',
   quotaObservation: 'quota observation',
   accountSwitch: 'account switch receipt',
   operationEvent: 'operation event',

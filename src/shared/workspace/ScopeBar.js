@@ -100,7 +100,9 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
       />
       {scope.period === 'custom' && <Button variant="subtle" onClick={openRange}>Edit range</Button>}
       <span className={styles.scopeSeparator} />{populationFilters}
-      {(scope.start || scope.provider || scope.model || scope.connectionId) && (
+      {scope.projectId && <Button variant="light" size="compact-sm" onClick={() => setScope({ projectId: null })}
+        title={`Clear exact project filter ${scope.projectId}`}>Project {scope.projectId.slice(0, 8)} ×</Button>}
+      {(scope.start || scope.provider || scope.model || scope.connectionId || scope.projectId) && (
         <Button
           variant="subtle"
           color="gray"
@@ -112,6 +114,7 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
               provider: null,
               connectionId: null,
               model: null,
+              projectId: null,
             })
           }
         >

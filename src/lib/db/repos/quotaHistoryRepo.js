@@ -65,26 +65,38 @@ export async function retainQuotaUsage(connection, usage) {
   catch { console.warn("[QuotaHistory] observation_write_failed"); return null; }
 }
 
-const EVENT_TYPES = new Set(["scheduled", "started", "usage-read", "failed", "warm-response", "warm-recorded", "clock-running", "still-cold", "completed"]);
-const EVENT_CODES = new Set(["reset-not-before", "probe-not-before", "required_proxy_unavailable", "credential_refresh_failed", "usage_unreadable", "usage_exception", "warm_rejected", "warm_exception", "state_write_failed", "check_exception", "observed", "blocking_quota_exhausted", "every-window-running", "warm-policy-held", "scheduler-recorded", "response-status-unknown", "verified"]);
+const EVENT_TYPES = new Set(["scheduled", "started", "cancelled", "usage-read", "failed", "warm-response", "warm-outcome", "warm-recorded", "clock-running", "still-cold", "completed"]);
+const EVENT_CODES = new Set(["reset-not-before", "probe-not-before", "required_proxy_unavailable", "credential_refresh_failed", "usage_unreadable", "usage_exception", "warm_rejected", "warm_uncertain", "warm_exception", "state_write_failed", "check_exception", "observed", "blocking_quota_exhausted", "every-window-running", "warm-policy-held", "scheduler-recorded", "response-status-unknown", "verified"]);
 
 export async function recordQuotaCheckEvent(event) {
+  return insertQuotaCheckEvent(await getAdapter(), event);
+}
+
+export function insertQuotaCheckEvent(db, event) {
   if (!text(event?.connectionId) || !EVENT_TYPES.has(event.eventType)) throw new TypeError("Invalid quota check event");
-  if (event.code != null && !EVENT_CODES.has(event.code) && !/^http_[1-5]\d{2}$/.test(event.code)) throw new TypeError("Invalid quota check code");
+  if (event.code != null && !EVENT_CODES.has(event.code) && !/^(poll-not-before|verify-not-before|retry-not-before|account-inactive|setting-disabled|auth-unsupported|account-missing|scheduler-stopped|ownership-lost|check-deadline)$/.test(event.code) && !/^http_[1-5]\d{2}$/.test(event.code)) throw new TypeError("Invalid quota check code");
+  if (event.outcome != null && !["accepted", "rejected", "uncertain"].includes(event.outcome)) throw new TypeError("Invalid quota warm outcome");
+  if (event.observationId != null && !/^[a-f0-9]{64}$/.test(event.observationId)) throw new TypeError("Invalid quota observation identity");
+  const observation = event.observationId ? db.get(
+    'SELECT id,resourceType,unit FROM quotaObservations WHERE id=? AND connectionId=? AND scope=? AND provider IS ?',
+    [event.observationId,event.connectionId,text(event.scope),text(event.provider)]) : null;
+  if (event.observationId && !observation) throw new TypeError("Quota observation does not match check target");
   const row = {
     checkId: text(event.checkId) ?? randomUUID(), connectionId: event.connectionId,
     provider: text(event.provider), scope: text(event.scope), source: "quota-auto-ping",
     eventType: event.eventType, scheduledFor: date(event.scheduledFor), resetAt: date(event.resetAt),
     observedAt: date(event.observedAt), capturedAt: date(event.capturedAt) ?? new Date().toISOString(), code: text(event.code),
+    targetModel: text(event.targetModel), outcome: event.outcome ?? null, jobId: text(event.jobId),
+    observationId: observation?.id ?? null,
+    resourceType: observation?.resourceType ?? null, unit: observation?.unit ?? null,
   };
-  const id = event.eventType === "scheduled"
+  const id = event.eventType === "scheduled" && !row.jobId
     ? digest([row.connectionId,row.provider,row.scope,row.eventType,row.scheduledFor,row.resetAt,row.code])
-    : row.eventType === "warm-response" ? randomUUID() : digest([row.checkId,row.scope,row.eventType,row.code]);
-  const db = await getAdapter();
+    : ["warm-response", "warm-outcome"].includes(row.eventType) ? randomUUID() : digest([row.checkId,row.scope,row.eventType,row.code]);
   return db.run(`INSERT OR IGNORE INTO quotaCheckEvents
-    (id,checkId,connectionId,provider,scope,source,eventType,scheduledFor,resetAt,observedAt,capturedAt,code)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-  [id,row.checkId,row.connectionId,row.provider,row.scope,row.source,row.eventType,row.scheduledFor,row.resetAt,row.observedAt,row.capturedAt,row.code]).changes;
+    (id,checkId,connectionId,provider,scope,source,eventType,scheduledFor,resetAt,observedAt,capturedAt,code,targetModel,outcome,resourceType,unit,observationId,jobId)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  [id,row.checkId,row.connectionId,row.provider,row.scope,row.source,row.eventType,row.scheduledFor,row.resetAt,row.observedAt,row.capturedAt,row.code,row.targetModel,row.outcome,row.resourceType,row.unit,row.observationId,row.jobId]).changes;
 }
 
 export async function getQuotaHistory(params = new URLSearchParams(), options = {}) {
