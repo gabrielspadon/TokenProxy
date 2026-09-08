@@ -32,28 +32,9 @@
 .accountEvidence { display: grid; gap: 2px; color: var(--slate); font-size: 13px; line-height: 1.4; margin: 8px 0 12px; overflow-wrap: anywhere; }
 .gate { color: var(--ember); }
 .windows { display: grid; gap: 12px; }
-.window { min-width: 0; }
-.windowHeading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 3px; }
-.windowHeading button { color: var(--ink); background: none; border: 0; padding: 2px 0; text-align: left; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; min-height: var(--account-control-height); }
-.windowHeading strong { color: var(--signal); font-size: 15px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.windowHeading strong[data-low] { color: var(--ember); }
-.meter { position: relative; height: 7px; border-radius: 3px; background: var(--rule); }
-.meter[data-unknown] { background: repeating-linear-gradient(135deg, var(--rule), var(--rule) 4px, transparent 4px, transparent 8px); }
-.fill { display: block; height: 100%; border-radius: 3px; background: var(--signal); transition: width 180ms ease; }
-.fill[data-low] { background: var(--ember); }
-.window[data-retained] .fill { background: var(--slate); }
-.window[data-retained] .windowHeading strong { color: var(--slate); }
-.threshold { position: absolute; top: -3px; width: 2px; height: 13px; background: var(--ink); transform: translateX(-1px); }
-.windowMeta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 10px; font-size: 13px; color: var(--slate); margin-top: 6px; font-variant-numeric: tabular-nums; }
-.pauseThreshold { white-space: nowrap; color: var(--ink); }
 .accountSettings { min-width: 0; }
-.thresholdControl { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin-top: 8px; }
-.thresholdControl > :global(.mantine-NumberInput-root), .priorityControl { display: grid; grid-template-columns: auto 76px; gap: 8px; align-items: center; }
-.thresholdControl :global(.mantine-InputWrapper-label), .priorityControl :global(.mantine-InputWrapper-label) { font-size: 13px; margin: 0; }
-.reserveSlider { accent-color: var(--signal); flex: 1 1 80px; width: 80px; min-width: 60px; height: 28px; margin: 0; cursor: pointer; }
-.reserveSlider:disabled { cursor: default; }
-.reserveSlider:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 3px; }
-.thresholdControl > span { font-size: 13px; color: var(--slate); }
+.priorityControl { display: grid; grid-template-columns: auto 76px; gap: 8px; align-items: center; }
+.priorityControl :global(.mantine-InputWrapper-label) { font-size: 13px; margin: 0; }
 .priorityControl { min-width: 0; }
 .saveControls { display: grid; gap: 8px; padding-top: 10px; }
 .draftSummary { font-size: 13px; color: var(--ember); margin-bottom: 12px; }
@@ -70,7 +51,7 @@
 .visibilityAccounts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; margin-top: 12px; }
 .preference { padding-bottom: 10px; border-bottom: 1px solid var(--rule); }
 .rows { display: grid; gap: 10px; }
-.identity:focus-visible, .windowHeading button:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 3px; }
+.identity:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 3px; }
 .panel[data-density='compact'] .card { padding: 10px; }
 .panel[data-density='compact'] .windows { gap: 8px; }
 .panel[data-density='compact'] .accountEvidence { margin-block: 6px 8px; }
@@ -89,4 +70,3 @@
   .comparisonActions { margin-left: 0; grid-column: 1 / -1; }
 }
 @media (pointer: coarse) { .panel { --account-control-height: max(44px, var(--op-control-min-height, 44px)); } }
-@media (prefers-reduced-motion: reduce) { .fill { transition: none; } }

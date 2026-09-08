@@ -41,7 +41,7 @@ it('shows snapshot-only quota windows with a real percentage and reverses the sc
   await act(async () => used.click());
   expect(container.querySelector('[role="meter"]').getAttribute('aria-valuenow')).toBe('75');
   expect(container.textContent).toContain('Pause ≤ 10% left');
-  expect(container.querySelector('[role="meter"]').parentElement.textContent).toContain('Pause ≤ 10% left');
+  expect(container.querySelector('[role="meter"]').closest('[data-quota-window]').textContent).toContain('Pause ≤ 10% left');
   expect(container.querySelector('details')).toBeNull();
   expect(field('Fallback priority').closest('[hidden]')).not.toBeNull();
   const priorityLabel = [...accountCard().querySelectorAll('label')].find(label => label.textContent === 'Priority');
@@ -58,7 +58,7 @@ it('uses Rows only for layout and preserves exact Unicode inspection identities'
   expect(container.querySelector('[value="compare"]')).toBeNull();
   await act(async () => container.querySelector('[value="rows"]').click());
   expect(onCompare).not.toHaveBeenCalled();
-  await click('sessão / 5時間');
+  await click('Inspect sessão / 5時間');
   expect(onSelect).toHaveBeenLastCalledWith('ação / 東京', 'sessão / 5時間');
   await click('Details');
   expect(onSelect).toHaveBeenLastCalledWith('ação / 東京');
