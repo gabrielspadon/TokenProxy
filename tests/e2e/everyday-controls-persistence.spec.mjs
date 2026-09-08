@@ -58,7 +58,9 @@ test('Everyday savings and disabled-key limits persist and restore through real 
   async function saveSavings(on, checkConsent = false) {
     await expect(savingsSwitch).toBeEnabled();
     await expect(savingsSwitch).toBeChecked({ checked: !on });
-    await savingsSwitch.click();
+    await savingsSwitch.focus();
+    await expect(savingsSwitch).toBeFocused();
+    await savingsSwitch.press('Space');
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
     const submit = dialog.getByRole('button', { name: on ? 'Turn on' : 'Turn off', exact: true });
