@@ -39,6 +39,6 @@ export function seedRepresentative(db, accounts) {
         db.run('INSERT INTO costLedger(id,ts,provider,model,baselineUsd,actualUsd,savedUsd,saverSavedUsd,cacheSavedUsd,inputTokens,cacheReadTokens,cacheWriteTokens,outputTokens,completionId) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [id, stamp, account.provider, model, baseline, cost, baseline - cost, baseline - cost - cached * 1.5 / 1e6, cached * 1.5 / 1e6, input, cached, 0, output, completionId]);
       }
     }
-    return { version: 'representative-local-v1', enabledAccountIds: enabled.map(account => account.id), additionalRequests: enabled.length * 6, additionalQuotaObservations: 36, health: 'Provider qualification and entitlement remain unknown. Enabled is local policy only.', providerCalls: 0 };
+    return { version: 'representative-local-v1', enabledAccountIds: enabled.map(account => account.id), additionalRequests: enabled.length * 6, additionalQuotaObservations: accounts.slice(6).length * 6, health: 'Provider qualification and entitlement remain unknown. Enabled is local policy only.', providerCalls: 0 };
   });
 }
