@@ -120,7 +120,7 @@
   .button {
     display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
     border: 1px solid var(--ink); border-radius: var(--radius); background: var(--ink); color: var(--raised);
-    font-weight: 500; cursor: pointer; text-decoration: none; min-height: 34px;
+    font-weight: 500; cursor: pointer; text-decoration: none; min-height: 30px;
   }
   .button:hover { background: #2a3542; border-color: #2a3542; }
   .button.quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
@@ -133,10 +133,10 @@
   .field label { font-weight: 500; }
   .input {
     padding: 7px 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised);
-    min-height: 34px; width: 100%;
+    min-height: 30px; width: 100%;
   }
   .input:focus-visible { border-color: var(--signal); }
-  .select { padding: 6px 8px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised); min-height: 34px; max-width: 100%; }
+  .select { padding: 6px 8px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised); min-height: 30px; max-width: 100%; }
 
   .segmented { display: inline-flex; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised); padding: 0; margin: 0; }
   .segmented legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

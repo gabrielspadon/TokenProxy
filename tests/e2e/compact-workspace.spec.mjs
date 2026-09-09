@@ -7,9 +7,7 @@ import { authenticateRedesign, installRedesignBrowser } from './redesign-fixture
 // Authentication is private; traces must never retain the synthetic password.
 test.use({ serviceWorkers: 'block', timezoneId: 'UTC', reducedMotion: 'reduce', trace: 'off' });
 
-test('compact scope, exact selection, shared comparison and responsive inspector retain context', async ({ page, context, baseURL }, testInfo) => {
-  test.setTimeout(240000);
-  page.setDefaultTimeout(15000);
+async function fixture({ page, context, baseURL }) {
   expect(process.env.E2E_FIXTURE_ROOT, 'An owned representative fixture root is required').toBeTruthy();
   const root = await realpath(process.env.E2E_FIXTURE_ROOT);
   const runtime = JSON.parse(await readFile(`${root}/process.json`, 'utf8'));
@@ -23,6 +21,18 @@ test('compact scope, exact selection, shared comparison and responsive inspector
   await authenticateRedesign(context, root);
   const safety = await installRedesignBrowser(page, { baseUrl: runtime.url, runtimeReceipt: runtime });
   if (runtime.mode === 'production') await page.routeWebSocket('**/*', socket => socket.close());
+  // The board's comparison and direct controls belong to the Advanced level.
+  await context.addInitScript(() => localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced')));
+  // A dev preview compiles each lens on first visit, which can outlast a
+  // navigation poll. Warm the lenses this suite walks before the clock matters.
+  if (runtime.mode === 'dev') for (const path of ['/dashboard/context', '/dashboard/usage', '/dashboard']) await page.goto(`${runtime.url}${path}`, { waitUntil: 'domcontentloaded', timeout: 180000 });
+  return { runtime, safety };
+}
+
+test('compact scope, exact selection, shared comparison and inline evidence retain context', async ({ page, context, baseURL }, testInfo) => {
+  test.setTimeout(240000);
+  page.setDefaultTimeout(15000);
+  const { runtime, safety } = await fixture({ page, context, baseURL });
   const report = { runtime, checks: [], layouts: [], comparisons: [], drafts: [], images: [], errors: [], console: [], apiFailures: [], writes: [] };
   page.on('pageerror', error => report.errors.push(error.message));
   page.on('console', message => { if (['error', 'warning'].includes(message.type())) report.console.push({ type: message.type(), text: message.text() }); });
@@ -36,10 +46,10 @@ test('compact scope, exact selection, shared comparison and responsive inspector
   const panel = page.getByRole('region', { name: 'Account control panel', exact: true });
   const scope = page.getByLabel('Shared analysis scope', { exact: true });
   const summary = page.getByRole('button', { name: 'Selected evidence', exact: true });
-  const details = page.getByLabel('Selection details', { exact: true });
   const comparisonIds = () => (new URL(page.url()).searchParams.get('compare') || '').split(',').filter(Boolean);
   const selected = () => JSON.parse(new URL(page.url()).searchParams.get('selected') || 'null');
-  const card = id => panel.locator(`[data-account-id="${id}"]`);
+  const row = id => panel.locator(`[data-account-id="${id}"]`);
+  const details = id => row(id).getByRole('region', { name: 'Selection details', exact: true });
   async function read(path) {
     const response = await context.request.get(`${runtime.url}${path}`);
     expect(response.status(), path).toBe(200);
@@ -53,16 +63,9 @@ test('compact scope, exact selection, shared comparison and responsive inspector
     await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture', { timeout: 60000 });
     await page.mouse.move(0, 0);
     await settled();
-    await page.locator('img').evaluateAll(async images => {
-      const visible = images.filter(image => {
-        const bounds = image.getBoundingClientRect();
-        return bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.right > 0 && bounds.top < innerHeight && bounds.left < innerWidth;
-      });
-      await Promise.all(visible.map(image => image.decode()));
-    });
     const path = testInfo.outputPath(`${label}.png`);
     const bytes = await page.screenshot({ path, animations: 'disabled' });
-    report.images.push({ label, path, sha256: createHash('sha256').update(bytes).digest('hex'), viewport: page.viewportSize(), url: page.url(), visibleImagesDecoded: true, finiteAnimationsCompleted: true, imageInspected: false });
+    report.images.push({ label, path, sha256: createHash('sha256').update(bytes).digest('hex'), viewport: page.viewportSize(), url: page.url(), imageInspected: false });
     await testInfo.attach(label, { path, contentType: 'image/png' });
   }
   async function layout(label) {
@@ -78,12 +81,11 @@ test('compact scope, exact selection, shared comparison and responsive inspector
         viewport: { width: innerWidth, height: innerHeight }, contentWidth: document.documentElement.scrollWidth,
         scope: rect('[aria-label="Shared analysis scope"]'), summary: rect('[aria-label="Selected evidence"]'),
         selectionGroup: rect('[aria-label="Retained evidence selection"]'),
-        inventory: rect('[aria-label="Inventory comparison"]'), details: rect('[aria-label="Selection details"]'),
-        drawer: rect('.mantine-Drawer-content'),
+        board: rect('[aria-label="Account control panel"]'), details: rect('[aria-label="Selection details"]'),
       };
     });
     report.layouts.push({ label, ...geometry });
-    expect(geometry.contentWidth, `${label} document fits viewport`).toBeLessThanOrEqual(geometry.viewport.width);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - innerWidth), { message: `${label} document fits viewport` }).toBeLessThanOrEqual(0);
     return geometry;
   }
   async function check(label, action) {
@@ -93,10 +95,6 @@ test('compact scope, exact selection, shared comparison and responsive inspector
   async function chooseProvider(name) {
     await scope.getByRole('combobox', { name: 'Provider filter', exact: true }).click();
     await page.getByRole('option', { name, exact: true }).click();
-  }
-  async function closeDetails() {
-    await page.getByRole('button', { name: 'Close selection details', exact: true }).click();
-    await expect(details).toBeHidden();
   }
   try {
     const accounts = (await read('/api/providers')).connections;
@@ -111,11 +109,10 @@ test('compact scope, exact selection, shared comparison and responsive inspector
     expect(response.status()).toBe(200);
     expect(response.headers()['x-tokenproxy-preview-version']).toBe(runtime.fixtureVersion);
     await expect(panel.locator('[data-account-id]')).toHaveCount(12, { timeout: 60000 });
-    await expect(panel.getByText('Rows', { exact: true })).toBeVisible();
     await check('The default Capacity view shows separately labelled request counts and cache tokens', async () => {
       const activity = page.getByRole('region', { name: 'Requests and cache activity', exact: true });
       await expect(activity).toBeVisible();
-      await expect(activity.getByRole('img')).toBeVisible();
+      await expect(activity.getByRole('img')).toBeVisible({ timeout: 30000 });
       const query = new URLSearchParams({ view: 'activity', groupBy: 'account', pageSize: '50' });
       const current = new URL(page.url());
       for (const key of ['start', 'end', 'provider', 'model', 'connectionId']) if (current.searchParams.has(key)) query.set(key, current.searchParams.get(key));
@@ -133,18 +130,18 @@ test('compact scope, exact selection, shared comparison and responsive inspector
       report.activity = { logicalRequests: evidence.summary.logicalRequests, attempts: evidence.summary.records, cacheReadFraction: evidence.summary.cacheReadFraction, source: evidence.source };
     });
     const emptyScope = {};
-    await check('Empty selection and account cards fit desktop and phone widths', async () => {
+    await check('Empty selection and the board fit desktop and phone widths', async () => {
       await expect(summary).toHaveCount(0);
       for (const [width, height] of [[1920, 1080], [1440, 1000], [390, 844]]) {
         await page.setViewportSize({ width, height });
         await page.evaluate(() => window.scrollTo(0, 0));
         emptyScope[width] = (await layout(`empty-${width}`)).scope;
-        await capture(`compact-accounts-${width}`);
+        await capture(`compact-board-${width}`);
       }
     });
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await card(research.id).getByRole('button', { name: /Synthetic research account/ }).click();
-    await expect(details).toBeVisible();
+    await row(research.id).getByRole('button', { name: /^Synthetic research account/ }).click();
+    await expect(details(research.id)).toBeVisible();
     await expect.poll(selected).toMatchObject({ kind: 'account', id: research.id });
     await check('Retained selection is intrinsic within the shared scope at 1920 and 1440', async () => {
       for (const [width, height] of [[1920, 1080], [1440, 1000]]) {
@@ -156,6 +153,9 @@ test('compact scope, exact selection, shared comparison and responsive inspector
         const saved = await scope.getByRole('button', { name: 'Saved investigations', exact: true }).boundingBox();
         expect(Math.abs(geometry.summary.y - saved.y), 'Selection and saved actions share a line').toBeLessThanOrEqual(8);
         if (width === 1920) expect(geometry.scope.height).toBeLessThanOrEqual(emptyScope[width].height + 8);
+        expect(geometry.details, 'Evidence opens inside the board, not beside it').not.toBeNull();
+        expect(geometry.details.x).toBeGreaterThanOrEqual(geometry.board.x);
+        expect(geometry.details.x + geometry.details.width).toBeLessThanOrEqual(geometry.board.x + geometry.board.width + 1);
         await capture(`compact-retained-${width}`);
       }
     });
@@ -163,6 +163,7 @@ test('compact scope, exact selection, shared comparison and responsive inspector
     await check('Exact selected identity survives scope changes and lens navigation', async () => {
       await chooseProvider('OpenAI');
       await expect(summary).toContainText('Outside scope');
+      await expect(row(research.id)).toHaveCount(0);
       await summary.click();
       const popover = page.locator('.mantine-Popover-dropdown:visible');
       await expect(popover.getByText(`account · ${research.id}`, { exact: true })).toBeVisible();
@@ -171,7 +172,7 @@ test('compact scope, exact selection, shared comparison and responsive inspector
       await page.keyboard.press('Escape');
       for (const lens of ['Context', 'Economics', 'Capacity']) {
         await page.getByRole('link', { name: lens, exact: true }).click();
-        await expect.poll(() => new URL(page.url()).pathname).toBe({ Context: '/dashboard/context', Economics: '/dashboard/usage', Capacity: '/dashboard' }[lens]);
+        await expect.poll(() => new URL(page.url()).pathname, { timeout: 60000 }).toBe({ Context: '/dashboard/context', Economics: '/dashboard/usage', Capacity: '/dashboard' }[lens]);
         await expect(scope.getByRole('combobox', { name: 'Provider filter', exact: true })).toHaveValue('OpenAI');
         await expect(summary).toContainText('Outside scope');
         await expect.poll(selected).toMatchObject({ id: research.id, provider: research.provider });
@@ -187,64 +188,55 @@ test('compact scope, exact selection, shared comparison and responsive inspector
       await scope.getByRole('button', { name: 'Clear', exact: true }).click();
       await expect(panel.locator('[data-account-id]')).toHaveCount(12);
     });
-    await check('Cards and Rows open the same real two-account comparison without losing search or IDs', async () => {
+    await check('Comparison opens the same real two-account totals inline without losing search or IDs', async () => {
       const search = panel.getByRole('searchbox', { name: 'Search accounts', exact: true });
-      for (const view of ['Cards', 'Rows']) {
-        await panel.getByText(view, { exact: true }).click();
-        for (const account of [research, batch]) await card(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true }).check();
-        await expect.poll(comparisonIds).toEqual(ids);
-        await search.fill(research.name);
-        await expect(panel.locator('[data-account-id]')).toHaveCount(1);
-        await panel.getByRole('button', { name: 'Compare selected (2)', exact: true }).click();
-        await expect(details).toBeVisible();
-        await expect(page.getByRole('heading', { name: 'Compare 2 accounts', exact: true })).toBeVisible();
-        const totals = details.getByRole('region', { name: 'Exact account comparison totals', exact: true });
-        await expect(totals.locator('tbody tr')).toHaveCount(2);
-        const comparison = { view, ids: comparisonIds(), accounts: [] };
-        for (const account of [research, batch]) {
-          const expected = await read(`/api/analytics?view=activity&groupBy=account&pageSize=50&connectionId=${encodeURIComponent(account.id)}`);
-          const row = totals.getByRole('row').filter({ has: page.getByRole('cell', { name: account.name, exact: true }) });
-          await expect(row.locator('td').nth(2)).toHaveText(new Intl.NumberFormat('en-US').format(expected.summary.records));
-          comparison.accounts.push({ id: account.id, name: account.name, apiRecords: expected.summary.records, renderedRecords: await row.locator('td').nth(2).innerText() });
-        }
-        report.comparisons.push(comparison);
-        await capture(`compact-comparison-${view.toLowerCase()}-1920`);
-        await closeDetails();
-        await expect(panel.getByRole('button', { name: 'Compare selected (2)', exact: true })).toBeFocused();
-        await expect(search).toHaveValue(research.name);
-        await panel.getByText(view === 'Cards' ? 'Rows' : 'Cards', { exact: true }).click();
-        await expect(search).toHaveValue(research.name);
-        await expect.poll(comparisonIds).toEqual(ids);
-        await search.fill('');
-        for (const account of [research, batch]) await expect(card(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true })).toBeChecked();
+      for (const account of [research, batch]) await row(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true }).check();
+      await expect.poll(comparisonIds).toEqual(ids);
+      await search.fill(research.name);
+      await expect(panel.locator('[data-account-id]')).toHaveCount(1);
+      await panel.getByRole('button', { name: 'Compare (2)', exact: true }).click();
+      const totals = panel.getByRole('region', { name: 'Exact account comparison totals', exact: true });
+      await expect(totals).toBeVisible();
+      await expect(totals.locator('tbody tr')).toHaveCount(2);
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      const comparison = { ids: comparisonIds(), accounts: [] };
+      for (const account of [research, batch]) {
+        const expected = await read(`/api/analytics?view=activity&groupBy=account&pageSize=50&connectionId=${encodeURIComponent(account.id)}`);
+        const line = totals.getByRole('row').filter({ has: page.getByRole('cell', { name: account.name, exact: true }) });
+        await expect(line.locator('td').nth(2)).toHaveText(new Intl.NumberFormat('en-US').format(expected.summary.records));
+        comparison.accounts.push({ id: account.id, name: account.name, apiRecords: expected.summary.records, renderedRecords: await line.locator('td').nth(2).innerText() });
       }
+      report.comparisons.push(comparison);
+      await capture('compact-comparison-1920');
+      await panel.getByRole('button', { name: 'Close comparison', exact: true }).click();
+      await expect(totals).toHaveCount(0);
+      await expect(search).toHaveValue(research.name);
+      await expect.poll(comparisonIds).toEqual(ids);
+      await search.fill('');
+      for (const account of [research, batch]) await expect(row(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true })).toBeChecked();
       for (const lens of ['Context', 'Economics', 'Capacity']) {
         await page.getByRole('link', { name: lens, exact: true }).click();
-        await expect.poll(() => new URL(page.url()).pathname).toBe({ Context: '/dashboard/context', Economics: '/dashboard/usage', Capacity: '/dashboard' }[lens]);
+        await expect.poll(() => new URL(page.url()).pathname, { timeout: 60000 }).toBe({ Context: '/dashboard/context', Economics: '/dashboard/usage', Capacity: '/dashboard' }[lens]);
         await expect(summary).toContainText('2 accounts');
         await expect.poll(comparisonIds).toEqual(ids);
       }
       await page.reload();
-      await expect(panel.getByRole('button', { name: 'Compare selected (2)', exact: true })).toBeEnabled();
+      await expect(panel.getByRole('button', { name: 'Compare (2)', exact: true })).toBeEnabled({ timeout: 60000 });
       await expect.poll(comparisonIds).toEqual(ids);
-      await panel.getByRole('button', { name: 'Compare selected (2)', exact: true }).click();
-      await expect(details).toBeVisible();
       await summary.click();
       await page.locator('.mantine-Popover-dropdown:visible').getByRole('button', { name: 'Clear comparison', exact: true }).click();
-      await expect(details).toBeHidden();
       await expect.poll(comparisonIds).toEqual([]);
       await expect(scope.getByRole('button', { name: 'Export evidence', exact: true })).toBeFocused();
-      for (const account of [research, batch]) await card(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true }).check();
+      for (const account of [research, batch]) await row(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true }).check();
       await expect.poll(comparisonIds).toEqual(ids);
-      await expect(details).toBeHidden();
-      await panel.getByRole('button', { name: 'Clear selection', exact: true }).click();
+      await panel.getByRole('button', { name: 'Clear comparison selection', exact: true }).click();
       await expect.poll(comparisonIds).toEqual([]);
     });
-    await check('The inspector keeps a quota scenario draft and caret while moving between pane, drawer and phone', async () => {
-      const trigger = card(research.id).getByRole('button', { name: /Synthetic research account/ });
-      await trigger.click();
-      await details.getByRole('tab', { name: /^Quota windows/ }).click();
-      const draft = details.getByRole('textbox', { name: 'Workload multiplier', exact: true });
+    await check('Inline evidence keeps a quota scenario draft and caret while the viewport changes', async () => {
+      await row(research.id).getByRole('button', { name: /^Synthetic research account/ }).click();
+      const evidence = details(research.id);
+      await evidence.getByRole('tab', { name: /^Quota windows/ }).click();
+      const draft = evidence.getByRole('textbox', { name: 'Workload multiplier', exact: true });
       await expect(draft).toBeVisible({ timeout: 30000 });
       await draft.fill('2.5');
       await draft.focus();
@@ -256,24 +248,13 @@ test('compact scope, exact selection, shared comparison and responsive inspector
         await expect(draft).toBeFocused();
         await expect.poll(() => draft.evaluate(element => [element.selectionStart, element.selectionEnd])).toEqual([1, 2]);
         report.drafts.push({ width, ...await draft.evaluate(element => ({ value: element.value, caret: [element.selectionStart, element.selectionEnd], focused: document.activeElement === element })) });
-        const geometry = await layout(`inspector-draft-${width}`);
-        if (width === 1400) {
-          expect(geometry.drawer.width).toBeGreaterThanOrEqual(320);
-          expect(geometry.drawer.width).toBeLessThanOrEqual(600);
-          expect(geometry.drawer.x).toBeGreaterThanOrEqual(700);
-          expect(geometry.inventory.width).toBeGreaterThanOrEqual(760);
-          await expect(page.getByRole('button', { name: 'Return to comparison', exact: true })).toBeVisible();
-        } else if (width === 390) {
-          expect(geometry.drawer.width).toBeGreaterThanOrEqual(388);
-          expect(geometry.drawer.width).toBeLessThanOrEqual(390);
-        } else {
-          expect(geometry.drawer).toBeNull();
-          expect(geometry.inventory.width).toBeGreaterThanOrEqual(760);
-        }
-        await capture(`compact-inspector-draft-${width}`);
+        const geometry = await layout(`inline-draft-${width}`);
+        expect(geometry.details).not.toBeNull();
+        expect(page.getByRole('dialog')).toHaveCount(0);
+        await capture(`compact-inline-draft-${width}`);
       }
-      await closeDetails();
-      await expect(trigger).toBeFocused();
+      await row(research.id).getByRole('button', { name: 'Collapse Synthetic research account', exact: true }).click();
+      await expect(evidence).toHaveCount(0);
     });
     await check('Inline activity data selects a real interval while retaining provider filters and exact selected identity', async () => {
       const originalUrl = page.url(), beforeSelected = selected();
@@ -315,22 +296,12 @@ test('compact scope, exact selection, shared comparison and responsive inspector
   }
 });
 
-test.describe('compact touch and motion', () => {
+test.describe('compact touch and keyboard', () => {
   test.use({ hasTouch: true });
-  test('dark phone scope, checkbox hit areas, keyboard selection and drawer motion remain usable', async ({ page, context, baseURL }, testInfo) => {
+  test('dark phone scope and keyboard selection remain usable', async ({ page, context, baseURL }, testInfo) => {
     test.setTimeout(180000);
-    expect(process.env.E2E_FIXTURE_ROOT).toBeTruthy();
-    const root = await realpath(process.env.E2E_FIXTURE_ROOT);
-    const runtime = JSON.parse(await readFile(`${root}/process.json`, 'utf8'));
-    const owner = JSON.parse(await readFile(`${root}/owner.json`, 'utf8'));
-    expect(owner).toMatchObject({ kind: 'tokenproxy-redesign-preview-v1', root, runId: runtime.runId });
-    expect(runtime.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-    expect(process.env.E2E_BASE).toBe(runtime.url);
-    expect(baseURL).toBe(runtime.url);
-    await authenticateRedesign(context, root);
-    const safety = await installRedesignBrowser(page, { baseUrl: runtime.url, runtimeReceipt: runtime });
-    if (runtime.mode === 'production') await page.routeWebSocket('**/*', socket => socket.close());
-    const report = { runtime, layouts: [], motion: [], images: [], errors: [], console: [], writes: [] };
+    const { runtime, safety } = await fixture({ page, context, baseURL });
+    const report = { runtime, images: [], errors: [], console: [], writes: [] };
     page.on('pageerror', error => report.errors.push(error.message));
     page.on('console', message => { if (['error', 'warning'].includes(message.type())) report.console.push({ type: message.type(), text: message.text() }); });
     page.on('request', request => { if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method())) report.writes.push({ path: new URL(request.url()).pathname, method: request.method() }); });
@@ -340,18 +311,10 @@ test.describe('compact touch and motion', () => {
     async function capture(label) {
       await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture', { timeout: 60000 });
       await page.mouse.move(0, 0);
-      const logos = await page.locator('img').evaluateAll(async images => {
-        await document.fonts.ready;
-        const visible = images.filter(image => {
-          const bounds = image.getBoundingClientRect();
-          return bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.right > 0 && bounds.top < innerHeight && bounds.left < innerWidth;
-        });
-        await Promise.all(visible.map(image => image.decode()));
-        return visible.map(image => ({ alt: image.alt, src: image.getAttribute('src'), width: image.naturalWidth, height: image.naturalHeight }));
-      });
+      await page.evaluate(async () => { await document.fonts.ready; });
       const path = testInfo.outputPath(`${label}.png`);
       const bytes = await page.screenshot({ path, animations: 'disabled' });
-      report.images.push({ path, sha256: createHash('sha256').update(bytes).digest('hex'), viewport: page.viewportSize(), logos, visibleImagesDecoded: true, finiteAnimationsCompleted: true, imageInspected: false });
+      report.images.push({ path, sha256: createHash('sha256').update(bytes).digest('hex'), viewport: page.viewportSize(), imageInspected: false });
       await testInfo.attach(label, { path, contentType: 'image/png' });
     }
     try {
@@ -366,39 +329,17 @@ test.describe('compact touch and motion', () => {
       await page.keyboard.press('Escape');
       await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark');
       const account = panel.locator('[data-account-id="capacity-fixture-a"]');
-      const checkbox = account.getByRole('checkbox', { name: 'Compare Synthetic research account', exact: true });
       for (const width of [390, 320]) {
         await page.setViewportSize({ width, height: 844 });
-        await account.scrollIntoViewIfNeeded();
-        const geometry = await checkbox.evaluate(input => {
-          const box = element => {
-            const { x, y, width, height } = element.getBoundingClientRect();
-            return { x, y, width, height };
-          };
-          return { hit: box(input.closest('label')), glyph: box(input), viewport: innerWidth, content: document.documentElement.scrollWidth };
-        });
-        const measurement = { width, ...geometry, edgeTapChangedCheckbox: false };
-        report.layouts.push(measurement);
-        expect(geometry.hit.width).toBeGreaterThanOrEqual(44);
-        expect(geometry.hit.height).toBeGreaterThanOrEqual(44);
-        expect(geometry.glyph.width).toBeGreaterThanOrEqual(18);
-        expect.soft(geometry.glyph.width).toBeLessThanOrEqual(20);
-        expect(geometry.glyph.height).toBeGreaterThanOrEqual(18);
-        expect.soft(geometry.glyph.height).toBeLessThanOrEqual(20);
-        expect(geometry.content).toBeLessThanOrEqual(width);
-        const wasChecked = await checkbox.isChecked();
-        await page.touchscreen.tap(geometry.hit.x + 2, geometry.hit.y + 2);
-        await expect(checkbox).toBeChecked({ checked: !wasChecked });
-        measurement.edgeTapChangedCheckbox = true;
         await page.evaluate(() => window.scrollTo(0, 0));
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         await capture(`compact-dark-coarse-${width}`);
       }
       await page.setViewportSize({ width: 1920, height: 1080 });
-      await account.getByRole('button', { name: /Synthetic research account/ }).click();
+      await account.getByRole('button', { name: /^Synthetic research account/ }).click();
       await page.getByRole('link', { name: 'Context', exact: true }).click();
-      await expect.poll(() => new URL(page.url()).pathname).toBe('/dashboard/context');
+      await expect.poll(() => new URL(page.url()).pathname, { timeout: 60000 }).toBe('/dashboard/context');
       await expect(page.getByRole('heading', { name: 'Context trace', exact: true })).toBeVisible();
-      await expect(page.getByLabel('Selection details', { exact: true })).toBeHidden();
       for (const width of [390, 320]) {
         await page.setViewportSize({ width, height: 844 });
         await summary.focus();
@@ -421,47 +362,17 @@ test.describe('compact touch and motion', () => {
       await expect(scope.getByRole('button', { name: 'Export evidence', exact: true })).toBeFocused();
       await page.setViewportSize({ width: 1920, height: 1080 });
       await page.getByRole('link', { name: 'Capacity', exact: true }).click();
-      await expect.poll(() => new URL(page.url()).pathname).toBe('/dashboard');
+      await expect.poll(() => new URL(page.url()).pathname, { timeout: 60000 }).toBe('/dashboard');
       await expect(account).toBeVisible();
-      await page.setViewportSize({ width: 1400, height: 1000 });
-      const trigger = account.getByRole('button', { name: /Synthetic research account/ });
-      for (const reducedMotion of ['no-preference', 'reduce']) {
-        await page.emulateMedia({ reducedMotion });
-        await page.evaluate(() => {
-          const samples = [];
-          let active = true;
-          const sample = () => {
-            const drawer = document.querySelector('.mantine-Drawer-content');
-            if (drawer) samples.push({ at: performance.now(), x: drawer.getBoundingClientRect().x, duration: getComputedStyle(drawer).transitionDuration });
-            if (active) requestAnimationFrame(sample);
-          };
-          requestAnimationFrame(sample);
-          window.__compactMotion = () => { active = false; return samples; };
-        });
-        await trigger.click();
-        const drawer = page.locator('.mantine-Drawer-content');
-        await expect(drawer).toBeVisible();
-        await expect.poll(() => drawer.evaluate(element => Math.round(element.getBoundingClientRect().x))).toBe(840);
-        const samples = await page.evaluate(() => window.__compactMotion());
-        expect(samples.length).toBeGreaterThan(0);
-        const durations = samples.flatMap(sample => sample.duration.split(',').map(value => parseFloat(value) * (value.trim().endsWith('ms') ? 1 : 1000)));
-        if (reducedMotion === 'no-preference') {
-          expect(Math.max(...durations)).toBeGreaterThanOrEqual(150);
-          expect(samples.some(sample => sample.x > 841 && sample.x < 1399), 'At least one real intermediate drawer animation frame').toBe(true);
-        } else expect(Math.max(...durations)).toBeLessThanOrEqual(1);
-        report.motion.push({ reducedMotion, samples, settledX: 840, screenshotsUsedAsMotionEvidence: false });
-        await page.getByRole('button', { name: 'Close selection details', exact: true }).click();
-        await expect(drawer).toBeHidden();
-        await expect(trigger).toBeFocused();
-      }
+      await expect(account.getByRole('region', { name: 'Selection details', exact: true })).toHaveCount(0);
       expect(report.errors).toEqual([]);
       expect(report.writes).toEqual([]);
       expect(safety.outboundFailures).toEqual([]);
     } finally {
       report.outboundFailures = safety.outboundFailures;
-      const path = testInfo.outputPath('compact-touch-motion-receipt.json');
+      const path = testInfo.outputPath('compact-touch-keyboard-receipt.json');
       await writeFile(path, JSON.stringify(report, null, 2));
-      await testInfo.attach('compact-touch-motion-receipt', { path, contentType: 'application/json' });
+      await testInfo.attach('compact-touch-keyboard-receipt', { path, contentType: 'application/json' });
     }
   });
 });

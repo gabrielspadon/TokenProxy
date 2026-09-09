@@ -1,5 +1,7 @@
 # Account control panel
 
+> Superseded on 2026-09-09 by CAPACITY-BOARD-20260909.md. The card panel, its Cards/Rows toggle, Customize and per-card Save/Discard no longer exist.
+
 The operator needs to identify an account with capacity, compare its windows,
 understand when each resets, and pause or adjust its safety buffer immediately.
 Capacity therefore opens on a control panel. Activity and analysis retains the

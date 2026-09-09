@@ -119,7 +119,7 @@ function WorkspaceShell({ children }) {
   return (
     <AppShell
       padding={0}
-      header={{ height: 52 }}
+      header={{ height: 44 }}
       navbar={{ width: 208, breakpoint: 'md', collapsed: { mobile: !mobileOpen } }}
       className={styles.shell}
     >
@@ -145,7 +145,6 @@ function WorkspaceShell({ children }) {
             <ActionIcon
               variant="subtle"
               color="gray"
-              size="lg"
               aria-label="Find a control"
               onClick={() => setSearchOpen(true)}
             >
@@ -156,7 +155,6 @@ function WorkspaceShell({ children }) {
             <ActionIcon
               variant="subtle"
               color="gray"
-              size="lg"
               aria-label="Workspace preferences"
               className={styles.desktopPreferences}
               onClick={() => setPreferencesOpen(true)}

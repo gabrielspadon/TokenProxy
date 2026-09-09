@@ -1,21 +1,21 @@
-.activity { margin: 10px 18px 6px; padding: 10px 14px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; min-width: 0; }
+.activity { margin: 4px 24px 0; padding: 8px 12px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; min-width: 0; }
 .header { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
-.header h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.summary { display: flex; flex-wrap: wrap; gap: 8px 30px; margin: 8px 0 10px; }
+.header h2 { margin: 0; font-size: var(--type-ui); font-weight: 600; }
+.summary { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 4px 0 6px; }
 .summary > div { display: flex; gap: 10px; align-items: baseline; }
-.summary dt { color: var(--slate); font-size: 13px; }
-.summary dd { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--slate); }
+.summary dt { color: var(--slate); font-size: var(--type-dense); }
+.summary dd { margin: 0; font-size: var(--type-ui); font-weight: 600; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--type-dense); color: var(--slate); }
 .legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 12px; height: 3px; border-radius: 1px; }
-.foot { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 13px; line-height: 1.4; color: var(--slate); border-top: 1px solid var(--rule); padding-top: 7px; }
-.state { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 90px; color: var(--slate); font-size: 14px; }
+.foot { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: var(--type-dense); line-height: 1.4; color: var(--slate); border-top: 1px solid var(--rule); padding-top: 5px; margin-top: 2px; }
+.state { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 60px; color: var(--slate); font-size: var(--type-ui); }
 .data { padding-block: 8px; }
 .tableScroll { overflow-x: auto; margin-bottom: 8px; }
-.tableScroll table { font-size: 13px; font-variant-numeric: tabular-nums; }
+.tableScroll table { font-size: var(--type-dense); font-variant-numeric: tabular-nums; }
 .tableScroll td:not(:first-child) { text-align: right; }
 @media (max-width: 760px) {
-  .activity { margin: 10px 12px 6px; padding: 10px; }
+  .activity { margin: 4px 12px 0; padding: 8px; }
   .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .summary > div { display: block; }
   .summary dd { margin-top: 2px; }

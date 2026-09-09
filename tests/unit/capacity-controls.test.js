@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyDrainChanges, capacityAttemptSelection, DRAIN_ENDPOINT, localCapacityState, retainAccountOrder } from '@/app/dashboard/capacityControlsModel';
+import { applyDrainChanges, capacityAttemptSelection, DRAIN_ENDPOINT } from '@/app/dashboard/capacityControlsModel';
 const response = (body, status = 200) => Response.json(body, { status });
 const target = id => ({ connectionId: id, version: `v-${id}` });
 
@@ -9,12 +9,6 @@ describe('per-account drain confirmation', () => {
     expect(capacityAttemptSelection(record)).toEqual({ kind: 'context-attempt', id: 'attempt-a', sessionId: 12, provider: 'anthropic', model: 'served-model', connectionId: 'account-a' });
     for (const change of [{ requestId: 'logical-b' }, { contextSessionId: null }, { contextSessionId: 0 }, { contextSessionId: '12' }, { requestId: '' }]) expect(capacityAttemptSelection({ ...record, ...change })).toBeNull();
     expect(capacityAttemptSelection(null)).toBeNull();
-  });
-  it('keeps inspected rows ordered during live updates and appends new accounts', () => {
-    const incoming = [{id:'b',records:90},{id:'new',records:80},{id:'a',records:50}];
-    expect(retainAccountOrder(incoming,['a','b']).map(row => row.id)).toEqual(['a','b','new']);
-    expect(incoming.map(row => row.id)).toEqual(['b','new','a']);
-    expect(retainAccountOrder(incoming,['a','b'])[0].records).toBe(50);
   });
   it('keeps a confirmed success and later stale refusal separate', async () => {
     const saved = { connectionId: 'a', isDraining: true, version: 'saved-a', activeStreams: 3 };
@@ -47,10 +41,5 @@ describe('per-account drain confirmation', () => {
     const request = vi.fn().mockRejectedValue(new Error('Connection ended'));
     expect((await applyDrainChanges([target('a')], true, request))[0].state).toBe('unconfirmed');
     expect(request).toHaveBeenCalledOnce();
-  });
-  it('does not infer capacity or entitlement from healthy status or absent quota', () => {
-    expect(localCapacityState({ isActive: true, status: 'healthy' }, null)).toBe('Model-specific check required');
-    expect(localCapacityState({ isActive: true, status: 'healthy' }, { isDraining: true })).toBe('Draining');
-    expect(localCapacityState({ isActive: false }, { isDraining: true })).toBe('Disabled');
   });
 });

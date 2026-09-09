@@ -18,7 +18,7 @@
 .wordmark {
   display: flex;
   align-items: center;
-  height: 52px;
+  height: 44px;
   width: 208px;
   padding-inline: 24px;
   flex-shrink: 0;
@@ -169,7 +169,7 @@
 .lensViewport {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - 52px);
+  height: calc(100dvh - 44px);
   min-width: 0;
 }
 .lensViewport > * {
@@ -199,7 +199,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px 20px;
-  padding: 16px 24px 12px;
+  padding: 12px 24px 8px;
 }
 .lensTitle {
   display: flex;
@@ -222,8 +222,8 @@
 .scope {
   display: flex;
   align-items: center;
-  gap: 8px 16px;
-  padding: 0 24px 12px;
+  gap: 6px 12px;
+  padding: 0 24px 8px;
   flex-wrap: wrap;
 }
 .scope > * {
@@ -253,11 +253,11 @@
 }
 .scopeSelect {
   flex: 1 1 8rem;
-  max-width: 12rem;
+  max-width: 10.5rem;
 }
 .periodSelect {
-  flex: 1.2 1 10rem;
-  max-width: 13rem;
+  flex: 1.2 1 9rem;
+  max-width: 11rem;
 }
 .scopeSeparator {
   height: 20px;

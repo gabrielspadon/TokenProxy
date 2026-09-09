@@ -37,18 +37,6 @@ export async function applyDrainChanges(targets, isDraining, request = fetch, on
   return outcomes;
 }
 
-export function localCapacityState(account, drain) {
-  if (!account.isActive) return 'Disabled';
-  if (drain?.isDraining ?? account.isDraining) return 'Draining';
-  if (account.status === 'cooldown') return 'Stored cooldown';
-  return 'Model-specific check required';
-}
-
-export function retainAccountOrder(rows, ids) {
-  const order = new Map(ids.map((id, index) => [id, index]));
-  return rows.toSorted((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
-}
-
 export function capacityAttemptSelection(record) {
   if (typeof record?.requestId !== 'string' || !record.requestId || record.id !== record.requestId
     || !Number.isSafeInteger(record.contextSessionId) || record.contextSessionId <= 0) return null;
