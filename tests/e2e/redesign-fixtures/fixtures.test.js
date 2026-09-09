@@ -10,6 +10,30 @@ import { seed } from './seed.mjs';
 import { CLOCK, SCENARIOS, VERSION } from './catalog.mjs';
 import { installRedesignBrowser } from './browser.mjs';
 
+// The guards install on page.context(), so the double records what the CONTEXT was asked for
+// and keeps the page's own route list separate. That separation is the point: a per-fault route
+// is page-scoped and a catch-all is context-scoped, and a double collapsing them would pass
+// whichever way the implementation registered them.
+const browserDouble = () => {
+  const context = {
+    routes: [], sockets: [], scripts: [], listeners: [], navigationTimeouts: [],
+    on: (event, handler) => { context.listeners.push({ event, handler }); },
+    route: async (pattern, handler) => { context.routes.push({ pattern, handler }); },
+    routeWebSocket: async (pattern, handler) => { context.sockets.push({ pattern, handler }); },
+    addInitScript: async (script, argument) => { context.scripts.push({ script, argument }); },
+    exposeFunction: async (name, fn) => { globalThis[name] = async (...args) => fn(...args); },
+    setDefaultNavigationTimeout: value => { context.navigationTimeouts.push(value); },
+  };
+  const page = {
+    routes: [],
+    context: () => context,
+    route: async (pattern, handler) => { page.routes.push({ pattern, handler }); },
+    addInitScript: async (script, argument) => { context.scripts.push({ script, argument }); },
+    exposeFunction: context.exposeFunction,
+  };
+  return { page, context };
+};
+
 describe('redesign fixture isolation and retained arithmetic', () => {
   it('seeds repeatable canonical rows with credentialless accounts and separated costs', async () => {
     const snapshots = [];
@@ -62,20 +86,44 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it('attributes browser fixtures to immutable runtime receipts and registers explicit faults separately', async () => {
-    const handlers = [], scripts = [], listeners = [];
-    const page = { route: async (pattern, handler) => handlers.push({ pattern, handler }), on: (event, handler) => { listeners.push({ event, handler }); }, routeWebSocket: async () => {}, addInitScript: async (script, argument) => scripts.push({ script, argument }) };
+    const { page, context } = browserDouble();
     const runtimeReceipt = { url: 'http://127.0.0.1:61234', clock: CLOCK, fixtureVersion: 'redesign-workspace-v1' };
     const receipt = await installRedesignBrowser(page, { baseUrl: runtimeReceipt.url, runtimeReceipt, fault: 'version-conflict' });
     expect(receipt.fixtureVersion).toBe('redesign-workspace-v1');
     expect(receipt.browserFixtureVersion).toBe(VERSION);
     expect(receipt.persistence).toBe(false);
+    // The catch-all belongs to the context and the fault route to the page. Asserting the split
+    // is what proves a popup, which is a new page in the same context, is still guarded.
+    expect(context.routes).toHaveLength(1);
+    expect(page.routes).toHaveLength(1);
     let body;
-    await handlers.at(-1).handler({ request: () => ({ method: () => 'PATCH' }), fulfill: async value => { body = value; } });
+    await page.routes.at(-1).handler({ request: () => ({ method: () => 'PATCH' }), fulfill: async value => { body = value; } });
     expect(body.status).toBe(409);
     expect(JSON.parse(body.body).code).toBe('draft_revision_conflict');
+    // The catch-all itself: same-origin continues untouched, off-origin is recorded AND aborted.
+    // Without this the `blocked: true` half of the contract has no assertion at all.
+    const catchAll = context.routes[0].handler;
+    const events = [];
+    const routeDouble = url => ({ request: () => ({ url: () => url, resourceType: () => 'image' }), continue: async () => events.push('continue'), abort: async reason => events.push(`abort:${reason}`) });
+    await catchAll(routeDouble(`${runtimeReceipt.url}/providers/openai.png`));
+    expect(events).toEqual(['continue']);
+    expect(receipt.outboundFailures).toEqual([]);
+    await catchAll(routeDouble('https://cdn.example.com/tracker.png'));
+    expect(events).toEqual(['continue', 'abort:blockedbyclient']);
+    expect(receipt.outboundFailures).toEqual([{ origin: 'https://cdn.example.com', resourceType: 'image', blocked: true }]);
+    // Websocket recorder: same three keys as the other two producers, so a consumer filtering on
+    // `!blocked` cannot read a closed socket as an unblocked leak.
+    const socket = context.sockets[0].handler;
+    const socketEvents = [];
+    socket({ url: () => `${runtimeReceipt.url.replace('http', 'ws')}/api/usage/stream`, connectToServer: () => socketEvents.push('connect'), close: value => socketEvents.push(value) });
+    expect(socketEvents).toEqual(['connect']);
+    socket({ url: () => 'wss://telemetry.example.com/socket', connectToServer: () => socketEvents.push('connect'), close: value => socketEvents.push(value) });
+    expect(socketEvents.at(-1).code).toBe(1008);
+    expect(receipt.outboundFailures.at(-1)).toEqual({ origin: 'wss://telemetry.example.com', resourceType: 'websocket', blocked: true });
+    receipt.outboundFailures.length = 0;
     // A redirect TARGET never reaches the route handler, so this request listener is the only
     // thing that records an off-origin hop. Same-origin and non-redirect requests stay silent.
-    const onRequest = listeners[0].handler;
+    const onRequest = context.listeners[0].handler;
     const hop = url => ({ url: () => url, resourceType: () => 'document', redirectedFrom: () => ({ url: () => `${runtimeReceipt.url}/go` }) });
     onRequest({ url: () => 'https://example.com/direct', resourceType: () => 'document', redirectedFrom: () => null });
     onRequest(hop(`${runtimeReceipt.url}/local`));
@@ -84,13 +132,13 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     expect(receipt.outboundFailures).toEqual([{ origin: 'https://example.com', resourceType: 'document', viaRedirectFrom: `${runtimeReceipt.url}/go`, blocked: false }]);
     expect((await installRedesignBrowser(page, { baseUrl: runtimeReceipt.url })).fixtureVersion).toBeNull();
     await expect(installRedesignBrowser(page, { baseUrl: runtimeReceipt.url, runtimeReceipt: { ...runtimeReceipt, url: 'http://127.0.0.1:60000' } })).rejects.toThrow('another preview');
-    expect(scripts[0].argument.clock).toBe(CLOCK);
+    expect(context.scripts[0].argument.clock).toBe(CLOCK);
     const nativeDate = globalThis.Date;
     const nativePerformance = Object.getOwnPropertyDescriptor(globalThis, 'performance');
     let elapsed = 100;
     try {
       Object.defineProperty(globalThis, 'performance', { configurable: true, value: { now: () => elapsed } });
-      scripts[0].script(scripts[0].argument);
+      context.scripts[0].script(context.scripts[0].argument);
       expect(Date.now()).toBe(nativeDate.parse(CLOCK));
       elapsed += 500;
       expect(Date.now()).toBe(nativeDate.parse(CLOCK) + 500);
@@ -101,6 +149,26 @@ describe('redesign fixture isolation and retained arithmetic', () => {
       Object.defineProperty(globalThis, 'performance', nativePerformance);
     }
     expect(receipt.browserClock).toBe('anchored advancing synthetic');
+  });
+
+  it('raises the navigation ceiling and leaves the clock real for a dev receipt, and rejects an unparseable one', async () => {
+    const { page, context } = browserDouble();
+    const dev = { url: 'http://127.0.0.1:61234', clock: '2026-09-09T18:30:00.000Z', fixtureVersion: 'redesign-workspace-v1', mode: 'dev' };
+    const receipt = await installRedesignBrowser(page, { baseUrl: dev.url, runtimeReceipt: dev });
+    // A dev preview compiles a route on first hit, so the ceiling is raised once, on the context
+    // (a popup shares it) and only for dev. Freezing Date would break webpack invalidation, so
+    // the dev branch installs no clock script at all.
+    expect(context.navigationTimeouts).toEqual([120000]);
+    expect(context.scripts).toEqual([]);
+    expect(receipt.browserClock).toBe('real');
+    expect(receipt.clock).toBe(dev.clock);
+    const production = browserDouble();
+    await installRedesignBrowser(production.page, { baseUrl: dev.url, runtimeReceipt: { ...dev, mode: 'production' } });
+    expect(production.context.navigationTimeouts).toEqual([]);
+    expect(production.context.scripts).toHaveLength(1);
+    // An unparseable clock must throw here, where the bad value is still visible, rather than
+    // handing every in-page `new Date()` a NaN through the proxy.
+    await expect(installRedesignBrowser(browserDouble().page, { baseUrl: dev.url, runtimeReceipt: { ...dev, mode: 'production', clock: 'yesterday' } })).rejects.toThrow('not a parseable date: yesterday');
   });
 
   it('seeds twelve representative accounts with local eligibility and exact retained histories', async () => {
@@ -116,6 +184,12 @@ describe('redesign fixture isolation and retained arithmetic', () => {
       expect(receipt.representative.additionalRequests).toBe(48);
       expect(db.prepare("SELECT COUNT(*) AS count FROM requestStats WHERE id LIKE 'representative-request-%'").get().count).toBe(48);
       expect(db.prepare("SELECT COUNT(*) AS count FROM usageHistory u JOIN costLedger c ON c.completionId=u.completionId JOIN requestStats r ON r.id=u.requestId WHERE r.id LIKE 'representative-request-%' AND r.provider=u.provider AND r.connectionId=u.connectionId AND r.logicalRequestId=u.logicalRequestId").get().count).toBe(48);
+      // The receipt's own count, checked against the rows it names, so growing ACCOUNTS cannot
+      // leave the receipt and the README asserting a number the seed stopped producing. Scoped
+      // to source, because the capacity fixtures seed 49 more rows under 'provider-usage' and
+      // the receipt counts only what representative-seed.mjs adds.
+      expect(db.prepare("SELECT COUNT(*) AS count FROM quotaObservations WHERE source='synthetic-fixture'").get().count).toBe(receipt.representative.additionalQuotaObservations);
+      expect(receipt.representative.additionalQuotaObservations).toBe(36);
       const confidence = db.prepare('SELECT DISTINCT confidence FROM quotaWindows').all().map(row => row.confidence);
       expect(confidence).toEqual(expect.arrayContaining(['fresh','stale','unknown']));
     } finally { db.close(); }
@@ -136,11 +210,10 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it('models lost activation response after a local handler and streaming interruption without dispatch', async () => {
-    const handlers = [], scripts = [], listeners = [];
-    const page = { route: async (pattern, handler) => handlers.push({ pattern, handler }), on: (event, handler) => { listeners.push({ event, handler }); }, routeWebSocket: async () => {}, addInitScript: async (script, argument) => scripts.push({ script, argument }), exposeFunction: async (name, fn) => { globalThis[name] = async (...args) => fn(...args); } };
+    const { page, context } = browserDouble();
     const receipt = await installRedesignBrowser(page, { baseUrl: 'http://127.0.0.1:61234', fault: 'interrupted-activation' });
     const events = [];
-    await handlers.at(-1).handler({ request: () => ({ method: () => 'POST' }), fetch: async () => { events.push('local-handler'); return { status: () => 207 }; }, abort: async () => events.push('lost-response') });
+    await page.routes.at(-1).handler({ request: () => ({ method: () => 'POST' }), fetch: async () => { events.push('local-handler'); return { status: () => 207 }; }, abort: async () => events.push('lost-response') });
     expect(events).toEqual(['local-handler', 'lost-response']);
     expect(receipt.faults[0].gatewayStatus).toBe(207);
     const streamReceipt = await installRedesignBrowser(page, { baseUrl: 'http://127.0.0.1:61234', fault: 'stream-interruption' });
@@ -149,7 +222,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     globalThis.fetch = async () => { nativeCalls++; throw new Error('Native fetch must not be reached'); };
     Object.defineProperty(globalThis, 'location', { configurable: true, value: { origin: 'http://127.0.0.1:61234' } });
     try {
-      scripts.at(-1).script();
+      context.scripts.at(-1).script();
       const response = await globalThis.fetch('/v1/chat/completions', { method: 'POST' });
       const reader = response.body.getReader();
       expect(new TextDecoder().decode((await reader.read()).value)).toContain('Synthetic interrupted event');
