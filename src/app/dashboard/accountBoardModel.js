@@ -86,10 +86,12 @@ export function windowLines(account) {
   );
 }
 
+// The reset column, short enough for a card line: "in 1h 35m", "passed", or
+// nothing when no reset time is known (the value column already says so).
 export function resetShort(window, now) {
   const time = accountWindowTime(window.resetAt, now, true);
-  if (!time.absolute) return 'no reset time';
-  return time.label.startsWith('Resets in ') ? `resets in ${time.label.slice(10)}` : 'reset passed';
+  if (!time.absolute) return '';
+  return time.label.startsWith('Resets in ') ? `in ${time.label.slice(10)}` : 'passed';
 }
 
 // The window a person watches first: the least remaining among fresh, known,

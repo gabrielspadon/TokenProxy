@@ -28,7 +28,8 @@ import { AnalyticalChart, METRIC_COLORS } from '@/shared/workspace/AnalyticalCha
 import { chartThemeColors } from '@/shared/workspace/metricColors';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import shared from '@/shared/workspace/workspace.module.css';
-import { BUCKETS, accountBucket, accountStateWord, orderCards } from './accountBoardModel';
+import { BUCKETS, accountBucket, accountStateWord, orderCards, visibleWindowLines } from './accountBoardModel';
+import { HiddenCount, HiddenWindows, QuotaLine, useHiddenWindows } from './QuotaLine';
 import board from './accountBoard.module.css';
 import styles from './capacityViews.module.css';
 
@@ -213,10 +214,13 @@ function ResetOverview({ windows, anchor, onSelect }) {
 
 // Everyday: the board's compact card, read-only. No pause, rename or expand
 // here; the name and every window hand the account back to the board instead.
-function AnalysisCard({ row, now, onSelect }) {
+function AnalysisCard({ row, now, onSelect, hiddenWindows, onShowWindow }) {
   const id = row.connectionId;
   const bucket = accountBucket(row, now);
   const name = row.displayName || row.provider || id;
+  const lines = visibleWindowLines(row, hiddenWindows, now);
+  const [showHidden, setShowHidden] = useState(false);
+  const pending = row.drain ? row.drain.activeStreams : null;
   return (
     <article
       className={`${board.card} ${styles.analysisCard}`}
@@ -241,20 +245,38 @@ function AnalysisCard({ row, now, onSelect }) {
           </span>
         </Tooltip>
         <span className={board.spacer} />
-        <span className={board.cardAttempts}>{attemptsWord(row)}</span>
+        <span className={board.cardAttempts}>
+          {attemptsWord(row)}
+          {pending > 0 ? ` · ${number(pending)} pending` : ''}
+        </span>
+        <HiddenCount
+          hidden={lines.hidden}
+          name={name}
+          open={showHidden}
+          onToggle={() => setShowHidden((value) => !value)}
+        />
       </div>
-      <small className={styles.cardGates}>{pendingWord(row)}</small>
       <div className={styles.cardMeasure}>
         <TokenMeasure
           record={row.activity}
           state={row.activityState ? 'Input unavailable' : null}
         />
       </div>
-      <div className={styles.cardQuota}>
-        <QuotaSummary
-          windows={row.windows}
-          onInspect={(windowScope) => onSelect(id, windowScope)}
-        />
+      <div className={board.cardWindows}>
+        {lines.shown.map((window) => (
+          <QuotaLine
+            key={window.key}
+            window={window}
+            now={now}
+            onInspect={(windowScope) => onSelect(id, windowScope)}
+          />
+        ))}
+        {!lines.shown.length && !lines.hidden.length ? (
+          <span className={board.muted}>No quota recorded</span>
+        ) : null}
+        {showHidden ? (
+          <HiddenWindows hidden={lines.hidden} onShow={(key) => onShowWindow(row, key)} />
+        ) : null}
       </div>
     </article>
   );
@@ -270,6 +292,7 @@ export function CapacityAnalysis({ rows, anchor, now, onSelect, advanced = false
     activity.data?.groupPagination || workspace.activity.data?.groupPagination;
   const [query, setQuery] = useState('');
   const [bucketFilter, setBucketFilter] = useState(null);
+  const { hiddenWindows, setWindowHidden } = useHiddenWindows();
   const filteredRows = useMemo(
     () =>
       rows.filter(
@@ -460,6 +483,8 @@ export function CapacityAnalysis({ rows, anchor, now, onSelect, advanced = false
                   {bucket.members.map((row) => (
                     <AnalysisCard
                       key={row.connectionId}
+                      hiddenWindows={hiddenWindows}
+                      onShowWindow={(account, key) => setWindowHidden(account, key, false)}
                       row={row}
                       now={now}
                       onSelect={onSelect}

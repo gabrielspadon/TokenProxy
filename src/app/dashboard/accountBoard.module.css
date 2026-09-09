@@ -187,14 +187,15 @@
 
 .quota { display: grid; gap: 3px; min-width: 0; }
 .line {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto 18px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto;
   align-items: center;
   column-gap: 8px;
   min-height: 18px;
   font-size: var(--type-dense);
 }
-.board[data-advanced] .line { grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto 54px 18px; }
+.board[data-advanced] .line { grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto 54px; }
 .lineLabel {
   min-width: 0;
   padding: 1px 3px;
@@ -239,38 +240,70 @@
 .line:not([data-level]) .lineValue { color: var(--ink); }
 .line[data-stale] .lineValue { color: var(--slate); }
 .lineReset { color: var(--slate); white-space: nowrap; min-width: 92px; }
+/* The hide control floats over the line's end and appears on hover or
+   focus, so a line never reserves width for it. */
 .lineHide {
+  position: absolute;
+  inset-inline-end: -2px;
+  top: 50%;
+  translate: 0 -50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
+  width: 20px;
   height: 18px;
   padding: 0;
   border: 0;
   border-radius: 3px;
-  background: none;
+  background: var(--raised);
+  box-shadow: -8px 0 6px -2px var(--raised);
   color: var(--slate);
-  opacity: 0.45;
+  opacity: 0;
   cursor: pointer;
 }
 .lineHide :global(.icon) { font-size: 14px; width: 14px; height: 14px; }
-.line:hover .lineHide, .lineHide:focus-visible, .lineHide:hover { opacity: 1; color: var(--ink); }
-@media (pointer: coarse) { .lineHide { opacity: 0.8; } }
+.line:hover .lineHide, .line:focus-within .lineHide { opacity: 1; }
+.lineHide:hover, .lineHide:focus-visible { color: var(--ink); }
+.row[data-expanded] .lineHide { background: var(--signal-wash); box-shadow: -8px 0 6px -2px var(--signal-wash); }
+@media (pointer: coarse) {
+  .lineHide { opacity: 0.7; }
+  .lineReset { padding-inline-end: 20px; }
+}
+/* The hidden count sits in the state row, so hiding a window shortens the
+   card instead of adding a line; the list opens under the lines on demand. */
+.hiddenCount {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px 0 3px;
+  min-height: 18px;
+  border: 1px dashed var(--rule);
+  border-radius: 9px;
+  background: none;
+  color: var(--slate);
+  font: inherit;
+  font-size: var(--type-dense);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.hiddenCount :global(.icon) { font-size: 13px; width: 13px; height: 13px; }
+.hiddenCount:hover, .hiddenCount[aria-expanded='true'] { color: var(--ink); border-color: var(--ink); border-style: solid; }
 .hiddenRow {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
+  margin-top: 1px;
   color: var(--slate);
   font-size: var(--type-dense);
 }
-.hiddenRow > :global(.icon) { font-size: 14px; width: 14px; height: 14px; opacity: 0.6; }
 .hiddenChip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 0 5px;
+  padding: 0 6px 0 4px;
   min-height: 18px;
   border: 1px dashed var(--rule);
   border-radius: 9px;
@@ -285,7 +318,7 @@
 }
 .hiddenChip :global(.icon) { font-size: 13px; width: 13px; height: 13px; }
 .hiddenChip:hover { color: var(--ink); border-color: var(--ink); }
-.hiddenChip[data-auto] { cursor: default; border-style: dotted; text-decoration: line-through; }
+.hiddenChip[data-auto] { cursor: default; border-style: dotted; text-decoration: line-through; padding-inline-start: 6px; }
 .pauseAt :global(.mantine-Input-input) { min-height: 22px; height: 22px; padding-inline: 4px; text-align: center; font-size: var(--type-dense); }
 
 .activity { display: grid; gap: 1px; font-size: var(--type-dense); color: var(--ink); font-variant-numeric: tabular-nums; min-width: 0; }
@@ -330,9 +363,8 @@
 }
 @container board (max-width: 520px) {
   .line,
-  .board[data-advanced] .line { grid-template-columns: minmax(60px, 0.6fr) minmax(60px, 1fr) 42px 18px; }
-  .lineReset { grid-column: 1 / -1; }
-  .lineHide { grid-row: 1; grid-column: 4; }
+  .board[data-advanced] .line { grid-template-columns: minmax(60px, 0.6fr) minmax(60px, 1fr) 42px; }
+  .row .lineReset { grid-column: 1 / -1; }
   .board[data-advanced] .pauseAt { grid-column: 3; }
   .quota,
   .activity { padding-inline-start: 0; }
@@ -388,9 +420,9 @@
 .cardState { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .cardAttempts { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
 .cardWindows { display: grid; gap: 4px; margin-top: 6px; }
-.cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) 40px minmax(0, auto) 18px; }
+.cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) 40px minmax(0, auto); }
 .cardWindows .lineReset { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.cardWindows .meter { height: 8px; border-radius: 4px; }
+.cardWindows .meter { height: 7px; border-radius: 4px; }
 .cardWindows .fill { border-radius: 4px; }
 .card .detail { padding: 8px 0 0; margin-top: 8px; }
 .messages:empty { display: none; }
@@ -407,7 +439,5 @@
 .board[data-density='comfy'] .toolbar { padding-block: 10px; }
 .board[data-density='comfy'] .group { padding: 10px 14px 14px; }
 @container board (max-width: 520px) {
-  .cardWindows .line { grid-template-columns: minmax(70px, 0.8fr) minmax(56px, 1fr) 40px 18px; }
-  .cardWindows .lineReset { grid-column: 1 / -1; }
-  .cardWindows .lineHide { grid-row: 1; grid-column: 4; }
+  .cardWindows .line { grid-template-columns: minmax(64px, 0.8fr) minmax(48px, 1fr) 40px auto; }
 }

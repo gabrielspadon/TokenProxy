@@ -119,9 +119,9 @@ describe('board filters and labels', () => {
     ]);
   });
   it('shortens reset labels without inventing a replenishment', () => {
-    expect(resetShort({ resetAt: minutes(95) }, NOW)).toBe('resets in 1h 35m');
-    expect(resetShort({ resetAt: minutes(-1) }, NOW)).toBe('reset passed');
-    expect(resetShort({ resetAt: null }, NOW)).toBe('no reset time');
+    expect(resetShort({ resetAt: minutes(95) }, NOW)).toBe('in 1h 35m');
+    expect(resetShort({ resetAt: minutes(-1) }, NOW)).toBe('passed');
+    expect(resetShort({ resetAt: null }, NOW)).toBe('');
   });
   it('lists providers once, sorted', () => {
     expect(
