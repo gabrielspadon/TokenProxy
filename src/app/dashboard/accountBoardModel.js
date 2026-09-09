@@ -77,6 +77,7 @@ export function windowLines(account) {
   return groupQuotaProducts(account.provider, accountWindows(account)).flatMap((group) =>
     group.windows.map((window) => ({
       ...window,
+      product: group.id,
       label:
         group.id === 'general' || group.label === window.label
           ? window.label
@@ -107,6 +108,39 @@ export function orderCards(accounts, now) {
     if (hb === null && ha !== null) return -1;
     return (hb ?? 0) - (ha ?? 0) || name(a).localeCompare(name(b));
   });
+}
+
+// Bar colour scale. Depleted is nothing left; low is at or under the larger of
+// 20% and the account's own auto-pause threshold; warn is at or under half.
+export function windowLevel(window) {
+  if (window.unlimited || !Number.isFinite(window.remaining)) return null;
+  if (window.remaining <= 0) return 'depleted';
+  if (window.remaining <= Math.max(20, window.threshold || 0)) return 'low';
+  if (window.remaining <= 50) return 'warn';
+  return 'good';
+}
+
+export const windowHiddenId = (account, key) => `${accountControlId(account)}\u0000${key}`;
+
+// Lines to draw for one account. A window the person hid stays hidden until
+// they show it again. Inside one product, a depleted longer window (weekly,
+// monthly) makes its shorter windows (session, hourly) meaningless, so those
+// hide themselves and return once the longer window has room again.
+export function visibleWindowLines(account, hiddenIds, now) {
+  const lines = windowLines(account);
+  const depletedOrder = {};
+  for (const line of lines) {
+    if (windowLevel(line) === 'depleted' && !accountWindowStale(line, now))
+      depletedOrder[line.product] = Math.max(depletedOrder[line.product] ?? -1, line.order);
+  }
+  const shown = [];
+  const hidden = [];
+  for (const line of lines) {
+    if (hiddenIds.has(windowHiddenId(account, line.key))) hidden.push({ ...line, reason: 'manual' });
+    else if (line.order < (depletedOrder[line.product] ?? -1)) hidden.push({ ...line, reason: 'depleted' });
+    else shown.push(line);
+  }
+  return { shown, hidden };
 }
 
 export function providerList(accounts) {
