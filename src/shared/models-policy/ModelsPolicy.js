@@ -354,7 +354,7 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
         <Tabs.Panel value="editor" keepMounted>
       <div className={styles.toolbar}>
         <Group gap="xs">
-          <Badge variant="light" color={dirty ? 'orange' : 'teal'}>
+          <Badge variant="light" color={dirty ? 'orange' : 'teal'} c={dirty ? 'var(--ember)' : 'var(--positive)'}>
             {draft
               ? draft.id
                 ? `Draft r${draft.revision}${dirty ? ' · unsaved edits' : ''}`
