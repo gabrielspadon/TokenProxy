@@ -8,7 +8,7 @@ const IDENTITY_FILTERS = ['clientKeyId',...CLIENT_REFERENCE_FIELDS];
 const MISSING_FILTERS = ['provider','model','connectionId','sessionId','logicalRequestId',...IDENTITY_FILTERS];
 const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
 const GROUP_SORTS = new Set(['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens']);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'bucketMs', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
 
 export class ActivityQueryError extends Error {}
 
@@ -22,6 +22,16 @@ function date(value, field) {
     throw new ActivityQueryError(`Invalid ${field} timestamp.`);
   }
   return new Date(value).toISOString();
+}
+
+const DAY = 86400000;
+// A chart scale in whole minutes, at most a year. The series never goes finer
+// than the point cap allows, so a small request is raised rather than refused.
+function bucket(value) {
+  if (value == null) return null;
+  const parsed = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+  if (!Number.isSafeInteger(parsed) || parsed < MINUTE || parsed % MINUTE !== 0 || parsed > 366 * DAY) throw new ActivityQueryError('Invalid bucket size.');
+  return parsed;
 }
 
 function integer(value, fallback, max, field) {
@@ -72,6 +82,7 @@ export function validateActivityQuery(query) {
   result.groupSortDirection=query.groupSortDirection ?? 'desc';
   if (!GROUP_SORTS.has(result.groupSortBy) || !['asc','desc'].includes(result.groupSortDirection)) throw new ActivityQueryError('Invalid cohort sort.');
   result.page = integer(query.page, 1, 100000, 'page');
+  result.bucketMs = bucket(query.bucketMs);
   result.pageSize = integer(query.pageSize, 50, 100, 'page size');
   result.sortBy = query.sortBy ?? 'timestamp';
   result.sortDirection = query.sortDirection ?? 'desc';
@@ -234,7 +245,8 @@ function series(db, base, query, summary) {
     return { bucketMs: null, points: [] };
   }
   const first = Date.parse(query.start || summary.firstSeenAt), last = Date.parse(query.end || summary.lastSeenAt);
-  const bucketMs = Math.max(MINUTE, Math.ceil((Math.max(MINUTE, last-first) + MINUTE) / (MAX_POINTS-1) / MINUTE) * MINUTE);
+  const floor = Math.max(MINUTE, Math.ceil((Math.max(MINUTE, last-first) + MINUTE) / (MAX_POINTS-1) / MINUTE) * MINUTE);
+  const bucketMs = Math.max(floor, query.bucketMs || 0);
   const bucket = `CAST((CAST(strftime('%s',timestamp) AS INTEGER)*1000)/${bucketMs} AS INTEGER)*${bucketMs}`;
   const rows = db.all(`${base.sql} SELECT ${bucket} AS bucketStartMs,${TOTALS} FROM records
     WHERE strftime('%s',timestamp) IS NOT NULL GROUP BY bucketStartMs ORDER BY bucketStartMs`, base.params);

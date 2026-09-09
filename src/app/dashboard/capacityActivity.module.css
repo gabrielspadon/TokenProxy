@@ -1,6 +1,10 @@
 .activity { margin: 4px 24px 0; padding: 8px 12px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; min-width: 0; }
 .header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .selectors { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.pick { width: 96px; }
+.pick :global(.mantine-Input-input), .metricPick :global(.mantine-Input-input) { min-height: 26px; height: 26px; font-size: var(--type-dense); }
+.metricPick { width: 128px; }
+.pickGroup { color: var(--slate); font-size: var(--type-dense); padding-inline-start: 2px; }
 .header h2 { margin: 0; font-size: var(--type-ui); font-weight: 600; }
 .summary { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 4px 0 6px; }
 .summary > div { display: flex; gap: 10px; align-items: baseline; }
