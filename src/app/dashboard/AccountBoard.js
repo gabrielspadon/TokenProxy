@@ -15,7 +15,6 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { Icon } from '@/shared/components/Icon';
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
@@ -34,6 +33,7 @@ import {
   sortAccountControls,
 } from './accountControlPanelModel';
 import { applyDrainChanges } from './capacityControlsModel';
+import { HiddenCount, HiddenWindows, QuotaLine, useHiddenWindows } from './QuotaLine';
 import {
   BUCKETS,
   SORTS,
@@ -43,10 +43,7 @@ import {
   fleetSummary,
   orderCards,
   providerList,
-  resetShort,
   visibleWindowLines,
-  windowHiddenId,
-  windowLevel,
   windowLines,
 } from './accountBoardModel';
 import { AccountDetail } from './AccountDetail';
@@ -213,104 +210,6 @@ export function NameField({ name, disabled, onCommit, onOpen, expanded }) {
   );
 }
 
-function QuotaLine({ window, now, advanced, disabled, onInspect, onThreshold, onHide }) {
-  const known = Number.isFinite(window.remaining) && !window.unlimited;
-  const stale = accountWindowStale(window, now);
-  const level = windowLevel(window);
-  const observed = accountWindowTime(window.observedAt, now);
-  const reset = accountWindowTime(window.resetAt, now, true);
-  const evidence = `${window.key}: ${known ? `${number(window.remaining)}% remaining` : window.unlimited ? 'unlimited' : 'remaining unknown'}. ${observed.label}. ${reset.label}.${window.threshold > 0 ? ` Auto-pause at ${number(window.threshold)}% remaining.` : ''}`;
-  return (
-    <div className={styles.line} data-stale={stale || undefined} data-level={level || undefined}>
-      <button
-        type="button"
-        className={styles.lineLabel}
-        title={evidence}
-        onClick={() => onInspect(window.key)}
-      >
-        {window.label}
-      </button>
-      <Tooltip label={evidence}>
-        <div
-          className={styles.meter}
-          role={known ? 'meter' : undefined}
-          aria-label={known ? `${window.key} remaining` : undefined}
-          aria-valuemin={known ? 0 : undefined}
-          aria-valuemax={known ? 100 : undefined}
-          aria-valuenow={known ? window.remaining : undefined}
-          aria-valuetext={known ? `${number(window.remaining)} percent remaining` : undefined}
-          data-unknown={!known || undefined}
-        >
-          {known ? <span className={styles.fill} style={{ width: `${window.remaining}%` }} /> : null}
-          {window.threshold > 0 && !window.unlimited ? (
-            <span className={styles.threshold} style={{ left: `${window.threshold}%` }} />
-          ) : null}
-        </div>
-      </Tooltip>
-      <span className={styles.lineValue}>
-        {window.unlimited ? '∞' : known ? `${number(window.remaining)}%` : '—'}
-      </span>
-      <span className={styles.lineReset}>{resetShort(window, now)}</span>
-      {advanced && !window.unlimited ? (
-        <Tooltip label="Auto-pause when remaining drops to this percentage. 0 turns it off.">
-          <CommitNumber
-            className={styles.pauseAt}
-            aria-label={`Auto-pause threshold for ${window.key}`}
-            value={window.threshold || 0}
-            min={0}
-            max={100}
-            suffix="%"
-            disabled={disabled}
-            onCommit={(next) => onThreshold(window.key, next)}
-          />
-        </Tooltip>
-      ) : null}
-      <Tooltip label="Hide this window">
-        <button
-          type="button"
-          className={styles.lineHide}
-          aria-label={`Hide ${window.label}`}
-          onClick={() => onHide(window.key, true)}
-        >
-          <Icon name="i-hide" />
-        </button>
-      </Tooltip>
-    </div>
-  );
-}
-
-// Windows that are off the card, with the way back for the ones the person
-// hid. A window hidden by the depletion rule returns on its own.
-function HiddenWindows({ hidden, onHide }) {
-  if (!hidden.length) return null;
-  return (
-    <div className={styles.hiddenRow} aria-label="Hidden windows">
-      <Icon name="i-hide" />
-      {hidden.map((window) =>
-        window.reason === 'manual' ? (
-          <Tooltip key={window.key} label="Show this window again">
-            <button
-              type="button"
-              className={styles.hiddenChip}
-              aria-label={`Show ${window.label}`}
-              onClick={() => onHide(window.key, false)}
-            >
-              <Icon name="i-show" />
-              {window.label}
-            </button>
-          </Tooltip>
-        ) : (
-          <Tooltip key={window.key} label="Hidden while the longer window is depleted. It returns when that window has room again.">
-            <span className={styles.hiddenChip} data-auto>
-              {window.label}
-            </span>
-          </Tooltip>
-        )
-      )}
-    </div>
-  );
-}
-
 function AccountRow({
   account,
   advanced,
@@ -340,6 +239,7 @@ function AccountRow({
   const paused = account.isActive === false;
   const draining = account.drain?.isDraining ?? account.isDraining;
   const lines = visibleWindowLines(account, hiddenWindows, now);
+  const [showHidden, setShowHidden] = useState(false);
   const editable = Boolean(accountControlBaseline(account, id)) && !busy;
   const record = account.activity;
   return (
@@ -415,6 +315,12 @@ function AccountRow({
               {verdict.verdict}
             </Badge>
           ) : null}
+          <HiddenCount
+            hidden={lines.hidden}
+            name={name}
+            open={showHidden}
+            onToggle={() => setShowHidden((value) => !value)}
+          />
         </div>
         <div className={styles.quota}>
           {lines.shown.map((window) => (
@@ -422,17 +328,32 @@ function AccountRow({
               key={window.key}
               window={window}
               now={now}
-              advanced={advanced}
-              disabled={!editable}
               onInspect={onInspect}
-              onThreshold={onThreshold}
-              onHide={onHideWindow}
+              onHide={(key) => onHideWindow(key, true)}
+              threshold={
+                advanced && !window.unlimited ? (
+                  <Tooltip label="Auto-pause when remaining drops to this percentage. 0 turns it off.">
+                    <CommitNumber
+                      className={styles.pauseAt}
+                      aria-label={`Auto-pause threshold for ${window.key}`}
+                      value={window.threshold || 0}
+                      min={0}
+                      max={100}
+                      suffix="%"
+                      disabled={!editable}
+                      onCommit={(next) => onThreshold(window.key, next)}
+                    />
+                  </Tooltip>
+                ) : null
+              }
             />
           ))}
           {!lines.shown.length && !lines.hidden.length ? (
             <span className={styles.muted}>No quota recorded</span>
           ) : null}
-          <HiddenWindows hidden={lines.hidden} onHide={onHideWindow} />
+          {showHidden ? (
+            <HiddenWindows hidden={lines.hidden} onShow={(key) => onHideWindow(key, false)} />
+          ) : null}
         </div>
         <div className={styles.activity}>
           {account.activityState ? (
@@ -551,6 +472,7 @@ function AccountCard({
   const evidence = accountControlEvidence(account, now);
   const paused = account.isActive === false;
   const lines = visibleWindowLines(account, hiddenWindows, now);
+  const [showHidden, setShowHidden] = useState(false);
   const record = account.activity;
   return (
     <article
@@ -621,6 +543,12 @@ function AccountCard({
               ? `${number(record.records)} attempts`
               : 'No attempts'}
         </span>
+        <HiddenCount
+          hidden={lines.hidden}
+          name={name}
+          open={showHidden}
+          onToggle={() => setShowHidden((value) => !value)}
+        />
       </div>
       <div className={styles.cardWindows}>
         {lines.shown.map((window) => (
@@ -628,17 +556,16 @@ function AccountCard({
             key={window.key}
             window={window}
             now={now}
-            advanced={false}
-            disabled
             onInspect={onInspect}
-            onThreshold={() => {}}
-            onHide={onHideWindow}
+            onHide={(key) => onHideWindow(key, true)}
           />
         ))}
         {!lines.shown.length && !lines.hidden.length ? (
           <span className={styles.muted}>No quota recorded</span>
         ) : null}
-        <HiddenWindows hidden={lines.hidden} onHide={onHideWindow} />
+        {showHidden ? (
+          <HiddenWindows hidden={lines.hidden} onShow={(key) => onHideWindow(key, false)} />
+        ) : null}
       </div>
       {expanded ? (
         <div className={styles.detail} role="region" aria-label="Selection details">
@@ -709,18 +636,7 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
   const [busy, setBusy] = useState({});
   const [adding, setAdding] = useState(false);
   const [comparing, setComparing] = useState(false);
-  // Windows the person hid, per browser, keyed by account and window key.
-  const [hiddenList, setHiddenList] = useLocalStorage({
-    key: 'tokenproxy.capacity-hidden-windows',
-    defaultValue: [],
-  });
-  const hiddenWindows = useMemo(() => new Set(hiddenList), [hiddenList]);
-  const hideWindow = (account, key, hide) => {
-    const id = windowHiddenId(account, key);
-    setHiddenList((previous) =>
-      hide ? [...new Set([...previous, id])] : previous.filter((value) => value !== id)
-    );
-  };
+  const { hiddenWindows, setWindowHidden: hideWindow } = useHiddenWindows();
   const accounts = useMemo(
     () => mergeAccountControls(resource.data?.connections, rows),
     [resource.data, rows]

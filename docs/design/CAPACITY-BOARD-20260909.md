@@ -61,10 +61,13 @@ seven-day reset horizon) and Model support (every account's persisted
 admission verdict and support evidence for one model). Choosing an account
 in either read view lands on the board with that account expanded.
 
-Every quota line carries a hide control at its end. A hidden window leaves
-the card or row, the layout closes over it, and the window's name stays as a
-dashed chip under the remaining lines with a show control, so nothing hidden
-is lost. The choice is stored per browser and survives reloads and sessions.
+Every quota line carries a hide control that floats over its end and shows
+on hover or focus, so a line reserves no width for it. A hidden window
+leaves the card or row and the card gets shorter: the only trace is a small
+count in the state row, which opens the hidden list under the lines on
+demand, where each window has its show control. The choice is stored per
+browser, survives reloads and sessions, and applies to every view that
+draws quota lines (the board and the Activity & analysis cards alike).
 Inside one product, a depleted longer window (weekly, monthly) hides its
 shorter windows (session, hourly) on its own, because a session allowance
 means nothing while the week is spent; those come back the moment the longer
