@@ -34,8 +34,12 @@ for (const path of paths) {
   assert.equal(response.status, 200, path);
   assert.equal(response.headers.get('x-tokenproxy-preview-version'), run.fixtureVersion);
   const data = await response.json();
+  // A handler answering 200 with `{}` would otherwise satisfy every assertion above, and the
+  // receipt would record an empty key list as if it were a verified projection.
+  const responseKeys = Object.keys(data);
+  assert.ok(responseKeys.length > 0, `${path} answered 200 with an empty body`);
   if (path === '/api/providers') accounts = data.connections;
-  results.push({ path, status: response.status, responseKeys: Object.keys(data) });
+  results.push({ path, status: response.status, responseKeys });
 }
 assert.equal(accounts.length, seed.accounts);
 const live = await identity();
