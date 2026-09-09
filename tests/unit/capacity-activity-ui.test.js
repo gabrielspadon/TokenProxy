@@ -9,11 +9,12 @@ vi.mock('@/shared/workspace/AnalyticalChart', async () => ({
   ...(await import('@/shared/workspace/metricColors')),
   AnalyticalChart: props => { state.chart = props; return <div aria-label={props.label} />; },
 }));
-import { CapacityActivity, capacityActivityOption, capacityBucketScope } from '@/app/dashboard/CapacityActivity';
+import { CALENDAR_METRICS, CapacityActivity, capacityActivityOption, capacityBucketScope, capacityCalendarOption, capacityDayScope, capacityTokensOption } from '@/app/dashboard/CapacityActivity';
 let root, host;
 const start = Date.parse('2026-09-07T12:00:00Z');
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  localStorage.clear();
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   const points = Array.from({ length: 8 }, (_, index) => ({ bucketStartMs: start + index * 60000, bucketStart: new Date(start + index * 60000).toISOString(), logicalRequests: 2, records: 3, failed: 1, cacheReadTokens: 900, cacheWriteTokens: 100, cacheReadSamples: 2, cacheWriteSamples: 2 }));
@@ -31,14 +32,40 @@ it('keeps logical request totals, attempts and paired cache token share distinct
   const summary = [...host.querySelectorAll('dl > div')].map(node => node.textContent);
   expect(summary).toEqual(['Requests with an ID10', 'Attempts24', 'Failed attempts8', 'Cache read share of input75%']);
   expect(host.textContent).toContain('4 attempts have no request ID');
-  expect(host.textContent).not.toContain('Historical zeros may be unreported');
   expect(state.chart.option.yAxis.map(axis => axis.name)).toEqual(['Count', 'Tokens']);
   expect(state.chart.option.series[0].data[0][1]).toBe(2);
   expect(state.chart.option.series[1].data[0][1]).toBe(3);
   expect(state.chart.option.series.every(series => series.showSymbol && series.showAllSymbol)).toBe(true);
-  await act(async () => host.querySelector('[value="data"]').click());
-  expect(host.textContent).toContain('Historical zeros may be unreported');
-  expect(host.textContent).toContain('interval counts do not add up to unique requests');
+  expect(state.chart.option.tooltip).toMatchObject({ renderMode: 'html', appendTo: 'body', confine: false });
+  await act(async () => host.querySelector('[value="tokens"]').click());
+  expect(state.chart.option.series.map(series => series.name)).toEqual(['Tokens in', 'Tokens out', 'Cache read', 'Cache write']);
+  expect(host.querySelector('[aria-label="Calendar metric"]')).toBeNull();
+  await act(async () => host.querySelector('[value="calendar"]').click());
+  expect(host.querySelector('[aria-label="Calendar metric"]')).not.toBeNull();
+  expect(state.chart.option.series[0]).toMatchObject({ type: 'heatmap', coordinateSystem: 'calendar' });
+  expect(state.chart.label).toContain('Tokens in per UTC day');
+  expect(host.querySelector('[value="data"]')).toBeNull();
+});
+
+it('sums a calendar metric per UTC day from measured buckets only and scopes a chosen day', () => {
+  const metric = CALENDAR_METRICS.find(item => item.value === 'cacheReadTokens');
+  const points = [
+    { bucketStartMs: Date.parse('2026-09-07T23:30:00Z'), cacheReadTokens: 10, cacheReadSamples: 1 },
+    { bucketStartMs: Date.parse('2026-09-07T23:45:00Z'), cacheReadTokens: 5, cacheReadSamples: 1 },
+    { bucketStartMs: Date.parse('2026-09-08T00:15:00Z'), cacheReadTokens: 7, cacheReadSamples: 1 },
+    { bucketStartMs: Date.parse('2026-09-08T01:00:00Z'), cacheReadTokens: 99, cacheReadSamples: 0 },
+    { bucketStartMs: Date.parse('2026-09-09T01:00:00Z'), inputTokens: 3 },
+  ];
+  const option = capacityCalendarOption(points, metric);
+  expect(option.series[0].data).toEqual([['2026-09-07', 15], ['2026-09-08', 7]]);
+  expect(option.calendar.range).toEqual(['2026-09-07', '2026-09-08']);
+  expect(option.visualMap.max).toBe(15);
+  expect(option.days).toBe(2);
+  expect(capacityDayScope('2026-09-08')).toEqual({ period: 'custom', start: '2026-09-08T00:00:00.000Z', end: '2026-09-09T00:00:00.000Z' });
+  expect(capacityDayScope('nope')).toBeNull();
+  const tokens = capacityTokensOption([{ bucketStartMs: start, inputTokens: 40, inputSamples: 2, outputTokens: 0, outputSamples: 0 }], 60000);
+  expect(tokens.series[0].data).toEqual([[start, 40]]);
+  expect(tokens.series[1].data).toEqual([[start, null]]);
 });
 
 it('preserves missing token samples and sparse gaps instead of drawing measured zeros', () => {
@@ -109,15 +136,14 @@ it('leaves empty or overflowing time domains unset', () => {
   }
 });
 
-it('offers the same clipped interval selection through the chart and a paginated inline table', async () => {
+it('selects a clipped interval from a chart click and a whole day from a calendar cell', async () => {
   await render();
   act(() => state.chart.onEvents.click({ value: [start, 2] }));
   expect(state.workspace.setScope).toHaveBeenLastCalledWith({ period: 'custom', start: new Date(start + 30000).toISOString(), end: new Date(start + 60000).toISOString() });
-  await act(async () => host.querySelector('[value="data"]').click());
   expect(host.querySelector('[role="dialog"]')).toBeNull();
-  expect(host.querySelectorAll('tbody tr')).toHaveLength(5);
-  const interval = host.querySelector('tbody button');
-  act(() => interval.click());
+  await act(async () => host.querySelector('[value="calendar"]').click());
+  act(() => state.chart.onEvents.click({ value: ['2026-09-07', 900] }));
+  expect(state.workspace.setScope).toHaveBeenLastCalledWith({ period: 'custom', start: '2026-09-07T00:00:00.000Z', end: '2026-09-08T00:00:00.000Z' });
   expect(state.workspace.setScope).toHaveBeenCalledTimes(2);
   expect(capacityBucketScope({ bucketStartMs: start - 120000 }, 60000, state.workspace.scope)).toBeNull();
   expect(capacityBucketScope({}, 60000, state.workspace.scope)).toBeNull();

@@ -94,7 +94,7 @@
 }
 .action:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 .action:disabled {
   color: var(--mantine-color-dimmed);
@@ -163,7 +163,7 @@
 }
 .ruleEvidence > summary:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 @media (max-width: 1050px) {
   .ruleWorkspace[data-editing] { grid-template-columns: minmax(0, 1fr); }
@@ -262,5 +262,5 @@
 .automationHistory { border-top: 1px solid var(--rule); margin-top: 16px; padding-top: 12px; }
 .automation a { overflow-wrap: anywhere; }
 .automation summary { cursor: pointer; font-size: 12px; margin-top: 6px; }
-.automation summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.automation summary:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 @media (max-width: 600px) { .automationFields { grid-template-columns: minmax(0, 1fr); } }

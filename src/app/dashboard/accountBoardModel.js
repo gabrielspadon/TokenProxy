@@ -91,6 +91,24 @@ export function resetShort(window, now) {
   return time.label.startsWith('Resets in ') ? `resets in ${time.label.slice(10)}` : 'reset passed';
 }
 
+// The window a person watches first: the least remaining among fresh, known,
+// limited windows. Null when nothing fresh is known.
+export function headroomOf(account, now) {
+  const values = liveWindows(account, now).map((window) => window.remaining);
+  return values.length ? Math.min(...values) : null;
+}
+
+// Everyday card order inside a bucket: most headroom first, unknown last, then name.
+export function orderCards(accounts, now) {
+  const name = (account) => String(account.displayName || account.name || accountControlId(account));
+  return [...accounts].sort((a, b) => {
+    const ha = headroomOf(a, now), hb = headroomOf(b, now);
+    if (ha === null && hb !== null) return 1;
+    if (hb === null && ha !== null) return -1;
+    return (hb ?? 0) - (ha ?? 0) || name(a).localeCompare(name(b));
+  });
+}
+
 export function providerList(accounts) {
   return [...new Set(accounts.map((account) => account.provider).filter(Boolean))].sort();
 }

@@ -29,7 +29,7 @@
   p { max-width: 68ch; }
   small, .caption { font-size: var(--t-12); color: var(--slate); }
   code, .id { font-family: var(--mono); font-size: 0.93em; overflow-wrap: anywhere; }
-  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
   a:hover { text-decoration-thickness: 2px; }
   hr { border: 0; border-top: 1px solid var(--rule); }
   ::selection { background: var(--signal-wash); }
