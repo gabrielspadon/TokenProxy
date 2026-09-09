@@ -106,6 +106,16 @@ describe('analytical workspace read contract', () => {
     expect(result.series.points.reduce((n,p)=>n+p.records,0)).toBe(4);
     expect(result.series.points.every(p=>Number.isFinite(Date.parse(p.bucketStart)))).toBe(true);
   });
+  it('reads a chosen chart scale, never finer than the point cap allows', () => {
+    const daily = read({bucketMs:'86400000'});
+    expect(daily.series.bucketMs).toBe(86400000);
+    expect(daily.series.points.map(p=>p.bucketStart)).toEqual(['2026-09-06T00:00:00.000Z']);
+    expect(daily.series.points[0].records).toBe(4);
+    expect(read({bucketMs:'60000'}).series.bucketMs).toBe(60000);
+    native.prepare('UPDATE requestStats SET timestamp=? WHERE id=?').run('2023-01-01T00:00:00.000Z','r1');
+    expect(read({bucketMs:'60000'}).series.bucketMs).toBeGreaterThan(60000);
+    for (const bad of ['1000','90000','0','-60000','x']) expect(() => read({bucketMs:bad})).toThrow(ActivityQueryError);
+  });
   it('reports malformed timestamps and keeps other observations chartable', () => {
     native.prepare('UPDATE requestStats SET timestamp=? WHERE id=?').run('invalid-date','r1');
     const result=read();

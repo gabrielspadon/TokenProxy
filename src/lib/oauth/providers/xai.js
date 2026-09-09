@@ -27,6 +27,8 @@ const xai = {
   flowType: "authorization_code_pkce",
   fixedPort: XAI_CONFIG.loopbackPort,
   callbackPath: XAI_CONFIG.callbackPath,
+  // startXaiProxy binds this address; xAI registered it as the loopback redirect.
+  loopbackRedirectUri: XAI_CONFIG.redirectUri,
   pkceVerifierBytes: XAI_PKCE_VERIFIER_BYTES,
   prepareConfig: async (config) => {
     const endpoints = await discoverXaiEndpoints();

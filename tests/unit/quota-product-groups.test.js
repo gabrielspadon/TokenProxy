@@ -44,8 +44,9 @@ describe('quota product display groups', () => {
     Object.assign(input[2], { remaining: 12.345678, resetAt: 'invalid' });
     const output = groupQuotaProducts('codex', input).flatMap(group => group.windows);
     for (const original of input) {
-      const { label, ...actual } = output.find(window => window.key === original.key);
+      const { label, order, ...actual } = output.find(window => window.key === original.key);
       expect(label).toBeTruthy();
+      expect(order).toBeTypeOf('number');
       expect(actual).toEqual(original);
     }
   });

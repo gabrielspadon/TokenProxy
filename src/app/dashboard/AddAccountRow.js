@@ -9,6 +9,7 @@ import { runGrant, importPasted } from '@/shared/oauthGrant';
 import { AI_PROVIDERS } from '@/shared/constants/providers';
 import { accountOptionFields } from './connections/AccountOptions';
 import { credentialModes } from './accountBoardModel';
+import { providerChoiceId, providerChoices } from '@/shared/workspace/scopeOptions';
 import styles from './accountBoard.module.css';
 
 const MODE_WORD = { oauth: 'Sign in', apikey: 'API key', cookie: 'Cookie', none: 'No credential' };
@@ -41,7 +42,9 @@ export function AddAccountRow({ onClose, onAdded }) {
         .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
     []
   );
-  const [providerId, setProviderId] = useState(null);
+  const [selection, setSelection] = useState(null);
+  const providerId = providerChoiceId(selection);
+  const choices = useMemo(() => providerChoices(entries), [entries]);
   const [mode, setMode] = useState('');
   const [name, setName] = useState('');
   const [secret, setSecret] = useState('');
@@ -71,9 +74,10 @@ export function AddAccountRow({ onClose, onAdded }) {
       accountOptionFields(entry.id).length > 2 ||
       !['oauth', 'apikey'].includes(mode));
   const paste = mode === 'oauth' && PASTE_FLOWS.has(flow?.flowType);
-  async function pick(id) {
+  async function pick(value) {
     const current = ++choice.current;
-    setProviderId(id);
+    const id = providerChoiceId(value);
+    setSelection(value);
     setFlow(null);
     setError(null);
     setSecret('');
@@ -161,8 +165,8 @@ export function AddAccountRow({ onClose, onAdded }) {
         aria-label="Provider"
         placeholder="Provider"
         searchable
-        data={entries.map((item) => ({ value: item.id, label: item.name || item.id }))}
-        value={providerId}
+        data={choices}
+        value={selection}
         onChange={(value) => value && pick(value)}
         className={styles.addProvider}
         nothingFoundMessage="No provider matches"
@@ -244,6 +248,7 @@ export function AddAccountRow({ onClose, onAdded }) {
         <Text size="xs" c="orange.8" className={styles.addNote} role="alert">
           {error.title}
           {error.next ? ` ${error.next}` : ''}
+          {error.detail ? ` ${error.detail}` : ''}
         </Text>
       ) : null}
       <span className={styles.spacer} />

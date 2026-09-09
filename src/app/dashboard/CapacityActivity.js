@@ -1,10 +1,11 @@
 'use client';
 import { useMemo } from 'react';
-import { Button, Loader, SegmentedControl, useComputedColorScheme } from '@mantine/core';
+import { Button, Loader, SegmentedControl, Select, useComputedColorScheme } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { AnalyticalChart, METRIC_COLORS } from '@/shared/workspace/AnalyticalChart';
 import { chartMetricColors, chartThemeColors } from '@/shared/workspace/metricColors';
-import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
+import { useResource } from '@/shared/workspace/useResource';
+import { analyticsUrl, useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import styles from './capacityActivity.module.css';
 
 const EMPTY = [];
@@ -14,11 +15,32 @@ export const CHARTS = [
   { value: 'tokens', label: 'Tokens' },
   { value: 'calendar', label: 'Calendar' },
 ];
+// The time axis scale. Auto is the server's own choice for the period; a
+// chosen scale is read as its own series and is never finer than the server
+// allows for that period.
+const HOUR = 3600000;
+export const SCALES = [
+  { value: 'auto', label: 'Auto' },
+  { value: String(60000), label: '1 min' },
+  { value: String(5 * 60000), label: '5 min' },
+  { value: String(15 * 60000), label: '15 min' },
+  { value: String(HOUR), label: '1 hour' },
+  { value: String(6 * HOUR), label: '6 hours' },
+  { value: String(DAY), label: '1 day' },
+  { value: String(7 * DAY), label: '1 week' },
+];
+export const STYLES = [
+  { value: 'lines', label: 'Lines' },
+  { value: 'bars', label: 'Bars' },
+  { value: 'area', label: 'Area' },
+];
 export const CALENDAR_METRICS = [
   {
     value: 'inputTokens',
     samples: 'inputSamples',
     label: 'Tokens in',
+    group: 'Tokens',
+    short: 'In',
     color: 'input',
     legend: '--metric-input',
   },
@@ -26,6 +48,8 @@ export const CALENDAR_METRICS = [
     value: 'outputTokens',
     samples: 'outputSamples',
     label: 'Tokens out',
+    group: 'Tokens',
+    short: 'Out',
     color: 'output',
     legend: '--metric-output',
   },
@@ -33,6 +57,8 @@ export const CALENDAR_METRICS = [
     value: 'cacheReadTokens',
     samples: 'cacheReadSamples',
     label: 'Cache read',
+    group: 'Cache',
+    short: 'Read',
     color: 'cacheRead',
     legend: '--metric-cache',
   },
@@ -40,10 +66,27 @@ export const CALENDAR_METRICS = [
     value: 'cacheWriteTokens',
     samples: 'cacheWriteSamples',
     label: 'Cache write',
+    group: 'Cache',
+    short: 'Write',
     color: 'cacheWrite',
     legend: '--metric-write',
   },
 ];
+// The metric picker groups by family so no option repeats "tokens" or "cache".
+export const METRIC_CHOICES = ['Tokens', 'Cache'].map((group) => ({
+  group,
+  items: CALENDAR_METRICS.filter((item) => item.group === group).map((item) => ({
+    value: item.value,
+    label: item.short,
+  })),
+}));
+const interval = (ms) =>
+  ms >= DAY && ms % DAY === 0
+    ? `${number(ms / DAY)}-day`
+    : ms >= HOUR && ms % HOUR === 0
+      ? `${number(ms / HOUR)}-hour`
+      : `${number(ms / 60000)}-minute`;
+const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 const REQUEST_LEGEND = [
   '--signal',
   '--metric-input',
@@ -148,21 +191,26 @@ function timeAxis(points, bucketMs) {
   return { plot, axis };
 }
 
-const line = (name, key, color, grid, samples, plot) => ({
+const line = (name, key, color, grid, samples, plot, style = 'lines') => ({
   name,
-  type: 'line',
+  type: style === 'bars' ? 'bar' : 'line',
   xAxisIndex: grid,
   yAxisIndex: grid,
-  connectNulls: false,
-  showSymbol: true,
-  showAllSymbol: true,
-  symbolSize: 4,
-  lineStyle: { width: 2, color },
   itemStyle: { color },
+  ...(style === 'bars'
+    ? { barMaxWidth: 10, barGap: '10%' }
+    : {
+        connectNulls: false,
+        showSymbol: true,
+        showAllSymbol: true,
+        symbolSize: 4,
+        lineStyle: { width: 2, color },
+        ...(style === 'area' ? { areaStyle: { color, opacity: 0.16 } } : {}),
+      }),
   data: plot.map((point) => [point.bucketStartMs, measured(point, key, samples)]),
 });
 
-export function capacityActivityOption(points, bucketMs) {
+export function capacityActivityOption(points, bucketMs, style = 'lines') {
   const { plot, axis } = timeAxis(points, bucketMs);
   return {
     grid: [
@@ -184,16 +232,17 @@ export function capacityActivityOption(points, bucketMs) {
       axisTick: { show: false },
     })),
     series: [
-      line('Requests with an ID', 'logicalRequests', METRIC_COLORS.selected, 0, null, plot),
-      line('Attempts', 'records', METRIC_COLORS.input, 0, null, plot),
-      line('Failed attempts', 'failed', METRIC_COLORS.failure, 0, null, plot),
+      line('Requests with an ID', 'logicalRequests', METRIC_COLORS.selected, 0, null, plot, style),
+      line('Attempts', 'records', METRIC_COLORS.input, 0, null, plot, style),
+      line('Failed attempts', 'failed', METRIC_COLORS.failure, 0, null, plot, style),
       line(
         'Cache reads · tokens',
         'cacheReadTokens',
         METRIC_COLORS.cacheRead,
         1,
         'cacheReadSamples',
-        plot
+        plot,
+        style
       ),
       line(
         'Cache writes · tokens',
@@ -201,13 +250,14 @@ export function capacityActivityOption(points, bucketMs) {
         METRIC_COLORS.cacheWrite,
         1,
         'cacheWriteSamples',
-        plot
+        plot,
+        style
       ),
     ],
   };
 }
 
-export function capacityTokensOption(points, bucketMs) {
+export function capacityTokensOption(points, bucketMs, style = 'lines') {
   const { plot, axis } = timeAxis(points, bucketMs);
   return {
     grid: [{ top: 12, height: 82, left: 48, right: 12 }],
@@ -227,16 +277,17 @@ export function capacityTokensOption(points, bucketMs) {
       },
     ],
     series: [
-      line('Tokens in', 'inputTokens', METRIC_COLORS.input, 0, 'inputSamples', plot),
-      line('Tokens out', 'outputTokens', METRIC_COLORS.output, 0, 'outputSamples', plot),
-      line('Cache read', 'cacheReadTokens', METRIC_COLORS.cacheRead, 0, 'cacheReadSamples', plot),
+      line('Tokens in', 'inputTokens', METRIC_COLORS.input, 0, 'inputSamples', plot, style),
+      line('Tokens out', 'outputTokens', METRIC_COLORS.output, 0, 'outputSamples', plot, style),
+      line('Cache read', 'cacheReadTokens', METRIC_COLORS.cacheRead, 0, 'cacheReadSamples', plot, style),
       line(
         'Cache write',
         'cacheWriteTokens',
         METRIC_COLORS.cacheWrite,
         0,
         'cacheWriteSamples',
-        plot
+        plot,
+        style
       ),
     ],
   };
@@ -248,7 +299,8 @@ export function capacityCalendarOption(
   points,
   metric,
   theme = { paper: '#f4f6f8', raised: '#fff', slate: '#52606d' },
-  palette = {}
+  palette = {},
+  range = null
 ) {
   const days = new Map();
   for (const point of points) {
@@ -258,13 +310,16 @@ export function capacityCalendarOption(
     days.set(day, (days.get(day) || 0) + value);
   }
   const data = [...days.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const first = data[0]?.[0] ?? new Date().toISOString().slice(0, 10);
-  const last = data.at(-1)?.[0] ?? first;
+  // The grid spans the asked range (a year ending now, like GitHub, when the
+  // period is open) and otherwise the days that carry data.
+  const first = range?.start ?? data[0]?.[0] ?? new Date().toISOString().slice(0, 10);
+  const last = range?.end ?? data.at(-1)?.[0] ?? first;
   const max = Math.max(1, ...data.map(([, value]) => value));
   const color = palette[metric.color] || METRIC_COLORS[metric.color];
-  // Up to half a year keeps square cells; a longer range spreads to the width.
+  // Up to half a year keeps fixed square cells; a longer range spreads to the
+  // width and the height so the cells stay close to square.
   const weeks = Math.ceil((Date.parse(last) - Date.parse(first)) / (7 * DAY)) + 1;
-  const cellWidth = weeks <= 26 ? 13 : 'auto';
+  const cell = weeks <= 26 ? 13 : 'auto';
   return {
     tooltip: balloon({
       trigger: 'item',
@@ -277,7 +332,7 @@ export function capacityCalendarOption(
       left: 36,
       right: 10,
       bottom: 4,
-      cellSize: [cellWidth, 13],
+      cellSize: [cell, cell],
       range: [first, last],
       splitLine: { show: false },
       itemStyle: { borderWidth: 2, borderColor: theme.raised, color: theme.paper },
@@ -298,8 +353,7 @@ export function capacityCalendarOption(
 }
 
 export function CapacityActivity() {
-  const workspace = useWorkspace(),
-    resource = workspace.activity;
+  const workspace = useWorkspace();
   const scheme = useComputedColorScheme('light');
   const [chart, setChart] = useLocalStorage({
     key: 'tokenproxy.capacity-chart',
@@ -309,16 +363,51 @@ export function CapacityActivity() {
     key: 'tokenproxy.capacity-calendar-metric',
     defaultValue: 'inputTokens',
   });
+  const [scale, setScale] = useLocalStorage({
+    key: 'tokenproxy.capacity-scale',
+    defaultValue: 'auto',
+  });
+  const [style, setStyle] = useLocalStorage({
+    key: 'tokenproxy.capacity-style',
+    defaultValue: 'lines',
+  });
   const metric = CALENDAR_METRICS.find((item) => item.value === metricKey) || CALENDAR_METRICS[0];
+  // The calendar always reads whole UTC days and a chosen scale reads its own
+  // series; Auto shares the workspace read.
+  const bucket = chart === 'calendar' ? DAY : scale === 'auto' ? null : Number(scale);
+  const own = useResource(
+    bucket
+      ? analyticsUrl(workspace.scope, 'activity', { bucketMs: String(bucket), pageSize: '1' })
+      : null,
+    { onSnapshot: workspace.observeSnapshot }
+  );
+  const resource = bucket ? own : workspace.activity;
   const points = resource.data?.series?.points || EMPTY,
-    summary = resource.data?.summary;
+    summary = workspace.activity.data?.summary;
   const bucketMs = resource.data?.series?.bucketMs;
+  const { start: scopeStart, end: scopeEnd } = workspace.scope;
+  const receivedAt = resource.receivedAt;
   const option = useMemo(() => {
-    if (chart === 'tokens') return capacityTokensOption(points, bucketMs);
-    if (chart === 'calendar')
-      return capacityCalendarOption(points, metric, chartThemeColors(scheme), chartMetricColors());
-    return capacityActivityOption(points, bucketMs);
-  }, [chart, metric, points, bucketMs, scheme]);
+    if (chart === 'tokens') return capacityTokensOption(points, bucketMs, style);
+    if (chart === 'calendar') {
+      const end = scopeEnd
+        ? Date.parse(scopeEnd) - 1
+        : receivedAt
+          ? Date.parse(receivedAt)
+          : points.at(-1)?.bucketStartMs;
+      const start = scopeStart ? Date.parse(scopeStart) : end - 364 * DAY;
+      const range =
+        Number.isFinite(start) && Number.isFinite(end) ? { start: day(start), end: day(end) } : null;
+      return capacityCalendarOption(
+        points,
+        metric,
+        chartThemeColors(scheme),
+        chartMetricColors(),
+        range
+      );
+    }
+    return capacityActivityOption(points, bucketMs, style);
+  }, [chart, metric, points, bucketMs, scheme, style, scopeStart, scopeEnd, receivedAt]);
   const choose = (point) => {
     const next = capacityBucketScope(point, bucketMs, workspace.scope);
     if (next) workspace.setScope(next);
@@ -335,14 +424,37 @@ export function CapacityActivity() {
         <h2>Requests &amp; cache</h2>
         <div className={styles.selectors}>
           {chart === 'calendar' ? (
-            <SegmentedControl
+            <Select
               size="xs"
               aria-label="Calendar metric"
               value={metric.value}
-              onChange={setMetricKey}
-              data={CALENDAR_METRICS.map((item) => ({ value: item.value, label: item.label }))}
+              onChange={(value) => value && setMetricKey(value)}
+              data={METRIC_CHOICES}
+              allowDeselect={false}
+              className={styles.metricPick}
+              leftSection={<span className={styles.pickGroup}>{metric.group}</span>}
+              leftSectionWidth={54}
             />
-          ) : null}
+          ) : (
+            <>
+              <Select
+                size="xs"
+                aria-label="Chart scale"
+                value={scale}
+                onChange={(value) => value && setScale(value)}
+                data={SCALES}
+                allowDeselect={false}
+                className={styles.pick}
+              />
+              <SegmentedControl
+                size="xs"
+                aria-label="Chart style"
+                value={style}
+                onChange={setStyle}
+                data={STYLES}
+              />
+            </>
+          )}
           <SegmentedControl
             size="xs"
             aria-label="Activity chart"
@@ -370,7 +482,7 @@ export function CapacityActivity() {
           <dd>{Number.isFinite(fraction) ? `${number(fraction * 100)}%` : 'Unknown'}</dd>
         </div>
       </dl>
-      {resource.loading && !summary ? (
+      {resource.loading && !points.length && !resource.error ? (
         <div className={styles.state} role="status">
           <Loader size="xs" /> Loading activity…
         </div>
@@ -400,7 +512,7 @@ export function CapacityActivity() {
           <AnalyticalChart
             key={chart}
             option={option}
-            height={chart === 'tokens' ? 110 : 120}
+            height={chart === 'tokens' ? 110 : chart === 'calendar' ? 150 : 120}
             label={
               chart === 'calendar'
                 ? `${metric.label} per UTC day over the selected period, ${option.days} days with a recorded total. Select a day to focus on it.`
@@ -425,8 +537,8 @@ export function CapacityActivity() {
       <footer className={styles.foot}>
         <span>
           {chart === 'calendar'
-            ? `Daily totals · UTC. ${Number.isFinite(bucketMs) ? `${number(bucketMs / 60000)}-minute buckets are counted on the day they start.` : ''}`
-            : `${Number.isFinite(bucketMs) ? `${number(bucketMs / 60000)}-minute intervals · UTC. Select an interval to focus.` : 'Selected UTC period.'}`}{' '}
+            ? `Daily totals · UTC${scopeStart ? '' : ', the last year'}. Select a day to focus.`
+            : `${Number.isFinite(bucketMs) ? `${interval(bucketMs)} intervals${bucket && bucketMs > bucket ? ` (the ${interval(bucket)} scale is too fine for this period)` : ''} · UTC. Select an interval to focus.` : 'Selected UTC period.'}`}{' '}
           {resource.receivedAt ? `Updated ${utc(resource.receivedAt)} UTC.` : ''}
         </span>
         {summary?.unattributedAttempts > 0 ? (

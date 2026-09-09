@@ -28,7 +28,8 @@ import { AnalyticalChart, METRIC_COLORS } from '@/shared/workspace/AnalyticalCha
 import { chartThemeColors } from '@/shared/workspace/metricColors';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import shared from '@/shared/workspace/workspace.module.css';
-import { BUCKETS, accountBucket, accountStateWord } from './accountBoardModel';
+import { BUCKETS, accountBucket, accountStateWord, orderCards } from './accountBoardModel';
+import board from './accountBoard.module.css';
 import styles from './capacityViews.module.css';
 
 const FEATURES = tableFeatures({ rowSortingFeature, sortedRowModel: createSortedRowModel() });
@@ -52,6 +53,17 @@ const timestamp = (value) =>
         timeZone: 'UTC',
       })
     : 'Unknown';
+
+// The evidence behind the state word, identical in the table and on a card.
+const gateLabel = (row) =>
+  `Derived from stored test status, errors, cooldown and local controls. Not model support or quota availability. Pending counters can expire or lag. Credential-check timestamp ${timestamp(row.lastQualifiedAt)} UTC.`;
+const pendingWord = (row) =>
+  row.drain
+    ? `${number(row.drain.activeStreams)} observed pending · this process`
+    : 'Pending count unknown';
+const attemptsWord = (row) =>
+  row.activityState ||
+  (row.records >= 0 ? `${number(row.records)} attempts` : 'No recorded attempts');
 
 // Recorded input split into uncached, cached-read and cache-write shares.
 function TokenMeasure({ record, state }) {
@@ -199,9 +211,58 @@ function ResetOverview({ windows, anchor, onSelect }) {
   );
 }
 
+// Everyday: the board's compact card, read-only. No pause, rename or expand
+// here; the name and every window hand the account back to the board instead.
+function AnalysisCard({ row, now, onSelect }) {
+  const id = row.connectionId;
+  const bucket = accountBucket(row, now);
+  const name = row.displayName || row.provider || id;
+  return (
+    <article
+      className={`${board.card} ${styles.analysisCard}`}
+      data-account-id={id}
+      data-bucket={bucket}
+      aria-label={name}
+    >
+      <header className={board.cardHead}>
+        <ProviderMark provider={row.provider} size="small" />
+        <div className={board.identityText}>
+          <UnstyledButton className={styles.cardName} onClick={() => onSelect(id)}>
+            {name}
+          </UnstyledButton>
+          <small>{providerIdentity(row.provider).name}</small>
+        </div>
+      </header>
+      <div className={board.cardState}>
+        <Tooltip label={gateLabel(row)}>
+          <span className={board.stateWord} data-tone={TONE[bucket]}>
+            <i />
+            {accountStateWord(row, now)}
+          </span>
+        </Tooltip>
+        <span className={board.spacer} />
+        <span className={board.cardAttempts}>{attemptsWord(row)}</span>
+      </div>
+      <small className={styles.cardGates}>{pendingWord(row)}</small>
+      <div className={styles.cardMeasure}>
+        <TokenMeasure
+          record={row.activity}
+          state={row.activityState ? 'Input unavailable' : null}
+        />
+      </div>
+      <div className={styles.cardQuota}>
+        <QuotaSummary
+          windows={row.windows}
+          onInspect={(windowScope) => onSelect(id, windowScope)}
+        />
+      </div>
+    </article>
+  );
+}
+
 // The historical account table: recorded activity, cache shares and every
 // retained quota window, sortable, over the shared interval.
-export function CapacityAnalysis({ rows, anchor, now, onSelect }) {
+export function CapacityAnalysis({ rows, anchor, now, onSelect, advanced = false, density = 'tidy' }) {
   const workspace = useWorkspace();
   const { scope } = workspace;
   const activity = workspace.inventoryActivity || workspace.activity;
@@ -258,19 +319,13 @@ export function CapacityAnalysis({ rows, anchor, now, onSelect }) {
         cell: ({ row }) => {
           const bucket = accountBucket(row.original, now);
           return (
-            <Tooltip
-              label={`Derived from stored test status, errors, cooldown and local controls. Not model support or quota availability. Pending counters can expire or lag. Credential-check timestamp ${timestamp(row.original.lastQualifiedAt)} UTC.`}
-            >
+            <Tooltip label={gateLabel(row.original)}>
               <div className={styles.gateCell}>
                 <span className={styles.state} data-tone={TONE[bucket]}>
                   <i />
                   {accountStateWord(row.original, now)}
                 </span>
-                <small>
-                  {row.original.drain
-                    ? `${number(row.original.drain.activeStreams)} observed pending · this process`
-                    : 'Pending count unknown'}
-                </small>
+                <small>{pendingWord(row.original)}</small>
               </div>
             </Tooltip>
           );
@@ -281,12 +336,7 @@ export function CapacityAnalysis({ rows, anchor, now, onSelect }) {
         header: 'Recorded activity',
         cell: ({ row }) => (
           <div className={styles.accountActivity}>
-            <span>
-              {row.original.activityState ||
-                (row.original.records >= 0
-                  ? `${number(row.original.records)} attempts`
-                  : 'No recorded attempts')}
-            </span>
+            <span>{attemptsWord(row.original)}</span>
             <TokenMeasure
               record={row.original.activity}
               state={row.original.activityState ? 'Input unavailable' : null}
@@ -319,8 +369,25 @@ export function CapacityAnalysis({ rows, anchor, now, onSelect }) {
     getRowId: (row) => row.connectionId,
     initialState: { sorting: [{ id: 'records', desc: true }] },
   });
+  const groups = useMemo(
+    () =>
+      BUCKETS.map((bucket) => ({
+        ...bucket,
+        members: orderCards(
+          filteredRows.filter((row) => accountBucket(row, now) === bucket.id),
+          now
+        ),
+      })).filter((bucket) => bucket.members.length),
+    [filteredRows, now]
+  );
   return (
-    <div className={styles.book}>
+    <div
+      className={styles.book}
+      role="region"
+      aria-label="Activity and analysis"
+      data-density={density}
+      data-layout={advanced ? 'table' : 'cards'}
+    >
       <div className={styles.bookToolbar}>
         <div className={styles.bookTitle}>
           <h2>Configured accounts</h2>
@@ -371,11 +438,40 @@ export function CapacityAnalysis({ rows, anchor, now, onSelect }) {
       {anchor > 0 && allWindows.length > 0 && (
         <ResetOverview windows={allWindows} anchor={anchor} onSelect={onSelect} />
       )}
-      <div className={styles.tableRegion}>
+      <div className={advanced ? styles.tableRegion : styles.cardRegion}>
         {workspace.health.loading ? (
           <div className={shared.emptyMessage}>
             <Loader size="xs" /> Loading account observations…
           </div>
+        ) : !advanced ? (
+          <>
+            {groups.map((bucket) => (
+              <section
+                key={bucket.id}
+                className={`${board.group} ${styles.analysisGroup}`}
+                aria-label={`${bucket.label} accounts`}
+              >
+                <h3 className={board.groupTitle} data-tone={bucket.tone}>
+                  <i />
+                  {bucket.label}
+                  <span>{bucket.members.length}</span>
+                </h3>
+                <div className={`${board.cards} ${styles.analysisCards}`}>
+                  {bucket.members.map((row) => (
+                    <AnalysisCard
+                      key={row.connectionId}
+                      row={row}
+                      now={now}
+                      onSelect={onSelect}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+            {filteredRows.length === 0 && (
+              <div className={shared.emptyMessage}>No configured accounts match these filters.</div>
+            )}
+          </>
         ) : (
           <Table.ScrollContainer
             minWidth={760}

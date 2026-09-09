@@ -3,13 +3,20 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ workspace: null, chart: null }));
-vi.mock('@/shared/workspace/WorkspaceProvider', () => ({ useWorkspace: () => state.workspace }));
+const state = vi.hoisted(() => ({ workspace: null, chart: null, urls: [], own: null }));
+vi.mock('@/shared/workspace/WorkspaceProvider', async () => ({
+  ...(await import('@/shared/workspace/WorkspaceProvider')),
+  useWorkspace: () => state.workspace,
+}));
+// A chosen scale and the calendar read their own series; the mock records the URL.
+vi.mock('@/shared/workspace/useResource', () => ({
+  useResource: url => { state.urls.push(url); return url ? state.own : { data: null, loading: false, error: null, refresh: () => {}, receivedAt: null }; },
+}));
 vi.mock('@/shared/workspace/AnalyticalChart', async () => ({
   ...(await import('@/shared/workspace/metricColors')),
   AnalyticalChart: props => { state.chart = props; return <div aria-label={props.label} />; },
 }));
-import { CALENDAR_METRICS, CapacityActivity, capacityActivityOption, capacityBucketScope, capacityCalendarOption, capacityDayScope, capacityTokensOption } from '@/app/dashboard/CapacityActivity';
+import { CALENDAR_METRICS, CapacityActivity, METRIC_CHOICES, capacityActivityOption, capacityBucketScope, capacityCalendarOption, capacityDayScope, capacityTokensOption } from '@/app/dashboard/CapacityActivity';
 let root, host;
 const start = Date.parse('2026-09-07T12:00:00Z');
 beforeEach(() => {
@@ -22,6 +29,8 @@ beforeEach(() => {
     url: '/api/activity?scope=fixture', refresh: vi.fn(), loading: false, receivedAt: '2026-09-07T12:09:00Z',
     data: { source: 'requestStats', summary: { records: 24, logicalRequests: 10, unattributedAttempts: 4, failed: 8, cacheReadFraction: 0.75 }, series: { bucketMs: 60000, points } },
   } };
+  state.own = { ...state.workspace.activity, url: '/api/activity?own' };
+  state.urls = [];
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
@@ -45,6 +54,40 @@ it('keeps logical request totals, attempts and paired cache token share distinct
   expect(state.chart.option.series[0]).toMatchObject({ type: 'heatmap', coordinateSystem: 'calendar' });
   expect(state.chart.label).toContain('Tokens in per UTC day');
   expect(host.querySelector('[value="data"]')).toBeNull();
+  expect(state.urls.at(-1)).toContain('bucketMs=86400000');
+  // A bounded period spans its own days; an open one spans the last year.
+  expect(state.chart.option.calendar.range).toEqual(['2026-09-07', '2026-09-07']);
+  await act(async () => root.unmount());
+  state.workspace = { ...state.workspace, scope: { provider: 'codex' } };
+  root = createRoot(host);
+  await render();
+  expect(state.chart.option.calendar.range).toEqual(['2025-09-08', '2026-09-07']);
+});
+
+it('offers a scale and a style for the time charts, and a grouped metric for the calendar', async () => {
+  await render();
+  expect(state.urls.every(url => url === null)).toBe(true);
+  expect(host.querySelector('[aria-label="Chart scale"]')).not.toBeNull();
+  await act(async () => host.querySelector('[value="bars"]').click());
+  expect(state.chart.option.series.every(series => series.type === 'bar')).toBe(true);
+  await act(async () => host.querySelector('[value="area"]').click());
+  expect(state.chart.option.series.every(series => series.type === 'line' && series.areaStyle)).toBe(true);
+  await act(async () => root.unmount());
+  // The server raised a one-minute request to one hour for this period.
+  localStorage.setItem('tokenproxy.capacity-scale', JSON.stringify('60000'));
+  state.own = { ...state.own, data: { ...state.own.data, series: { ...state.own.data.series, bucketMs: 3600000 } } };
+  root = createRoot(host);
+  await render();
+  expect(state.urls.at(-1)).toContain('bucketMs=60000');
+  expect(state.urls.at(-1)).toContain('provider=codex');
+  expect(host.textContent).toContain('1-hour intervals (the 1-minute scale is too fine for this period)');
+  expect(METRIC_CHOICES).toEqual([
+    { group: 'Tokens', items: [{ value: 'inputTokens', label: 'In' }, { value: 'outputTokens', label: 'Out' }] },
+    { group: 'Cache', items: [{ value: 'cacheReadTokens', label: 'Read' }, { value: 'cacheWriteTokens', label: 'Write' }] },
+  ]);
+  const ranged = capacityCalendarOption([], CALENDAR_METRICS[0], undefined, {}, { start: '2026-01-01', end: '2026-03-01' });
+  expect(ranged.calendar.range).toEqual(['2026-01-01', '2026-03-01']);
+  expect(ranged.calendar.cellSize).toEqual([13, 13]);
 });
 
 it('sums a calendar metric per UTC day from measured buckets only and scopes a chosen day', () => {

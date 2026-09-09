@@ -7,6 +7,9 @@ import {
   fleetSummary,
   providerList,
   resetShort,
+  visibleWindowLines,
+  windowHiddenId,
+  windowLevel,
   windowLines,
 } from '@/app/dashboard/accountBoardModel';
 
@@ -131,5 +134,59 @@ describe('board filters and labels', () => {
     expect(credentialModes({ noAuth: true })).toEqual(['none']);
     expect(credentialModes({ authType: 'cookie' })).toEqual(['cookie']);
     expect(credentialModes({})).toEqual(['apikey']);
+  });
+});
+
+describe('window visibility', () => {
+  const claude = (session, weekly, extra = {}) =>
+    account({ provider: 'claude', quotaPauseThresholds: { 'session (5h)': 20 }, ...extra }, [
+      { key: 'session (5h)', remainingPercentage: session, resetAt: minutes(90) },
+      { key: 'weekly (7d)', remainingPercentage: weekly, resetAt: minutes(3000) },
+    ]);
+  it('grades a window green, yellow, red or depleted', () => {
+    const line = (remaining, threshold = 0) => ({ remaining, threshold, unlimited: false });
+    expect(windowLevel(line(80))).toBe('good');
+    expect(windowLevel(line(51))).toBe('good');
+    expect(windowLevel(line(50))).toBe('warn');
+    expect(windowLevel(line(21))).toBe('warn');
+    expect(windowLevel(line(20))).toBe('low');
+    expect(windowLevel(line(25, 30))).toBe('low');
+    expect(windowLevel(line(0))).toBe('depleted');
+    expect(windowLevel({ remaining: 50, unlimited: true })).toBeNull();
+    expect(windowLevel({ remaining: null })).toBeNull();
+  });
+  it('hides the session window while the weekly window is depleted and shows it again after', () => {
+    const none = new Set();
+    const depleted = visibleWindowLines(claude(70, 0), none, NOW);
+    expect(depleted.shown.map((line) => line.key)).toEqual(['weekly (7d)']);
+    expect(depleted.hidden).toMatchObject([{ key: 'session (5h)', reason: 'depleted' }]);
+    const recovered = visibleWindowLines(claude(70, 12), none, NOW);
+    expect(recovered.shown.map((line) => line.key)).toEqual(['session (5h)', 'weekly (7d)']);
+    expect(recovered.hidden).toEqual([]);
+  });
+  it('does not let a stale depleted weekly window hide anything', () => {
+    const stale = claude(70, 0, { lastQuotaSnapshot: { fetchedAt: minutes(-600), windows: [
+      { key: 'session (5h)', remainingPercentage: 70, resetAt: minutes(90) },
+      { key: 'weekly (7d)', remainingPercentage: 0, resetAt: minutes(3000) },
+    ] } });
+    expect(visibleWindowLines(stale, new Set(), NOW).hidden).toEqual([]);
+  });
+  it('keeps a manual hide until the person shows the window again, whatever the weekly does', () => {
+    const hidden = new Set([windowHiddenId(claude(70, 80), 'weekly (7d)')]);
+    const lines = visibleWindowLines(claude(70, 80), hidden, NOW);
+    expect(lines.shown.map((line) => line.key)).toEqual(['session (5h)']);
+    expect(lines.hidden).toMatchObject([{ key: 'weekly (7d)', reason: 'manual' }]);
+    expect(visibleWindowLines(claude(70, 80), new Set(), NOW).hidden).toEqual([]);
+  });
+  it('scopes the depletion rule to one product', () => {
+    const codex = account({}, [
+      { key: 'session', remainingPercentage: 50, resetAt: minutes(90) },
+      { key: 'weekly', remainingPercentage: 40, resetAt: minutes(3000) },
+      { key: 'spark_session', remainingPercentage: 90, resetAt: minutes(90) },
+      { key: 'spark_weekly', remainingPercentage: 0, resetAt: minutes(3000) },
+    ]);
+    const lines = visibleWindowLines(codex, new Set(), NOW);
+    expect(lines.shown.map((line) => line.key)).toEqual(['session', 'weekly', 'spark_weekly']);
+    expect(lines.hidden.map((line) => line.key)).toEqual(['spark_session']);
   });
 });

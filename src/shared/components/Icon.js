@@ -40,6 +40,8 @@ const GLYPHS = {
   'i-compare': 'checklist',
   'i-sort': 'arrow_downward',
   'i-warning': 'warning',
+  'i-hide': 'visibility_off',
+  'i-show': 'visibility',
 };
 export function Icon({ name, mirror }) {
   if (GLYPHS[name])

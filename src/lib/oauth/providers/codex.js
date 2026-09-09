@@ -6,6 +6,9 @@ const codex = {
   flowType: "authorization_code_pkce",
   fixedPort: CODEX_CONFIG.fixedPort,
   callbackPath: CODEX_CONFIG.callbackPath,
+  // The only redirect URI the Codex client accepts, and the address startCodexProxy
+  // binds. Same value the CLI flow builds in src/lib/oauth/services/codex.js.
+  loopbackRedirectUri: `http://localhost:${CODEX_CONFIG.fixedPort}${CODEX_CONFIG.callbackPath}`,
   buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
     const params = {
       response_type: "code",

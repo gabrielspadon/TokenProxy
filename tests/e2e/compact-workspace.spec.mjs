@@ -112,7 +112,7 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
     await check('The default Capacity view shows separately labelled request counts and cache tokens', async () => {
       const activity = page.getByRole('region', { name: 'Requests and cache activity', exact: true });
       await expect(activity).toBeVisible();
-      await expect(activity.getByRole('img')).toBeVisible({ timeout: 30000 });
+      await expect(activity.getByRole('img', { name: /Select an interval|Select a day/ })).toBeVisible({ timeout: 30000 });
       const query = new URLSearchParams({ view: 'activity', groupBy: 'account', pageSize: '50' });
       const current = new URL(page.url());
       for (const key of ['start', 'end', 'provider', 'model', 'connectionId']) if (current.searchParams.has(key)) query.set(key, current.searchParams.get(key));
@@ -124,10 +124,14 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
       await expect(activity.locator('dl > div').nth(3).locator('dd')).toHaveText(Number.isFinite(evidence.summary.cacheReadFraction) ? `${format(evidence.summary.cacheReadFraction * 100)}%` : 'Unknown');
       await expect(activity).toContainText('Cache reads · tokens');
       await expect(activity).toContainText('Cache writes · tokens');
+      // The time charts carry a scale and a style; the calendar a grouped metric.
+      await expect(activity.getByRole('combobox', { name: 'Chart scale', exact: true })).toHaveValue('Auto');
+      await expect(activity.getByRole('radiogroup', { name: 'Chart style', exact: true })).toBeVisible();
       await activity.getByText('Tokens', { exact: true }).click();
       await expect(activity).toContainText('Tokens out');
       await activity.getByText('Calendar', { exact: true }).click();
-      await expect(activity.getByRole('radiogroup', { name: 'Calendar metric', exact: true })).toBeVisible();
+      await expect(activity.getByRole('combobox', { name: 'Calendar metric', exact: true })).toHaveValue('In');
+      await expect(activity.getByRole('combobox', { name: 'Chart scale', exact: true })).toHaveCount(0);
       await expect(activity).toContainText('Daily totals');
       await activity.getByText('Requests', { exact: true }).click();
       await expect(activity).toContainText('Cache reads · tokens');
@@ -263,13 +267,29 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
     await check('The activity chart selector persists and never opens a dialog', async () => {
       const activity = page.getByRole('region', { name: 'Requests and cache activity', exact: true });
       await activity.getByText('Calendar', { exact: true }).click();
-      await expect(activity.getByRole('radiogroup', { name: 'Calendar metric', exact: true })).toBeVisible();
-      await activity.getByRole('radiogroup', { name: 'Calendar metric', exact: true }).getByText('Cache write', { exact: true }).click();
+      const metric = activity.getByRole('combobox', { name: 'Calendar metric', exact: true });
+      await expect(metric).toHaveValue('In');
+      await metric.click();
+      // The metric list is grouped so no option repeats a word.
+      await expect(page.getByText('Cache', { exact: true })).toBeVisible();
+      await page.getByRole('option', { name: 'Write', exact: true }).click();
+      await expect(metric).toHaveValue('Write');
+      await expect(activity).toContainText('Cache');
       await page.reload();
-      await expect(activity.getByRole('radiogroup', { name: 'Calendar metric', exact: true })).toBeVisible({ timeout: 60000 });
-      await expect(activity.getByRole('radio', { name: 'Cache write', exact: true })).toBeChecked();
+      await expect(activity.getByRole('combobox', { name: 'Calendar metric', exact: true })).toHaveValue('Write', { timeout: 60000 });
       await expect(page.getByRole('dialog')).toHaveCount(0);
       await activity.getByText('Requests', { exact: true }).click();
+      // The scale and the style persist the same way.
+      await activity.getByText('Bars', { exact: true }).click();
+      await activity.getByRole('combobox', { name: 'Chart scale', exact: true }).click();
+      await page.getByRole('option', { name: '1 hour', exact: true }).click();
+      await expect(activity).toContainText('1-hour intervals');
+      await page.reload();
+      await expect(activity.getByRole('combobox', { name: 'Chart scale', exact: true })).toHaveValue('1 hour', { timeout: 60000 });
+      await expect(activity.getByRole('radio', { name: 'Bars', exact: true })).toBeChecked();
+      await activity.getByText('Lines', { exact: true }).click();
+      await activity.getByRole('combobox', { name: 'Chart scale', exact: true }).click();
+      await page.getByRole('option', { name: 'Auto', exact: true }).click();
     });
     expect(report.errors).toEqual([]);
     expect(report.apiFailures).toEqual([]);

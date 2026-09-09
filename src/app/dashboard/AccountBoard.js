@@ -15,6 +15,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { Icon } from '@/shared/components/Icon';
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
@@ -43,6 +44,9 @@ import {
   orderCards,
   providerList,
   resetShort,
+  visibleWindowLines,
+  windowHiddenId,
+  windowLevel,
   windowLines,
 } from './accountBoardModel';
 import { AccountDetail } from './AccountDetail';
@@ -209,15 +213,15 @@ export function NameField({ name, disabled, onCommit, onOpen, expanded }) {
   );
 }
 
-function QuotaLine({ window, now, advanced, disabled, onInspect, onThreshold }) {
+function QuotaLine({ window, now, advanced, disabled, onInspect, onThreshold, onHide }) {
   const known = Number.isFinite(window.remaining) && !window.unlimited;
   const stale = accountWindowStale(window, now);
-  const low = known && window.remaining <= Math.max(10, window.threshold);
+  const level = windowLevel(window);
   const observed = accountWindowTime(window.observedAt, now);
   const reset = accountWindowTime(window.resetAt, now, true);
   const evidence = `${window.key}: ${known ? `${number(window.remaining)}% remaining` : window.unlimited ? 'unlimited' : 'remaining unknown'}. ${observed.label}. ${reset.label}.${window.threshold > 0 ? ` Auto-pause at ${number(window.threshold)}% remaining.` : ''}`;
   return (
-    <div className={styles.line} data-stale={stale || undefined}>
+    <div className={styles.line} data-stale={stale || undefined} data-level={level || undefined}>
       <button
         type="button"
         className={styles.lineLabel}
@@ -237,19 +241,13 @@ function QuotaLine({ window, now, advanced, disabled, onInspect, onThreshold }) 
           aria-valuetext={known ? `${number(window.remaining)} percent remaining` : undefined}
           data-unknown={!known || undefined}
         >
-          {known ? (
-            <span
-              className={styles.fill}
-              data-low={low || undefined}
-              style={{ width: `${window.remaining}%` }}
-            />
-          ) : null}
+          {known ? <span className={styles.fill} style={{ width: `${window.remaining}%` }} /> : null}
           {window.threshold > 0 && !window.unlimited ? (
             <span className={styles.threshold} style={{ left: `${window.threshold}%` }} />
           ) : null}
         </div>
       </Tooltip>
-      <span className={styles.lineValue} data-low={low || undefined}>
+      <span className={styles.lineValue}>
         {window.unlimited ? '∞' : known ? `${number(window.remaining)}%` : '—'}
       </span>
       <span className={styles.lineReset}>{resetShort(window, now)}</span>
@@ -267,6 +265,48 @@ function QuotaLine({ window, now, advanced, disabled, onInspect, onThreshold }) 
           />
         </Tooltip>
       ) : null}
+      <Tooltip label="Hide this window">
+        <button
+          type="button"
+          className={styles.lineHide}
+          aria-label={`Hide ${window.label}`}
+          onClick={() => onHide(window.key, true)}
+        >
+          <Icon name="i-hide" />
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
+// Windows that are off the card, with the way back for the ones the person
+// hid. A window hidden by the depletion rule returns on its own.
+function HiddenWindows({ hidden, onHide }) {
+  if (!hidden.length) return null;
+  return (
+    <div className={styles.hiddenRow} aria-label="Hidden windows">
+      <Icon name="i-hide" />
+      {hidden.map((window) =>
+        window.reason === 'manual' ? (
+          <Tooltip key={window.key} label="Show this window again">
+            <button
+              type="button"
+              className={styles.hiddenChip}
+              aria-label={`Show ${window.label}`}
+              onClick={() => onHide(window.key, false)}
+            >
+              <Icon name="i-show" />
+              {window.label}
+            </button>
+          </Tooltip>
+        ) : (
+          <Tooltip key={window.key} label="Hidden while the longer window is depleted. It returns when that window has room again.">
+            <span className={styles.hiddenChip} data-auto>
+              {window.label}
+            </span>
+          </Tooltip>
+        )
+      )}
     </div>
   );
 }
@@ -286,6 +326,8 @@ function AccountRow({
   onInspect,
   onRename,
   onPause,
+  hiddenWindows,
+  onHideWindow,
   onDrain,
   onPriority,
   onThreshold,
@@ -297,7 +339,7 @@ function AccountRow({
   const evidence = accountControlEvidence(account, now);
   const paused = account.isActive === false;
   const draining = account.drain?.isDraining ?? account.isDraining;
-  const lines = windowLines(account);
+  const lines = visibleWindowLines(account, hiddenWindows, now);
   const editable = Boolean(accountControlBaseline(account, id)) && !busy;
   const record = account.activity;
   return (
@@ -375,7 +417,7 @@ function AccountRow({
           ) : null}
         </div>
         <div className={styles.quota}>
-          {lines.map((window) => (
+          {lines.shown.map((window) => (
             <QuotaLine
               key={window.key}
               window={window}
@@ -384,9 +426,13 @@ function AccountRow({
               disabled={!editable}
               onInspect={onInspect}
               onThreshold={onThreshold}
+              onHide={onHideWindow}
             />
           ))}
-          {!lines.length ? <span className={styles.muted}>No quota recorded</span> : null}
+          {!lines.shown.length && !lines.hidden.length ? (
+            <span className={styles.muted}>No quota recorded</span>
+          ) : null}
+          <HiddenWindows hidden={lines.hidden} onHide={onHideWindow} />
         </div>
         <div className={styles.activity}>
           {account.activityState ? (
@@ -495,6 +541,8 @@ function AccountCard({
   onInspect,
   onRename,
   onPause,
+  hiddenWindows,
+  onHideWindow,
 }) {
   const id = accountControlId(account);
   const name = account.displayName || account.name || id;
@@ -502,7 +550,7 @@ function AccountCard({
   const word = accountStateWord(account, now);
   const evidence = accountControlEvidence(account, now);
   const paused = account.isActive === false;
-  const lines = windowLines(account);
+  const lines = visibleWindowLines(account, hiddenWindows, now);
   const record = account.activity;
   return (
     <article
@@ -575,7 +623,7 @@ function AccountCard({
         </span>
       </div>
       <div className={styles.cardWindows}>
-        {lines.map((window) => (
+        {lines.shown.map((window) => (
           <QuotaLine
             key={window.key}
             window={window}
@@ -584,9 +632,13 @@ function AccountCard({
             disabled
             onInspect={onInspect}
             onThreshold={() => {}}
+            onHide={onHideWindow}
           />
         ))}
-        {!lines.length ? <span className={styles.muted}>No quota recorded</span> : null}
+        {!lines.shown.length && !lines.hidden.length ? (
+          <span className={styles.muted}>No quota recorded</span>
+        ) : null}
+        <HiddenWindows hidden={lines.hidden} onHide={onHideWindow} />
       </div>
       {expanded ? (
         <div className={styles.detail} role="region" aria-label="Selection details">
@@ -657,6 +709,18 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
   const [busy, setBusy] = useState({});
   const [adding, setAdding] = useState(false);
   const [comparing, setComparing] = useState(false);
+  // Windows the person hid, per browser, keyed by account and window key.
+  const [hiddenList, setHiddenList] = useLocalStorage({
+    key: 'tokenproxy.capacity-hidden-windows',
+    defaultValue: [],
+  });
+  const hiddenWindows = useMemo(() => new Set(hiddenList), [hiddenList]);
+  const hideWindow = (account, key, hide) => {
+    const id = windowHiddenId(account, key);
+    setHiddenList((previous) =>
+      hide ? [...new Set([...previous, id])] : previous.filter((value) => value !== id)
+    );
+  };
   const accounts = useMemo(
     () => mergeAccountControls(resource.data?.connections, rows),
     [resource.data, rows]
@@ -1012,6 +1076,8 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
                         onToggle={() => toggle(id)}
                         onInspect={(windowScope) => toggle(id, windowScope)}
                         onRename={(name) => rename(account, name)}
+                        hiddenWindows={hiddenWindows}
+                        onHideWindow={(key, hide) => hideWindow(account, key, hide)}
                         onPause={() =>
                           savePolicy(
                             account,
@@ -1053,6 +1119,8 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
               onToggle={() => toggle(id)}
               onInspect={(windowScope) => toggle(id, windowScope)}
               onRename={(name) => rename(account, name)}
+              hiddenWindows={hiddenWindows}
+              onHideWindow={(key, hide) => hideWindow(account, key, hide)}
               onPause={() =>
                 savePolicy(
                   account,

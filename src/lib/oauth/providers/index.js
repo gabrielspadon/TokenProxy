@@ -96,15 +96,23 @@ export async function generateAuthData(providerName, redirectUri, meta) {
   const state = config.loginTraceID || pkceState;
   // Zed: codeVerifier carries the encoded RSA private key (from prepareConfig), not a PKCE verifier.
   const codeVerifier = config.privateKeyVerifier || pkceVerifier;
+  // A provider that binds a fixed loopback port registered ONE redirect URI with the
+  // upstream, and its own callback proxy is what listens for the answer. The dashboard
+  // origin is not in that allow-list, so a caller-supplied redirect_uri both fails
+  // upstream validation and sends the browser to a window nothing is waiting on, while
+  // the grant polls a proxy that never receives a callback. The provider's URI wins and
+  // is echoed back, so the session registered before the popup and the code exchanged
+  // after it carry the same value.
+  const effectiveRedirectUri = provider.loopbackRedirectUri || redirectUri;
 
   let authUrl;
   if (provider.flowType === "device_code") {
     // Device code flow doesn't have auth URL upfront
     authUrl = null;
   } else if (provider.flowType === "authorization_code_pkce") {
-    authUrl = provider.buildAuthUrl(config, redirectUri, state, codeChallenge, meta || {});
+    authUrl = provider.buildAuthUrl(config, effectiveRedirectUri, state, codeChallenge, meta || {});
   } else {
-    authUrl = provider.buildAuthUrl(config, redirectUri, state, undefined, meta || {});
+    authUrl = provider.buildAuthUrl(config, effectiveRedirectUri, state, undefined, meta || {});
   }
 
   return {
@@ -112,7 +120,7 @@ export async function generateAuthData(providerName, redirectUri, meta) {
     state,
     codeVerifier,
     codeChallenge,
-    redirectUri,
+    redirectUri: effectiveRedirectUri,
     flowType: provider.flowType,
     fixedPort: provider.fixedPort,
     callbackPath: provider.callbackPath || "/callback",

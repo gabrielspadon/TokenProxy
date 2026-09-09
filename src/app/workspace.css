@@ -77,6 +77,9 @@
   --metric-cache: #7454a4;
   --metric-write: #a4691f;
   --metric-output: #58657a;
+  --meter-good: #1f9d55;
+  --meter-warn: #e0a400;
+  --meter-low: #d92d2d;
   --brand-claude: #bf6c43;
   --brand-openai: #237d66;
   --brand-gemini: #4c70c7;
@@ -111,6 +114,9 @@
   --metric-cache: #c4a7e5;
   --metric-write: #e7c488;
   --metric-output: #b6c5db;
+  --meter-good: #34c76a;
+  --meter-warn: #f2c14e;
+  --meter-low: #ff6b6b;
 }
 html { font-size: 16px; }
 body {

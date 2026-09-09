@@ -19,6 +19,8 @@
 .bookTitle { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .bookTitle h2 { font-size: var(--type-ui); font-weight: 600; }
 .bookTitle > span:last-child { color: var(--slate); font-size: var(--type-dense); }
+/* The count is evidence: it shrinks to an ellipsis at 390px without this. */
+.bookTitle :global(.mantine-Badge-root) { flex: none; }
 .accountSearch { width: 170px; }
 .activityPages {
   display: flex;
@@ -43,6 +45,34 @@
 .resetOverview p { font-size: var(--type-dense); color: var(--slate); margin-top: 2px; }
 .resetChart { min-width: 0; }
 .tableRegion { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
+
+/* Everyday cards. The board owns .group, .cards, .card, .cardHead, .cardState,
+   .cardAttempts, .identityText, .stateWord and .spacer; only the read-view
+   pieces and the density variants live here. */
+.cardRegion { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
+.cardName {
+  font-size: var(--type-dense);
+  font-weight: 600;
+  color: var(--ink);
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.cardName:hover { text-decoration: underline; }
+.cardGates { display: block; margin-top: 5px; color: var(--slate); font-size: var(--type-dense); }
+.cardMeasure { margin-top: 6px; font-variant-numeric: tabular-nums; }
+.cardMeasure .tokenMeasure { min-width: 0; max-width: none; }
+.cardQuota { margin-top: 8px; }
+.book[data-density='comfy'] .analysisCards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+.book[data-density='comfy'] .analysisCard { padding: 14px 16px; }
+.book[data-density='comfy'] .analysisGroup { padding: 10px 14px 14px; }
+.book[data-density='comfy'] .cardGates { margin-top: 8px; }
+.book[data-density='comfy'] .cardMeasure { margin-top: 10px; }
+.book[data-density='comfy'] .cardQuota { margin-top: 12px; }
 .tableScroll { max-width: 100%; min-width: 0; }
 .accountTable { table-layout: fixed; font-size: var(--type-dense); white-space: nowrap; width: 100%; min-width: 760px; }
 .accountTable thead { z-index: 1; background: var(--paper); box-shadow: 0 1px var(--rule); }

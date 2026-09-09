@@ -61,12 +61,45 @@ seven-day reset horizon) and Model support (every account's persisted
 admission verdict and support evidence for one model). Choosing an account
 in either read view lands on the board with that account expanded.
 
+Every quota line carries a hide control at its end. A hidden window leaves
+the card or row, the layout closes over it, and the window's name stays as a
+dashed chip under the remaining lines with a show control, so nothing hidden
+is lost. The choice is stored per browser and survives reloads and sessions.
+Inside one product, a depleted longer window (weekly, monthly) hides its
+shorter windows (session, hourly) on its own, because a session allowance
+means nothing while the week is spent; those come back the moment the longer
+window has room again, and their chip says why they are away. A stale
+depleted reading does not hide anything.
+
+Meters carry one colour per level on the fill and on the number: green above
+half, yellow at or under half, red at or under 20% or the account's own
+auto-pause threshold, and a red hatched empty bar for a depleted window. A
+stale reading stays grey.
+
 The Requests & cache block keeps its four totals and offers three charts:
 Requests (request and attempt counts over cache token tracks), Tokens (input,
 output, cache read and cache write over time) and Calendar (a per-day heatmap
 of one of those four token metrics, GitHub style, a bucket counted on the UTC
 day it starts). Balloons render on the document body so the small chart box
 cannot crop them. Selecting an interval or a day narrows the shared scope.
+
+The time charts carry a scale (Auto, the server's own choice for the period,
+then one minute up to one week) and a style (lines, bars, area). A chosen
+scale reads its own series with `bucketMs`; the server never goes finer than
+its point cap allows and the foot says when a scale was too fine. The
+calendar always reads whole UTC days, spans the last year when the period is
+open, and picks its metric from a grouped list (Tokens: In, Out; Cache: Read,
+Write) so no option repeats a word. All four choices persist per browser.
+
+## Only what matters
+
+The model filter in the scope bar and the model picker in Model support list
+only models of providers with at least one configured account; a provider
+filter narrows them by id or alias alike, and labels name the provider rather
+than its alias. The add-account provider list leads with a Popular group
+(Claude Code, Codex, OpenAI, Anthropic, Gemini and the other common ones) and
+keeps the full alphabetical list under it, so a popular provider is reachable
+from the top and from its place in the list.
 
 ## Global controls
 

@@ -43,12 +43,15 @@ export default function CapacityPage() {
     return () => clearInterval(timer);
   }, []);
   const activity = workspace.inventoryActivity || workspace.activity;
+  // The anchor is the moment the evidence describes: the snapshot's capture,
+  // else the quota read, else the clock, so a history read never asks for an
+  // epoch-zero range while the first quota read is still in flight.
   const anchor = snapshot?.capturedAt
     ? Date.parse(snapshot.capturedAt)
     : quota.data?.asOf
       ? Date.parse(quota.data.asOf)
-      : 0;
-  const now = snapshot?.isolated && anchor > 0 ? anchor : clock;
+      : clock;
+  const now = snapshot?.isolated && snapshot?.capturedAt ? anchor : clock;
   const rows = useMemo(
     () =>
       accounts.map((account) => {
@@ -125,7 +128,7 @@ export default function CapacityPage() {
             }}
           />
         ) : view === 'analysis' ? (
-          <CapacityAnalysis rows={rows} anchor={anchor} now={now} onSelect={select} />
+          <CapacityAnalysis rows={rows} anchor={anchor} now={now} onSelect={select} advanced={advanced} density={density} />
         ) : (
           <CapacityModelSupport accounts={accounts} onSelect={select} />
         )}

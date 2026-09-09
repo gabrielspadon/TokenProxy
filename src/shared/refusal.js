@@ -1,9 +1,16 @@
 // One sentence per refusal shape. `status` is the HTTP status, `body` the JSON.
 export function refusal(status, body) {
   const code = body?.code;
-  if (status === 0 || code === "network") {
+  // `code` is set only by call()'s own transport envelope, so it is what separates an
+  // unreachable gateway from a refusal raised in the browser AFTER the gateway answered
+  // normally: a provider that refused a sign-in, a blocked sign-in window, a grant that
+  // ran out of time. Those all carry status 0 too, and collapsing them here told the
+  // operator to restart a service that was never involved, while the one sentence that
+  // explained the failure never reached the row.
+  if (code === "network" || (status === 0 && !body?.error)) {
     return { tone: "bad", title: "The gateway did not answer.", next: "Check that TokenProxy is running, then reload." };
   }
+  if (status === 0) return { tone: code === "cancelled" ? "warn" : "bad", title: body.error };
   if (body?.source === "tokenproxy-admin") {
     switch (code) {
       case "unauthorized":

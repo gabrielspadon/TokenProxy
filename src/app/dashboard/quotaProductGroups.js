@@ -50,9 +50,9 @@ export function groupQuotaProducts(provider, windows) {
   const described = windows.map(window => ({ window, ...describeWindow(provider, window.key) }));
   described.sort((a, b) => productOrder(a.id) - productOrder(b.id) || compareText(a.id, b.id)
     || a.order - b.order || compareText(a.window.key, b.window.key));
-  for (const { window, id, productLabel, label } of described) {
+  for (const { window, id, productLabel, label, order } of described) {
     if (!groups.has(id)) groups.set(id, { id, label: productLabel, windows: [] });
-    groups.get(id).windows.push({ ...window, label });
+    groups.get(id).windows.push({ ...window, label, order });
   }
   return [...groups.values()];
 }

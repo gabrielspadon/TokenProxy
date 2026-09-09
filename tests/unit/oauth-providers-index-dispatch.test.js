@@ -71,12 +71,17 @@ describe('generateAuthData', () => {
       .getProviderNames()
       .find(
         (n) =>
-          mod.PROVIDERS[n].flowType === 'authorization_code_pkce' && !mod.PROVIDERS[n].prepareConfig
+          mod.PROVIDERS[n].flowType === 'authorization_code_pkce' &&
+          !mod.PROVIDERS[n].prepareConfig &&
+          !mod.PROVIDERS[n].loopbackRedirectUri
       );
     const plainName = mod
       .getProviderNames()
       .find(
-        (n) => mod.PROVIDERS[n].flowType === 'authorization_code' && !mod.PROVIDERS[n].prepareConfig
+        (n) =>
+          mod.PROVIDERS[n].flowType === 'authorization_code' &&
+          !mod.PROVIDERS[n].prepareConfig &&
+          !mod.PROVIDERS[n].loopbackRedirectUri
       );
 
     for (const [name, expectChallenge] of [
@@ -97,6 +102,33 @@ describe('generateAuthData', () => {
       else expect(challenge).toBeUndefined();
       spy.mockRestore();
     }
+  });
+
+  it('overrides the caller redirect_uri with the loopback URI a fixed-port provider binds', async () => {
+    const mod = await loadIndex();
+    const fixed = mod.getProviderNames().filter((n) => mod.PROVIDERS[n].loopbackRedirectUri);
+    // codex is the reported case: its callback lands on the local proxy, never on the dashboard.
+    expect(fixed).toContain('codex');
+    for (const name of fixed) {
+      const provider = mod.PROVIDERS[name];
+      const spy = vi.spyOn(provider, 'buildAuthUrl').mockReturnValue('https://example.invalid/auth');
+      const data = await mod.generateAuthData(name, 'http://127.0.0.1:20129/callback');
+      expect(spy.mock.calls[0][1]).toBe(provider.loopbackRedirectUri);
+      expect(data.redirectUri).toBe(provider.loopbackRedirectUri);
+      // The proxy that receives that callback binds exactly this port and path.
+      const loopback = new URL(provider.loopbackRedirectUri);
+      expect(loopback.port).toBe(String(provider.fixedPort));
+      expect(loopback.pathname).toBe(provider.callbackPath);
+      spy.mockRestore();
+    }
+    // A provider with no fixed loopback keeps the dashboard origin, which is what the
+    // same-origin /callback relay needs.
+    expect(mod.PROVIDERS.claude.loopbackRedirectUri).toBeUndefined();
+    const claude = await mod.generateAuthData('claude', 'http://127.0.0.1:20129/callback');
+    expect(claude.redirectUri).toBe('http://127.0.0.1:20129/callback');
+    expect(new URL(claude.authUrl).searchParams.get('redirect_uri')).toBe(
+      'http://127.0.0.1:20129/callback'
+    );
   });
 
   it('runs prepareConfig with meta and honours config-provided state/verifier overrides', async () => {
