@@ -207,7 +207,15 @@ async function main() {
     const root = flag('--run') || (await prepare(flag('--scenario', 'populated'), flag('--mode', 'production'))).root;
     return start(root, flag('--dist', '.next'), flag('--build-receipt'), flag('--mode', 'production'), Number(flag('--port', 0)));
   }
-  if (command === 'status') return identity(flag('--run'));
+  if (command === 'status') {
+    const receipt = await identity(flag('--run'));
+    // start() saves the receipt at :174 so the readiness probe has something to challenge, and
+    // only rewrites it with routeTable at :189 once a deep dynamic route answered. A status read
+    // landing in that window would otherwise report a dev preview as if its route table were
+    // proven. verify-preview.mjs:16 already refuses such a receipt; fail here too, at the read.
+    if (receipt.mode === 'dev' && !receipt.routeTable) throw new Error('Dev preview has no route-table receipt yet; its start probe has not completed');
+    return receipt;
+  }
   if (command === 'recover-stopped') {
     const root = flag('--run');
     const owner = await owned(root);
