@@ -183,16 +183,26 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await expect(board.locator('[data-level]').first()).toBeAttached();
       const hide = row.getByRole('button', { name: /^Hide / }).first();
       const label = (await hide.getAttribute('aria-label')).replace(/^Hide /, '');
+      const height = await row.evaluate(node => node.getBoundingClientRect().height);
       await hide.click();
       await expect(meters()).toHaveCount(before - 1);
+      // Hiding shortens the card: the count lives in the state row, the list opens on demand.
+      expect(await row.evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(height);
+      const count = row.getByRole('button', { name: `Hidden windows for ${NAME}`, exact: true });
+      // The glyph ligature name precedes the count in the text.
+      await expect(count).toHaveText(/1$/);
+      await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toHaveCount(0);
+      await count.click();
       await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toBeVisible();
       await capture('board-everyday-hidden-window-1440');
-      await page.reload();
-      await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toBeVisible({ timeout: 60000 });
+      // The dev preview recompiles on a reload, so wait for the document, not the load event.
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
+      await expect(count).toHaveText(/1$/, { timeout: 60000 });
       await expect(meters()).toHaveCount(before - 1);
+      await count.click();
       await row.getByRole('button', { name: `Show ${label}`, exact: true }).click();
       await expect(meters()).toHaveCount(before);
-      await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toHaveCount(0);
+      await expect(count).toHaveCount(0);
       expect(await page.evaluate(() => JSON.parse(localStorage.getItem('tokenproxy.capacity-hidden-windows') || '[]'))).toEqual([]);
     });
     await check('Search and the paused chip change the actual row collection', async () => {
@@ -413,7 +423,10 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await context.request.put(`${runtime.url}${accountPath}`, { data: { isActive: wanted.isActive, quotaPauseThresholds: wanted.quotaPauseThresholds, ...(wanted.priority === null ? {} : { priority: wanted.priority }), expectedControls: controls } });
     }
     const final = await current();
-    report.restored = { name: final.name === NAME, isActive: final.isActive === initial.isActive, thresholds: JSON.stringify(final.quotaPauseThresholds ?? {}) === JSON.stringify(initial.quotaPauseThresholds ?? {}) };
+    // A run aborted between Drain and Stop drain must not leave the fixture draining either.
+    const draining = (await read('/api/admin/drain?all=true')).connections.find(item => item.connectionId === ACCOUNT)?.isDraining === true;
+    if (draining) await context.request.delete(`${runtime.url}/api/admin/drain/${ACCOUNT}`);
+    report.restored = { name: final.name === NAME, isActive: final.isActive === initial.isActive, thresholds: JSON.stringify(final.quotaPauseThresholds ?? {}) === JSON.stringify(initial.quotaPauseThresholds ?? {}), drain: !draining || 'stopped' };
     report.outboundFailures = safety.outboundFailures;
     const receiptPath = testInfo.outputPath('capacity-board-receipt.json');
     await writeFile(receiptPath, JSON.stringify(report, null, 2));
