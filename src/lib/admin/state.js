@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
 import { makeKv } from "@/lib/db/helpers/kvStore.js";
-import { getAdapter } from "@/lib/db/driver.js";
-import { parseJson, stringifyJson } from "@/lib/db/helpers/jsonCol.js";
 import { getAppVersion } from "@/lib/db/version.js";
 
 /**
@@ -64,14 +62,7 @@ export async function writeDrainDoc(connectionId, doc) {
 // synchronous SQLite transaction closes that window: the caller either writes
 // against exactly the document it read, or gets the current one back.
 export async function swapDrainDoc(connectionId, expected, next) {
-  const db = await getAdapter();
-  return db.transaction(() => {
-    const row = db.get("SELECT value FROM kv WHERE scope = 'admin.drain' AND key = ?", [connectionId]);
-    const current = row ? parseJson(row.value, null) : null;
-    if (versionOf(current) !== versionOf(expected)) return { written: false, current };
-    db.run("INSERT INTO kv(scope, key, value) VALUES('admin.drain', ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value", [connectionId, stringifyJson(next)]);
-    return { written: true, current: next };
-  });
+  return await drainKv.swap(connectionId, expected, next, versionOf);
 }
 
 /**
