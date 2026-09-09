@@ -3,7 +3,7 @@ import { buildCreateTableSql } from '../schema.js';
 
 // Only the scope constraint changes. The outer migration transaction and
 // mandatory pre-schema backup preserve all historical runs on failure.
-export default {
+const migration = {
   version: 2,
   name: 'compatibility-controlled-scopes',
   up(db) {
@@ -35,3 +35,5 @@ export default {
     if (db.all('PRAGMA foreign_key_check(compatibilityRuns)').length) throw new Error('Compatibility migration foreign key validation failed');
   },
 };
+
+export default migration;

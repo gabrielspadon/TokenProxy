@@ -77,6 +77,7 @@ export function ConfigurationDomains() {
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only initial load. action is redeclared every render, so listing it would re-run this fetch on every render; its own dependencies are the stable state setters.
   }, []);
   const retainDraft = (value) => {
     setDraft(value);
