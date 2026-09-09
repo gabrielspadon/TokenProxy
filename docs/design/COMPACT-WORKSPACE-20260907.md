@@ -1,5 +1,7 @@
 # Coherent compact workspace
 
+> Capacity sections superseded on 2026-09-09 by CAPACITY-BOARD-20260909.md. The side inspector, drawer and card presentation on Capacity were replaced by one board with inline expansion.
+
 The operator's correction is about coherent compactness, not smaller components. Keep readable text, recognizable brands and accessible targets. Reduce repeated hierarchy and context switches, and place decisions beside their evidence.
 
 The rendered baseline repeats scope, status and selection controls across multiple bars. A selected record forces an additional full-width banner. Every intermediate layout opens a fullscreen inspector. The account panel calls a row layout Compare, while actual multi-account comparison is elsewhere. Equal-height cards and viewport-driven columns waste space when the inspector changes the available width.

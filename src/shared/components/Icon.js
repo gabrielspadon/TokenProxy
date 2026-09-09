@@ -33,6 +33,13 @@ const GLYPHS = {
   'i-chart': 'show_chart',
   'i-clock': 'schedule',
   'i-table': 'table_rows',
+  'i-chevron-up': 'expand_less',
+  'i-edit': 'edit',
+  'i-open': 'open_in_new',
+  'i-drain': 'stop_circle',
+  'i-compare': 'checklist',
+  'i-sort': 'arrow_downward',
+  'i-warning': 'warning',
 };
 export function Icon({ name, mirror }) {
   if (GLYPHS[name])

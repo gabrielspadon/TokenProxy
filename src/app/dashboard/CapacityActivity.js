@@ -38,7 +38,7 @@ export function capacityActivityOption(points, bucketMs) {
     data: plot.map(point => [point.bucketStartMs, measured(point, key, samples)]),
   });
   return {
-    grid: [{ top: 19, height: 35, left: 52, right: 15 }, { top: 87, height: 35, left: 52, right: 15 }],
+    grid: [{ top: 16, height: 30, left: 48, right: 12 }, { top: 66, height: 30, left: 48, right: 12 }],
     tooltip: { trigger: 'axis', renderMode: 'richText', confine: true, valueFormatter: value => value == null ? 'Unknown' : number(value) },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
     xAxis: [0, 1].map(gridIndex => ({ type: 'time', gridIndex, min: validDomain ? first : undefined, max: validDomain ? end : undefined,
@@ -82,7 +82,7 @@ export function CapacityActivity() {
         : !points.length ? <div className={styles.state}>No recorded activity for this period. Account controls remain available below.</div>
           : view === 'chart' ? <>
             <div className={styles.legend}>{option.series.map((series, index) => <span key={series.name}><i style={{ background: `var(${LEGEND_COLORS[index]}, ${series.itemStyle.color})` }} />{series.name}</span>)}</div>
-            <AnalyticalChart option={option} height={149} label="Requests, attempts and cache tokens over the selected UTC period. Counts and tokens use separate aligned tracks. Use Data for keyboard interval selection." onEvents={{ click: event => {
+            <AnalyticalChart option={option} height={120} label="Requests, attempts and cache tokens over the selected UTC period. Counts and tokens use separate aligned tracks. Use Data for keyboard interval selection." onEvents={{ click: event => {
               const start = event.value?.[0];
               choose(points.find(point => point.bucketStartMs === start));
             } }} />

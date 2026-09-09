@@ -208,9 +208,9 @@
   margin-block-end: 16px;
 }
 .button {
-  min-height: 35px;
-  border-radius: 7px;
-  padding: 7px 12px;
+  min-height: 30px;
+  border-radius: 6px;
+  padding: 5px 10px;
   font-size: var(--type-dense);
   background: var(--signal);
   border-color: var(--signal);
@@ -235,9 +235,9 @@
 }
 .input,
 .select {
-  border-radius: 7px;
-  min-height: 36px;
-  padding: 8px 10px;
+  border-radius: 6px;
+  min-height: 30px;
+  padding: 5px 8px;
   font-size: var(--type-dense);
 }
 .field label,

@@ -11,6 +11,7 @@ import { runGrant, importPasted } from "@/shared/oauthGrant";
 import { TONE, WORDS, AUTH } from "@/shared/status";
 import { fmtNum, fmtRelative, fmtTime } from "@/shared/format";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { credentialModes } from '../accountBoardModel';
 import { ProviderMark } from '@/shared/components/ProviderMark';
 import { Icon } from "@/shared/components/Icon";
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
@@ -39,16 +40,7 @@ const CAUSE_WORD = {
   error: "a recorded error",
 };
 
-// How a provider entry can be credentialed, derived from the registry entry.
-function modesOf(entry) {
-  if (Array.isArray(entry.authModes) && entry.authModes.length) return entry.authModes;
-  const modes = [];
-  if (entry.hasOAuth) modes.push("oauth");
-  if (entry.noAuth) modes.push("none");
-  else if (entry.authType === "cookie") modes.push("cookie");
-  else modes.push("apikey");
-  return modes;
-}
+const modesOf = credentialModes;
 
 const MODE_WORD = { oauth: "OAuth grant", apikey: "API key", cookie: "Cookie", none: "No credential", paste: "Pasted token" };
 
