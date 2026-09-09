@@ -60,6 +60,26 @@ const nextConfig = {
     root: tracingRoot
   },
   outputFileTracingRoot: tracingRoot,
+  // Build byproducts that live inside the traced root and contain copies of the
+  // product tree, so tracing re-enters them. cli/app is where build-cli.js puts
+  // the standalone output, and every previous pack left its own cli/app inside
+  // it, which is how a path reached cli/app/cli/app x19. The deploy driver's
+  // .deploy-prep areas each hold a full rollback copy of the prior package,
+  // which holds its own .deploy-prep. Measured on the installed release: of
+  // 6133 entries in one route trace, 5311 were these nested copies, .nft.json
+  // reached 735 MB across 236 files, the package doubled to 1.2 G and `npm pack`
+  // exceeded its 300 s timeout. Nothing under them is a runtime dependency.
+  // The "**" key also matches Next's literal "next-server" probe, so these
+  // reach sharedIgnores and nft skips the walk rather than only the output.
+  outputFileTracingExcludes: {
+    "**": [
+      "**/cli/app/**",
+      "**/.deploy-prep/**",
+      "**/.data-preservation-*/**",
+      "**/.build-tools/**",
+      "**/.build-home/**",
+    ],
+  },
   // sql.js is the last link in the database driver chain and the one that is
   // supposed to work everywhere, but it is WASM with a sidecar binary rather
   // than pure JS. Nothing statically requires that binary — the loader resolves
