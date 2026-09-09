@@ -14,8 +14,8 @@ import { installOperatorFixture, NOW as OPERATOR_CLOCK } from '../operator-fixtu
 // routes below stay page-scoped, which is safe because a page route takes precedence over a
 // context route for the same URL (measured, same run). What context scope still does NOT
 // cover is context.request, the Node-side HTTP client used by authenticateRedesign; it is not
-// routed at any scope and reaches the network. That is deliberate, since that client is what
-// the harness itself logs in with, and its only in-tree use is loopback.
+// routed at any scope and reaches the network. That client is guarded at its call site instead
+// (authenticateRedesign below), which is the only place it is used.
 export async function installRedesignBrowser(page, { baseUrl, operator = false, runtimeReceipt = null, fault = null }) {
   const origin = new URL(baseUrl).origin;
   const context = page.context();
@@ -126,7 +126,14 @@ export async function installRedesignBrowser(page, { baseUrl, operator = false, 
 export async function authenticateRedesign(context, root) {
   const process = JSON.parse(await readFile(join(root, 'process.json'), 'utf8'));
   const auth = JSON.parse(await readFile(join(root, 'preview-auth.json'), 'utf8'));
-  const response = await context.request.post(`${process.url}/api/auth/login`, { data: { password: auth.initialPassword } });
+  // context.request is routed at no scope (measured on playwright 1.62.1: a catch-all on the
+  // context saw zero of its requests and the off-origin one reached the network), so the outbound
+  // guard installed above cannot cover this client. The guard that CAN cover it is here, at its
+  // one call site: refuse any target that is not the owned loopback preview before the request
+  // leaves. process.json is written by this launcher, but it is still a file on disk.
+  const target = new URL(`${process.url}/api/auth/login`);
+  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(target.origin)) throw new Error(`Synthetic preview login refuses a non-loopback target: ${target.origin}`);
+  const response = await context.request.post(target.href, { data: { password: auth.initialPassword } });
   if (!response.ok()) throw new Error('Synthetic preview login failed');
   return { authenticated: true, synthetic: true };
 }

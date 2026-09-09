@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { seed } from './seed.mjs';
 import { CLOCK, SCENARIOS, VERSION } from './catalog.mjs';
-import { installRedesignBrowser } from './browser.mjs';
+import { installRedesignBrowser, authenticateRedesign } from './browser.mjs';
 
 // The guards install on page.context(), so the double records what the CONTEXT was asked for
 // and keeps the page's own route list separate. That separation is the point: a per-fault route
@@ -169,6 +169,21 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     // An unparseable clock must throw here, where the bad value is still visible, rather than
     // handing every in-page `new Date()` a NaN through the proxy.
     await expect(installRedesignBrowser(browserDouble().page, { baseUrl: dev.url, runtimeReceipt: { ...dev, mode: 'production', clock: 'yesterday' } })).rejects.toThrow('not a parseable date: yesterday');
+  });
+
+  it('refuses a login through context.request whose process receipt names a non-loopback target', async () => {
+    // context.request is routed at no scope, so the context catch-all cannot cover this client
+    // and the guard lives at the call site instead. A process.json rewritten to point off-host
+    // must not produce a request; it must throw naming the origin.
+    const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+    await writeFile(join(root, 'preview-auth.json'), JSON.stringify({ initialPassword: 'synthetic' }));
+    const requested = [];
+    const context = { request: { post: async url => { requested.push(url); return { ok: () => true }; } } };
+    await writeFile(join(root, 'process.json'), JSON.stringify({ url: 'https://attacker.example.com' }));
+    await expect(authenticateRedesign(context, root)).rejects.toThrow('refuses a non-loopback target: https://attacker.example.com');
+    await writeFile(join(root, 'process.json'), JSON.stringify({ url: 'http://127.0.0.1:61234' }));
+    expect(await authenticateRedesign(context, root)).toEqual({ authenticated: true, synthetic: true });
+    expect(requested).toEqual(['http://127.0.0.1:61234/api/auth/login']);
   });
 
   it('seeds twelve representative accounts with local eligibility and exact retained histories', async () => {
