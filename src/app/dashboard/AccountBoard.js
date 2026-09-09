@@ -34,6 +34,7 @@ import {
 } from './accountControlPanelModel';
 import { applyDrainChanges } from './capacityControlsModel';
 import { HiddenCount, HiddenWindows, QuotaLine, useHiddenWindows } from './QuotaLine';
+import { ResetHorizon, UsageLine } from './ActivityEvidence';
 import {
   BUCKETS,
   SORTS,
@@ -359,19 +360,15 @@ function AccountRow({
           {account.activityState ? (
             <span className={styles.muted}>{account.activityState}</span>
           ) : record ? (
-            <>
-              <span>{number(record.records)} attempts</span>
-              {advanced ? (
-                <small>
-                  {compact(record.inputSamples > 0 ? record.inputTokens : NaN)} in ·{' '}
-                  {pct(record.cacheReadFraction)} cached
-                  {record.failed > 0 ? ` · ${number(record.failed)} failed` : ''}
-                </small>
-              ) : null}
-            </>
+            <span>
+              {number(record.records)} attempts
+              {record.failed > 0 ? ` · ${number(record.failed)} failed` : ''}
+              {account.drain?.activeStreams > 0 ? ` · ${number(account.drain.activeStreams)} pending` : ''}
+            </span>
           ) : (
             <span className={styles.muted}>No attempts</span>
           )}
+          <UsageLine record={record} state={account.activityState} compact />
         </div>
         <div className={styles.actions}>
           {advanced ? (
@@ -540,7 +537,7 @@ function AccountCard({
           {account.activityState
             ? account.activityState
             : record
-              ? `${number(record.records)} attempts`
+              ? `${number(record.records)} attempts${record.failed > 0 ? ` · ${number(record.failed)} failed` : ''}${account.drain?.activeStreams > 0 ? ` · ${number(account.drain.activeStreams)} pending` : ''}`
               : 'No attempts'}
         </span>
         <HiddenCount
@@ -551,6 +548,7 @@ function AccountCard({
         />
       </div>
       <div className={styles.cardWindows}>
+        <UsageLine record={record} state={account.activityState} />
         {lines.shown.map((window) => (
           <QuotaLine
             key={window.key}
@@ -883,6 +881,9 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
             refresh();
           }}
         />
+      ) : null}
+      {visible.length ? (
+        <ResetHorizon rows={visible} anchor={anchor} onSelect={(id, scope) => toggle(id, scope)} />
       ) : null}
       {advanced && comparing && compared.length > 1 ? (
         <div

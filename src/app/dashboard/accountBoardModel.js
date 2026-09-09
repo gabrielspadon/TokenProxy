@@ -21,6 +21,7 @@ export const SORTS = [
   { value: 'name', label: 'Name' },
   { value: 'reset', label: 'Next reset' },
   { value: 'headroom', label: 'Least headroom' },
+  { value: 'attempts', label: 'Most attempts' },
 ];
 
 export function liveWindows(account, now) {
