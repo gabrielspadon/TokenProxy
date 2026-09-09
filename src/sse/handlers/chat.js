@@ -767,9 +767,16 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // Same request object handleChat saw, so readRid's memoised WeakMap hands
   // back the SAME rid every hop of a recursive chat call.
   const rid = requestRid(request);
+  // One configuration snapshot per dispatch. Every account attempt below
+  // prepares the SAME request, so re-reading the settings row per attempt
+  // both repeats the work and lets one request's attempts disagree about the
+  // operator configuration. The read stays lazy: a dispatch that never needs
+  // it never pays for it, and concurrent callers share the one promise.
+  let settingsOnce = null;
+  const dispatchSettings = () => (settingsOnce ??= getSettings());
   // An explicit connection also disambiguates a bare default before admission.
   const pinnedConnectionId = comboChain
-    ? resolveComboMemberConnection(comboChain, modelStr, await getSettings())
+    ? resolveComboMemberConnection(comboChain, modelStr, await dispatchSettings())
     : null;
   const requestedConnectionId = request?.headers?.get(REQUEST_CONNECTION_HEADER) || null;
   const modelInfo = await resolveRequestModel(modelStr, { preferredConnectionId: pinnedConnectionId || requestedConnectionId });
@@ -791,7 +798,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         return errorResponse(HTTP_STATUS.BAD_REQUEST, `Combo "${modelStr}" contains itself (${cycle})`);
       }
       chain.add(modelStr);
-      const chatSettings = await getSettings();
+      const chatSettings = await dispatchSettings();
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -853,7 +860,9 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // fallback already read as "try the next candidate" — which is what the
   // report asks for: spread a combo over its members instead of piling every
   // request onto the first one. Unset (the default) skips the lookup entirely.
-  const overflow = await providerConcurrencyOverflow(provider);
+  // Fail-open on an unreadable settings row is this check's contract, so the
+  // snapshot is offered rather than required here.
+  const overflow = await providerConcurrencyOverflow(provider, await dispatchSettings().catch(() => null));
   if (overflow) {
     log.warn("CHAT", `[${provider}/${model}] ${overflow}`);
     // A LOCAL admission refusal, not a claim that the provider is out of
@@ -1029,7 +1038,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       }
 
       // Use shared chatCore
-      const chatSettings = await getSettings();
+      const chatSettings = await dispatchSettings();
       // The token saver was global, so a combo mixing an expensive model with a
       // cheap one had to be saved for both or neither (#2289, #2037). The chain
       // names the combo this attempt came from, so a combo's own overrides apply

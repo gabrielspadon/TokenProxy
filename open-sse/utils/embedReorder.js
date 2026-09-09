@@ -26,8 +26,12 @@ const BLOCKED_KEYS = new Set([
 const ALLOWED_BLOCK_TYPES = new Set(["text", "thinking", "redacted_thinking"]);
 const ALNUM_RE = /[a-z0-9]+/gi;
 
-function cacheKey(model, text) {
-  return createHash("sha256").update(`${model}:${text}`).digest("hex");
+// The endpoint is part of the key, not just the model name: two services can
+// answer to the same model identifier with different weights, and an operator
+// who repoints the embedding URL must not be served vectors the previous
+// service produced.
+function cacheKey(embedUrl, model, text) {
+  return createHash("sha256").update(`${embedUrl}\u0000${model}\u0000${text}`).digest("hex");
 }
 
 function cacheGet(cache, key) {
@@ -242,8 +246,8 @@ export async function reorderByRelevance(messages, options = {}) {
   const allPairs = runs.flat();
   const texts = allPairs.map((p) => extractText(messages[p.start]) + "\n" + extractText(messages[p.start + 1]));
 
-  const queryKey = cacheKey(embedModel, query);
-  const textKeys = texts.map((t) => cacheKey(embedModel, t));
+  const queryKey = cacheKey(embedUrl, embedModel, query);
+  const textKeys = texts.map((t) => cacheKey(embedUrl, embedModel, t));
   let queryVec = cacheGet(cache, queryKey);
   const textVecs = textKeys.map((k) => cacheGet(cache, k));
   const missTextIdx = [];

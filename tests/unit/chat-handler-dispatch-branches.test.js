@@ -409,3 +409,50 @@ describe('readAttemptCeiling', () => {
     }
   });
 });
+
+// PERFORMANCE-DELIVERY item 5, "avoid ... identical-attempt preparation": every
+// account attempt inside the dispatch loop prepares the SAME request, so the
+// operator configuration is read once per dispatch and shared. Counting reads
+// against a fixed baseline rather than an absolute number keeps this honest
+// about the unrelated call sites (the API-key gate and the cascade plan) that
+// also read settings once per request.
+describe('dispatch-scoped configuration snapshot', () => {
+  function failure(status = 503) {
+    return {
+      success: false,
+      status,
+      error: 'upstream refused',
+      failureMetadata: { safeToReplay: true },
+      response: Response.json({ error: { message: 'upstream refused' } }, { status }),
+    };
+  }
+
+  async function readsForAttempts(attempts) {
+    vi.clearAllMocks();
+    __rateLimiter.reset();
+    settingsMocks.getSettings.mockResolvedValue({});
+    let n = 0;
+    authMocks.getProviderCredentials.mockImplementation(async () => ({
+      connectionId: `c${++n}`,
+      connectionName: `c${n}`,
+      providerSpecificData: {},
+      accountLease: null,
+    }));
+    authMocks.markAccountUnavailable.mockResolvedValue({
+      shouldFallback: true, mustWait: false, retrySameAccount: false, cooldownMs: 0,
+    });
+    let left = attempts - 1;
+    coreMocks.handleChatCore.mockImplementation(async () =>
+      left-- > 0 ? failure() : { success: true, response: sseWithContent() });
+    const res = await handleChat(request({ model: 'prov/m', messages: [] }));
+    expect(res.status).toBe(200);
+    expect(coreMocks.handleChatCore).toHaveBeenCalledTimes(attempts);
+    return settingsMocks.getSettings.mock.calls.length;
+  }
+
+  it('reads the settings row the same number of times however many accounts one dispatch burns', async () => {
+    const one = await readsForAttempts(1);
+    const four = await readsForAttempts(4);
+    expect(four).toBe(one);
+  });
+});
