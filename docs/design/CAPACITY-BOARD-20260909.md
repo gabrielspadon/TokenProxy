@@ -54,12 +54,21 @@ evidence tabs inline. Advanced is the dense row board with priority, drain,
 auto-pause thresholds and comparison. Both levels carry a comfy or tidy
 density switch, stored per browser, defaulting to tidy.
 
-The three upper-right views are back: Accounts (the board or the cards),
-Activity & analysis (the sortable account table with recorded activity, the
-uncached, cached-read and cache-write split, every retained window, and the
-seven-day reset horizon) and Model support (every account's persisted
-admission verdict and support evidence for one model). Choosing an account
-in either read view lands on the board with that account expanded.
+Two upper-right views remain: Accounts and Model support (every account's
+persisted admission verdict and support evidence for one model). The former
+Activity & analysis view is folded into the board: every card and row
+carries a Usage line on the quota grid (recorded input over the shared
+interval as uncached, cached-read and cache-write shares, the total and the
+cached share), the attempt count carries failures and pending streams, the
+sort offers most attempts, and a slim Reset horizon band above the accounts
+plots the stored deadlines of the next seven days with a picker that lands
+on the account's window. Choosing an account in Model support lands on the
+board with that account expanded.
+
+Two palettes, one page: composition (usage shares, token tracks) uses cool
+hues (blue for uncached input, teal for cached reads, violet for cache
+writes) and status (quota meters) uses semantic green, amber and red, so a
+share bar and a status bar never read alike.
 
 Every quota line carries a hide control that floats over its end and shows
 on hover or focus, so a line reserves no width for it. A hidden window
@@ -75,7 +84,7 @@ window has room again, and their chip says why they are away. A stale
 depleted reading does not hide anything.
 
 Meters carry one colour per level on the fill and on the number: green above
-half, yellow at or under half, red at or under 20% or the account's own
+half, amber at or under half, red at or under 20% or the account's own
 auto-pause threshold, and a red hatched empty bar for a depleted window. A
 stale reading stays grey.
 

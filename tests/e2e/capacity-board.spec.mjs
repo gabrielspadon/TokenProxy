@@ -127,25 +127,21 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await expect(board).toHaveAttribute('data-density', 'tidy');
       await capture('board-everyday-cards-1440');
     });
-    await check('The three views keep the activity table, reset horizon and model support reachable', async () => {
+    await check('The board carries the activity evidence and the reset horizon; Model support stays a view', async () => {
       const views = page.getByRole('radiogroup', { name: 'Capacity view', exact: true });
-      await views.getByText('Activity & analysis', { exact: true }).click();
-      const analysis = page.getByRole('region', { name: 'Activity and analysis', exact: true });
-      await expect(page.getByRole('textbox', { name: 'Search configured accounts', exact: true })).toBeVisible();
-      // Everyday is the board's grouped cards; Advanced keeps the sortable table.
-      await expect(analysis).toHaveAttribute('data-layout', 'cards', { timeout: 60000 });
-      await expect(analysis.getByRole('region', { name: 'Ready accounts', exact: true })).toBeVisible();
-      expect(await analysis.getByRole('region', { name: /accounts$/ }).count()).toBeGreaterThan(0);
-      await expect(analysis.getByRole('table', { name: 'Configured account capacity', exact: true })).toHaveCount(0);
-      await expect(page.getByText('Reset horizon', { exact: true })).toBeVisible();
-      await capture('board-analysis-everyday-1440');
+      await expect(views.getByRole('radio')).toHaveCount(2);
+      // Usage shares sit on the quota grid of every card, and the horizon band sits above the accounts.
+      await expect(row.getByText('Usage', { exact: true })).toBeVisible();
+      await expect(board.getByRole('group', { name: 'Reset horizon', exact: true })).toBeVisible();
+      await expect(board.getByRole('group', { name: 'Reset horizon', exact: true })).toContainText('in the next 7 days');
+      await capture('board-everyday-evidence-1440');
       await level('Advanced');
-      await expect(analysis).toHaveAttribute('data-layout', 'table', { timeout: 60000 });
-      await expect(page.getByRole('table', { name: 'Configured account capacity', exact: true })).toBeVisible({ timeout: 60000 });
-      await expect(page.getByText('Reset horizon', { exact: true })).toBeVisible();
-      await capture('board-analysis-1440');
+      await expect(board).toHaveAttribute('data-layout', 'rows', { timeout: 60000 });
+      await expect(row.locator('[data-usage][data-compact]')).toBeVisible();
+      await expect(board.getByRole('group', { name: 'Reset horizon', exact: true })).toBeVisible();
+      await capture('board-advanced-evidence-1440');
       await level('Everyday');
-      await expect(analysis).toHaveAttribute('data-layout', 'cards', { timeout: 60000 });
+      await expect(board).toHaveAttribute('data-layout', 'cards', { timeout: 60000 });
       await views.getByText('Model support', { exact: true }).click();
       await expect(page.getByRole('combobox', { name: 'Model to inspect', exact: true })).toBeVisible();
       // Only providers with an account are offered, under their own names.

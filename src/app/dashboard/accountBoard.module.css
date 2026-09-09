@@ -104,14 +104,14 @@
 .head,
 .main {
   display: grid;
-  grid-template-columns: 24px minmax(180px, 1fr) 100px minmax(300px, 1.9fr) minmax(96px, 0.6fr) 58px;
+  grid-template-columns: 24px minmax(180px, 1fr) 100px minmax(280px, 1.7fr) minmax(150px, 0.8fr) 58px;
   column-gap: 10px;
   align-items: center;
   padding: 0 10px;
 }
 .board[data-advanced] .head,
 .board[data-advanced] .main {
-  grid-template-columns: 24px 20px minmax(180px, 1fr) 100px minmax(340px, 2fr) minmax(120px, 0.7fr) 142px;
+  grid-template-columns: 24px 20px minmax(180px, 1fr) 100px minmax(300px, 1.8fr) minmax(170px, 0.9fr) 142px;
 }
 .head {
   min-height: 26px;
@@ -212,6 +212,22 @@
   white-space: nowrap;
 }
 .lineLabel:hover { text-decoration: underline dotted; text-underline-offset: 2px; }
+.lineLabel[data-static] { cursor: default; color: var(--slate); }
+.lineLabel[data-static]:hover { text-decoration: none; }
+/* The usage line shares the quota grid. Its bar is composition, not status:
+   uncached input, cached read and cache write in the cool metric hues, so it
+   sits beside the green, yellow and red status meters without competing. */
+.shares { display: flex; height: 100%; border-radius: inherit; overflow: hidden; }
+.shares i { display: block; height: 100%; }
+.shares i[data-share='input'], .legend i[data-share='input'] { background: var(--metric-input); }
+.shares i[data-share='read'], .legend i[data-share='read'] { background: var(--metric-cache); }
+.shares i[data-share='write'], .legend i[data-share='write'] { background: var(--metric-write); }
+.lineValue[data-usage] { color: var(--ink); }
+/* In a row the column header already says Activity, so the usage line drops
+   its label: bar, total, cached share. */
+.line[data-usage][data-compact] { grid-template-columns: minmax(48px, 1fr) 44px auto; margin-top: 2px; }
+.line[data-usage][data-compact] .lineReset { min-width: 0; }
+.line[data-usage] .lineReset { color: var(--metric-cache); }
 .meter {
   position: relative;
   height: 6px;
@@ -378,7 +394,7 @@
 @container board (min-width: 901px) {
   @media (pointer: coarse) {
     .board[data-advanced] .head,
-    .board[data-advanced] .main { grid-template-columns: 24px 44px minmax(180px, 1fr) 100px minmax(340px, 2fr) minmax(120px, 0.7fr) 142px; }
+    .board[data-advanced] .main { grid-template-columns: 24px 44px minmax(180px, 1fr) 100px minmax(300px, 1.8fr) minmax(170px, 0.9fr) 142px; }
   }
 }
 @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
@@ -426,6 +442,32 @@
 .cardWindows .fill { border-radius: 4px; }
 .card .detail { padding: 8px 0 0; margin-top: 8px; }
 .messages:empty { display: none; }
+/* Reset horizon: one slim band between the toolbar and the accounts. */
+.horizon {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) 150px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.horizonTitle { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.horizonTitle h3 { font-size: var(--type-dense); font-weight: 600; color: var(--ink); }
+.horizonTitle span { font-size: var(--type-dense); color: var(--slate); }
+.horizonChart { min-width: 0; }
+.horizonPick :global(.mantine-Input-input) { min-height: 24px; height: 24px; font-size: var(--type-dense); }
+.legend { display: inline-flex; align-items: center; gap: 5px; font-size: var(--type-dense); color: var(--slate); white-space: nowrap; }
+.legend i { width: 8px; height: 8px; border-radius: 2px; margin-inline-start: 6px; }
+.legend i:first-child { margin-inline-start: 0; }
+@container board (max-width: 900px) {
+  .horizon { grid-template-columns: auto minmax(120px, 1fr) 140px; }
+  .legend { display: none; }
+}
+@container board (max-width: 520px) {
+  .horizon { grid-template-columns: minmax(0, 1fr) 130px; }
+  .horizonChart { display: none; }
+}
 
 /* Density. Tidy is the default; comfy adds room everywhere. */
 .board[data-density='comfy'] .main { min-height: 52px; padding-block: 8px; }

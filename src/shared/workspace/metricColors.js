@@ -1,4 +1,4 @@
-export const METRIC_COLORS = Object.freeze({ input: '#3B62B3', cacheRead: '#7454A4', cacheWrite: '#A4691F', output: '#58657A', failure: '#B23A43', selected: '#006F78' });
+export const METRIC_COLORS = Object.freeze({ input: '#3A63B8', cacheRead: '#2F9AA6', cacheWrite: '#7D6BD1', output: '#58657A', failure: '#B23A43', selected: '#006F78' });
 
 const FALLBACKS = { ink: '#17232D', slate: '#52606D', rule: '#D9E1E7', paper: '#F4F6F8', raised: '#FFFFFF', signalWash: '#E5F5F4' };
 

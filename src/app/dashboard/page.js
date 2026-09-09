@@ -10,14 +10,12 @@ import shared from '@/shared/workspace/workspace.module.css';
 import styles from './capacity.module.css';
 import { AccountBoard } from './AccountBoard';
 import { CapacityActivity } from './CapacityActivity';
-import { CapacityAnalysis } from './CapacityAnalysis';
 import { CapacityModelSupport } from './CapacityModelSupport';
 import { DRAIN_ENDPOINT } from './capacityControlsModel';
 
 const EMPTY = [];
 const VIEWS = [
   { value: 'accounts', label: 'Accounts' },
-  { value: 'analysis', label: 'Activity & analysis' },
   { value: 'support', label: 'Model support' },
 ];
 
@@ -89,7 +87,7 @@ export default function CapacityPage() {
       drains.error,
     ]
   );
-  // The two read views hand a chosen account back to the board, expanded.
+  // Model support hands a chosen account back to the board, expanded.
   const select = (id, windowScope = null) => {
     setSelectedAccountId(id, windowScope);
     setView('accounts');
@@ -127,8 +125,6 @@ export default function CapacityPage() {
               workspace.refresh();
             }}
           />
-        ) : view === 'analysis' ? (
-          <CapacityAnalysis rows={rows} anchor={anchor} now={now} onSelect={select} advanced={advanced} density={density} />
         ) : (
           <CapacityModelSupport accounts={accounts} onSelect={select} />
         )}

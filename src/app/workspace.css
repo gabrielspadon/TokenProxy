@@ -73,13 +73,15 @@
   --accent: var(--signal);
   --wire: var(--control-edge);
   --blue: #4267a9;
-  --metric-input: #3b62b3;
-  --metric-cache: #7454a4;
-  --metric-write: #a4691f;
+  /* Composition (usage shares, token tracks) in cool hues; status (quota
+     meters) in semantic green, amber and red, so the two never read alike. */
+  --metric-input: #3a63b8;
+  --metric-cache: #2f9aa6;
+  --metric-write: #7d6bd1;
   --metric-output: #58657a;
-  --meter-good: #1f9d55;
-  --meter-warn: #e0a400;
-  --meter-low: #d92d2d;
+  --meter-good: #2a9d5f;
+  --meter-warn: #d9a300;
+  --meter-low: #d6413c;
   --brand-claude: #bf6c43;
   --brand-openai: #237d66;
   --brand-gemini: #4c70c7;
@@ -111,12 +113,12 @@
   --elevation-menu: 0 6px 20px rgb(0 0 0 / 24%);
   --elevation-dialog: 0 16px 48px rgb(0 0 0 / 32%);
   --metric-input: #9ab5ee;
-  --metric-cache: #c4a7e5;
-  --metric-write: #e7c488;
+  --metric-cache: #7fd3dc;
+  --metric-write: #c0b3f0;
   --metric-output: #b6c5db;
-  --meter-good: #34c76a;
-  --meter-warn: #f2c14e;
-  --meter-low: #ff6b6b;
+  --meter-good: #3fca72;
+  --meter-warn: #f0c24a;
+  --meter-low: #ff6f6a;
 }
 html { font-size: 16px; }
 body {

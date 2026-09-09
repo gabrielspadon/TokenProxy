@@ -71,7 +71,9 @@ export function sortAccountControls(accounts, sort, now) {
     return values.length ? Math.min(...values) : Infinity;
   };
   if (sort === 'name') return [...accounts].sort(compareName);
-  const values = new Map(accounts.map(account => [accountControlId(account), metric(account)]));
+  // Most recorded attempts first; accounts with no activity record go last.
+  const activity = account => (Number.isFinite(account.activity?.records) ? -account.activity.records : Infinity);
+  const values = new Map(accounts.map(account => [accountControlId(account), sort === 'attempts' ? activity(account) : metric(account)]));
   return [...accounts].sort((a, b) => (values.get(accountControlId(a)) - values.get(accountControlId(b))) || compareName(a, b));
 }
 
