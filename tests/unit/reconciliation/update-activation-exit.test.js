@@ -78,7 +78,15 @@ const params = (connectionId) => ({ params: Promise.resolve({ connectionId }) })
 const conn1 = { id: 'conn-1', provider: 'anthropic', isActive: true, testStatus: 'active' };
 // .all() backs disabledModelsRepo's getDisabledModels(), which the models
 // route consults; an empty set means nothing is filtered out of the catalog.
-const healthyDb = { driver: 'sql.js', get: vi.fn(() => ({ ok: 1 })), all: vi.fn(() => []) };
+// swapDrainDoc runs the drain compare-and-set inside one adapter transaction
+// over the kv table; this stub routes those reads and writes to the same map
+// the makeKv mock uses, so the drain route sees exactly what state.js wrote.
+const kvRow = (key) => { const v = store.get(`admin.drain:${key}`); return v === undefined ? undefined : { value: v }; };
+const healthyDb = { driver: 'sql.js',
+  get: vi.fn((sql, args) => /FROM kv/.test(sql) ? kvRow(args[0]) : ({ ok: 1 })),
+  all: vi.fn(() => []),
+  run: vi.fn((sql, args) => { if (/INSERT INTO kv/.test(sql)) store.set(`admin.drain:${args[0]}`, args[1]); }),
+  transaction: (fn) => fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();
