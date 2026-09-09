@@ -369,6 +369,9 @@ export const COMPATIBILITY_WORKER_FILES = [
   "./open-sse/translator/schema/index.js",
   "./open-sse/translator/schema/roles.js",
   "./open-sse/translator/schema/toolTypes.js",
+  "./open-sse/utils/asyncLogOutput.js",
+  "./open-sse/utils/boundedLogRecord.js",
+  "./open-sse/utils/boundedLogSink.js",
   "./open-sse/utils/claudeCloaking.js",
   "./open-sse/utils/claudeSignature.js",
   "./open-sse/utils/clientHeaderPassthrough.js",
@@ -431,5 +434,6 @@ export const COMPATIBILITY_WORKER_FILES = [
   "./src/lib/oauth/utils/pkce.js",
   "./src/lib/oauth/utils/server.js",
   "./src/lib/oauth/utils/ui.js",
-  "./src/shared/observability/decide.js"
+  "./src/lib/shutdown.js",
+  "./src/shared/observability/decide.js",
 ];
