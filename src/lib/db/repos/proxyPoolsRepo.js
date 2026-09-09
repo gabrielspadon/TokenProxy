@@ -1,3 +1,4 @@
+import { configurationDomainMutation } from '../../configuration/configurationDomains.js';
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
@@ -74,24 +75,15 @@ export async function createProxyPool(data) {
     createdAt: now,
     updatedAt: now,
   };
-  upsert(db, pool);
+  db.transaction(configurationDomainMutation(db, 'repo.proxyPools.create', () => upsert(db, pool)));
   return pool;
 }
 
 export async function updateProxyPool(id, data) {
-  const db = await getAdapter();
-  let result = null;
-  db.transaction(() => {
-    const row = db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]);
-    if (!row) return;
-    const merged = { ...rowToPool(row), ...data, updatedAt: new Date().toISOString() };
-    upsert(db, merged);
-    result = merged;
-  });
-  return result;
+  return updateProxyPoolWithBoundSnapshots(id, data);
 }
 
-function updateBoundConnectionSnapshotsInTx(db, proxyPoolId, strictProxy, now) {
+function updateBoundConnectionSnapshotsInTx(db, proxyPoolId, strictProxy, now, transportChanged = false) {
   const rows = db.all(`SELECT id, data FROM providerConnections`);
   for (const row of rows) {
     const connectionData = decryptSecretJson(row.data, {});
@@ -104,6 +96,8 @@ function updateBoundConnectionSnapshotsInTx(db, proxyPoolId, strictProxy, now) {
     ) {
       continue;
     }
+    if (!transportChanged && providerSpecificData.strictProxy === strictProxy) continue;
+    connectionData.credentialRevisionId = uuidv4();
     connectionData.providerSpecificData = {
       ...providerSpecificData,
       proxyPoolId,
@@ -145,28 +139,30 @@ function updateBoundStrategySnapshotsInTx(db, proxyPoolId, strictProxy) {
 export async function updateProxyPoolWithBoundSnapshots(id, data) {
   const db = await getAdapter();
   let result = null;
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.proxyPools.update', () => {
     const row = db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]);
     if (!row) return;
     const now = new Date().toISOString();
-    const merged = { ...rowToPool(row), ...data, updatedAt: now };
+    const previous = rowToPool(row);
+    const merged = { ...previous, ...data, updatedAt: now };
     merged.strictProxy = merged.strictProxy === true;
     upsert(db, merged);
-    updateBoundConnectionSnapshotsInTx(db, id, merged.strictProxy, now);
+    updateBoundConnectionSnapshotsInTx(db, id, merged.strictProxy, now, ["proxyUrl","noProxy","type","isActive","strictProxy"].some(key=>previous[key] !== merged[key]));
     updateBoundStrategySnapshotsInTx(db, id, merged.strictProxy);
     result = merged;
-  });
+  }));
   return result;
 }
 
 export async function deleteProxyPool(id) {
   const db = await getAdapter();
   let removed = null;
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.proxyPools.update', () => {
     const row = db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]);
     if (!row) return;
     removed = rowToPool(row);
+    updateBoundConnectionSnapshotsInTx(db, id, removed.strictProxy === true, new Date().toISOString(), true);
     db.run(`DELETE FROM proxyPools WHERE id = ?`, [id]);
-  });
+  }));
   return removed;
 }

@@ -1,3 +1,5 @@
+import { refreshAdmissionPolicy } from '@/sse/services/resourceAdmission.js';
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -36,7 +38,8 @@ vi.mock("../../open-sse/executors/index.js", () => ({
 }));
 
 import { ConnectTimeoutError } from "../../open-sse/utils/responseHeaderTimeout.js";
-import { handleImageGeneration } from "../../src/sse/handlers/imageGeneration.js";
+import { handleImageGeneration as rawhandleImageGeneration } from "../../src/sse/handlers/imageGeneration.js";
+const handleImageGeneration = trackResponseLifetime(rawhandleImageGeneration);
 
 const settings = {
   requireApiKey: false,
@@ -68,7 +71,7 @@ function imageSuccess(data = "aW1hZ2U=") {
 }
 
 describe("image connect timeout propagation", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mocks.execute.mockReset();
     mocks.getSettings.mockResolvedValue(settings);
@@ -81,6 +84,8 @@ describe("image connect timeout propagation", () => {
     mocks.checkAndRefreshToken.mockImplementation(async (provider, value) => value);
     mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: false });
     mocks.execute.mockResolvedValue(imageSuccess());
+    await refreshAdmissionPolicy();
+    mocks.getSettings.mockClear();
   });
 
   afterEach(() => {

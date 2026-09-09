@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 // Issue #1379 — /v1/embeddings ignored combos: a combo name reached
 // getProviderCredentials as a provider and 400'd. It now expands the same way
 // the TTS handler does, running members through the shared combo handler.
@@ -43,7 +44,8 @@ vi.mock("../../src/sse/services/tokenRefresh.js", () => ({
 }));
 vi.mock("@/lib/usageDb.js", () => ({ saveRequestUsage: mocks.saveRequestUsage }));
 
-import { handleEmbeddings } from "../../src/sse/handlers/embeddings.js";
+import { handleEmbeddings as rawHandler } from "../../src/sse/handlers/embeddings.js";
+const handleEmbeddings = trackResponseLifetime(rawHandler);
 
 const post = (model) => handleEmbeddings(new Request("http://localhost/v1/embeddings", {
   method: "POST",

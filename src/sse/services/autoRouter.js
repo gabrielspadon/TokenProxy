@@ -129,10 +129,8 @@ export async function resolveAutoModel(body, settings = {}) {
 
   // An explicit rule wins outright. This is the config half of the report, and
   // it is the only part a user can get wrong, so it is checked for shape.
-  const rule = settings?.autoRouter?.rules?.[taskClass];
-  if (typeof rule === "string" && splitModelId(rule)) {
-    return { model: rule, taskClass, source: "rule" };
-  }
+  const explicit = selectAutoModelFromCatalog(taskClass, [], undefined, settings);
+  if (explicit) return explicit;
 
   let models;
   try {
@@ -143,6 +141,14 @@ export async function resolveAutoModel(body, settings = {}) {
   }
 
   const blocked = await blockedSets();
+  return selectAutoModelFromCatalog(taskClass, models, blocked, settings);
+}
+
+/** Pure captured-catalog decision; callers own catalog acquisition. */
+export function selectAutoModelFromCatalog(taskClass, models, blocked = { models: new Set(), providers: new Set() }, settings = {}) {
+  if (!CLASS_TIERS[taskClass]) return null;
+  const rule = settings?.autoRouter?.rules?.[taskClass];
+  if (typeof rule === "string" && splitModelId(rule)) return { model: rule, taskClass, source: "rule" };
   const classified = [];
   for (const model of models || []) {
     if (typeof model?.id !== "string" || model.owned_by === "combo") continue;

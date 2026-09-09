@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
@@ -40,6 +42,10 @@ function validatePayload(body, kind, endpoint) {
 }
 
 export async function handleJsonProxy(request, kind) {
+  return withResourceAdmission(request, () => handleJsonProxyAdmitted(request, kind));
+}
+
+async function handleJsonProxyAdmitted(request, kind) {
   const endpoint = ENDPOINTS[kind];
   if (!endpoint) return errorResponse(HTTP_STATUS.NOT_FOUND, "Unknown endpoint");
 
@@ -91,6 +97,7 @@ export async function handleJsonProxy(request, kind) {
   let lastError = null;
   let lastStatus = null;
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is

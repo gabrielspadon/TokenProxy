@@ -33,6 +33,14 @@ describe("read-only Context analytics", () => {
     readContextOverview({ get: (sql, args) => { queried.push(sql); return db.get(sql, args); }, all: () => { throw new Error("Unneeded grouped query"); } }, filter);
     expect(queried.every((sql) => !sql.includes("contextStages"))).toBe(true);
   });
+  it("invalidates the same completed projection on committed WAL writes", async () => {
+    const filter = { provider: "version-fixture", view: "summary" };
+    expect((await getContextOverview(filter)).recording.totalRetainedAttempts).toBe(0);
+    db.run("INSERT INTO requestStats(id,timestamp,provider) VALUES(?,?,?)", ["version-fixture", "2026-09-08T12:00:00.000Z", "version-fixture"]);
+    expect((await getContextOverview(filter)).recording.totalRetainedAttempts).toBe(1);
+    db.run("DELETE FROM requestStats WHERE id=?", ["version-fixture"]);
+    expect((await getContextOverview(filter)).recording.totalRetainedAttempts).toBe(0);
+  });
   it("holds a consistent WAL snapshot while the writer continues and rejects mutation", async () => {
     const reader = await openAnalyticsReadOnly(DATA_FILE, db.driver);
     try {

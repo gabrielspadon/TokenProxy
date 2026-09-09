@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 // handleRerank (src/sse/handlers/rerank.js): request validation at the trust
 // boundary, key/model gates, combo expansion, the account-fallback loop, lease
 // release on every exit, and usage persistence — the paths where a break means
@@ -75,7 +76,8 @@ vi.mock('@/sse/services/apiKeyDevices.js', () => ({
   recordApiKeyDevice: mocks.recordApiKeyDevice,
 }));
 
-import { handleRerank } from '../../src/sse/handlers/rerank.js';
+import { handleRerank as rawHandler } from '../../src/sse/handlers/rerank.js';
+const handleRerank = trackResponseLifetime(rawHandler);
 
 const post = (body) =>
   handleRerank(

@@ -1,7 +1,10 @@
 // Quota auto-ping scheduler: warms 5h windows by sending tiny opt-in requests right after reset.
 import 'open-sse/index.js';
 import { randomUUID } from 'node:crypto';
-import { retainQuotaUsage, recordQuotaCheckEvent } from '@/lib/db/repos/quotaHistoryRepo.js';
+import { retainQuotaUsage, quotaObservationsFromUsage, recordQuotaCheckEvent } from '@/lib/db/repos/quotaHistoryRepo.js';
+import { getAdapter } from '@/lib/db/driver.js';
+import { getQuotaCheckQueue, QUOTA_CHECK_BATCH_SIZE, QUOTA_CHECK_LEASE_MS } from '@/lib/db/repos/quotaCheckQueue.js';
+import { registerShutdownFlusher } from '@/lib/shutdown.js';
 
 import { getSettings, getProviderConnections, updateProviderConnection } from '@/lib/localDb';
 import * as localDb from '@/lib/localDb';
@@ -26,6 +29,32 @@ import { QUOTA_AUTOPING_CONFIG } from '@/shared/constants/config';
 
 const C = QUOTA_AUTOPING_CONFIG;
 const CLAUDE_PING_URL = 'https://api.anthropic.com/v1/messages?beta=true';
+
+function throwIfStopped(signal) { signal?.throwIfAborted(); }
+function waitForCheck(promise, signal, late) {
+  if (!signal) return Promise.resolve(promise);
+  return new Promise((resolve, reject) => {
+    const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason || new Error('quota_check_cancelled')); };
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    Promise.resolve(promise).then(value => {
+      signal.removeEventListener('abort', abort);
+      if (signal.aborted) { Promise.resolve().then(() => late?.(value)).catch(() => {}); return; }
+      resolve(value);
+    }, error => { signal.removeEventListener('abort', abort); reject(error); });
+  });
+}
+function waitForMetadata(promise, deps) {
+  const pending = deps.metadataState?.pendingMetadata;
+  const task = Promise.resolve(promise);
+  pending?.add(task);
+  task.then(() => pending?.delete(task), () => pending?.delete(task));
+  // Shared quota/credential collectors may serve another waiter. Their I/O
+  // retains its own timeout and ownership while this cancelled waiter detaches.
+  // Keep the background permit until that work settles to prevent stop/start
+  // bursts from accumulating abandoned metadata work.
+  return waitForCheck(task, deps.signal);
+}
 
 // Bespoke warm senders only. Usage reads ALWAYS go through the generic
 // dispatcher (deps.getUsageForProvider), which already covers every provider
@@ -155,10 +184,11 @@ async function sendClaudePing(connection, providerConfig, proxyOptions, deps) {
   const candidates = claudePingCandidates(providerConfig);
   for (let i = 0; i < candidates.length; i++) {
     const model = candidates[i];
-    const res = await deps.proxyAwareFetch(
+    const result = await dispatchWarmRequest(deps, { model, scopes: deps.warmTargets, readError: true }, () => deps.proxyAwareFetch(
       CLAUDE_PING_URL,
       {
         method: 'POST',
+        signal: deps.signal,
         headers: {
           ...CLAUDE_CLI_SPOOF_HEADERS,
           Authorization: `Bearer ${connection.accessToken}`,
@@ -171,9 +201,8 @@ async function sendClaudePing(connection, providerConfig, proxyOptions, deps) {
         }),
       },
       proxyOptions
-    );
-    await deps.onWarmResponse?.(res);
-    if (res.ok) {
+    ));
+    if (result.outcome === 'accepted') {
       if (i > 0) console.log(`[AutoPing] claude: ${candidates[0]} refused, pinged with ${model}`);
       return true;
     }
@@ -181,13 +210,12 @@ async function sendClaudePing(connection, providerConfig, proxyOptions, deps) {
     // never warmed and the countdown never started, with nothing said about why
     // (#2592). Walk to the next model instead, but only when the refusal is
     // about the model.
-    const bodyText = (await res.text?.().catch(() => '')) || '';
-    if (!isClaudeModelRejection(res.status, bodyText)) {
-      console.log(`[AutoPing] claude: ping failed with ${res.status}, not retrying another model`);
+    if (result.outcome !== 'rejected' || !isClaudeModelRejection(result.status, result.bodyText)) {
+      console.log(`[AutoPing] claude: ping failed with ${result.status}, not retrying another model`);
       return false;
     }
     if (i === candidates.length - 1) {
-      console.log(`[AutoPing] claude: every candidate model was refused (last ${res.status})`);
+      console.log(`[AutoPing] claude: every candidate model was refused (last ${result.status})`);
     }
   }
   return false;
@@ -203,23 +231,51 @@ function buildCodexPingInput(text) {
   ];
 }
 
-async function drainResponseBody(response) {
-  if (typeof response?.text === 'function') {
-    await response.text();
-    return;
-  }
-
+async function drainResponseBody(response, capture = false, signal) {
+  throwIfStopped(signal);
   const reader = response?.body?.getReader?.();
-  if (!reader) return;
-
+  if (!reader) return typeof response?.text === 'function'
+    ? (await waitForCheck(response.text(), signal)).slice(0, capture ? 4096 : 0) : '';
+  const decoder = new TextDecoder();
+  let bytes = 0, text = '';
   try {
     while (true) {
-      const { done } = await reader.read();
-      if (done) return;
+      const { done, value } = await waitForCheck(reader.read(), signal);
+      if (done) return text;
+      bytes += value?.byteLength || 0;
+      if (bytes > 65536) throw new Error('warm_response_limit');
+      if (capture && text.length < 4096 && value) text += decoder.decode(value, { stream: true }).slice(0, 4096 - text.length);
     }
+  } catch (error) {
+    try { void reader.cancel().catch(() => {}); } catch { /* Preserve the original outcome. */ }
+    throw error;
   } finally {
     reader.releaseLock?.();
   }
+}
+
+// Request acceptance and observed quota activation are separate facts. Unknown
+// transport outcomes never authorize another model or family as a fallback.
+async function dispatchWarmRequest(deps, { model, scopes = [], readError = false }, send) {
+  await deps.beforeWarmRequest(scopes, model);
+  await deps.assertQuotaCheckOwnership?.();
+  throwIfStopped(deps.signal);
+  let result;
+  try {
+    const response = await waitForCheck(send(), deps.signal, response => response?.body?.cancel?.());
+    const status = Number.isInteger(response?.status) ? response.status : null;
+    await deps.onWarmResponse?.(response, scopes.length === 1 ? scopes[0] : null);
+    const outcome = status >= 200 && status < 300 ? 'accepted'
+      : status >= 400 && status < 500 ? 'rejected' : 'uncertain';
+    let bodyText = '';
+    if (outcome === 'accepted' || readError) bodyText = await drainResponseBody(response, readError, deps.signal);
+    else { try { await response?.body?.cancel?.(); } catch { /* A refusal stays a refusal. */ } }
+    result = { outcome, status, bodyText, code: status >= 100 && status <= 599 ? `http_${status}` : 'response-status-unknown' };
+  } catch {
+    result = { outcome: 'uncertain', status: null, bodyText: '', code: 'warm_exception' };
+  }
+  await deps.onWarmOutcome({ ...result, scopes, targetModel: model });
+  return result;
 }
 
 // Codex model access is per-account and moves over time, so a model fixed in
@@ -268,6 +324,7 @@ async function resolveCodexPingModel(connection, providerConfig, proxyOptions, d
       CODEX_MODELS_URL,
       {
         method: 'GET',
+        signal: deps.signal,
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${connection.accessToken}`,
@@ -294,7 +351,8 @@ async function sendCodexPing(connection, providerConfig, proxyOptions, deps) {
   if (!pingModel) return false;
 
   const executor = deps.getExecutor('codex');
-  const { response } = await executor.execute({
+  const result = await dispatchWarmRequest(deps, { model: pingModel, scopes: deps.warmTargets }, async () => (await executor.execute({
+    signal: deps.signal,
     model: pingModel,
     stream: true,
     credentials: {
@@ -314,20 +372,8 @@ async function sendCodexPing(connection, providerConfig, proxyOptions, deps) {
       store: false,
       stream: true,
     },
-  });
-  await deps.onWarmResponse?.(response);
-  if (!response.ok) {
-    try {
-      await response.body?.cancel?.();
-    } catch {
-      /* noop */
-    }
-    return false;
-  }
-
-  // Codex only starts the 5h window after the streaming response completes.
-  await drainResponseBody(response);
-  return true;
+  })).response);
+  return result.outcome === 'accepted';
 }
 
 // A 401, 403 or 429 is about the ACCOUNT or the limiter, never about this one
@@ -343,19 +389,16 @@ export function isAntigravityAccountRefusal(status) {
 // reset timestamp share a reset key, so a single governing poke would leave the
 // other one cold for good.
 //
-// Any other status counts as warmed. The poke's goal is that the request reaches
-// upstream and spends a token, not that it comes back 2xx: Google's transport
-// commonly answers 5xx or drops the stream after processing the request. Same
-// reading as the manual hot reload in
-// src/app/api/providers/[id]/hotreload/route.js:31-37.
+// Only the families admitted by the current plan are dispatched. A 5xx or an
+// interrupted stream is uncertain, so remaining families wait for another check.
 async function sendAntigravityPing(connection, providerConfig, proxyOptions, deps) {
   const executor = deps.getExecutor('antigravity');
-  const models = providerConfig.quotaKeys || [];
+  const models = (providerConfig.quotaKeys || []).filter(model => deps.warmTargets.includes(model));
   let landed = 0;
 
   for (const model of models) {
-    try {
-      const { response } = await executor.execute({
+      const result = await dispatchWarmRequest(deps, { model, scopes: [model] }, async () => (await executor.execute({
+        signal: deps.signal,
         model,
         stream: true,
         credentials: {
@@ -374,12 +417,8 @@ async function sendAntigravityPing(connection, providerConfig, proxyOptions, dep
             generationConfig: { maxOutputTokens: providerConfig.pingMaxTokens, temperature: 0 },
           },
         },
-      });
-      if (!response) continue;
-      await deps.onWarmResponse?.(response, model);
-
-      const status = response.status;
-      await drainResponseBody(response);
+      })).response);
+      const status = result.status;
       if (isAntigravityAccountRefusal(status)) {
         console.log(
           `[AutoPing] antigravity: ${model} refused with ${status}, leaving the other quota families alone`
@@ -389,17 +428,14 @@ async function sendAntigravityPing(connection, providerConfig, proxyOptions, dep
       // A 400/404 is a model this account is not entitled to (or a renamed
       // id). Counting it as landed masked a never-warmed family as warmed and
       // spent one wasted poke per period on it forever.
-      if (status === 400 || status === 404) {
+      if (result.outcome === 'rejected') {
         console.log(
           `[AutoPing] antigravity: ${model} answered ${status}, not counting as warmed`
         );
         continue;
       }
+      if (result.outcome === 'uncertain') break;
       landed += 1;
-    } catch (e) {
-      await deps.onWarmException?.(model);
-      console.log(`[AutoPing] antigravity: ${model} ping errored: ${e.message}`);
-    }
   }
 
   // A partial success still counts. Failing the whole tick would put the
@@ -434,10 +470,8 @@ export function cheapestPingModel(provider, providerConfig = {}) {
 // same code a real request uses — a warming path with its own HTTP call would
 // drift from the real one and warm nothing the day it did.
 //
-// Reaching upstream is the whole goal, not a 2xx: the provider has to COUNT the
-// request against a window, and several answer 4xx or 5xx after doing exactly
-// that. A 5xx is the one case worth treating as failure, because it usually
-// means the request never landed.
+// A completed 2xx request was accepted. It does not prove that a quota window
+// started; the later provider observation establishes that separately.
 async function sendGenericPing(connection, providerConfig, proxyOptions, deps) {
   const provider = connection.provider;
   const model = cheapestPingModel(provider, providerConfig);
@@ -450,7 +484,8 @@ async function sendGenericPing(connection, providerConfig, proxyOptions, deps) {
     console.log(`[AutoPing] ${provider}: no executor, cannot warm`);
     return false;
   }
-  const { response } = await executor.execute({
+  const result = await dispatchWarmRequest(deps, { model, scopes: deps.warmTargets }, async () => (await executor.execute({
+    signal: deps.signal,
     model,
     stream: false,
     credentials: {
@@ -468,16 +503,9 @@ async function sendGenericPing(connection, providerConfig, proxyOptions, deps) {
       max_tokens: providerConfig.pingMaxTokens ?? 1,
       stream: false,
     },
-  });
-  if (!response) return false;
-  await deps.onWarmResponse?.(response);
-  const status = response.status;
-  await drainResponseBody(response);
-  if (status >= 500) {
-    console.log(`[AutoPing] ${provider}: warm request answered ${status}, treating as failed`);
-    return false;
-  }
-  return true;
+  })).response);
+  if (result.outcome !== 'accepted') console.log(`[AutoPing] ${provider}: warm request answered ${result.status}, treating as failed (${result.outcome})`);
+  return result.outcome === 'accepted';
 }
 
 // A repeat failure doubles the cooldown up to the cap. Without escalation a
@@ -516,7 +544,7 @@ async function markRateLimitedUntil(connection, resetAt, provider, deps, check) 
     await check?.('failed', { code: 'state_write_failed' });
     // Never fail a poll tick over bookkeeping; the next tick retries.
     console.warn(
-      `[AutoPing] ${provider}:${connection.id}: could not record exhausted quota: ${e.message}`
+      `[AutoPing] ${provider}:${connection.id}: could not record exhausted quota`
     );
   }
 }
@@ -547,14 +575,14 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
   const key = cacheKey(provider, conn.id);
 
   // Avoid hammering provider auth/quota endpoints if a warm failed recently.
-  if (shouldSkipAfterFailure(state, key)) return;
+  if (!deps.quotaCheckClaim && shouldSkipAfterFailure(state, key)) return;
 
   // A connection whose every cold family is on a warm brake has nothing this
   // tick can do, so the refresh+usage read is held too. Without this hold, one
   // permanently absent family (a plan without the weekly window, say) cost a
   // token refresh and a usage GET every 60s tick, 1440/day per connection.
   const probeHold = state.probeHold?.[key];
-  if (probeHold && Date.now() < probeHold) return;
+  if (!deps.quotaCheckClaim && probeHold && Date.now() < probeHold) return;
 
   // A COLD WINDOW HAS NO RESET TO WAIT FOR, so the old "skip until we are near
   // the cached reset" guard cannot gate the read any more: it is what kept the
@@ -563,30 +591,32 @@ async function pingConnection(conn, provider, providerConfig, sendPingOverride, 
   // which is the common case and the one it was written for.
   const cachedReset = state.resetCache[key];
   const allWarm = state.allRunning?.[key] === true;
-  if (allWarm && cachedReset && Date.now() < new Date(cachedReset).getTime() - C.refreshAheadMs)
+  if (!deps.quotaCheckClaim && allWarm && cachedReset && Date.now() < new Date(cachedReset).getTime() - C.refreshAheadMs)
     return;
 
-  const checkId = randomUUID();
+  const checkId = deps.quotaCheckClaim?.checkId || randomUUID();
   let failureRecorded = false;
   const check = async (eventType, fields = {}) => {
     if (eventType === 'failed') failureRecorded = true;
+    deps.onQuotaCheckEvent?.({ eventType, ...fields });
     try {
-      await deps.recordQuotaCheckEvent?.({ checkId, connectionId: conn.id, provider, eventType, ...fields });
+      await deps.recordQuotaCheckEvent?.({ checkId, jobId: deps.quotaCheckClaim?.id, connectionId: conn.id, provider, eventType, ...fields });
     } catch { console.warn('[QuotaHistory] check_event_write_failed'); }
   };
-  await check('started', { scheduledFor: probeHold ? new Date(probeHold).toISOString() :
-    allWarm && cachedReset ? new Date(new Date(cachedReset).getTime() - C.refreshAheadMs).toISOString() : null,
-    resetAt: cachedReset || null });
+  await check('started', { scheduledFor: deps.quotaCheckClaim?.nextCheckAt ?? (probeHold ? new Date(probeHold).toISOString() :
+    allWarm && cachedReset ? new Date(new Date(cachedReset).getTime() - C.refreshAheadMs).toISOString() : null), resetAt: cachedReset || null });
   try { return await performQuotaCheck(conn, provider, providerConfig, sendPingOverride, deps, state, check, cachedReset); }
   catch (error) { if (!failureRecorded) await check('failed', { code: 'check_exception' }); throw error; }
 }
 
 async function performQuotaCheck(conn, provider, providerConfig, sendPingOverride, deps, state, check, cachedReset) {
+  throwIfStopped(deps.signal);
+  await deps.assertQuotaCheckOwnership?.();
   const key = cacheKey(provider, conn.id);
-  const proxyCfg = await deps.resolveConnectionProxyConfig(
+  const proxyCfg = await waitForMetadata(deps.resolveConnectionProxyConfig(
     conn.providerSpecificData,
     snapshotOwner(conn, deps)
-  );
+  ), deps);
   if (proxyCfg?.kind === 'required-unavailable') {
     recordFailure(state, key);
     await check('failed', { code: 'required_proxy_unavailable' });
@@ -597,17 +627,18 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
 
   let connection = conn;
   try {
-    const r = await deps.refreshAndUpdateCredentials(connection, false, proxyOptions);
+    throwIfStopped(deps.signal);
+    const r = await waitForMetadata(deps.refreshAndUpdateCredentials(connection, false, proxyOptions), deps);
     connection = r.connection;
   } catch (e) {
     recordFailure(state, key);
     await check('failed', { code: 'credential_refresh_failed' });
-    console.warn(`[AutoPing] ${provider}:${conn.id}: refresh failed: ${e.message}`);
+    console.warn(`[AutoPing] ${provider}:${conn.id}: refresh failed`);
     return;
   }
 
   let usage;
-  try { usage = await deps.getUsageForProvider(connection, proxyOptions); }
+  try { throwIfStopped(deps.signal); usage = await waitForMetadata(deps.getUsageForProvider(connection, proxyOptions), deps); }
   catch (error) { await check('failed', { code: 'usage_exception' }); throw error; }
   // A usage reader that failed returns {message}/{expired} WITHOUT a quotas
   // object. Treating that as "every window absent" is what made a 429ing or
@@ -617,16 +648,22 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
     await check('failed', { code: 'usage_unreadable' });
     recordFailure(state, key);
     console.warn(
-      `[AutoPing] ${provider}:${conn.id}: usage unreadable` +
-        `${usage?.message ? `: ${usage.message}` : ''} — skipping, not treating as cold`
+      `[AutoPing] ${provider}:${conn.id}: usage unreadable, skipping warm`
     );
     return;
   }
   const quotas = usage.quotas;
-  try { await deps.retainQuotaUsage?.(connection, usage); }
+  let observations = [];
+  try {
+    if (deps.retainQuotaUsage && await deps.retainQuotaUsage(connection, usage) !== null) {
+      observations = quotaObservationsFromUsage(connection, usage);
+    }
+  }
   catch { console.warn('[QuotaHistory] observation_write_failed'); }
+  const priorObservation = scope => observations.find(row => row.scope === scope)?.id ?? null;
   const observedAt = usage.quotaObservation?.observedAt ?? null;
   await check('usage-read', { code: 'observed', observedAt });
+  for (const observation of observations) deps.onQuotaObservation?.(observation);
 
   // TWO KINDS OF STATE, kept in two places on purpose.
   //
@@ -731,7 +768,7 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
     } catch (e) {
       await check('failed', { code: 'state_write_failed' });
       console.warn(
-        `[AutoPing] ${provider}:${connection.id}: could not persist warm state: ${e.message}`
+        `[AutoPing] ${provider}:${connection.id}: could not persist warm state`
       );
     }
   }
@@ -763,10 +800,11 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
   if (plan.nextResetAt) state.resetCache[key] = new Date(plan.nextResetAt).toISOString();
   // The guard is a not-before deadline, not a prediction that a reset occurred
   // or an exact execution time. The existing tick determines actual execution.
-  if (state.allRunning[key] && plan.nextResetAt) {
-    await check('scheduled', { code: 'reset-not-before', resetAt: new Date(plan.nextResetAt).toISOString(),
-      scheduledFor: new Date(plan.nextResetAt - C.refreshAheadMs).toISOString(), observedAt });
-  } else if (state.probeHold[key]) {
+  if (!deps.quotaCheckClaim && state.allRunning[key] && plan.nextResetAt) {
+    for (const window of plan.running) await check('scheduled', { scope: window.name, observationId: priorObservation(window.name),
+      code: 'reset-not-before', resetAt: new Date(window.resetAt).toISOString(),
+      scheduledFor: new Date(Math.max(Date.now() + C.tickIntervalMs, window.resetAt - C.refreshAheadMs)).toISOString(), observedAt });
+  } else if (!deps.quotaCheckClaim && state.probeHold[key]) {
     await check('scheduled', { code: 'probe-not-before', scheduledFor: new Date(state.probeHold[key]).toISOString(), observedAt });
   }
 
@@ -803,7 +841,7 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
     } catch (e) {
       await check('failed', { code: 'state_write_failed' });
       console.warn(
-        `[AutoPing] ${provider}:${connection.id}: could not clear lifted lock: ${e.message}`
+        `[AutoPing] ${provider}:${connection.id}: could not clear lifted lock`
       );
     }
   }
@@ -826,19 +864,47 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
   );
 
   const sendPing = sendPingOverride || sendGenericPing;
-  let ok;
+  let nextState = { ...verdict.state };
+  const accepted = new Set(), outcomes = new Map();
+  const persist = deps.persistWarmState || deps.updateProviderConnection;
+  const persistAttempt = async () => {
+    state.warmStateCache[key] = nextState;
+    try { await persist(connection.id, { autoPingWindows: nextState }); }
+    catch (error) { await check('failed', { code: 'state_write_failed' }); recordFailure(state, key); throw error; }
+  };
   const senderDeps = {
     ...deps,
+    warmTargets: targets,
+    beforeWarmRequest: async (scopes, model) => {
+      await deps.assertQuotaCheckOwnership?.();
+      if (!scopes.length || scopes.some(scope => !targets.includes(scope))) throw new Error('warm_target_mismatch');
+      for (const scope of scopes) nextState[scope] = { ...nextState[scope],
+        lastAttemptedAt: new Date().toISOString(), lastAttemptedResetKey: plan.resetKeys?.[scope] ?? null,
+        lastAttemptOutcome: 'dispatching', lastAttemptModel: model };
+      // The durable guard is acknowledged before a possibly billable dispatch.
+      await persistAttempt();
+    },
+    onWarmOutcome: async ({ scopes, targetModel, outcome, code }) => {
+      for (const scope of scopes) {
+        outcomes.set(scope, { targetModel, outcome });
+        nextState[scope] = { ...nextState[scope], lastAttemptOutcome: outcome };
+        if (outcome === 'accepted') {
+          accepted.add(scope);
+          nextState = recordWarm({ state: nextState, targets: [scope], resetKeys: plan.resetKeys || {}, now: Date.now() });
+        }
+        await check('warm-outcome', { scope, targetModel, outcome, code, observedAt, observationId: priorObservation(scope) });
+      }
+      await persistAttempt();
+    },
     onWarmResponse: (response, scope = null) => check('warm-response', {
       scope, code: Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599
         ? `http_${response.status}` : 'response-status-unknown',
     }),
-    onWarmException: scope => check('failed', { scope, code: 'warm_exception' }),
   };
-  try { ok = await sendPing(connection, providerConfig, proxyOptions, senderDeps); }
+  try { await sendPing(connection, providerConfig, proxyOptions, senderDeps); }
   catch (error) { await check('failed', { code: 'warm_exception' }); throw error; }
-  if (!ok) {
-    await check('failed', { code: 'warm_rejected' });
+  if (!accepted.size) {
+    await check('failed', { code: [...outcomes.values()].some(o => o.outcome === 'uncertain') ? 'warm_uncertain' : 'warm_rejected' });
     // Do not record a warm unless upstream took the tiny request.
     recordFailure(state, key);
     console.warn(
@@ -847,12 +913,12 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
     return;
   }
   clearFailure(state, key);
-  for (const scope of targets) await check('warm-recorded', { scope, code: 'scheduler-recorded', observedAt });
+  for (const scope of accepted) await check('warm-recorded', { scope, ...outcomes.get(scope), code: 'scheduler-recorded', observedAt, observationId: priorObservation(scope) });
 
   const nowIso = new Date().toISOString();
-  const nextState = recordWarm({
-    state: verdict.state,
-    targets,
+  nextState = recordWarm({
+    state: nextState,
+    targets: [...accepted],
     resetKeys: plan.resetKeys || {},
     now: Date.now(),
   });
@@ -876,7 +942,7 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
     (plan.nextResetAt ? new Date(plan.nextResetAt).toISOString() : null);
   state.warmStateCache[key] = nextState;
   try {
-    await deps.updateProviderConnection(connection.id, {
+    await persist(connection.id, {
       autoPingWindows: nextState,
       // Kept for the dashboard and for anything still reading the single-window
       // fields; the per-window map above is what the scheduler decides on.
@@ -892,8 +958,106 @@ async function performQuotaCheck(conn, provider, providerConfig, sendPingOverrid
     // dead DB from turning every tick into a token.
     recordFailure(state, key);
     console.warn(
-      `[AutoPing] ${provider}:${connection.id}: warm spent but state write failed: ${e.message}`
+      `[AutoPing] ${provider}:${connection.id}: warm spent but state write failed`
     );
+  }
+}
+
+async function quotaInventory(settings, deps) {
+  const inventory = [];
+  const byId = new Map();
+  for (const [provider, config] of Object.entries(C.providers)) {
+    const enabled = settings?.[config.settingsKey]?.connections || {};
+    const connections = await deps.getProviderConnections({ provider }) || [];
+    for (const connection of connections) {
+      const cancelReason = connection.isActive === false ? 'account-inactive'
+        : enabled[connection.id] !== true ? 'setting-disabled'
+        : !(config.authTypes || ['oauth']).includes(connection.authType) ? 'auth-unsupported' : null;
+      inventory.push({ id: connection.id, provider, cancelReason });
+      if (!cancelReason) byId.set(`${provider}:${connection.id}`, { connection, config });
+    }
+  }
+  return { inventory, byId };
+}
+
+async function runDurableQuotaChecks(settings, deps, state) {
+  const queue = await deps.getQuotaCheckQueue();
+  state.queue = queue;
+  const { inventory, byId } = await quotaInventory(settings, deps);
+  throwIfStopped(deps.signal);
+  queue.reconcile(inventory);
+  for (const job of queue.due(QUOTA_CHECK_BATCH_SIZE)) {
+    throwIfStopped(deps.signal);
+    const target = byId.get(`${job.provider}:${job.connectionId}`);
+    if (!target) continue;
+    const claim = queue.claim(job.id);
+    if (!claim) continue;
+    let lost = false;
+    let failed = false;
+    let accepted = false;
+    const observations = new Map();
+    const controller = new AbortController();
+    const signal = AbortSignal.any([deps.signal, controller.signal].filter(Boolean));
+    const cancel = reason => {
+      if (!controller.signal.aborted) {
+        controller.abort(new Error(reason));
+        try { queue.cancel(claim, reason); } catch { console.warn('[AutoPing] cancellation_state_write_failed'); }
+      }
+    };
+    state.activeCheck = { claim, cancel };
+    const assertAuthority = async () => {
+      throwIfStopped(signal);
+      if (lost || !queue.owns(claim)) { lost = true; cancel('ownership-lost'); throw new Error('quota_check_ownership_lost'); }
+      const current = await deps.getSettings();
+      const accounts = await deps.getProviderConnections({ provider: job.provider }) || [];
+      const account = accounts.find(item => item.id === job.connectionId);
+      const reason = !account ? 'account-missing' : account.isActive === false ? 'account-inactive'
+        : current?.[target.config.settingsKey]?.connections?.[job.connectionId] !== true ? 'setting-disabled'
+        : !(target.config.authTypes || ['oauth']).includes(account.authType) ? 'auth-unsupported' : null;
+      if (reason) { cancel(reason); throw new Error(reason); }
+      throwIfStopped(signal);
+      if (!queue.owns(claim)) { lost = true; cancel('ownership-lost'); throw new Error('quota_check_ownership_lost'); }
+    };
+    const renewal = setInterval(() => {
+      try { if (!queue.renew(claim)) { lost = true; cancel('ownership-lost'); } }
+      catch { lost = true; cancel('ownership-lost'); }
+    }, Math.floor(QUOTA_CHECK_LEASE_MS / 3));
+    renewal.unref?.();
+    const deadline = setTimeout(() => cancel('check-deadline'), QUOTA_CHECK_LEASE_MS);
+    deadline.unref?.();
+    const stop = () => cancel('scheduler-stopped');
+    deps.signal?.addEventListener('abort', stop, { once: true });
+    try {
+      await pingConnection(target.connection, job.provider, target.config,
+        PING_SENDERS[job.provider] || null, { ...deps, signal, quotaCheckClaim: claim,
+          assertQuotaCheckOwnership: assertAuthority,
+          onQuotaObservation: observation => observations.set(observation.scope, observation),
+          onQuotaCheckEvent: event => { if (event.eventType === 'failed') failed = true; if (event.eventType === 'warm-outcome' && event.outcome === 'accepted') accepted = true; },
+        }, state);
+    } catch {
+      failed = true;
+      recordFailure(state, cacheKey(job.provider, job.connectionId));
+    } finally {
+      clearInterval(renewal);
+      clearTimeout(deadline);
+      deps.signal?.removeEventListener('abort', stop);
+      if (state.activeCheck?.claim === claim) state.activeCheck = null;
+    }
+    const key = cacheKey(job.provider, job.connectionId);
+    let next = Date.now() + C.tickIntervalMs;
+    let reason = 'poll-not-before';
+    if (failed) { next = Date.now() + C.failureCooldownMs; reason = 'retry-not-before'; }
+    else if (accepted) { next = Date.now() + C.warmVerifyAfterMs; reason = 'verify-not-before'; }
+    else if (state.probeHold?.[key] > next) { next = state.probeHold[key]; reason = 'probe-not-before'; }
+    else if (state.allRunning?.[key] && Date.parse(state.resetCache[key]) - C.refreshAheadMs > next) {
+      next = Date.parse(state.resetCache[key]) - C.refreshAheadMs; reason = 'reset-not-before';
+    }
+    const targets = [...observations.values()].map(observation => ({ scope: observation.scope, observationId: observation.id, resetAt: observation.resetAt }));
+    if (!lost && !signal.aborted) {
+      await assertAuthority();
+      queue.complete(claim, { nextCheckAt: new Date(next).toISOString(), reason,
+        targets: targets.slice(0,100), outcome: failed ? 'failed' : 'completed' });
+    }
   }
 }
 
@@ -903,6 +1067,11 @@ function createDefaultDeps() {
     getProviderConnections,
     updateConnectionProxyPoolSnapshotIfBound: localDb.updateConnectionProxyPoolSnapshotIfBound,
     updateProviderConnection,
+    persistWarmState: async (id, patch) => {
+      if (!await updateProviderConnection(id, patch)) throw new Error('warm_account_missing');
+      const db = await getAdapter();
+      db.flush?.();
+    },
     resolveConnectionProxyConfig,
     refreshAndUpdateCredentials,
     proxyAwareFetch,
@@ -910,14 +1079,30 @@ function createDefaultDeps() {
     getUsageForProvider,
     retainQuotaUsage,
     recordQuotaCheckEvent,
+    getQuotaCheckQueue,
   };
 }
 
-export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g) {
-  if (state.running) return;
+export function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g) {
+  if (state.running) return state.tickPromise || Promise.resolve();
+  if (state.pendingMetadata?.size) return Promise.resolve();
   state.running = true;
+  state.pendingMetadata ??= new Set();
+  state.controller = new AbortController();
+  state.deps = deps;
+  state.tickPromise = executeQuotaAutoPingTick({ ...deps, signal: state.controller.signal, metadataState: state }, state)
+    .finally(() => { state.running = false; state.controller = null; state.tickPromise = null; });
+  return state.tickPromise;
+}
+
+async function executeQuotaAutoPingTick(deps, state) {
   try {
     const settings = await deps.getSettings();
+    throwIfStopped(deps.signal);
+    if (deps.getQuotaCheckQueue) {
+      await runDurableQuotaChecks(settings, deps, state);
+      return;
+    }
 
     for (const [provider, providerConfig] of Object.entries(C.providers)) {
       // A provider with no bespoke handler is warmed through the generic usage
@@ -935,42 +1120,68 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
         (conn) => allowedAuth.includes(conn.authType) && enabledMap[conn.id] === true
       );
       for (const conn of targets) {
+        throwIfStopped(deps.signal);
         try {
           await pingConnection(conn, provider, providerConfig, sendPing, deps, state);
         } catch (e) {
           recordFailure(state, cacheKey(provider, conn.id));
-          console.warn(`[AutoPing] ${provider}:${conn.id}: ${e.message}`);
+          console.warn(`[AutoPing] ${provider}:${conn.id}: check failed`);
         }
       }
     }
   } catch (e) {
-    console.warn('[AutoPing] tick error:', e.message);
-  } finally {
-    state.running = false;
+    console.warn('[AutoPing] tick error: check failed');
   }
 }
 
-export function startQuotaAutoPing() {
-  if (g.interval) return;
+export function startQuotaAutoPing(deps = createDefaultDeps(), state = g) {
+  if (state.interval) return;
   console.log('[AutoPing] scheduler started');
-  runQuotaAutoPingTick().catch(() => {});
-  g.interval = setInterval(() => {
-    runQuotaAutoPingTick().catch(() => {});
+  state.shutdownCleanup ??= registerShutdownFlusher(() => stopQuotaAutoPing(state), -50);
+  runQuotaAutoPingTick(deps, state).catch(() => {});
+  state.interval = setInterval(() => {
+    runQuotaAutoPingTick(deps, state).catch(() => {});
   }, C.tickIntervalMs);
-  if (g.interval.unref) g.interval.unref();
+  state.interval.unref?.();
 }
 
-export function stopQuotaAutoPing() {
-  if (!g.interval) return;
-  clearInterval(g.interval);
-  g.interval = null;
-  console.log('[AutoPing] scheduler stopped');
+export function stopQuotaAutoPing(state = g) {
+  const wasRunning = state.interval || state.running;
+  clearInterval(state.interval);
+  state.interval = null;
+  state.controller?.abort(new Error('scheduler-stopped'));
+  state.activeCheck?.cancel('scheduler-stopped');
+  state.shutdownCleanup?.(); state.shutdownCleanup = null;
+  if (wasRunning) console.log('[AutoPing] scheduler stopped');
+  return Promise.resolve(state.tickPromise);
 }
 
-export function configureQuotaAutoPing(settings) {
+export function configureQuotaAutoPing(settings, deps = createDefaultDeps(), state = g) {
   const enabled = Object.values(C.providers).some((providerConfig) =>
     Object.values(settings?.[providerConfig.settingsKey]?.connections || {}).some(Boolean)
   );
-  if (enabled) startQuotaAutoPing();
-  else stopQuotaAutoPing();
+  if (enabled) startQuotaAutoPing(deps, state);
+  else stopQuotaAutoPing(state);
+  // Persist opt-out even when no interval was installed in this process.
+  const reconcile = async () => {
+    if (!deps.getQuotaCheckQueue) return;
+    const queue = await deps.getQuotaCheckQueue();
+    state.queue = queue;
+    const current = await deps.getSettings();
+    const { inventory } = await quotaInventory(current, deps);
+    queue.reconcile(inventory);
+    if (state.activeCheck && !queue.owns(state.activeCheck.claim)) state.activeCheck.cancel('setting-disabled');
+  };
+  return reconcile().catch(() => console.warn('[AutoPing] settings_reconciliation_failed'));
+}
+
+// Called only after an account mutation commits. Reading inventory can cancel
+// work but never performs provider I/O or starts a scheduler that was absent.
+export async function notifyQuotaAccountChanged(connectionId, state = g) {
+  if (!state.queue || !state.deps) return;
+  const { inventory } = await quotaInventory(await state.deps.getSettings(), state.deps);
+  state.queue.reconcile(inventory);
+  if (state.activeCheck?.claim.connectionId === connectionId && !state.queue.owns(state.activeCheck.claim)) {
+    state.activeCheck.cancel('account-inactive');
+  }
 }

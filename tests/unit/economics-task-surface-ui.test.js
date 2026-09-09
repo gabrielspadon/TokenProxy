@@ -37,7 +37,7 @@ it('offers one task-tab level, preserving analytics, query scope, and pricing dr
   await act(async()=>root.render(<MantineProvider env="test"><Surface/></MantineProvider>));
   const analysis=host.querySelector('[aria-label="Recorded analysis"]');
   expect(fetcher).not.toHaveBeenCalled();
-  expect(host.querySelectorAll('[role=tab]')).toHaveLength(4);
+  expect([...host.querySelectorAll('[role=tab]')].map(tab=>tab.textContent)).toEqual(['Analysis','Identity filters','Pricing','Budget reservations','Projects']);
   await click('Pricing');
   expect(field('Pricing provider').closest('[role=tabpanel]').style.display).not.toBe('none');
   await input('Pricing provider','fixture');await input('Pricing model','model');await input('Input USD / million tokens','7');

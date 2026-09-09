@@ -93,3 +93,60 @@ it('resolves configured prefix shadows and enforces that node account policy', a
   expect((await call('simulate', { input, capture: canonical.body.capture })).body.localSelection.connectionId).toBe(connection.id);
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it('captures and simulates versioned routes and session effects without repository writes or transport', async () => {
+  const { setModelAlias } = await import('@/lib/db/repos/aliasRepo.js');
+  await setModelAlias('simulation-route', `claude/${MODEL}`);
+  const before = db.get('SELECT total_changes() AS n').n;
+  const captured = await call('capture', { scope: 'route', input: { model: 'simulation-route' }, sessionHash });
+  expect(captured.status).toBe(200);
+  expect(captured.body.capture.version).toBe(2);
+  const result = await call('simulate', { capture: captured.body.capture, input: captured.body.input,
+    sessionPolicy: { action: 'clear', at: captured.body.capture.capturedAt, connectionIds: [connection.id] } });
+  expect(result.status).toBe(200);
+  expect(result.body.after.selectedModel).toBe(`claude/${MODEL}`);
+  expect(result.body.sessionPreview.affectedCount).toBeGreaterThan(0);
+  expect(db.get('SELECT total_changes() AS n').n).toBe(before);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('refuses captured configuration and stored draft drift before replay', async () => {
+  const { createConfigurationDraft, getCurrentConfiguration, reviseConfigurationDraft } = await import('@/lib/db/repos/configVersionsRepo.js');
+  const current = await getCurrentConfiguration();
+  const draft = await createConfigurationDraft({ document: current.document, expectedCurrent: current.currentHash });
+  const packet = { version: 1, draftId: draft.id, revision: draft.revision, document: draft.version.document };
+  const captured = await call('capture', { scope: 'route', input, draft: packet });
+  expect(captured.status).toBe(200);
+  const args = { input, capture: captured.body.capture, draft: { ...packet, expectedCurrent: current.currentHash } };
+  expect((await call('simulate', args)).status).toBe(200);
+  await reviseConfigurationDraft(draft.id, { document: current.document, expectedRevision: draft.revision });
+  expect((await call('simulate', args)).body.code).toBe('capture_draft_stale');
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('evaluates automatic rules on the local catalog without invoking provider discovery', async () => {
+  const { updateSettings } = await import('@/lib/db/repos/settingsRepo.js');
+  await updateSettings({ autoRouter: { rules: { coding: `claude/${MODEL}` } } });
+  const autoInput = { model: 'auto-router', taskClass: 'coding' };
+  const before = db.get('SELECT total_changes() AS n').n;
+  const captured = await call('capture', { scope: 'route', input: autoInput });
+  expect(captured.status).toBe(200);
+  const result = await call('simulate', { capture: captured.body.capture, input: autoInput });
+  expect(result.status).toBe(200);
+  expect(result.body.after.automatic).toMatchObject({ source: 'rule', taskClass: 'coding', model: `claude/${MODEL}` });
+  expect(db.get('SELECT total_changes() AS n').n).toBe(before);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it('refuses an expired sealed capture and changed active configuration', async () => {
+  const { createRoutePlanCapture, ROUTE_CAPTURE_TTL_MS } = await import('@/lib/routingPlanSimulation.js');
+  const { setModelAlias } = await import('@/lib/db/repos/aliasRepo.js');
+  const packet = await call('capture', { scope: 'route', input });
+  expect(packet.status).toBe(200);
+  const capturedAt = new Date(Date.now() - ROUTE_CAPTURE_TTL_MS - 60000).toISOString();
+  const expired = createRoutePlanCapture({ ...packet.body.capture, capturedAt, expiresAt: new Date(Date.parse(capturedAt) + ROUTE_CAPTURE_TTL_MS).toISOString() });
+  expect((await call('simulate', { input, capture: expired })).body.code).toBe('capture_expired');
+  await setModelAlias('simulation-stale-config', `claude/${MODEL}`);
+  expect((await call('simulate', { input, capture: packet.body.capture })).body.code).toBe('capture_configuration_stale');
+  expect(fetch).not.toHaveBeenCalled();
+});

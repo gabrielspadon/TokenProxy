@@ -26,7 +26,7 @@ export function Strap() {
   return (
     <div className="strap" role="status" aria-label="Telemetry" tabIndex={0}>
       <span className="cell">
-        <Freshness status={stream.status} lastDataAt={receivedAt} />
+        <Freshness status={stream.status} reason={stream.reason} lastDataAt={stream.lastDataAt || receivedAt} />
       </span>
       <span className="cell">
         <span className="fig">

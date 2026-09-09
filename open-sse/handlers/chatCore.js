@@ -1,5 +1,8 @@
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
 import { isReplaySafeRejection, withReplaySafety } from "../utils/replaySafety.js";
+import { createStageGuard } from "../utils/stageOutcome.js";
+import { pendingShapingHandoffs } from "../../src/lib/db/repos/shapingHandoffsRepo.js";
+import { injectHandoffPackets } from "../services/memory/handoffStore.js";
 import { createContextTelemetry, recordContextAttempt, nextContextAttempt } from "./chatCore/contextTelemetry.js";
 import { requireBudgetDispatchCoverage, beginBudgetDispatch, observeBudgetResponse, budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
 import { BudgetAdmissionError, markBudgetUncertain, releaseUndispatchedBudgetReservation } from "../../src/lib/db/repos/budgetRepo.js";
@@ -114,7 +117,7 @@ import {
   getRejectedFields,
   extractRejectedFieldNamesFromError,
 } from "../translator/concerns/adaptiveStripper.js";
-import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
+import { MediaAggregateLimitError, prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { defaultClaudeToolType } from "../translator/concerns/toolCall.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { applyMemoryEnhancements } from "../services/memory/index.js";
@@ -416,7 +419,18 @@ function updatePrefixTelemetry(scope, serialized, tracked) {
   return { epochHitRate, volatileKeys };
 }
 
-export async function handleChatCore({
+export async function handleChatCore(options) {
+  try {
+    options.callerSignal?.throwIfAborted();
+    return await handleChatCoreAttempt(options);
+  } catch (error) {
+    if (!options.callerSignal?.aborted) throw error;
+    trackPendingRequest(options.modelInfo.model, options.modelInfo.provider, options.connectionId, false);
+    return createCallerAbortResult();
+  }
+}
+
+async function handleChatCoreAttempt({
   requestId,
   contextTelemetry: contextIdentity = {},
   contextStructureEnabled = true,
@@ -550,6 +564,7 @@ export async function handleChatCore({
   if (bypassResponse) return bypassResponse;
   const contextCapture = await prepareContextCapture({ body: clientRawRequest?.body ?? body,
     headers: clientRawRequest?.headers, apiKey, enabled: contextStructureEnabled });
+  callerSignal?.throwIfAborted();
 
   // Track as an active (concurrent) session for the dashboard. clientId is the
   // real client IP stamped by custom-server.js as x-tp-real-ip, which is the
@@ -672,7 +687,16 @@ export async function handleChatCore({
     sourceFormat,
     targetFormat,
     model,
+    { signal: callerSignal },
   );
+  let loggerOwnsStream = false;
+  const closeRequestLog = () => { Promise.resolve(reqLogger.close?.()).catch(() => {}); };
+  const deliverLoggedStream = async (options) => {
+    const result = await handleStreamingResponse(options);
+    loggerOwnsStream = result?.success === true;
+    return result;
+  };
+  try {
   if (clientRawRequest)
     reqLogger.logClientRawRequest(
       clientRawRequest.endpoint,
@@ -712,7 +736,7 @@ export async function handleChatCore({
     // Convert remote image URLs to base64 for targets that can't fetch URLs.
     try {
       const n = await prefetchRemoteImages(body, sourceFormat, targetFormat, {
-        signal: undefined,
+        signal: callerSignal,
       });
       if (n > 0)
         log?.debug?.(
@@ -720,6 +744,10 @@ export async function handleChatCore({
           `prefetched ${n} remote image(s) for ${targetFormat}`,
         );
     } catch (e) {
+      callerSignal?.throwIfAborted();
+      if (e instanceof MediaAggregateLimitError) {
+        return createErrorResult(413, e.message, null, { safeToReplay: false, failurePhase: 'preparation' }, rid);
+      }
       log?.warn?.("MODALITY", `image prefetch failed: ${e.message}`);
     }
   }
@@ -827,7 +855,8 @@ export async function handleChatCore({
   // entry (negative delta) instead of vanishing into the entry bytes.
   let toolsStageDelta = null;
   let toolsStripped = false;
-  const toolsBeforeBytes = Buffer.byteLength(JSON.stringify(translatedBody));
+  const toolsBeforeSerialized = JSON.stringify(translatedBody);
+  const toolsBeforeBytes = Buffer.byteLength(toolsBeforeSerialized);
   // Serializing the whole body twice to bracket this block cost a second full
   // pass over every request, including the overwhelmingly common one where
   // nothing in the block fires. Every mutation between the two measurements
@@ -837,6 +866,13 @@ export async function handleChatCore({
   // disclosure pass that strips nothing still replaces the array and can
   // reorder it, and the TTS branch below changes messages as well as tools.
   let toolsBodyMutated = false;
+  // Per-request opt-out: computed early so token savers (including disclosure) can respect it.
+  const tokenSaverEnabled =
+    clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase?.() !== "off";
+  const toolsGuard = createStageGuard({
+    rollback: () => { translatedBody = JSON.parse(toolsBeforeSerialized); toolsBodyMutated = false; toolsStripped = false; },
+  });
+  toolsGuard.sync("tools", () => {
   if (Array.isArray(translatedBody.tools)) {
     const { tools: deduped, stripped } = dedupeTools(translatedBody.tools, { clientTool, model });
     if (stripped.length > 0) {
@@ -850,9 +886,6 @@ export async function handleChatCore({
     }
   }
 
-  // Per-request opt-out: computed early so token savers (including disclosure) can respect it.
-  const tokenSaverEnabled =
-    clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase?.() !== "off";
 
   // Progressive tool disclosure: static filter (Phase 1) + BM25 selection (Phase 2).
   // Runs after dedupeTools, before RTK/headroom. cache_control stamping is NOT
@@ -911,6 +944,7 @@ export async function handleChatCore({
     }
   }
 
+  });
   // Token savers: applied at the final body just before dispatch
   // Covers both passthrough (source shape) and translated (target shape) flows
   const finalFormat = passthrough ? sourceFormat : targetFormat;
@@ -955,9 +989,11 @@ export async function handleChatCore({
   // serialize is unconditional; toolsBodyMutated still gates the byte delta.
   const preSaverSerialized = JSON.stringify(translatedBody);
   const toolsAfterBytes = toolsBodyMutated ? Buffer.byteLength(preSaverSerialized) : toolsBeforeBytes;
-  toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true };
+  toolsStageDelta = { in: toolsBeforeBytes, out: toolsAfterBytes, delta: toolsAfterBytes - toolsBeforeBytes, ran: true,
+    ...toolsGuard.measurement("tools", true, preSaverSerialized !== toolsBeforeSerialized) };
   const saverStages = [];
   const contextStages = [{ stage: "tools", ...toolsStageDelta }];
+  const contextHandoffs = [];
   // The tools-normalization block above ran before this ledger existed; fold
   // its measured delta in as the first stage so save= attributes the strip.
   if (toolsStageDelta.delta !== 0) saverStages.push({ stage: "tools", ...toolsStageDelta });
@@ -975,18 +1011,44 @@ export async function handleChatCore({
   const pushPrefixNote = (note) => {
     if (prefixNotes.length < PREFIX_NOTES_MAX) prefixNotes.push(note);
   };
-  const saverPrev = { bytes: toolsAfterBytes };
+  const saverPrev = { bytes: toolsAfterBytes, serialized: preSaverSerialized };
   const saverEntryBytes = saverPrev ? saverPrev.bytes : 0;
-  const measureSaverStage = (stage, ran, measuredBytes) => {
+  const stageGuard = createStageGuard({
+    signal: callerSignal,
+    rollback: () => { translatedBody = JSON.parse(saverPrev.serialized); },
+    onCancelled: async (stage) => {
+      measureSaverStage(stage, true);
+      const cancelled = createContextTelemetry({
+        ...contextIdentity, sessionHash: credentials?.sessionHash, sessionIdentitySource: credentials?.sessionIdentitySource,
+        dispatchCoverage: "preparation-only", explicitIdentity: contextCapture.identity,
+        structures: [contextCapture.initial].filter(Boolean), timestamp: new Date(requestStartTime).toISOString(),
+        requestedModel: clientRawRequest?.body?.model || body.model, clientTool, inputEstimate, messageCount, toolCount,
+        bodyAfterBytes: saverPrev.bytes, stages: contextStages, handoffs: contextHandoffs,
+        routeKind: routeKindOverride || (passthrough ? "passthrough" : sourceFormat === targetFormat ? "same-format" : "translated"),
+        formatPair: `${sourceFormat}>${targetFormat}`,
+      });
+      await recordContextAttempt(cancelled, { provider, model, connectionId, status: "aborted" });
+    },
+  });
+  const measureSaverStage = (stage, ran, measuredBytes, evaluated = ran) => {
     // Every mutation between ledger boundaries belongs to a gated stage.
     // A disabled stage retains its exact predecessor measurement and still
     // contributes an explicit zero-delta row. The final serializer supplies
     // its already-measured size so the ledger never serializes it twice.
-    const at = measuredBytes ?? (ran ? Buffer.byteLength(JSON.stringify(translatedBody)) : saverPrev.bytes);
-    const measurement = { ran: Boolean(ran), stage, delta: at - saverPrev.bytes, in: saverPrev.bytes, out: at };
+    let serialized;
+    try {
+      serialized = ran ? (measuredBytes === undefined ? JSON.stringify(translatedBody) : finalSerialized) : saverPrev.serialized;
+    } catch (error) {
+      stageGuard.failed(stage, error);
+      serialized = saverPrev.serialized;
+    }
+    const at = measuredBytes ?? (ran ? Buffer.byteLength(serialized) : saverPrev.bytes);
+    const measurement = { ran: Boolean(ran), stage, delta: at - saverPrev.bytes, in: saverPrev.bytes, out: at,
+      ...stageGuard.measurement(stage, Boolean(evaluated), serialized !== saverPrev.serialized) };
     contextStages.push(measurement);
     if (saverWillRun && at !== saverPrev.bytes) saverStages.push(measurement);
     saverPrev.bytes = at;
+    saverPrev.serialized = serialized;
   };
 
   // Schema distillation: strip validation-noise JSON-Schema keywords from
@@ -999,13 +1061,13 @@ export async function handleChatCore({
   // entry bytes and losing it from save=.
   const schemaDistillRan =
     tokenSaverEnabled && schemaDistillEnabled && Array.isArray(translatedBody.tools);
-  if (schemaDistillRan) {
+  if (schemaDistillRan) stageGuard.sync("schema", () => {
     const distilled = distillToolSchemas(translatedBody.tools, { allowLossy: schemaAllowLossy });
     if (distilled.savedBytes > 0) {
       translatedBody.tools = distilled.tools;
       notePath(rid, "XFORM.tool-distill");
     }
-  }
+  });
   measureSaverStage("schema", schemaDistillRan);
 
   // Prefix token-savers (#token-savers). The pipeline is in two halves.
@@ -1059,7 +1121,7 @@ export async function handleChatCore({
   const anthropicNative = provider === "claude" || provider === "anthropic";
   const thinkingWillRun =
     tokenSaverEnabled && thinkingStripEnabled && claudePrefixTarget && !anthropicNative && !!prefixMessages();
-  if (thinkingWillRun) {
+  if (thinkingWillRun) stageGuard.sync("thinking", () => {
     const res = stripHistoricalThinking(translatedBody.messages, { keepRecentTurns: 1 });
     if (res.stripped > 0) {
       translatedBody.messages = res.messages;
@@ -1073,16 +1135,18 @@ export async function handleChatCore({
         .slice(0, 8);
       pushPrefixNote({ kind: "thinking", text: `stripped ${res.stripped} reasoning block(s)` });
     }
-  }
+  });
   measureSaverStage("thinking", thinkingWillRun);
 
   // RTK rewrites only this attempt's privately owned request containers.
   const rtkWillRun = tokenSaverEnabled && rtkEnabled;
-  const rtkStats = compressMessages(
-    translatedBody,
-    rtkWillRun,
-    { allowLossy: rtkAllowLossy },
-  );
+  let rtkStats = null;
+  stageGuard.sync("rtk", () => {
+    const diagnostics = {};
+    rtkStats = compressMessages(translatedBody, rtkWillRun, { allowLossy: rtkAllowLossy, diagnostics });
+    stageGuard.report("rtk", diagnostics);
+  });
+  if (stageGuard.measurement("rtk", rtkWillRun, false).outcome === "failed") rtkStats = null;
   const rtkLine = formatRtkLog(rtkStats);
   if (rtkLine) console.log(rtkLine);
   measureSaverStage("rtk", rtkWillRun);
@@ -1106,14 +1170,14 @@ export async function handleChatCore({
   // stage measures; without its own stage those bytes were attributed to
   // headroom (wrong save= and a false saver-guard).
   let privacyRan = false;
-  if (privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming)) {
+  if (privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming)) stageGuard.sync("privacy", () => {
     privacyRan = true;
     privacyFilter = redactOutbound(translatedBody, privacyTerms);
     if (privacyFilter) {
       log?.debug?.("PRIVACY", `pseudonymised ${privacyFilter.size} value(s)`);
       if (privacyFilter.size > 0) notePath(rid, "XFORM.privacy-applied");
     }
-  }
+  });
   measureSaverStage("privacy", privacyRan);
 
   // Token-saver flags accumulator for the single "⚙" log line below.
@@ -1122,6 +1186,7 @@ export async function handleChatCore({
   // Caveman: inject terse-style system prompt. injectCaveman reports whether
   // the body actually changed; an unknown level or an already-injected prompt
   // must not claim XFORM.injected.
+  stageGuard.sync("inject", () => {
   if (tokenSaverEnabled && cavemanEnabled && cavemanLevel) {
     if (injectCaveman(translatedBody, finalFormat, cavemanLevel)) {
       xf.push(`CAVEMAN:${cavemanLevel}`);
@@ -1136,6 +1201,7 @@ export async function handleChatCore({
       notePath(rid, "XFORM.injected");
     }
   }
+  });
   measureSaverStage(
     "inject",
     tokenSaverEnabled &&
@@ -1144,7 +1210,7 @@ export async function handleChatCore({
 
   // PXPIPE: image bulky context (Claude-format bodies only), last saver before dispatch
   let pxpipeSummary = null;
-  if (pxpipeEnabled) {
+  if (pxpipeEnabled) await stageGuard.async("pxpipe", async () => {
     const pxpipeResult = await compressWithPxpipe(translatedBody, {
       enabled: tokenSaverEnabled,
       allowLossy: pxpipeAllowLossy,
@@ -1153,6 +1219,7 @@ export async function handleChatCore({
       minChars: pxpipeMinChars,
       timeoutMs: pxpipeTimeoutMs,
       transform: pxpipeTransform,
+      signal: callerSignal,
     });
     pxpipeSummary = pxpipeResult.summary;
     if (pxpipeResult.body) translatedBody = pxpipeResult.body;
@@ -1165,11 +1232,12 @@ export async function handleChatCore({
     } catch {
       /* stats must not break requests */
     }
-  }
+    stageGuard.report("pxpipe", pxpipeSummary);
+  });
   measureSaverStage("pxpipe", pxpipeEnabled);
 
   // Memory & Context Optimizer (Tool & Media Pruning, Compaction, Cache Anchoring, Handoffs)
-  if (tokenSaverEnabled && memorySettings) {
+  if (tokenSaverEnabled && memorySettings) await stageGuard.async("mem", async () => {
     // THE MODEL'S OWN WINDOW decides when history has to be cut, and the
     // capability table already knows it (1,000,000 for the Opus and Sonnet 5
     // class, and a conservative default for anything it has not heard of).
@@ -1183,6 +1251,7 @@ export async function handleChatCore({
       calibration: sessionCalibrationFor(contextScope),
       log,
     });
+    stageGuard.report("mem", memRes);
     memStats = memRes.stats || null;
     const memBudget = memRes.stats?.budget;
     if (memBudget) {
@@ -1207,10 +1276,7 @@ export async function handleChatCore({
       xf.push(`COMPACT:${memRes.stats.compaction.savedTokens}t`);
       notePath(rid, "XFORM.compact-applied");
     }
-    if (memRes.stats?.handoff?.applied) {
-      notePath(rid, "XFORM.mem-handoff");
-    }
-  }
+  });
   measureSaverStage("mem", tokenSaverEnabled && memorySettings);
 
   // ---- Pressure-driven prefix rungs. A rung rewrites the cached prefix, so
@@ -1263,7 +1329,9 @@ export async function handleChatCore({
   // the provider's cache keeps hitting.
   const headroomDiagnostics = {};
   const headroomPressure = tokenSaverEnabled && headroomEnabled ? measurePrefixPressure() : null;
-  const headroomStats = await compressWithHeadroom(translatedBody, {
+  let headroomStats = null;
+  await stageGuard.async("headroom", async () => {
+    headroomStats = await compressWithHeadroom(translatedBody, {
     enabled: tokenSaverEnabled && headroomEnabled,
     allowLossy: headroomAllowLossy,
     url: headroomUrl,
@@ -1273,6 +1341,9 @@ export async function handleChatCore({
     timeoutMs: headroomTimeoutMs,
     contextPressure: headroomPressure,
     diagnostics: headroomDiagnostics,
+    signal: callerSignal,
+  });
+    stageGuard.report("headroom", headroomDiagnostics);
   });
   const headroomLine = formatHeadroomLog(headroomStats);
   const headroomSizeLine = formatHeadroomSizeLog(headroomDiagnostics);
@@ -1328,7 +1399,7 @@ export async function handleChatCore({
   // requests.
   const qacWillRun =
     tokenSaverEnabled && queryAwareCompressionEnabled && claudePrefixTarget && !!prefixMessages();
-  if (qacWillRun) {
+  if (qacWillRun) stageGuard.sync("qac", () => {
     let qacMemo = sessionKey ? memoGet("qac", sessionKey) : null;
     if (sessionKey && !qacMemo) {
       qacMemo = new Set();
@@ -1356,8 +1427,8 @@ export async function handleChatCore({
           text: `compressed ${res.compressed} low-relevance turn(s)`,
         });
       }
-    }
-  }
+    } else stageGuard.report("qac", { outcome: "skipped" });
+  });
   measureSaverStage("qac", qacWillRun);
 
   // Pair dropping: demand-driven, like the memory pruner. The deficit is how
@@ -1369,7 +1440,7 @@ export async function handleChatCore({
   // pairs first would spend them before the cheaper, larger reclaim ran.
   const pairsWillRun =
     tokenSaverEnabled && pairDropEnabled && claudePrefixTarget && !!prefixMessages();
-  if (pairsWillRun) {
+  if (pairsWillRun) stageGuard.sync("pairs", () => {
     const pairsPressure = measurePrefixPressure();
     if (pairsPressure.deficitChars > 0 && mayDecideAnew()) {
       const res = dropOldestPairs(translatedBody.messages, {
@@ -1391,8 +1462,8 @@ export async function handleChatCore({
           text: `dropped ${res.droppedPairs} pair(s) (~${res.savedChars} chars)`,
         });
       }
-    }
-  }
+    } else stageGuard.report("pairs", { outcome: "skipped" });
+  });
   measureSaverStage("pairs", pairsWillRun);
 
   // Epoch-aligned compaction cascade (#context-tuning): diet prunes expired
@@ -1421,7 +1492,7 @@ export async function handleChatCore({
   // never touched. Default off (dietEnabled).
   const dietWillRun = epochStageWanted && dietEnabled;
   let dietApplied = false;
-  if (dietWillRun && epochCutIndex > 0) {
+  if (dietWillRun && epochCutIndex > 0) stageGuard.sync("diet", () => {
     const res = pruneExpiredToolResults(translatedBody, {
       epochCutIndex,
       minAgeTurns: 8,
@@ -1438,8 +1509,8 @@ export async function handleChatCore({
         text: `pruned ${res.prunedBlocks} expired tool_result(s) (~${res.prunedChars} chars)`,
       });
     }
-  }
-  measureSaverStage("diet", dietApplied);
+  });
+  measureSaverStage("diet", dietApplied, undefined, dietWillRun && epochCutIndex > 0);
 
   // LLMLingua-2 selective compression: large natural-language-ish user/
   // tool_result blobs below the epoch cut are compressed in place by a
@@ -1452,7 +1523,7 @@ export async function handleChatCore({
   const linguaWillRun = epochStageWanted && linguaEnabled;
   let linguaApplied = false;
   let linguaSkip = null;
-  if (linguaWillRun && epochCutIndex > 0) {
+  if (linguaWillRun && epochCutIndex > 0) await stageGuard.async("lingua", async () => {
     const res = await compressBlobs(translatedBody, {
       epochCutIndex,
       endpoint: resolveLinguaEndpoint(),
@@ -1460,6 +1531,7 @@ export async function handleChatCore({
       log,
     });
     linguaSkip = res.skip ?? null;
+    stageGuard.report("lingua", res);
     if (res.applied) {
       translatedBody.messages = res.messages;
       linguaApplied = true;
@@ -1470,12 +1542,12 @@ export async function handleChatCore({
         text: `compressed ${res.compressedBlocks} blob(s) (~${res.savedChars} chars)`,
       });
     }
-  }
-  measureSaverStage("lingua", linguaApplied);
+  });
+  measureSaverStage("lingua", linguaApplied, undefined, linguaWillRun && epochCutIndex > 0);
 
   const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
   let epochMicroApplied = false;
-  if (epochMicroWillRun && epochCutIndex > 0) {
+  if (epochMicroWillRun && epochCutIndex > 0) stageGuard.sync("epochMicro", () => {
     const res = microcompact(translatedBody, {
       epochCutIndex,
       keepLastTurns: 4,
@@ -1490,8 +1562,8 @@ export async function handleChatCore({
         text: `cleared ${res.clearedBlocks} block(s) (~${res.clearedChars} chars)`,
       });
     }
-  }
-  measureSaverStage("epochMicro", epochMicroApplied);
+  });
+  measureSaverStage("epochMicro", epochMicroApplied, undefined, epochMicroWillRun && epochCutIndex > 0);
 
   const epochAutoWillRun = epochStageWanted && epochAutoEnabled;
   let epochAutoApplied = false;
@@ -1504,7 +1576,7 @@ export async function handleChatCore({
   if (epochAutoWillRun && epochCutIndex === 0) {
     epochAutoSkipReason = "epoch_boundary";
   }
-  if (epochAutoWillRun && epochCutIndex > 0) {
+  if (epochAutoWillRun && epochCutIndex > 0) await stageGuard.async("epochAuto", async () => {
     // The model's own window from the capability table, same lookup the
     // memory ladder and pair dropping use.
     const epochWindowTokens =
@@ -1517,6 +1589,7 @@ export async function handleChatCore({
         keepRecentTurns: 6,
         epochCutIndex,
       });
+      stageGuard.report("epochAuto", res);
       if (res.applied) {
         translatedBody.messages = res.messages;
         epochAutoApplied = true;
@@ -1530,8 +1603,8 @@ export async function handleChatCore({
         epochAutoSkipReason = "window_pressure";
       }
     }
-  }
-  measureSaverStage("epochAuto", epochAutoApplied);
+  });
+  measureSaverStage("epochAuto", epochAutoApplied, undefined, epochAutoWillRun && epochCutIndex > 0);
 
   // Embedding reorder: moves the most relevant historical pairs next to the
   // recent tail via local OpenAI-compatible embeddings. A permutation of the
@@ -1542,7 +1615,7 @@ export async function handleChatCore({
   // debug line and leaves the prefix in order.
   const reorderWillRun =
     tokenSaverEnabled && embedReorderEnabled && claudePrefixTarget && !!prefixMessages();
-  if (reorderWillRun) {
+  if (reorderWillRun) await stageGuard.async("reorder", async () => {
     let reorderMemo = sessionKey ? memoGet("reorder", sessionKey) : null;
     if (sessionKey && !reorderMemo) {
       reorderMemo = { order: [] };
@@ -1558,15 +1631,17 @@ export async function handleChatCore({
         keepRecentTurns: 2,
         memo: reorderMemo,
         recompute,
+        signal: callerSignal,
       });
       if (res.error) {
         log?.debug?.("REORDER", `skipped: ${String(res.error).slice(0, 80)}`);
         // DEBUG is dark in production; the failure must still be visible.
         decide("XFORM", "reorder-degraded", {
           rid,
-          why: String(res.error).slice(0, 40),
+          why: res.errorCode || "invalid_configuration",
         });
       }
+      stageGuard.report("reorder", res);
       if (res.moved > 0) {
         translatedBody.messages = res.messages;
         notePath(rid, "XFORM.reorder-applied");
@@ -1577,8 +1652,8 @@ export async function handleChatCore({
           });
         }
       }
-    }
-  }
+    } else stageGuard.report("reorder", { outcome: "skipped" });
+  });
   measureSaverStage("reorder", reorderWillRun);
 
   // Boundary note: after the prefix rungs reshaped history, one short note
@@ -1595,7 +1670,7 @@ export async function handleChatCore({
     prefixNotes.length > 0 &&
     !!prefixMessages();
   let midinjectApplied = false;
-  if (midinjectWillRun) {
+  if (midinjectWillRun) stageGuard.sync("midinject", () => {
     const noteText = composeBoundaryNote(prefixNotes);
     let insertIndex = -1;
     for (let i = translatedBody.messages.length - 1; i >= 0; i--) {
@@ -1610,9 +1685,29 @@ export async function handleChatCore({
       midinjectApplied = true;
       notePath(rid, "XFORM.midinject-applied");
     }
-  }
+  });
 
-  measureSaverStage("midinject", midinjectApplied);
+  measureSaverStage("midinject", midinjectApplied, undefined, midinjectWillRun);
+
+  // Insert approved summaries after history mutations so later pruning cannot
+  // remove them. The pressure check includes the addition before accepting it;
+  // final anchoring and wire measurements then see the complete body.
+  const handoffWillRun = tokenSaverEnabled && memorySettings?.memoryHandoffEnabled === true;
+  let handoffApplications = [];
+  if (handoffWillRun) await stageGuard.async("handoff", async () => {
+    const packets = await pendingShapingHandoffs(contextCapture.identity);
+    callerSignal?.throwIfAborted();
+    if (!packets.length) return;
+    const result = injectHandoffPackets(translatedBody, packets);
+    if (!result.injected) throw Object.assign(new Error("handoff format unsupported"), { code: "invalid_configuration" });
+    const capacity = getCapabilitiesForModel(provider, upstreamModel);
+    const pressure = measureContextPressure(translatedBody, { contextWindow: capacity?.contextWindow ?? null, settings: memorySettings, calibration: sessionCalibrationFor(contextScope) });
+    if (pressure.over) throw Object.assign(new Error("handoff exceeds context allowance"), { code: "capacity_exceeded" });
+    handoffApplications = result.applied;
+    notePath(rid, "XFORM.handoff");
+  });
+  measureSaverStage("handoff", handoffWillRun);
+  if (stageGuard.measurement("handoff", handoffWillRun, false).outcome !== "failed") contextHandoffs.push(...handoffApplications);
 
   if (xf.length && log?.line) log.line(reqTag, "⚙", xf.join(" · "));
 
@@ -1723,12 +1818,13 @@ export async function handleChatCore({
       thinking: Boolean(thinkingWillRun), privacy: Boolean(privacyEnabled),
       caveman: Boolean(tokenSaverEnabled && cavemanEnabled), ponytail: Boolean(tokenSaverEnabled && ponytailEnabled),
       pxpipe: Boolean(tokenSaverEnabled && pxpipeEnabled), pxpipeAllowLossy,
-      memory: Boolean(tokenSaverEnabled && memorySettings), headroom: Boolean(tokenSaverEnabled && headroomEnabled), headroomAllowLossy,
+      memory: Boolean(tokenSaverEnabled && memorySettings), handoff: handoffWillRun, headroom: Boolean(tokenSaverEnabled && headroomEnabled), headroomAllowLossy,
       qac: Boolean(qacWillRun), pairs: Boolean(pairsWillRun), reorder: Boolean(reorderWillRun), midinject: Boolean(tokenSaverEnabled && midPrefixInjectEnabled),
       diet: Boolean(dietWillRun), lingua: Boolean(linguaWillRun), epochMicro: Boolean(epochMicroWillRun), epochAuto: Boolean(epochAutoWillRun),
       adaptiveCacheTtl: Boolean(adaptiveCacheTtlEnabled && finalFormat === FORMATS.CLAUDE), clientOptOut: !tokenSaverEnabled,
     },
     stages: contextStages.map((stage) => ({ ...stage, ...(stage.stage === "rtk" ? { semanticPreserving: rtkStats?.semanticPreserving === true } : {}) })),
+    handoffs: contextHandoffs,
   });
   Object.defineProperties(saverMeta, {
     requestId: { get: () => contextTelemetry.requestId },
@@ -1982,11 +2078,13 @@ export async function handleChatCore({
 
   const streamController = createStreamController({
     onDisconnect: (reason) => {
+      reqLogger.cancel?.();
       trackPendingRequest(model, provider, connectionId, false);
       abandonStreamingDetail?.(typeof reason?.reason === "string" ? reason.reason : "client_disconnected");
       if (onDisconnect) onDisconnect(reason);
     },
     onError: (err) => {
+      reqLogger.cancel?.();
       trackPendingRequest(model, provider, connectionId, false);
       abandonStreamingDetail?.(err?.message === "stream stall timeout" ? "stall_timeout" : "stream_error");
     },
@@ -2100,7 +2198,9 @@ export async function handleChatCore({
     return withSaverHeaders(createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg, null, { safeToReplay: false }, rid), saverMeta);
   };
   const executeAttempt = async (args) => {
+    executionSignal.throwIfAborted();
     await requireBudgetDispatchCoverage(apiKey, executor.supportsBudgetDispatch === true);
+    executionSignal.throwIfAborted();
     let dispatches = 0;
     return executor.execute({ ...args, beforeDispatch: async (wire = {}) => {
       if (dispatches++ > 0) {
@@ -2365,7 +2465,7 @@ export async function handleChatCore({
             const { onStreamComplete, onStreamAbandoned, streamDetailId, streamState } =
               buildOnStreamComplete({ ...sharedCtx });
             abandonStreamingDetail = onStreamAbandoned;
-            return handleStreamingResponse({
+            return await deliverLoggedStream({
               ...sharedCtx,
               providerResponse,
               sourceFormat,
@@ -2534,7 +2634,7 @@ export async function handleChatCore({
   const { onStreamComplete, onStreamAbandoned, streamDetailId, streamState } =
     buildOnStreamComplete({ ...sharedCtx });
   abandonStreamingDetail = onStreamAbandoned;
-  return handleStreamingResponse({
+  return await deliverLoggedStream({
     ...sharedCtx,
     providerResponse,
     sourceFormat,
@@ -2549,6 +2649,9 @@ export async function handleChatCore({
     streamDetailId,
     streamState,
   });
+  } finally {
+    if (!loggerOwnsStream) closeRequestLog();
+  }
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

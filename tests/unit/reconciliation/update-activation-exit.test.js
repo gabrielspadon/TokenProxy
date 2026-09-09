@@ -26,36 +26,12 @@ const mocks = vi.hoisted(() => ({
 
 const store = new Map();
 
+import { makeMemoryKv } from './kvMemory.js';
+
 vi.mock('next/server', () => ({
   NextResponse: { json: (body, init) => Response.json(body, init) },
 }));
-vi.mock('@/lib/db/helpers/kvStore.js', () => ({
-  makeKv: (scope) => ({
-    async get(key, fallback = null) {
-      const v = store.get(`${scope}:${key}`);
-      return v === undefined ? fallback : JSON.parse(v);
-    },
-    async getAll() {
-      const out = {};
-      for (const [k, v] of store) {
-        if (k.startsWith(`${scope}:`)) out[k.slice(scope.length + 1)] = JSON.parse(v);
-      }
-      return out;
-    },
-    async set(key, value) {
-      store.set(`${scope}:${key}`, JSON.stringify(value));
-    },
-    async setMany(obj) {
-      for (const [k, v] of Object.entries(obj)) store.set(`${scope}:${k}`, JSON.stringify(v));
-    },
-    async remove(key) {
-      store.delete(`${scope}:${key}`);
-    },
-    async clear() {
-      for (const k of [...store.keys()]) if (k.startsWith(`${scope}:`)) store.delete(k);
-    },
-  }),
-}));
+vi.mock('@/lib/db/helpers/kvStore.js', () => ({ makeKv: makeMemoryKv(store) }));
 vi.mock('@/lib/admin/guard.js', () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock('@/lib/db/version.js', () => ({ getAppVersion: () => '0.0.1' }));
 vi.mock('@/lib/db/repos/connectionsRepo.js', () => ({
@@ -78,7 +54,15 @@ const params = (connectionId) => ({ params: Promise.resolve({ connectionId }) })
 const conn1 = { id: 'conn-1', provider: 'anthropic', isActive: true, testStatus: 'active' };
 // .all() backs disabledModelsRepo's getDisabledModels(), which the models
 // route consults; an empty set means nothing is filtered out of the catalog.
-const healthyDb = { driver: 'sql.js', get: vi.fn(() => ({ ok: 1 })), all: vi.fn(() => []) };
+// swapDrainDoc runs the drain compare-and-set inside one adapter transaction
+// over the kv table; this stub routes those reads and writes to the same map
+// the makeKv mock uses, so the drain route sees exactly what state.js wrote.
+const kvRow = (key) => { const v = store.get(`admin.drain:${key}`); return v === undefined ? undefined : { value: v }; };
+const healthyDb = { driver: 'sql.js',
+  get: vi.fn((sql, args) => /FROM kv/.test(sql) ? kvRow(args[0]) : ({ ok: 1 })),
+  all: vi.fn(() => []),
+  run: vi.fn((sql, args) => { if (/INSERT INTO kv/.test(sql)) store.set(`admin.drain:${args[0]}`, args[1]); }),
+  transaction: (fn) => fn() };
 
 beforeEach(() => {
   vi.clearAllMocks();

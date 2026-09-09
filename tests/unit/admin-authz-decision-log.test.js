@@ -224,3 +224,8 @@ describe("/api/admin route gate (guard.js) emits through the collector", () => {
     expect(line).toContain("required=inference");
   });
 });
+
+// Isolate decision semantics from the separately qualified asynchronous transport.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

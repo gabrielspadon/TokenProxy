@@ -2820,9 +2820,9 @@
           "line": 16
         }
       ],
-      "supportedScope": "Stores versioned rules that evaluate retained evidence and write local alerts; they never change routing/accounts or send webhooks.",
+      "supportedScope": "Stores versioned rules that evaluate retained evidence and write local alerts. Rules never change routing or send webhooks by themselves. An operator may attach an explicitly enabled, revision-bound account action policy (automatic drain) to one rule and one account; without that policy a rule only records alerts.",
       "prerequisites": "Running installation and permission contract.",
-      "currentBehavior": "Stores versioned rules that evaluate retained evidence and write local alerts; they never change routing/accounts or send webhooks.",
+      "currentBehavior": "Stores versioned rules that evaluate retained evidence and write local alerts. Rules never change routing or send webhooks by themselves. An operator may attach an explicitly enabled, revision-bound account action policy (automatic drain) to one rule and one account; without that policy a rule only records alerts.",
       "currentEntryPoint": "/dashboard/notifications, retained-evidence rules",
       "redesignedDestination": {
         "proposed": "Operations / Notification rules",

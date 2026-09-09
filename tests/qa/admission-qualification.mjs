@@ -1,0 +1,18 @@
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve, join } from 'node:path';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..');
+const output=resolve(process.argv[2] || '/tmp/tokenproxy-admission-qualification');mkdirSync(output,{recursive:true});
+const tests=['resource-admission','request-lifetime','admission-api','admission-media-cancellation','admission-identity','chat-handler-dispatch-branches','step-router','stt-core-dispatch','assemblyai-stt','embeddingsCore','rerank-endpoint-936','generic-format-tts-handlers','edge-tts-provider','google-tts-provider','local-device-tts-provider','reconciliation/scheduler-wiring','rate-limit-key-eviction-1245','admission-key-gate-decisions','stt-combo-3600','rerank-handler-auth-fallback','embeddings-combo-1379','reconciliation/admission','reconciliation/codex-responses-admission','image-generation','image-connect-timeout','web-handlers-error-paths','json-proxy-app','xai-video-handler'].map(name=>`unit/${name}.test.js`);
+const handlers=['search','imageEdits','chat','embeddings','fetch','imageGeneration','jsonProxy','rerank','stt','tts','videoGeneration'].map(name=>`src/sse/handlers/${name}.js`);
+const adapters=['edgeTts','elevenlabs','gemini','genericFormats','googleTts','localDevice','minimax','openai','openrouter','selfhostedTts','xiaomi-mimo'].map(name=>`open-sse/handlers/ttsProviders/${name}.js`);
+const files=[...handlers,...adapters,'src/sse/services/resourceAdmission.js','src/sse/services/accountLeaseRegistry.js','src/sse/services/auth.js','src/lib/auth/clientApiKey.js','src/app/api/system/admission/route.js','src/app/dashboard/system/AdmissionControls.js','src/app/dashboard/system/page.js','open-sse/handlers/search/index.js','open-sse/handlers/search/chatSearch.js','open-sse/utils/requestLifetime.js','open-sse/handlers/embeddingsCore.js','open-sse/handlers/rerankCore.js','open-sse/handlers/sttCore.js','docs/operations/adaptive-admission.md','tests/helpers/response-lifetime.js','tests/qa/admission-browser.mjs','tests/qa/admission-qualification.mjs','tests/qa/admission-evidence.mjs',...tests.map(path=>`tests/${path}`)];
+const run=(name,args,cwd)=>{const result=spawnSync(process.execPath,args,{cwd,encoding:'utf8',maxBuffer:32*1024*1024});writeFileSync(join(output,`${name}.log`),(result.stdout||'')+(result.stderr||''));if(result.status!==0)throw new Error(`${name} failed; inspect ${join(output,`${name}.log`)}`);};
+run('tests',[join(root,'tests/node_modules/vitest/vitest.mjs'),'run',...tests,'--reporter=json',`--outputFile=${join(output,'tests.json')}`],join(root,'tests'));
+run('lint',[join(root,'node_modules/eslint/bin/eslint.js'),...files.filter(file=>file.endsWith('.js')&&!file.startsWith('tests/'))],root);
+const results=JSON.parse(readFileSync(join(output,'tests.json'),'utf8'));
+const sourceHashes=Object.fromEntries(files.map(file=>[file,createHash('sha256').update(readFileSync(join(root,file))).digest('hex')]));
+const receipt={passed:true,passedTests:results.numPassedTests,failedTests:results.numFailedTests,testFiles:results.numTotalTestSuites,sourceHashes,qualifiedAt:new Date().toISOString(),scope:'single-process admission and mocked transport; P01 latency qualification excluded',paidUpstreamCalls:0};
+writeFileSync(join(output,'qualification.json'),JSON.stringify(receipt,null,2));console.log(`ADMISSION QUALIFIED ${receipt.passedTests} passed, ${receipt.failedTests} failed; lint exit 0`);

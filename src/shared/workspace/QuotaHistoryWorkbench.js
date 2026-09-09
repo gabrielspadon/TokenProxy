@@ -30,6 +30,8 @@ import {
   quotaWorkbenchUrl,
 } from './quotaWorkbenchModel';
 import styles from './quotaHistoryWorkbench.module.css';
+import { QuotaSchedule } from './QuotaSchedule';
+import { QuotaFleetScenario } from './QuotaFleetScenario';
 
 function Freshness({ value }) {
   if (!value) return null;
@@ -125,7 +127,7 @@ function Scenario({ analysis }) {
         </dd>
         <dt>Balance observed (UTC)</dt>
         <dd>{quotaTimestamp(analysis.last?.observedAt)}</dd>
-        <dt>Median consumption</dt>
+        <dt>Median net depletion</dt>
         <dd>
           {analysis.rate
             ? `${quotaNumber(analysis.rate.median)} ${analysis.rate.unit}`
@@ -440,6 +442,7 @@ export function QuotaHistoryWorkbench({ account, anchor, selectedScope }) {
     : series.find(item => item.scope === selectedScope) || series[0];
   return (
     <section className={styles.workbench} aria-label="Quota history workbench">
+      <QuotaSchedule connectionId={account.connectionId} />
       <Group justify="space-between">
         <div>
           <h3>Quota history</h3>
@@ -498,6 +501,7 @@ export function QuotaHistoryWorkbench({ account, anchor, selectedScope }) {
           {active ? <ObservationSeries key={`${url}:${active.id}`} series={active} /> : <Alert color="gray" title="Selected window is outside the retained population">The selected historical series is preserved. Choose another window to inspect its evidence; no other series was substituted.</Alert>}
         </>
       )}
+      <QuotaFleetScenario key={url} analysisUrl={url} model={scope.model || ''} retentionKey={JSON.stringify([account.connectionId, scope.provider, scope.model, scope.start, scope.end])} />
       <Freshness value={resource.data?.freshness} />
       <ResetChecks key={`${url}:${active?.scope || selectedScope || ''}`} analysisUrl={url} onSnapshot={observeSnapshot} windowScope={active?.scope || selectedScope} />
     </section>

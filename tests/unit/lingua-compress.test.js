@@ -375,7 +375,7 @@ describe("compressBlobs", () => {
     }
   });
 
-  it("fails closed when the caller aborts mid-flight: applied:false, body unchanged", async () => {
+  it("propagates caller cancellation mid-flight with the body unchanged", async () => {
     // A sidecar that accepts the request but never answers: only the caller
     // abort can release the stage, and it must leave the body untouched.
     let received = 0;
@@ -402,10 +402,7 @@ describe("compressBlobs", () => {
         },
       );
       setTimeout(() => controller.abort(), 50);
-      const res = await promise;
-      expect(res.applied).toBe(false);
-      expect(res.skip).toBe("backend_error");
-      expect(res.messages).toBe(messages);
+      await expect(promise).rejects.toMatchObject({ name: "AbortError" });
       expect(JSON.stringify(messages)).toBe(before);
       expect(received).toBe(1);
     } finally {

@@ -10,10 +10,19 @@ expiry, and cache-control behavior are not simulated.
 ## Offline (no network, no cost)
 
 ```bash
-node tests/qa/saver-audit/run.mjs --quick --workers 8 --out /tmp/saver-audit-quick
+./tests/node_modules/.bin/vitest run --config tests/vitest.config.js tests/unit/shaping-ordered-coverage.test.js
 ```
 
-`--quick` runs every stage subset once in the canonical order. Without it,
+The bounded acceptance suite exercises all 18 stage families independently,
+all 153 ordered pairs, canonical groups of each size from 3 to 18, and two
+consecutive request shapes under wide and constrained windows. An optional
+`SHAPING_COVERAGE_REPORT` absolute path retains the complete signed byte ledger.
+It does not claim coverage of all parameter values or all 262143 nonempty subsets.
+Remaining over-window estimates are retained as capacity limitations, including
+the disabled baseline; they are distinct from protocol-invariant failures.
+
+The historical exhaustive runner remains available as `run.mjs`. Its
+`--quick` flag runs every selected stage subset once in canonical order. Without it,
 every order of every subset up to `--maxPerm` stages (default 5) is scored, and
 larger subsets get the canonical order plus `--randomPerms` random ones. Two
 regimes run per configuration: `wide` (the session never approaches the
@@ -30,9 +39,13 @@ is a fixed point on its own output.
 `headroom` calls the real wrapper with an in-process JSON-compaction response
 stub. It does not validate any external model's compression quality. `reorder`
 uses a bag-of-words embedding stub. RTK and schema defaults preserve semantic
-content; the remaining historical lossy stages are classified in the independent
-validation matrix. This historical runner has twelve grouped stages, combines
-Caveman/Ponytail, and omits PXPIPE. It must not be cited as every-toggle coverage.
+content. The extended table includes PXPIPE, Diet, Lingua, epoch microcompaction
+and epoch autocompaction. PXPIPE exercises its production wrapper with a stub
+image, not a rendered encoding of source content. Lingua uses a whitespace stub.
+Epoch boundaries are supplied fixture state. These are wrapper, consent and
+ordering checks, not service-quality or task-outcome evaluations. The table
+groups Caveman/Ponytail and memory controls; independent control variants and
+gateway-stage fault tests remain separate regression suites.
 
 ## Live (Haiku, through a test instance)
 

@@ -32,7 +32,7 @@ test('the traced restricted worker runs from a relocated package with no checkou
       cpSync(join(root, file), join(relocated, file));
     }
     mkdirSync(join(relocated, 'server'));
-    for (const fixture of SAMPLE_FIXTURES) {
+    for (const fixture of [...SAMPLE_FIXTURES, { definition: { ...SAMPLE_FIXTURES[0].definition, scope: 'controlled-gateway-routing', provider: 'openai', targetFormat: 'openai', scenario: 'tool-ordering', fixtureVersion: 'controlled-v1' } }]) {
       const response = await resultFrom(createCompatibilityWorker(fixture.definition, { cwd: join(relocated, 'server') }));
       assert.equal(response.error, undefined);
       assert.ok(response.result.checks.every(check => check.outcome === 'passed'));

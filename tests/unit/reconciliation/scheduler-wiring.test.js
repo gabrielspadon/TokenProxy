@@ -882,3 +882,23 @@ describe('model entitlement and temporary pin recovery', () => {
     expect(leases._getLeaseRegistry().inFlight()).toBe(0);
   });
 });
+
+it('cancels a provider-selection waiter without unlocking its live predecessor', async () => {
+  const { withRequestLifetime } = await import('open-sse/utils/requestLifetime.js');
+  const account = connection('abort-queue', { key: FAKE_KEY_A, maxConcurrent: 4 });
+  let releaseRead;
+  dbMocks.getProviderConnections.mockResolvedValue([account]).mockImplementationOnce(() => new Promise(resolve => { releaseRead = resolve; }));
+  const first = auth.getProviderCredentials(PROVIDER, null, MODEL);
+  await vi.waitFor(() => expect(releaseRead).toBeTypeOf('function'));
+  const abort = new AbortController();
+  const second = withRequestLifetime(abort.signal, () => auth.getProviderCredentials(PROVIDER, null, MODEL));
+  const third = auth.getProviderCredentials(PROVIDER, null, MODEL);
+  abort.abort(new Error('caller left'));
+  await expect(second).rejects.toThrow('caller left');
+  expect(dbMocks.getProviderConnections).toHaveBeenCalledTimes(1);
+  releaseRead([account]);
+  const [a, b] = await Promise.all([first, third]);
+  expect(a.connectionId).toBe(account.id); expect(b.connectionId).toBe(account.id);
+  leases.releaseAccountLease(a.accountLease); leases.releaseAccountLease(b.accountLease);
+  expect(leases.leaseRegistry.inFlight()).toBe(0);
+});

@@ -121,17 +121,11 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
   }
 
   // Update database
-  await updateProviderConnection(connection.id, updateData);
-
-  // Return updated connection
-  const updatedConnection = {
-    ...connection,
-    ...updateData,
-    providerSpecificData: updateData.providerSpecificData || connection.providerSpecificData,
-  };
+  const saved = await updateProviderConnection(connection.id, updateData, { expectedCredentials: connection });
+  if (!saved) throw Object.assign(new Error('Account was removed during credential refresh'), { code: 'CREDENTIAL_CONFLICT' });
 
   return {
-    connection: updatedConnection,
+    connection: saved,
     refreshed: true,
   };
 }

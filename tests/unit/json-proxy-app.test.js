@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authMocks = vi.hoisted(() => ({
@@ -23,7 +24,8 @@ vi.mock("@/lib/localDb", () => ({ getSettings: vi.fn(async () => ({ requireApiKe
 vi.mock("@/sse/utils/logger.js", () => ({ request: vi.fn() }));
 vi.mock("open-sse/handlers/jsonProxyCore.js", () => coreMocks);
 
-import { handleJsonProxy } from "@/sse/handlers/jsonProxy.js";
+import { handleJsonProxy as rawhandleJsonProxy } from "@/sse/handlers/jsonProxy.js";
+const handleJsonProxy = trackResponseLifetime(rawhandleJsonProxy);
 
 const account = (id) => ({ connectionId: id, apiKey: `key-${id}` });
 const requestFor = () => new Request("http://localhost/v1/ocr", {

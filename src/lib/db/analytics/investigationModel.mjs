@@ -4,7 +4,7 @@ export class InvestigationError extends Error {
 }
 export const OWNER_SCOPE = 'installation-operator';
 export const LENS_PATHS = { capacity: '/dashboard', context: '/dashboard/context', economics: '/dashboard/usage', routing: '/dashboard/sessions' };
-export const INITIAL_SCOPE = { period: 'all', start: null, end: null, provider: null, model: null, connectionId: null };
+export const INITIAL_SCOPE = { period: 'all', start: null, end: null, provider: null, model: null, connectionId: null, projectId: null };
 const kinds = ['account', 'context-session', 'context-attempt', 'economics-record', 'economics-group', 'routing-switch'];
 const sorts = ['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs'];
 export const ECONOMICS_IDENTITY_FIELDS = ['requestId','logicalRequestId','sessionId','clientKeyId','clientRef','clientSessionRef','projectRef','taskRef'];
@@ -59,7 +59,8 @@ function date(value) {
 export function validateScope(input = INITIAL_SCOPE) {
   const value = object(input, Object.keys(INITIAL_SCOPE));
   const scope = { period: choice(value.period, ['all','24h','7d','custom'], 'all'), start: date(value.start), end: date(value.end),
-    provider: text(value.provider, 'provider'), model: text(value.model, 'model'), connectionId: text(value.connectionId, 'account') };
+    provider: text(value.provider, 'provider'), model: text(value.model, 'model'), connectionId: text(value.connectionId, 'account'), projectId: text(value.projectId, 'project ID', 128) };
+  if (scope.projectId && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(scope.projectId)) throw new InvestigationError('Invalid project ID.');
   if (scope.start && scope.end && scope.start >= scope.end) throw new InvestigationError('Start must precede the exclusive end.');
   if (scope.period === 'all' && (scope.start || scope.end)) throw new InvestigationError('All-history scope cannot contain time boundaries.');
   if (scope.period !== 'all' && (!scope.start || !scope.end)) throw new InvestigationError('Saved ranges require fixed start and end boundaries.');
@@ -106,10 +107,10 @@ export function selectionExcluded(selected, scope) {
 }
 export function validateDefinition(value) {
   object(value, ['schemaVersion','lens','scope','selection','comparisonIds','context','economics']);
-  if (![1,2,3,4].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
+  if (![1,2,3,4,5].includes(value.schemaVersion)) throw new InvestigationError('Unsupported investigation version.');
   const ids = value.comparisonIds ?? [];
   if (!Array.isArray(ids) || ids.length > 100 || new Set(ids).size !== ids.length) throw new InvestigationError('Compare at most 100 distinct accounts.');
-  const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool',...(value.schemaVersion>=2 ? ['baseline'] : [])]);
+  const context = object(value.context || {}, ['sessionId','page','projectLabel','clientTool',...(value.schemaVersion>=2 ? ['baseline'] : []),...(value.schemaVersion>=5 ? ['intervalComparison'] : [])]);
   const economics = object(value.economics || {}, ['groupBy','status','sortBy','sortDirection','cohort',...(value.schemaVersion>=3 ? ['groupSortBy','groupSortDirection','costSource','attemptKind'] : []),...(value.schemaVersion>=4 ? ['filters'] : [])]);
   const page = context.page ?? 1;
   if (!Number.isSafeInteger(page) || page < 1 || page > 10000) throw new InvestigationError('Invalid attempt page.');
@@ -131,9 +132,19 @@ export function validateDefinition(value) {
     const exact = validateSelection({kind:'context-attempt',...context.baseline});
     baseline = {id:exact.id,sessionId:exact.sessionId};
   }
+  let intervalComparison = null;
+  if (context.intervalComparison != null) {
+    object(context.intervalComparison,['baseline','selected']);
+    intervalComparison = Object.fromEntries(['baseline','selected'].map(side=>{
+      const period = object(context.intervalComparison[side],['start','end']);
+      if (!period.start || !period.end) throw new InvestigationError('Comparison periods require both boundaries.');
+      const checked = validateScope({...INITIAL_SCOPE,period:'custom',...period});
+      return [side,{start:checked.start,end:checked.end}];
+    }));
+  }
   return { schemaVersion: value.schemaVersion, lens: choice(value.lens, Object.keys(LENS_PATHS)), scope: validateScope(value.scope), selection,
     comparisonIds: ids.map((id) => text(id,'comparison account',200,false)),
-    context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client'), ...(value.schemaVersion>=2 ? {baseline} : {}) },
+    context: { sessionId, page, projectLabel: text(context.projectLabel,'project label',80), clientTool: text(context.clientTool,'client'), ...(value.schemaVersion>=2 ? {baseline} : {}), ...(value.schemaVersion>=5 ? {intervalComparison} : {}) },
     economics: { groupBy: choice(economics.groupBy,value.schemaVersion>=3 ? ECONOMICS_GROUP_VALUES : ['provider','model','account'],'provider'), status: choice(economics.status,['all','succeeded','failed','pending'],'all'),
       sortBy: choice(economics.sortBy,sorts,'timestamp'), sortDirection: choice(economics.sortDirection,['asc','desc'],'desc'), cohort,
       ...(value.schemaVersion>=4 ? {filters:validateEconomicsFilters(economics.filters)} : {}),

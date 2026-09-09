@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission, withPublicProviderAdmission } from '../services/resourceAdmission.js';
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
   isValidApiKey,
@@ -29,6 +31,10 @@ const CREDENTIALED_PROVIDERS = new Set(
 );
 
 export async function handleStt(request) {
+  return withResourceAdmission(request, () => handleSttAdmitted(request));
+}
+
+async function handleSttAdmitted(request) {
   let formData;
   try {
     formData = await request.formData();
@@ -101,7 +107,7 @@ async function handleSingleModelStt(formData, modelStr) {
 
   // noAuth providers
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const result = await handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig });
+    const result = await withPublicProviderAdmission(provider, () => handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig }));
     if (result.success) return result.response;
     return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed"), result.failureMetadata?.safeToReplay);
   }
@@ -112,6 +118,7 @@ async function handleSingleModelStt(formData, modelStr) {
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is

@@ -1,3 +1,4 @@
+import { capabilityEvidence, qualifiedRegressionEvidence } from '../../compatibility/evidence.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
 import { CompatibilityError, LIMITS, OWNER_SCOPE, IMPLEMENTATION_VERSION, TERMINAL, identifier, revision, validateFixture, boundedJson } from '../../compatibility/model.mjs';
@@ -42,7 +43,7 @@ export function compatibilityStore(db, ownerScope = OWNER_SCOPE) {
         if (fixture.archived || latest?.archived) throw new CompatibilityError('Archived fixtures cannot start a new run.', 409, 'archived');
         if (count('compatibilityRuns') >= LIMITS.runs) throw new CompatibilityError('Retained run capacity reached. No prior evidence was deleted.', 409, 'capacity_reached');
         const runId = randomUUID();
-        db.run('INSERT INTO compatibilityRuns (id,ownerScope,fixtureId,fixtureRevision,fixtureHash,scope,status,implementationVersion,processOwner,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [runId, ownerScope, id, rev, fixture.contentHash, 'local-translation', 'queued', IMPLEMENTATION_VERSION, processOwner, new Date().toISOString()]);
+        db.run('INSERT INTO compatibilityRuns (id,ownerScope,fixtureId,fixtureRevision,fixtureHash,scope,status,implementationVersion,processOwner,createdAt) VALUES (?,?,?,?,?,?,?,?,?,?)', [runId, ownerScope, id, rev, fixture.contentHash, fixture.definition.scope || 'local-translation', 'queued', IMPLEMENTATION_VERSION, processOwner, new Date().toISOString()]);
         return { run: getRun(runId), fixture };
       });
     },
@@ -68,18 +69,14 @@ export function compatibilityStore(db, ownerScope = OWNER_SCOPE) {
       const counts = db.get("SELECT SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running FROM compatibilityRuns WHERE ownerScope=?", [ownerScope]);
       return { items, queue: { queued: counts.queued || 0, running: counts.running || 0, scope: 'installation-operator' }, pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } };
     },
-    evidence() {
-      return db.all(`SELECT json_extract(f.definition,'$.sourceFormat') AS sourceFormat,
+    evidenceRuns() {
+      return db.all(`SELECT r.*,json_extract(f.definition,'$.sourceFormat') AS sourceFormat,
         json_extract(f.definition,'$.targetFormat') AS targetFormat,json_extract(f.definition,'$.operation') AS operation,
-        COUNT(*) AS runs,COUNT(DISTINCT r.fixtureHash) AS fixtureVersions,
-        SUM(CASE WHEN r.status='succeeded' THEN 1 ELSE 0 END) AS passed,
-        SUM(CASE WHEN r.status='failed' THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN r.status IN ('cancelled','timed-out','interrupted') THEN 1 ELSE 0 END) AS other,
-        SUM(CASE WHEN r.status IN ('queued','running') THEN 1 ELSE 0 END) AS pending,
-        MAX(r.createdAt) AS lastRunAt
-        FROM compatibilityRuns r JOIN compatibilityFixtures f ON f.id=r.fixtureId AND f.revision=r.fixtureRevision AND f.ownerScope=r.ownerScope
-        WHERE r.ownerScope=? GROUP BY sourceFormat,targetFormat,operation ORDER BY sourceFormat,targetFormat,operation`, [ownerScope]);
+        json_extract(f.definition,'$.model') AS model FROM compatibilityRuns r JOIN compatibilityFixtures f
+        ON f.id=r.fixtureId AND f.revision=r.fixtureRevision AND f.ownerScope=r.ownerScope WHERE r.ownerScope=?`, [ownerScope]).map(projectRun);
     },
+    evidence() { return capabilityEvidence(this.evidenceRuns()); },
+    regressions() { return qualifiedRegressionEvidence(this.evidenceRuns()); },
   };
 }
 export async function getCompatibilityStore() { return compatibilityStore(await getAdapter()); }

@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission, withPublicProviderAdmission } from '../services/resourceAdmission.js';
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
@@ -28,6 +30,10 @@ const CREDENTIALED_PROVIDERS = new Set(
 );
 
 export async function handleTts(request) {
+  return withResourceAdmission(request, () => handleTtsAdmitted(request));
+}
+
+async function handleTtsAdmitted(request) {
   let body;
   try {
     body = await request.json();
@@ -108,7 +114,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
 
   // noAuth providers — no credential needed
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const result = await handleTtsCore({ provider, model, input: body.input, responseFormat, language, style, providerOptions });
+    const result = await withPublicProviderAdmission(provider, () => handleTtsCore({ provider, model, input: body.input, responseFormat, language, style, providerOptions }));
     if (result.success) return result.response;
     return withReplaySafety(result.response || errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed"), result.failureMetadata?.safeToReplay);
   }
@@ -119,6 +125,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is

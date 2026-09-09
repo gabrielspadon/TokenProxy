@@ -7,6 +7,7 @@ import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.
 
 /** Refresh when expiry is within 30 minutes (or the provider on-request lead, whichever larger). */
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
+export const BACKGROUND_REFRESH_CONCURRENCY = 4;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
 
@@ -14,6 +15,8 @@ let started = false;
 let intervalHandle = null;
 let initialTimeoutHandle = null;
 let tickRunning = false;
+let generation = 0;
+let tickController = null;
 
 function isTruthyEnv(value) {
   if (value == null || value === "") return false;
@@ -77,9 +80,9 @@ async function loadActiveConnections() {
   return getProviderConnections({ isActive: true });
 }
 
-async function refreshOne(connection) {
+async function refreshOne(connection, {signal} = {}) {
   const { checkAndRefreshToken } = await import("./tokenRefresh.js");
-  return checkAndRefreshToken(connection.provider, connection, { force: true });
+  return checkAndRefreshToken(connection.provider, connection, { force: true, signal, requireCurrent:true, waitForSettled:true });
 }
 
 /**
@@ -91,12 +94,17 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
     log.debug("BG_TOKEN_REFRESH", "Tick already running, skip");
     return;
   }
+  if (deps.signal?.aborted) return;
   tickRunning = true;
+  const controller = new AbortController();
+  tickController = controller;
+  const signal = deps.signal ? AbortSignal.any([controller.signal,deps.signal]) : controller.signal;
   try {
     const load = deps.loadConnections || loadActiveConnections;
     const refresh = deps.refreshConnection || refreshOne;
 
     const connections = await load();
+    if (signal.aborted) return;
     const due = selectConnectionsNeedingRefresh(connections, Date.now());
 
     if (due.length === 0) {
@@ -112,19 +120,22 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
     // warn in the catch.
     let refreshed = 0;
 
-    await Promise.allSettled(
-      due.map(async (conn) => {
+    let next = 0;
+    const worker = async () => {
+      while (!signal.aborted && next < due.length) {
+        const conn = due[next++];
         try {
-          await refresh(conn);
-          refreshed += 1;
+          await refresh(conn,{signal});
+          if (!signal.aborted) refreshed += 1;
         } catch (err) {
-          log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
+          if (!signal.aborted) log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
             provider: conn?.provider,
             error: err?.message ?? String(err),
           });
         }
-      })
-    );
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(BACKGROUND_REFRESH_CONCURRENCY,due.length)},worker));
 
     log.debug("BG_TOKEN_REFRESH", "Connection refresh tick finished", {
       due: due.length,
@@ -136,6 +147,7 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
     });
   } finally {
     tickRunning = false;
+    if (tickController === controller) tickController = null;
   }
 }
 
@@ -156,9 +168,11 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
   }
 
   started = true;
+  const epoch = ++generation;
   const period = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : DEFAULT_INTERVAL_MS;
 
   const safeTick = () => {
+    if (!started || epoch !== generation) return;
     runBackgroundTokenRefreshTick().catch((err) => {
       log.warn("BG_TOKEN_REFRESH", "Unhandled tick rejection (swallowed)", {
         error: err?.message ?? String(err),
@@ -182,6 +196,8 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
 }
 
 export function stopBackgroundTokenRefresh() {
+  generation += 1;
+  tickController?.abort(new DOMException("Background refresh stopped", "AbortError"));
   if (initialTimeoutHandle) {
     clearTimeout(initialTimeoutHandle);
     initialTimeoutHandle = null;

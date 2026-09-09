@@ -1,3 +1,4 @@
+import { configurationDomainMutation } from '../../configuration/configurationDomains.js';
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
@@ -116,11 +117,11 @@ export async function disableModels(providerAlias, ids, connectionId = null) {
   invalidateDisabledModelsCache();
   if (!providerAlias || !Array.isArray(ids)) return;
   const db = await getAdapter();
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.disabledModels.update', () => {
     const scope = providerScope(db, providerAlias);
     const current = effectiveScope(db, scope, connectionId).ids;
     writeScope(db, scope, connectionId, [...new Set([...current, ...ids.map(scope.modelId)])]);
-  });
+  }));
   invalidateDisabledModelsCache();
 }
 
@@ -128,12 +129,12 @@ export async function enableModels(providerAlias, ids, connectionId = null) {
   invalidateDisabledModelsCache();
   if (!providerAlias) return;
   const db = await getAdapter();
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.disabledModels.update', () => {
     const scope = providerScope(db, providerAlias);
     const current = effectiveScope(db, scope, connectionId).ids;
     const removeSet = new Set(Array.isArray(ids) ? ids.map(scope.modelId) : []);
     const next = removeSet.size ? current.filter((id) => !removeSet.has(id)) : [];
     writeScope(db, scope, connectionId, next);
-  });
+  }));
   invalidateDisabledModelsCache();
 }

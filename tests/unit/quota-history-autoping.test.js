@@ -64,7 +64,7 @@ describe('scheduler to persisted quota history', () => {
     expect((await rows('checks')).some(e => e.eventType === 'clock-running' || e.eventType === 'still-cold')).toBe(false);
     expect((await rows('checks')).find(e => e.eventType === 'usage-read').observedAt).toBe('2026-09-06T11:00:00.000Z');
   });
-  it('retains a rejected HTTP response without converting legacy bookkeeping into acceptance', async () => {
+  it('retains a rejected HTTP response without recording an accepted warm', async () => {
     const provider = 'synthetic-history';
     C.providers[provider] = { settingsKey: 'syntheticHistory', quotaKey: 'session', expectedWindows: ['session'], authTypes: ['oauth'], pingModel: 'synthetic-model' };
     conn.provider = provider;
@@ -75,7 +75,8 @@ describe('scheduler to persisted quota history', () => {
       await runQuotaAutoPingTick(deps, state);
       const events = await rows('checks');
       expect(events.find(e => e.eventType === 'warm-response').code).toBe('http_403');
-      expect(events.find(e => e.eventType === 'warm-recorded').code).toBe('scheduler-recorded');
+      expect(events.find(e => e.eventType === 'warm-outcome')).toMatchObject({ outcome: 'rejected', scope: 'session' });
+      expect(events.some(e => e.eventType === 'warm-recorded')).toBe(false);
       expect(events.some(e => e.eventType === 'clock-running' || e.eventType === 'warm-accepted')).toBe(false);
     } finally { delete C.providers[provider]; }
   });

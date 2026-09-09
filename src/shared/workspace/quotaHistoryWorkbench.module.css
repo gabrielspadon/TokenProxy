@@ -202,3 +202,13 @@
     font-size: 15px;
   }
 }
+
+.fleetAccount { border-top: 1px solid var(--rule); padding-top: 12px; margin-top: 12px; overflow-wrap: anywhere; }
+.productLabel { color: var(--ink); font-weight: 600; margin: 10px 0 6px; }
+.fleetWindows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 10px; }
+.fleetWindow { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--rule); padding: 12px; font-size: 12px; background: var(--paper); min-width: 0; }
+.fleetWindow summary { cursor: pointer; color: var(--signal); }
+.evidenceLinks { display: flex; flex-wrap: wrap; gap: 8px; max-height: 180px; overflow: auto; }
+.evidenceLinks a { overflow-wrap: anywhere; text-decoration: underline; }
+
+.productGroup, .scenario { scroll-margin-top: 84px; }

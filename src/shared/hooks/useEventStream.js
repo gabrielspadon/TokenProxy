@@ -17,15 +17,22 @@ export function useEventStream(url, onMessage) {
     let timer;
     let failures = 0;
     let closed = false;
+    let freshnessTimer;
     const open = () => {
       setState((s) => ({ ...s, status: failures ? "reconnecting" : "connecting" }));
       es = new EventSource(url);
-      es.onopen = () => { failures = 0; setState((s) => ({ ...s, status: "live", failures: 0 })); };
+      es.onopen = () => { failures = 0; setState((s) => ({ ...s, status: "connecting", failures: 0 })); };
       es.onmessage = (e) => {
         if (closed) return;
         let data;
         try { data = JSON.parse(e.data); } catch { return; }
-        setState((s) => ({ ...s, status: "live", lastDataAt: Date.now() }));
+        const projection = data?.projection;
+        const observedAt = Date.parse(projection?.computedAt);
+        const stale = projection?.stale || Number.isFinite(observedAt) && Date.now() - observedAt > 15000;
+        const status = stale ? 'stale' : projection?.mode === 'reduced' ? 'reduced' : 'live';
+        setState((s) => ({ ...s, status, reason: projection?.reason, lastDataAt: Number.isFinite(observedAt) ? observedAt : Date.now() }));
+        clearTimeout(freshnessTimer);
+        freshnessTimer = setTimeout(() => { if (!closed) setState(s => ({ ...s, status: 'stale' })); }, Number.isFinite(observedAt) ? Math.max(0, 15000 - (Date.now() - observedAt)) : 15000);
         handler.current?.(data);
       };
       es.onerror = () => {
@@ -37,7 +44,7 @@ export function useEventStream(url, onMessage) {
       };
     };
     open();
-    return () => { closed = true; clearTimeout(timer); es?.close(); };
+    return () => { closed = true; clearTimeout(timer); clearTimeout(freshnessTimer); es?.close(); };
   }, [url, background]);
 
   return background ? state : { ...state, status: observations?.snapshot ? 'snapshot' : observations?.historical ? 'historical' : observations?.mode || 'paused' };

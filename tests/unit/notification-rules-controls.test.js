@@ -155,6 +155,8 @@ it('keeps threshold units distinct for quota, age and counted events', async () 
     (row) => row.children[3].textContent
   );
   expect(thresholds).toEqual([
+    '10regressed checks',
+    '10failed transformation stages',
     '10percent remaining',
     '10switches',
     '10minutes since last observation',

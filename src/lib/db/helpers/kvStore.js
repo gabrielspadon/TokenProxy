@@ -35,5 +35,21 @@ export function makeKv(scope) {
       const db = await getAdapter();
       db.run(`DELETE FROM kv WHERE scope = ?`, [scope]);
     },
+    // Compare-and-set. The re-read and the write happen inside one synchronous
+    // SQLite transaction, so a concurrent writer that changed the row between
+    // the caller's precondition read and this call loses the race rather than
+    // being silently overwritten. It belongs here rather than in a caller
+    // because a caller reaching past this store to the adapter also reaches
+    // past whatever the store is backed by.
+    async swap(key, expected, next, versionOf) {
+      const db = await getAdapter();
+      return db.transaction(() => {
+        const row = db.get(`SELECT value FROM kv WHERE scope = ? AND key = ?`, [scope, key]);
+        const current = row ? parseJson(row.value, null) : null;
+        if (versionOf(current) !== versionOf(expected)) return { written: false, current };
+        db.run(`INSERT INTO kv(scope, key, value) VALUES(?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`, [scope, key, stringifyJson(next)]);
+        return { written: true, current: next };
+      });
+    },
   };
 }

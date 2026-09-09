@@ -78,7 +78,7 @@ describe("compressWithPxpipe gates", () => {
     });
     expect(body).toBeNull();
     expect(summary.reason).toBe("transform_error");
-    expect(summary.detail).toBe("boom");
+    expect(summary.detail).toBe("transform_exception");
   });
 
   it("fails open on timeout", async () => {

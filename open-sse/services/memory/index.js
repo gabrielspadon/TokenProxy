@@ -4,7 +4,6 @@
  * Modular pipeline integrating:
  * - Phase 1: Tool Output Pruning & Historical Media Pruning
  * - Phase 2: Sliding Window Context Compaction
- * - Phase 4: Cross-Session Handoff Injection
  *
  * SPEND THE WINDOW (2026-09-04). These savers used to run on fixed thresholds
  * that knew nothing about the model they were shaping for: tool pruning on
@@ -31,7 +30,6 @@
 import { pruneHistoricalTools, PRESSURE_TIERS } from "./toolPruner.js";
 import { pruneHistoricalMedia } from "./mediaPruner.js";
 import { compactContextWindow } from "./contextCompactor.js";
-import { injectPendingHandoff } from "./handoffStore.js";
 import { measureContextPressure, resolveContextBudget, CHARS_PER_TOKEN } from "./contextBudget.js";
 
 /**
@@ -45,7 +43,6 @@ import { measureContextPressure, resolveContextBudget, CHARS_PER_TOKEN } from ".
  *   default, which is deliberately conservative.
  * @param {number} [options.calibration] - provider-count over estimate ratio
  *   for this session (contextBudget.calibrationFactor); 1 when unknown.
- * @param {string} [options.projectKey] - Optional project key for handoffs
  * @param {Object} [options.log] - Logger instance
  * @returns {Promise<{ body: Object, stats: Object }>}
  */
@@ -55,7 +52,6 @@ export async function applyMemoryEnhancements(body, options = {}) {
     targetFormat = "openai",
     contextWindow = null,
     calibration = 1,
-    projectKey,
     log,
   } = options;
 
@@ -63,7 +59,6 @@ export async function applyMemoryEnhancements(body, options = {}) {
     toolPruning: { applied: false, savedChars: 0, tiersUsed: 0 },
     mediaPruning: { applied: false, savedItems: 0 },
     compaction: { applied: false, savedTokens: 0 },
-    handoff: { applied: false },
     budget: null,
   };
 
@@ -72,36 +67,22 @@ export async function applyMemoryEnhancements(body, options = {}) {
   }
 
   // Isolation, same discipline as chatCore's isolateCompressibleItems for RTK
-  // (#3566) and privacy: every mutation below (handoff injection, tool/media
+  // (#3566) and privacy: every mutation below (tool/media
   // pruning, compaction) rewrites these arrays IN PLACE, and without a private
   // copy an account-fallback retry would hand the pipeline an already-pruned
   // body, so the second run trims ANOTHER slice of history (measured: a second
   // pass re-trimmed 39,822 chars). Only the collections the pruners and the
   // compactor actually touch are copied, never the whole body.
+  const collections = {};
   for (const key of ["messages", "input", "contents"]) {
     if (!Array.isArray(body[key])) continue;
     try {
-      body[key] = structuredClone(body[key]);
+      collections[key] = structuredClone(body[key]);
     } catch {
-      // A non-cloneable item means this collection stays shared. Pruning is
-      // idempotent-ish rather than exact, so a shared array is a worse
-      // result, not a broken one.
+      return { body, stats, outcome: "failed", errorCode: "transform_exception" };
     }
   }
-
-  // 1. Phase 4: Pending Handoff Injection (if enabled). Additive, and it runs
-  // BEFORE the measurement so what it adds is inside the budget rather than
-  // smuggled past it.
-  if (settings.memoryHandoffEnabled) {
-    const handoffRes = injectPendingHandoff(body, {
-      enabled: true,
-      projectKey,
-    });
-    if (handoffRes.injected) {
-      stats.handoff.applied = true;
-      log?.debug?.("MEMORY", `Injected previous session handoff for project: ${projectKey}`);
-    }
-  }
+  Object.assign(body, collections);
 
   const toolPruningEnabled = settings.memoryToolPruningEnabled !== false;
   const mediaPruningEnabled = settings.memoryMediaPruningEnabled !== false;

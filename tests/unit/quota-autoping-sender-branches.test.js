@@ -8,6 +8,7 @@ vi.mock('@/lib/localDb', () => ({
   getSettings: vi.fn(),
   getProviderConnections: vi.fn(),
   updateProviderConnection: vi.fn(),
+  updateConnectionProxyPoolSnapshotIfBound: vi.fn(),
 }));
 vi.mock('@/lib/network/connectionProxy', () => ({
   resolveConnectionProxyConfig: vi.fn(),
@@ -277,9 +278,8 @@ describe('quota bookkeeping around the warm', () => {
     const state = freshState();
     const deps = tickDeps('claude', cfg, {
       proxyAwareFetch: vi.fn(async () => ({ ok: true, status: 200, text: async () => '' })),
-      updateProviderConnection: vi.fn(async () => {
-        throw new Error('db gone');
-      }),
+      updateProviderConnection: vi.fn().mockResolvedValueOnce({}).mockResolvedValueOnce({})
+        .mockRejectedValue(new Error('db gone')),
     });
     await runQuotaAutoPingTick(deps, state);
     expect(logged(warnSpy)).toContain('warm spent but state write failed');

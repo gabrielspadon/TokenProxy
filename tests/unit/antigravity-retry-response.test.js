@@ -26,7 +26,7 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
 }));
 vi.mock("../../open-sse/utils/clientDetector.js", () => ({ detectClientTool: vi.fn(() => null), isNativePassthrough: vi.fn(() => false) }));
 vi.mock("../../open-sse/utils/bypassHandler.js", () => ({ handleBypassRequest: vi.fn(() => null) }));
-vi.mock("../../open-sse/utils/streamHandler.js", () => ({ createStreamController: vi.fn(() => ({ signal: undefined, handleComplete: vi.fn(), handleError: vi.fn() })) }));
+vi.mock("../../open-sse/utils/streamHandler.js", () => ({ createStreamController: vi.fn(() => ({ signal: new AbortController().signal, handleComplete: vi.fn(), handleError: vi.fn() })) }));
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ default: vi.fn(), proxyAwareFetch: vi.fn() }));
 vi.mock("../../open-sse/translator/formats/claude.js", () => ({ normalizeClaudePassthrough: vi.fn(), anchorClaudeCache: vi.fn() }));
 vi.mock("../../open-sse/utils/toolDeduper.js", () => ({ dedupeTools: vi.fn((tools) => ({ tools, stripped: [] })) }));
@@ -96,7 +96,7 @@ describe("Antigravity refreshed response replacement", () => {
     mocks.execute.mockResolvedValueOnce(result(401)).mockResolvedValueOnce(result(403));
 
     await expect(handleChatCore(options())).resolves.toMatchObject({ success: false, status: 403 });
-    expect(mocks.parseUpstreamError).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }), expect.anything(), expect.objectContaining({signal:undefined}));
+    expect(mocks.parseUpstreamError).toHaveBeenCalledWith(expect.objectContaining({ status: 403 }), expect.anything(), expect.objectContaining({signal:expect.any(AbortSignal)}));
   });
 
   it("replaces the original response with a generic retry HTTP error", async () => {

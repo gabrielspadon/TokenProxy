@@ -205,6 +205,7 @@ describe("gateway API-key candidate resolution (PR #2926)", () => {
     for (const [name, load, invoke] of cases) {
       const response = await invoke(await load());
       expect(response.status, name).toBe(400);
+      await response.body?.cancel();
     }
     expect(deviceMocks.recordApiKeyDevice).toHaveBeenCalledTimes(cases.length);
     for (const [apiKey] of deviceMocks.recordApiKeyDevice.mock.calls) {

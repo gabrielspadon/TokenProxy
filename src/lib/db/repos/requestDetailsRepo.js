@@ -1,3 +1,5 @@
+import { logOutput } from '../../../../open-sse/utils/asyncLogOutput.js';
+import { boundedLogRecord } from '../../../../open-sse/utils/boundedLogRecord.js';
 import { redactSecrets, stripSensitiveHeaders } from "../../../../open-sse/utils/redact.js";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
@@ -9,6 +11,13 @@ const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 const DEFAULT_MAX_JSON_SIZE = 5 * 1024;
 const CONFIG_CACHE_TTL_MS = 5000;
+const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+let retainedBytes = 0;
+let pendingAdmissions = 0;
+let droppedRecords = 0;
+let shuttingDown = false;
+let shutdownExpired = false;
+const boundedSetting = (value, fallback, max) => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Math.min(Number(value), max) : fallback;
 
 let cachedConfig = null;
 let cachedConfigTs = 0;
@@ -64,6 +73,10 @@ async function getObservabilityConfig() {
       flushIntervalMs: settings.observabilityFlushIntervalMs || parseInt(process.env.OBSERVABILITY_FLUSH_INTERVAL_MS || String(DEFAULT_FLUSH_INTERVAL_MS), 10),
       maxJsonSize: (settings.observabilityMaxJsonSize || parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10)) * 1024,
     };
+    cachedConfig.maxRecords = boundedSetting(cachedConfig.maxRecords, DEFAULT_MAX_RECORDS, 10000);
+    cachedConfig.batchSize = boundedSetting(cachedConfig.batchSize, DEFAULT_BATCH_SIZE, 100);
+    cachedConfig.flushIntervalMs = boundedSetting(cachedConfig.flushIntervalMs, DEFAULT_FLUSH_INTERVAL_MS, 60000);
+    cachedConfig.maxJsonSize = boundedSetting(cachedConfig.maxJsonSize, DEFAULT_MAX_JSON_SIZE, 65536);
   } catch {
     cachedConfig = {
       enabled: false,
@@ -94,32 +107,13 @@ let writeBuffer = [];
 let flushTimer = null;
 let flushPromise = null;
 
-/**
- * Ceiling on the in-memory buffer, in multiples of one flush batch.
- *
- * Every buffered entry holds whole request and response bodies, capped at
- * `maxJsonSize` EACH but with no cap on how many are held at once. In normal
- * operation `flushToDatabase` drains the buffer completely, so it stays near
- * `batchSize`. It does not stay there when the write side stalls: the flush
- * returns immediately while another flush is running (line 123), and a locked
- * or slow SQLite file leaves that flush in `await` while every further request
- * keeps pushing. Nothing bounded the result (#1245).
- */
+// Diagnostic overflow is lossy. Count and byte bounds include in-flight records;
+// accounting remains independent. Count overflow keeps the newest pending rows.
 const BUFFER_BATCHES = 10;
 
-/**
- * Drop the OLDEST entries past the ceiling.
- *
- * Nothing is lost that the write would have kept. Usage and cost accounting is
- * already persisted by `saveRequestStats`, which runs before the push and is
- * independent of this buffer; and the flush itself deletes all but the newest
- * `maxRecords` rows, so an entry evicted here is one the retention sweep was
- * going to delete anyway. Oldest-first matches that sweep's own `ORDER BY
- * timestamp ASC`.
- */
 function capWriteBuffer(config) {
   const limit = Math.max(config.maxRecords, config.batchSize * BUFFER_BATCHES);
-  if (writeBuffer.length > limit) writeBuffer.splice(0, writeBuffer.length - limit);
+  while (writeBuffer.length > limit) { retainedBytes -= writeBuffer.shift()._retainedBytes; droppedRecords++; }
 }
 
 // Header dropping now reads open-sse/utils/redact.js's single key list, which
@@ -129,6 +123,8 @@ const sanitizeHeaders = stripSensitiveHeaders;
 
 export const __test__ = {
   sanitizeHeaders, redactAndTruncate, bufferSize: () => writeBuffer.length,
+  bufferStatus: () => ({ retainedBytes, pendingAdmissions, droppedRecords, maxBytes: MAX_BUFFER_BYTES }),
+  shutdown: () => _shutdownHandler(),
   dispose: async () => { await _shutdownHandler(); unregisterShutdown(); },
 };
 
@@ -150,15 +146,15 @@ function generateDetailId(model) {
  * the failure marker rather than persisted: the closed direction.
  */
 function redactAndTruncate(obj, maxSize) {
-  const safe = redactSecrets(obj);
+  const safe = boundedLogRecord(obj, { maxBytes: maxSize });
   let str;
   try {
     str = JSON.stringify(safe ?? {});
   } catch {
     return { redacted: true, reason: "redaction failed" };
   }
-  if (str.length > maxSize) {
-    return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
+  if (Buffer.byteLength(str) > maxSize) {
+    return { _truncated: true, _retainedSize: Buffer.byteLength(str), _preview: str.substring(0, 200) };
   }
   return safe ?? {};
 }
@@ -172,12 +168,13 @@ function flushToDatabase() {
 
 async function writeBufferedDetails() {
   try {
-    // Drain entire buffer (loop in case more pushed during await)
+    // Small transactions bound synchronous SQLite work per event-loop turn.
     while (writeBuffer.length > 0) {
-      const items = writeBuffer.splice(0, writeBuffer.length);
+      const items = writeBuffer.splice(0, 20);
+      try {
       const db = await getAdapter();
       const config = await getObservabilityConfig();
-
+      if (shutdownExpired) { droppedRecords += items.length; continue; }
       db.transaction(() => {
         for (const item of items) {
           if (!item.id) item.id = generateDetailId(item.model);
@@ -215,38 +212,55 @@ async function writeBufferedDetails() {
             [cnt.c - config.maxRecords]
           );
         }
-      });
+      }); } catch (error) { droppedRecords += items.length; throw error; } finally { retainedBytes -= items.reduce((sum, item) => sum + item._retainedBytes, 0); }
+      if (writeBuffer.length) await new Promise(setImmediate);
     }
   } catch (e) {
-    console.error("[requestDetailsRepo] Batch write failed:", e);
+    logOutput(`[requestDetailsRepo] Batch write failed ${e?.code || 'sink-error'}`, 2);
   }
 }
 
+function prepareDetail(detail) {
+  const { request, providerRequest, providerResponse, response, ...metadata } = detail;
+  const statsPromise = saveRequestStats(metadata).catch(() => logOutput('[requestStats] save failed', 2));
+  let safe = null;
+  let bytes = 0;
+  if (!shuttingDown && pendingAdmissions < 256 && retainedBytes < MAX_BUFFER_BYTES - 65536) {
+    safe = boundedLogRecord({ ...metadata, request, providerRequest, providerResponse, response }, { maxBytes: 32768, maxNodes: 1024 });
+    bytes = Buffer.byteLength(JSON.stringify(safe)) + 256;
+    if (bytes <= MAX_BUFFER_BYTES - retainedBytes) { retainedBytes += bytes; pendingAdmissions++; }
+    else { safe = null; bytes = 0; droppedRecords++; }
+  } else droppedRecords++;
+  return { statsPromise, safe, bytes };
+}
+
 export async function saveRequestDetail(detail) {
-  // Shared id feeds both the observability row (upsert across stream
-  // start/complete) and the stats row (one per request). Generate it here so
-  // the stats write — which runs unconditionally, independent of the
-  // observability toggle — sees a stable key.
   if (!detail.id) detail.id = generateDetailId(detail.model);
-  await saveRequestStats(detail).catch((e) => console.error("[requestStats] save failed:", e.message));
-
-  const config = await getObservabilityConfig();
-  if (!config.enabled) {return;}
-
-  writeBuffer.push(detail);
-  capWriteBuffer(config);
-
-  // Trigger immediate flush if batch threshold reached.
-  // flushToDatabase() drains entire buffer in a loop, so all pushes during await are persisted.
-  if (writeBuffer.length >= config.batchSize) {
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-    flushToDatabase().catch((e) => console.error("[requestDetailsRepo] flush err:", e));
-  } else if (!flushTimer) {
-    flushTimer = setTimeout(() => {
-      flushTimer = null;
-      flushToDatabase().catch(() => {});
-    }, config.flushIntervalMs);
+  // Accounting keeps its existing contract; payload bodies never enter that promise.
+  const prepared = prepareDetail(detail);
+  const { statsPromise, safe } = prepared;
+  let bytes = prepared.bytes;
+  // Do not hold a caller's response object across asynchronous configuration reads.
+  detail = null;
+  if (safe) {
+    try {
+      const config = await getObservabilityConfig();
+      if (config.enabled && !shuttingDown) {
+        safe._retainedBytes = bytes;
+        writeBuffer.push(safe);
+        bytes = 0;
+        capWriteBuffer(config);
+        if (writeBuffer.length >= config.batchSize) {
+          if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+          void flushToDatabase();
+        } else if (!flushTimer) {
+          flushTimer = setTimeout(() => { flushTimer = null; void flushToDatabase(); }, config.flushIntervalMs);
+          flushTimer.unref?.();
+        }
+      }
+    } finally { pendingAdmissions--; retainedBytes -= bytes; }
   }
+  await statsPromise;
 }
 
 export async function getRequestDetails(filter = {}) {
@@ -295,8 +309,15 @@ export async function getRequestDetailById(id) {
 }
 
 const _shutdownHandler = async () => {
+  shuttingDown = true;
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-  await flushToDatabase();
+  let timer;
+  await Promise.race([flushToDatabase(), new Promise(resolve => { timer = setTimeout(() => { shutdownExpired = true; resolve(); }, 1000); })]);
+  clearTimeout(timer);
+  if (shutdownExpired) {
+    for (const item of writeBuffer.splice(0)) { retainedBytes -= item._retainedBytes; droppedRecords++; }
+  }
+  return { drained: retainedBytes === 0, retainedBytes, droppedRecords };
 };
 
 // Each module instance owns its buffer; all flush before adapters close at priority 100.

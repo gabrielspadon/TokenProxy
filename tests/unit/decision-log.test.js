@@ -1,3 +1,5 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
+const handleChat = trackResponseLifetime(async (...args) => (await import('@/sse/handlers/chat.js')).handleChat(...args));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The agent-efficient decision log (docs/logging-design.md). These assert the
@@ -284,7 +286,7 @@ describe("chat.js admission refusal (the 73% line)", () => {
   }
 
   it("names the key, the limit, the window and the reset, and folds the repeats", async () => {
-    const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
+    const { __rateLimiter } = await import("@/sse/handlers/chat.js");
     __rateLimiter.reset();
     const ip = "203.0.113.9";
     burnWindow(__rateLimiter, ip);
@@ -298,6 +300,7 @@ describe("chat.js admission refusal (the 73% line)", () => {
 
     const res = await handleChat(make());
     expect(res.status).toBe(429);
+    await res.body?.cancel();
 
     const line = lines.find((l) => l.includes("ADM.ratelimited"));
     expect(line).toBeDefined();
@@ -314,14 +317,14 @@ describe("chat.js admission refusal (the 73% line)", () => {
 
     // The old line was one per refusal. This one folds: 60 more refusals cost 5.
     lines.length = 0;
-    for (let n = 0; n < 60; n++) await handleChat(make());
+    for (let n = 0; n < 60; n++) { const response = await handleChat(make()); await response.body?.cancel(); }
     const emitted = lines.filter((l) => l.includes("ADM.ratelimited"));
     expect(emitted.length).toBeLessThanOrEqual(6);
     expect(emitted.at(-1)).toMatch(/ rep=\d+ first=\d{4}-[\d:]{8}$/); // D-7
   });
 
   it("D-10: the rate-limit refusal emits REQ.refused carrying the same rid", async () => {
-    const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
+    const { __rateLimiter } = await import("@/sse/handlers/chat.js");
     __rateLimiter.reset();
     const ip = "203.0.113.9";
     burnWindow(__rateLimiter, ip);
@@ -333,6 +336,7 @@ describe("chat.js admission refusal (the 73% line)", () => {
       body: JSON.stringify({ model: "claude-fable-5", messages: [] }),
     }));
     expect(res.status).toBe(429);
+    await res.body?.cancel();
     const line = lines.find((l) => l.includes("REQ.refused"));
     expect(line).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:]{8}Z REQ\.refused rid=[0-9a-f]{8} why=rate-limited$/);
     const admLine = lines.find((l) => l.includes("ADM.ratelimited"));
@@ -340,7 +344,7 @@ describe("chat.js admission refusal (the 73% line)", () => {
   });
 
   it("no longer writes the reasonless warn it replaced", async () => {
-    const { handleChat, __rateLimiter } = await import("@/sse/handlers/chat.js");
+    const { __rateLimiter } = await import("@/sse/handlers/chat.js");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     __rateLimiter.reset();
     burnWindow(__rateLimiter, "anonymous");
@@ -379,3 +383,8 @@ describe("path/save truncation cuts at whole codes (audit finding 19)", () => {
     }
   });
 });
+
+// Schema/folding tests capture admitted lines; bounded asynchronous transport has its own suite.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

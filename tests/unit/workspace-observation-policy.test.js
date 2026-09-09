@@ -143,3 +143,34 @@ it('retains a failed refresh and the last successful observation through retry a
   expect(current.evidence).toMatchObject({data:{revision:'recovered'},error:null,loading:false});
   expect(current.legacy).toMatchObject({data:{revision:'recovered'},error:null,status:200,loading:false});
 });
+
+
+it('server refresh advice slows background analytics while explicit refresh and pause stay immediate',async()=>{
+  fetch.mockImplementation(async()=>new Response('{"revision":"pressure"}',{headers:{'x-tokenproxy-refresh-after-ms':'60000'}}));
+  function AnalyticsProbe(){const policy=useObservationPolicy();const evidence=useResource('/api/analytics');useEffect(()=>{current={policy,evidence};});return null;}
+  await act(async()=>root.render(<ObservationProvider><AnalyticsProbe/></ObservationProvider>));await act(async()=>current.policy.setMode('live'));
+  const before=fetch.mock.calls.filter(([url])=>url===current.evidence.url).length;
+  await act(async()=>vi.advanceTimersByTimeAsync(15000));
+  expect(fetch.mock.calls.filter(([url])=>url===current.evidence.url)).toHaveLength(before);
+  await act(async()=>current.evidence.refresh());
+  expect(fetch.mock.calls.filter(([url])=>url===current.evidence.url)).toHaveLength(before+1);
+  await act(async()=>current.policy.setMode('paused'));
+  const paused=fetch.mock.calls.length;await act(async()=>vi.advanceTimersByTimeAsync(60000));expect(fetch).toHaveBeenCalledTimes(paused);
+});
+
+it('a reduced or stale shared projection never labels its old totals live',async()=>{
+  await render();await act(async()=>current.policy.setMode('live'));
+  await act(async()=>streams[0].onmessage({data:JSON.stringify({projection:{mode:'reduced',computedAt:new Date().toISOString()}})}));
+  expect(current.stream.status).toBe('reduced');
+  await act(async()=>streams[0].onmessage({data:JSON.stringify({projection:{mode:'normal',stale:true,computedAt:new Date(Date.now()-30000).toISOString()}})}));
+  expect(current.stream.status).toBe('stale');
+});
+
+
+it('partial frames retain the original freshness deadline rather than extending it on delivery',async()=>{
+ await render();await act(async()=>current.policy.setMode('live'));
+ const computedAt=new Date(Date.now()-14000).toISOString();
+ await act(async()=>streams[0].onmessage({data:JSON.stringify({projection:{computedAt,partial:true}})}));
+ expect(current.stream.status).toBe('live');
+ await act(async()=>vi.advanceTimersByTimeAsync(1001));expect(current.stream.status).toBe('stale');
+});

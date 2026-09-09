@@ -9,6 +9,9 @@ const chatCoreMocks = vi.hoisted(() => ({
   onPxpipeEvent: vi.fn(),
 }));
 
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));
 vi.mock("../../open-sse/executors/index.js", () => ({
   getExecutor: () => ({ noAuth: true, execute: chatCoreMocks.executeMock }),
 }));

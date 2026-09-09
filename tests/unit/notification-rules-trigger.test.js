@@ -64,7 +64,7 @@ describe("the trigger", () => {
     expect(state.lastRuleRunAt).toBe(now);
   });
 
-  it("owns no timer — it fires only when statsEmitter does", async () => {
+  it("keeps one traffic listener alongside the idle trigger", async () => {
     // ensureWatcher() installs exactly one listener for both scans; the emitter
     // is a process-wide singleton with a 50-listener cap that the dashboard's
     // usage stream already spends two of per connected client.

@@ -56,7 +56,10 @@ function bounded(value) {
 }
 export function validateSimulationInput(value) {
   bounded(value);
-  requireShape(value, ['model', 'modality', 'contextTokens', 'outputTokens', 'requiredCapabilities', 'preferredConnectionId', 'strictPreferredConnection', 'excludedConnectionIds']);
+  requireShape(value, ['model', 'modality', 'contextTokens', 'outputTokens', 'requiredCapabilities', 'preferredConnectionId', 'strictPreferredConnection', 'excludedConnectionIds', 'taskClass', 'agentRole', 'cascadeMode']);
+  if (value.cascadeMode !== undefined && !['unknown', 'exploration', 'non-exploration', 'escalated'].includes(value.cascadeMode)) throw new SimulationError('invalid_cascade_mode');
+  if (value.taskClass !== undefined && !['simple', 'coding', 'reasoning'].includes(value.taskClass)) throw new SimulationError('invalid_task_class');
+  if (value.agentRole !== undefined && !['parent', 'sub', 'unknown'].includes(value.agentRole)) throw new SimulationError('invalid_agent_role');
   if (!identifier(value.model)) throw new SimulationError('invalid_model');
   if (value.modality !== undefined && !MODALITIES.includes(value.modality)) throw new SimulationError('invalid_modality');
   for (const key of ['contextTokens', 'outputTokens']) if (value[key] !== undefined && (count(value[key]) === null || value[key] > 100000000)) throw new SimulationError('invalid_token_count');

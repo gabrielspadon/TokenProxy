@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
@@ -38,7 +39,8 @@ vi.mock('@/shared/constants/providers', () => ({
   resolveProviderId: vi.fn((provider) => provider),
 }));
 
-const { handleStt } = await import('@/sse/handlers/stt.js');
+const { handleStt: rawHandler } = await import('@/sse/handlers/stt.js');
+const handleStt = trackResponseLifetime(rawHandler);
 
 function sttRequest(model) {
   const form = new FormData();

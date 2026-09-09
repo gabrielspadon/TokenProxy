@@ -1,3 +1,4 @@
+import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 // handleChat dispatch and validation branches the reconciliation suites leave
 // dark: invalid-JSON and missing-model refusals, the context-suffix strip and
 // claude-compat rewrite, the allowlist/disabled/bypass gates, the auto router,
@@ -94,8 +95,9 @@ vi.mock('@/sse/services/accountLeaseRegistry.js', () => ({
   releaseAccountLeaseOnResponse: vi.fn((r) => r),
 }));
 
-const { handleChat, providerConcurrencyOverflow, readAttemptCeiling, __rateLimiter } =
+const { handleChat: rawHandleChat, providerConcurrencyOverflow, readAttemptCeiling, __rateLimiter } =
   await import('@/sse/handlers/chat.js');
+const handleChat = trackResponseLifetime(rawHandleChat);
 
 function request(body = { model: 'prov/m', messages: [] }, headers = {}) {
   return new Request('http://localhost/v1/chat/completions', {
@@ -179,7 +181,9 @@ describe('admission gates in order', () => {
   it('returns the allowlist refusal as-is', async () => {
     const barred = new Response('no', { status: 403 });
     accessMocks.refuseDisallowedModel.mockResolvedValue(barred);
-    expect(await handleChat(request())).toBe(barred);
+    const response = await handleChat(request());
+    expect(response.status).toBe(403);
+    expect(await response.text()).toBe("no");
     expect(modelMocks.getComboModels).not.toHaveBeenCalled();
   });
 
@@ -193,7 +197,9 @@ describe('admission gates in order', () => {
   it('short-circuits a bypass (naming/warmup) request before rotation', async () => {
     const bypass = new Response('warm', { status: 200 });
     bypassMocks.handleBypassRequest.mockReturnValue({ response: bypass });
-    expect(await handleChat(request())).toBe(bypass);
+    const response = await handleChat(request());
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("warm");
     expect(authMocks.getProviderCredentials).not.toHaveBeenCalled();
   });
 });
@@ -401,5 +407,52 @@ describe('readAttemptCeiling', () => {
     for (const bad of ['0', '-1', 'many', '2.5', undefined]) {
       expect(readAttemptCeiling(req(bad))).toBeNull();
     }
+  });
+});
+
+// PERFORMANCE-DELIVERY item 5, "avoid ... identical-attempt preparation": every
+// account attempt inside the dispatch loop prepares the SAME request, so the
+// operator configuration is read once per dispatch and shared. Counting reads
+// against a fixed baseline rather than an absolute number keeps this honest
+// about the unrelated call sites (the API-key gate and the cascade plan) that
+// also read settings once per request.
+describe('dispatch-scoped configuration snapshot', () => {
+  function failure(status = 503) {
+    return {
+      success: false,
+      status,
+      error: 'upstream refused',
+      failureMetadata: { safeToReplay: true },
+      response: Response.json({ error: { message: 'upstream refused' } }, { status }),
+    };
+  }
+
+  async function readsForAttempts(attempts) {
+    vi.clearAllMocks();
+    __rateLimiter.reset();
+    settingsMocks.getSettings.mockResolvedValue({});
+    let n = 0;
+    authMocks.getProviderCredentials.mockImplementation(async () => ({
+      connectionId: `c${++n}`,
+      connectionName: `c${n}`,
+      providerSpecificData: {},
+      accountLease: null,
+    }));
+    authMocks.markAccountUnavailable.mockResolvedValue({
+      shouldFallback: true, mustWait: false, retrySameAccount: false, cooldownMs: 0,
+    });
+    let left = attempts - 1;
+    coreMocks.handleChatCore.mockImplementation(async () =>
+      left-- > 0 ? failure() : { success: true, response: sseWithContent() });
+    const res = await handleChat(request({ model: 'prov/m', messages: [] }));
+    expect(res.status).toBe(200);
+    expect(coreMocks.handleChatCore).toHaveBeenCalledTimes(attempts);
+    return settingsMocks.getSettings.mock.calls.length;
+  }
+
+  it('reads the settings row the same number of times however many accounts one dispatch burns', async () => {
+    const one = await readsForAttempts(1);
+    const four = await readsForAttempts(4);
+    expect(four).toBe(one);
   });
 });

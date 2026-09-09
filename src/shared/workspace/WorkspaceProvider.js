@@ -29,11 +29,11 @@ function scopeFromParams(params) {
   }
 }
 const EMPTY = [];
-const INITIAL_CONTEXT = { sessionId: null, page: 1, projectLabel: null, clientTool: null, baseline:null };
+const INITIAL_CONTEXT = { sessionId: null, page: 1, projectLabel: null, clientTool: null, baseline:null, intervalComparison:null };
 const INITIAL_ECONOMICS = { groupBy:'provider', status:'all', sortBy:'timestamp', sortDirection:'desc', cohort:null, groupSortBy:'recordedCostUsd',groupSortDirection:'desc',costSource:'all',attemptKind:'all',filters:{} };
 export function analyticsUrl(scope, view = 'activity', extra = {}) {
   const query = new URLSearchParams({ view, groupBy: 'account', pageSize: '50', ...extra });
-  for (const key of ['start', 'end', 'provider', 'model', 'connectionId',...(view==='economics' ? ['sessionId','logicalRequestId','clientRef','projectRef','taskRef','missing'] : [])])
+  for (const key of ['start', 'end', 'provider', 'model', 'connectionId', 'projectId',...(view==='economics' ? ['sessionId','logicalRequestId','clientRef','projectRef','taskRef','missing'] : [])])
     if (scope[key]) query.set(key, scope[key]);
   return `/api/analytics?${query}`;
 }
@@ -146,7 +146,7 @@ function WorkspaceStateProvider({ children }) {
     setEconomicsView,
     savedEntry,
     setSavedEntry,
-    captureDefinition: (lens) => validateDefinition({schemaVersion:4,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
+    captureDefinition: (lens) => validateDefinition({schemaVersion:5,lens,scope,selection:selectedRecord,comparisonIds,context:contextView,economics:economicsView}),
     restoreInvestigation: (entry) => {
       const definition = validateDefinition(entry.definition);
       setScopeValue(definition.scope);

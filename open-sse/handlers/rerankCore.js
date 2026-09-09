@@ -1,3 +1,4 @@
+import { requestFetch as fetch, throwIfRequestAborted } from '../utils/requestLifetime.js';
 import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { BudgetAdmissionError } from "../../src/lib/db/repos/budgetRepo.js";
 import { budgetErrorResult } from "../../src/sse/services/budgetDispatch.js";
@@ -152,6 +153,7 @@ export async function handleRerankCore({
   let serialized;
   try {
     serialized = JSON.stringify(requestBody);
+    throwIfRequestAborted();
     if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: cfg.url });
     providerResponse = await fetch(cfg.url, {
       method: "POST",
@@ -169,6 +171,7 @@ export async function handleRerankCore({
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
   }
 
+  throwIfRequestAborted();
   const executor = getExecutor(provider);
   if (
     !executor?.noAuth &&
@@ -188,7 +191,8 @@ export async function handleRerankCore({
       if (onCredentialsRefreshed) await onCredentialsRefreshed(newCredentials);
       try {
         discardResponseBody(providerResponse);
-        if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: cfg.url });
+        throwIfRequestAborted();
+    if (beforeDispatch) await beforeDispatch({ body: requestBody, serialized, url: cfg.url });
         providerResponse = await fetch(cfg.url, {
           method: "POST",
           headers: headers(),

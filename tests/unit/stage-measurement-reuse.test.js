@@ -31,7 +31,7 @@ it('retains disabled byte stages and final size without serializing those stages
   expect(stageSerializations).toBe(0);
   expect(observed.outbound.messages[0].content).toBe(text);
   const disabled = observed.ledger.filter(stage => !stage.ran);
-  expect(disabled.map(stage => stage.stage)).toEqual(['schema', 'thinking', 'rtk', 'privacy', 'inject', 'pxpipe', 'mem', 'headroom', 'qac', 'pairs', 'diet', 'lingua', 'epochMicro', 'epochAuto', 'reorder', 'midinject']);
+  expect(disabled.map(stage => stage.stage)).toEqual(['schema', 'thinking', 'rtk', 'privacy', 'inject', 'pxpipe', 'mem', 'headroom', 'qac', 'pairs', 'diet', 'lingua', 'epochMicro', 'epochAuto', 'reorder', 'midinject', 'handoff']);
   for (const stage of disabled) expect(stage).toMatchObject({ delta: 0, in: stage.out, ran: false });
   expect(observed.ledger.at(-1).out).toBe(Buffer.byteLength(stringify(observed.outbound)));
   expect(observed.ledger.reduce((sum, stage) => sum + stage.delta, 0)).toBe(observed.ledger.at(-1).out - observed.ledger[0].in);

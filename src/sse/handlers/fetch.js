@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission, withPublicProviderAdmission } from '../services/resourceAdmission.js';
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
@@ -40,6 +42,10 @@ function buildFetchProxyOptions(credentials) {
  * @param {Request} request
  */
 export async function handleFetch(request) {
+  return withResourceAdmission(request, () => handleFetchAdmitted(request));
+}
+
+async function handleFetchAdmitted(request) {
   let body;
   try {
     body = await request.json();
@@ -169,7 +175,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   // No-auth fetch path (kept for parity though no current fetch provider sets noAuth)
   if (resolvedProvider.noAuth) {
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
-    const result = await handleFetchCore({
+    const result = await withPublicProviderAdmission(providerId, () => handleFetchCore({
       url: targetUrl,
       format,
       maxCharacters,
@@ -179,7 +185,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
       signal: request.signal,
       proxyOptions: buildFetchProxyOptions(null),
       log
-    });
+    }));
     if (result.success) {
       return new Response(JSON.stringify(result.data), {
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
@@ -194,6 +200,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is

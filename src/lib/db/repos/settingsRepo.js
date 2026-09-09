@@ -1,3 +1,4 @@
+import { configurationDomainMutation } from '../../configuration/configurationDomains.js';
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import {
@@ -259,7 +260,7 @@ export async function updateSettings(updates) {
   const tracked = CONFIG_SETTINGS_KEYS.some(key => Object.hasOwn(updates, key));
   const db = await getAdapter();
   let next;
-  db.transaction(function () {
+  db.transaction(configurationDomainMutation(db, 'repo.settings.update', function () {
     const before = tracked ? readRoutingConfig(db) : null;
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
@@ -299,7 +300,7 @@ export async function updateSettings(updates) {
       [stringifyJson(next)],
     );
     if (tracked) recordConfigMutation(db, before, "repo.settings.update");
-  });
+  }));
   return mergeWithDefaults(next);
 }
 
@@ -359,7 +360,7 @@ export async function updateProviderStrategy(providerId, values) {
   }
   const db = await getAdapter();
   let next;
-  db.transaction(function () {
+  db.transaction(configurationDomainMutation(db, 'repo.settings.update', function () {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
     const strategies = { ...(current.providerStrategies || {}) };
@@ -375,7 +376,7 @@ export async function updateProviderStrategy(providerId, values) {
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)],
     );
-  });
+  }));
   return mergeWithDefaults(next);
 }
 
@@ -388,7 +389,7 @@ export async function updateProviderStrategyProxyPoolSnapshotIfBound(providerId,
   }
   const db = await getAdapter();
   let result = null;
-  db.transaction(function () {
+  db.transaction(configurationDomainMutation(db, 'repo.settings.update', function () {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
     const strategies = { ...(current.providerStrategies || {}) };
@@ -412,7 +413,7 @@ export async function updateProviderStrategyProxyPoolSnapshotIfBound(providerId,
       [stringifyJson({ ...current, providerStrategies: strategies })],
     );
     result = updatedStrategy;
-  });
+  }));
   return result;
 }
 

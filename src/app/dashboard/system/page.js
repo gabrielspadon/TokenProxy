@@ -3,6 +3,7 @@ import { Button, Input } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import './styles.css';
+import AdmissionControls from './AdmissionControls';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Confirm } from '@/shared/components/Confirm';
 import { Freshness } from '@/shared/components/Freshness';
@@ -375,6 +376,7 @@ export default function SystemPage() {
             <Unreported why="Token refresh and the checkpoint timers run in process and report on no route. The model catalogue sync reports its own schedule under Models." />
           </dd>
         </dl>
+      <AdmissionControls />
       </section>
 
       <section aria-labelledby="h-checks" className={taskPanelClass} data-task-panel hidden={task !== 'status'}>

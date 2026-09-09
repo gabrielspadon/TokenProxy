@@ -20,6 +20,7 @@
 // refusals routes through, so a regression there is a regression everywhere at
 // once.
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { trackResponseLifetime } from '../../helpers/response-lifetime.js';
 
 import {
   errorResponse,
@@ -74,7 +75,6 @@ vi.mock('@/sse/utils/logger.js', () => ({
 }));
 vi.mock('open-sse/utils/ollamaTransform.js', () => ({ transformToOllama: (response) => response }));
 
-let handleChat;
 let __rateLimiter;
 
 // Synthetic, obviously fake, and never read from the environment.
@@ -116,8 +116,13 @@ function success() {
 
 const retryAfter = (response) => response.headers.get('retry-after');
 
+// Unread bodies hold stream permits; dispose them between cases so a later
+// admission never waits behind an earlier test's response. The tracker must be
+// registered at collection time, so it wraps a late-bound handler.
+let rawHandleChat;
+const handleChat = trackResponseLifetime((...args) => rawHandleChat(...args));
 beforeAll(async () => {
-  ({ handleChat, __rateLimiter } = await import('@/sse/handlers/chat.js'));
+  ({ handleChat: rawHandleChat, __rateLimiter } = await import('@/sse/handlers/chat.js'));
 });
 
 beforeEach(() => {

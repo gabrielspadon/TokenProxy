@@ -1,7 +1,25 @@
+import { configurationDomainMutation, connectionDomainChange } from '../../configuration/configurationDomains.js';
+import { credentialRevision, credentialContentRevision } from "../../../../open-sse/services/tokenRefresh/credentialRevision.js";
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { decryptSecretJson, encryptSecretJson } from "../helpers/secretCol.js";
 import { captureAccountControls } from "../../../shared/utils/accountControls.js";
+
+export async function notifyQuotaPolicyChange(id) {
+  const state = global.__quotaAutoPing;
+  if (!state?.queue) return true;
+  try {
+    const { notifyQuotaAccountChanged } = await import('../../../shared/services/quotaAutoPing.js');
+    await notifyQuotaAccountChanged(id);
+    return true;
+  } catch {
+    // The account write already committed. Revoke matching in-process work
+    // if the inventory cannot be reconciled; never turn that into a false save refusal.
+    if (state.activeCheck?.claim.connectionId === id) state.activeCheck.cancel('ownership-lost');
+    console.warn('[AutoPing] account_reconciliation_failed');
+    return false;
+  }
+}
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -49,6 +67,10 @@ function connToRow(c) {
 }
 
 function upsert(db, c) {
+  const previous = rowToConn(db.get('SELECT * FROM providerConnections WHERE id = ?', [c.id]));
+  if (!previous || credentialContentRevision(previous) !== credentialContentRevision(c)) c.credentialRevisionId = uuidv4();
+  else if (previous.credentialRevisionId) c.credentialRevisionId = previous.credentialRevisionId;
+  else delete c.credentialRevisionId;
   const r = connToRow(c);
   db.run(
     `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
@@ -145,7 +167,7 @@ function trimmed(value) {
 export async function reauthorizeProviderConnection(id, data = {}) {
   const db = await getAdapter();
   let outcome = { ok: false, code: "not_found" };
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) return;
     const existing = rowToConn(row);
@@ -190,7 +212,8 @@ export async function reauthorizeProviderConnection(id, data = {}) {
     });
     upsert(db, merged);
     outcome = { ok: true, connection: merged };
-  });
+  }));
+  if (outcome?.ok) await notifyQuotaPolicyChange(id);
   return outcome;
 }
 
@@ -269,7 +292,7 @@ export async function createProviderConnection(data) {
   const now = new Date().toISOString();
   let result;
 
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const all = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider]).map(rowToConn);
 
     let existing = null;
@@ -384,30 +407,37 @@ export async function createProviderConnection(data) {
     upsert(db, conn);
     reorderInTx(db, data.provider);
     result = conn;
-  });
+  }));
 
   return result;
 }
 
 // Critical: OAuth refresh token race — atomic merge inside transaction
-export async function updateProviderConnection(id, data, { expectedControls } = {}) {
+export async function updateProviderConnection(id, data, { expectedControls, expectedCredentials, signal } = {}) {
   const db = await getAdapter();
   let result;
-  db.transaction(() => {
+  let quotaPolicyChanged = false;
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
+    signal?.throwIfAborted();
+    if (expectedCredentials !== undefined && credentialRevision(existing) !== credentialRevision(expectedCredentials)) {
+      throw Object.assign(new Error("Credentials changed during refresh; reload before retrying"), {code:"CREDENTIAL_CONFLICT"});
+    }
     if (expectedControls !== undefined
         && JSON.stringify(captureAccountControls(existing)) !== JSON.stringify(captureAccountControls(expectedControls))) {
       throw Object.assign(new Error("Account controls changed; reload before saving"), { code: "CONTROL_CONFLICT" });
     }
     const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
+    quotaPolicyChanged = ['isActive', 'authType', 'provider'].some(key => merged[key] !== existing[key]);
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = data.priority !== undefined
       ? rowToConn(db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]))
       : merged;
-  });
+  }, () => connectionDomainChange(db, id, data)));
+  if (quotaPolicyChanged) await notifyQuotaPolicyChange(id);
   return result;
 }
 
@@ -417,7 +447,7 @@ export async function updateProviderConnection(id, data, { expectedControls } = 
 export async function mergeProviderConnectionData(id, { name, providerSpecificData } = {}) {
   const db = await getAdapter();
   let result = null;
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) return;
     const existing = rowToConn(row);
@@ -434,7 +464,7 @@ export async function mergeProviderConnectionData(id, { name, providerSpecificDa
     };
     upsert(db, merged);
     result = merged;
-  });
+  }));
   return result;
 }
 
@@ -443,7 +473,7 @@ export async function mergeProviderConnectionData(id, { name, providerSpecificDa
 export async function updateConnectionProxyPoolSnapshotIfBound(id, expectedPoolId, pair) {
   const db = await getAdapter();
   let result = null;
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) return;
     const existing = rowToConn(row);
@@ -467,33 +497,38 @@ export async function updateConnectionProxyPoolSnapshotIfBound(id, expectedPoolI
     };
     upsert(db, updated);
     result = updated;
-  });
+  }));
   return result;
 }
 
 export async function deleteProviderConnection(id) {
   const db = await getAdapter();
   let ok = false;
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const row = db.get(`SELECT provider FROM providerConnections WHERE id = ?`, [id]);
     if (!row) return;
     db.run(`DELETE FROM providerConnections WHERE id = ?`, [id]);
     reorderInTx(db, row.provider);
     ok = true;
-  });
+  }));
+  if (ok) await notifyQuotaPolicyChange(id);
   return ok;
 }
 
 export async function deleteProviderConnectionsByProvider(providerId) {
   const db = await getAdapter();
-  const before = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId]);
-  db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
-  return before?.n || 0;
+  const ids = db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
+    const rows = db.all('SELECT id FROM providerConnections WHERE provider = ?', [providerId]);
+    db.run('DELETE FROM providerConnections WHERE provider = ?', [providerId]);
+    return rows.map(row => row.id);
+  }));
+  for (const id of ids) await notifyQuotaPolicyChange(id);
+  return ids.length;
 }
 
 export async function reorderProviderConnections(providerId) {
   const db = await getAdapter();
-  db.transaction(() => reorderInTx(db, providerId));
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => reorderInTx(db, providerId)));
 }
 
 export async function cleanupProviderConnections() {
@@ -506,7 +541,7 @@ export async function cleanupProviderConnections() {
     "consecutiveUseCount",
   ];
   let cleaned = 0;
-  db.transaction(() => {
+  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
     const rows = db.all(`SELECT * FROM providerConnections`);
     for (const row of rows) {
       const conn = rowToConn(row);
@@ -523,7 +558,7 @@ export async function cleanupProviderConnections() {
       }
       if (dirty) upsert(db, conn);
     }
-  });
+  }));
   return cleaned;
 }
 

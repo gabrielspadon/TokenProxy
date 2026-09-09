@@ -408,3 +408,8 @@ describe('auth.js LOCK emissions (markAccountUnavailable)', () => {
     expect(line).not.toContain('rid=');
   });
 });
+
+// Schema/folding tests capture admitted lines; bounded asynchronous transport has its own suite.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

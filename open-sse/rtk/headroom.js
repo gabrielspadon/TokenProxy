@@ -1,3 +1,5 @@
+import { reportStageOutcome, stageErrorCode } from "../utils/stageOutcome.js";
+import { preparationSignal, waitForPreparation } from "../utils/preparationAbort.js";
 import { isErrorResult } from "./errorFlags.js";
 import { currentUserRequestMatches, validateCompressedMessages } from "./contentPolicy.js";
 // ponytail: Claude OpenAI-pivot imports dropped — direct Claude path ships;
@@ -88,6 +90,11 @@ function sanitizeReason(text) {
 
 function setDiagnostic(diagnostics, reason) {
   if (diagnostics && !diagnostics.reason) diagnostics.reason = sanitizeReason(reason);
+  if (diagnostics && !diagnostics.outcome) reportStageOutcome(diagnostics, "skipped");
+}
+function failDiagnostic(diagnostics, reason, code = "invalid_response") {
+  setDiagnostic(diagnostics, reason);
+  reportStageOutcome(diagnostics, "failed", code);
 }
 
 // OpenAI shape structural guard: same count, ordered role, valid content shape,
@@ -95,14 +102,14 @@ function setDiagnostic(diagnostics, reason) {
 // Any fixup (e.g. reindexing tool_call_id) is dangerous — reject instead.
 function validateOpenAIMessageShape(sourceMessages, candidateMessages, diagnostics) {
   if (!Array.isArray(candidateMessages) || candidateMessages.length !== sourceMessages.length) {
-    setDiagnostic(diagnostics, "proxy response did not preserve message count or order");
+    failDiagnostic(diagnostics, "proxy response did not preserve message count or order");
     return false;
   }
   for (let i = 0; i < sourceMessages.length; i++) {
     const src = sourceMessages[i] || {};
     const cand = candidateMessages[i] || {};
     if (cand.role !== src.role) {
-      setDiagnostic(diagnostics, "proxy response did not preserve message count or order");
+      failDiagnostic(diagnostics, "proxy response did not preserve message count or order");
       return false;
     }
     // content: string | array blocks | null/empty (assistant tool_calls-only)
@@ -115,17 +122,17 @@ function validateOpenAIMessageShape(sourceMessages, candidateMessages, diagnosti
       typeof candContent === "object";
     if (candContent === null || candContent === undefined) {
       if (!candHasToolCalls && !srcHasToolCalls) {
-        setDiagnostic(diagnostics, "proxy response did not preserve message count or order");
+        failDiagnostic(diagnostics, "proxy response did not preserve message count or order");
         return false;
       }
     } else if (!contentShape) {
-      setDiagnostic(diagnostics, "proxy response did not preserve message count or order");
+      failDiagnostic(diagnostics, "proxy response did not preserve message count or order");
       return false;
     }
     // Tool pairing: do not let the proxy rewrite routing metadata.
     if (src.tool_call_id != null || cand.tool_call_id != null) {
       if (String(cand.tool_call_id ?? "") !== String(src.tool_call_id ?? "")) {
-        setDiagnostic(diagnostics, "proxy response did not preserve message count or order");
+        failDiagnostic(diagnostics, "proxy response did not preserve message count or order");
         return false;
       }
     }
@@ -133,7 +140,7 @@ function validateOpenAIMessageShape(sourceMessages, candidateMessages, diagnosti
     const candCalls = cand.tool_calls;
     if ((Array.isArray(srcCalls) && srcCalls.length > 0) || (Array.isArray(candCalls) && candCalls.length > 0)) {
       if (!Array.isArray(candCalls) || candCalls.length !== (srcCalls?.length ?? 0)) {
-        setDiagnostic(diagnostics, "proxy response did not preserve tool pairing identity");
+        failDiagnostic(diagnostics, "proxy response did not preserve tool pairing identity");
         return false;
       }
       for (let j = 0; j < srcCalls.length; j++) {
@@ -143,7 +150,7 @@ function validateOpenAIMessageShape(sourceMessages, candidateMessages, diagnosti
             String(cCall.type ?? "function") !== String(sCall.type ?? "function") ||
             String(cCall.function?.name ?? "") !== String(sCall.function?.name ?? "") ||
             String(cCall.function?.arguments ?? "") !== String(sCall.function?.arguments ?? "")) {
-          setDiagnostic(diagnostics, "proxy response did not preserve tool pairing identity");
+          failDiagnostic(diagnostics, "proxy response did not preserve tool pairing identity");
           return false;
         }
       }
@@ -528,7 +535,7 @@ function textFromHeadroomMessage(message) {
 
 function applyProjectedMessages(projection, compressedMessages, diagnostics, label) {
   if (!Array.isArray(compressedMessages) || compressedMessages.length !== projection.messages.length) {
-    setDiagnostic(diagnostics, `proxy response did not match ${label} message count`);
+    failDiagnostic(diagnostics, `proxy response did not match ${label} message count`);
     return false;
   }
 
@@ -537,13 +544,13 @@ function applyProjectedMessages(projection, compressedMessages, diagnostics, lab
     const expected = projection.messages[i];
     const actual = compressedMessages[i];
     if (!actual || actual.role !== expected.role) {
-      setDiagnostic(diagnostics, `proxy response did not preserve ${label} message order`);
+      failDiagnostic(diagnostics, `proxy response did not preserve ${label} message order`);
       return false;
     }
 
     const text = textFromHeadroomMessage(actual);
     if (text === null) {
-      setDiagnostic(diagnostics, `proxy response missing ${label} text content`);
+      failDiagnostic(diagnostics, `proxy response missing ${label} text content`);
       return false;
     }
     updates.push({ target: projection.targets[i], text });
@@ -564,7 +571,9 @@ export function resetHeadroomCircuitBreaker() {
 }
 
 // POST messages to Headroom /v1/compress; returns compressed messages + stats or null.
-async function callCompress(url, messages, model, timeoutMs, compressUserMessages, diagnostics, allowLossy) {
+async function callCompress(url, messages, model, timeoutMs, compressUserMessages, diagnostics, allowLossy, signal) {
+  signal?.throwIfAborted();
+  const deadline = preparationSignal(signal, timeoutMs);
   const endpoint = buildCompressEndpoint(url);
   diagnostics.endpoint = maskEndpoint(endpoint);
   const cb = CIRCUIT_BREAKER.get(endpoint);
@@ -579,38 +588,51 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
   const headroomAuth = resolveHeadroomAuth();
   let res;
   try {
-    res = await fetch(endpoint, {
+    res = await waitForPreparation(fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(headroomAuth ? { Authorization: `Bearer ${headroomAuth}` } : {}) },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: deadline,
       dispatcher: dispatcherForEndpoint(endpoint),
-    });
+    }), deadline, late => late.body?.cancel());
   } catch (error) {
+    signal?.throwIfAborted();
     const state = cb || { failures: 0, lastFailureTime: 0 };
     state.failures += 1;
     state.lastFailureTime = Date.now();
     CIRCUIT_BREAKER.set(endpoint, state);
-    setDiagnostic(diagnostics, `request failed: ${describeFetchError(error)}`);
+    failDiagnostic(diagnostics, `request failed: ${describeFetchError(error)}`, deadline.aborted ? "service_timeout" : "service_unavailable");
     return null;
   }
   if (!res.ok) {
+    try { await res.body?.cancel(); } catch { /* already aborted */ }
     const state = cb || { failures: 0, lastFailureTime: 0 };
     state.failures += 1;
     state.lastFailureTime = Date.now();
     CIRCUIT_BREAKER.set(endpoint, state);
+    reportStageOutcome(diagnostics, "failed", "service_http_error");
     if (res.status === 400 || res.status === 404) setDiagnostic(diagnostics, `proxy rejected config.mode (HTTP ${res.status})`);
     else setDiagnostic(diagnostics, `proxy returned HTTP ${res.status}`);
     return null; // no fallback retry — one call only
   }
-  const data = await res.json();
+  let data;
+  try {
+    data = await waitForPreparation(res.json(), deadline);
+    deadline.throwIfAborted();
+  } catch (error) {
+    signal?.throwIfAborted();
+    failDiagnostic(diagnostics, "invalid service response", deadline.aborted ? "service_timeout" : "invalid_response");
+    return null;
+  } finally {
+    try { await res.body?.cancel(); } catch { /* already consumed or aborted */ }
+  }
   // CCR gate: gateway has no headroom_retrieve path — reject any CCR-marked response.
   if (hasCcrHashes(data)) {
-    setDiagnostic(diagnostics, "rejected: response contains CCR markers");
+    failDiagnostic(diagnostics, "rejected: response contains CCR markers");
     return null;
   }
   if (Array.isArray(data?.messages) && containsCcrMarker(data.messages)) {
-    setDiagnostic(diagnostics, "rejected: response contains CCR markers");
+    failDiagnostic(diagnostics, "rejected: response contains CCR markers");
     return null;
   }
   if (data?.compression_skipped === true) {
@@ -622,7 +644,7 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
     return null;
   }
   if (!Array.isArray(data?.messages)) {
-    setDiagnostic(diagnostics, "proxy response missing messages[]");
+    failDiagnostic(diagnostics, "proxy response missing messages[]");
     return null;
   }
   // Token phantom / conflicting metrics gate — null means keep original.
@@ -641,12 +663,12 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
       return null;
     }
     if (tokensAfter > tokensBefore) {
-      setDiagnostic(diagnostics, "conflicting token metrics — keeping original");
+      failDiagnostic(diagnostics, "conflicting token metrics — keeping original");
       return null;
     }
   }
   if (!validateCompressedMessages(messages, data.messages, { allowLossy, compressUserMessages })) {
-    setDiagnostic(diagnostics, "proxy changed protected content or metadata (tool pairing identity/message count or order)");
+    failDiagnostic(diagnostics, "proxy changed protected content or metadata (tool pairing identity/message count or order)");
     return null;
   }
   data.mode = allowLossy ? "lossy-opt-in" : "semantic-preserving";
@@ -658,32 +680,37 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
 // Work on private data and commit only after every guard and diagnostic ran.
 // Failed Kiro/Gemini projection previously left replacement containers behind.
 export async function compressWithHeadroom(body, options = {}) {
+  options.signal?.throwIfAborted();
   if (!body || !options.enabled) return compressCandidate(body, options);
   try {
     const candidate = structuredClone(body);
     const result = await compressCandidate(candidate, options);
+    options.signal?.throwIfAborted();
     if (!result) return null;
     if (!currentUserRequestMatches(body, candidate)) {
-      setDiagnostic(options.diagnostics, "proxy changed the current user request");
+      failDiagnostic(options.diagnostics, "proxy changed the current user request");
       return null;
     }
     const keys = Object.keys(candidate).filter((key) => JSON.stringify(body[key]) !== JSON.stringify(candidate[key]));
     for (const key of keys) {
       const descriptor = Object.getOwnPropertyDescriptor(body, key);
       if (!descriptor || !("value" in descriptor) || !descriptor.writable) {
-        setDiagnostic(options.diagnostics, "request target is not a writable data property");
+        failDiagnostic(options.diagnostics, "request target is not a writable data property");
         return null;
       }
     }
     for (const key of keys) body[key] = candidate[key];
+    reportStageOutcome(options.diagnostics, keys.length ? "applied" : "unchanged");
     return result;
   } catch (error) {
-    setDiagnostic(options.diagnostics, `unexpected error: ${error?.message || String(error)}`);
+    options.signal?.throwIfAborted();
+    failDiagnostic(options.diagnostics, "unexpected compression error", stageErrorCode(error));
     return null;
   }
 }
 
-async function compressCandidate(body, { allowLossy = false, enabled, url, model, format, compressUserMessages, timeoutMs = DEFAULT_TIMEOUT_MS, contextPressure = null, diagnostics = null } = {}) {
+async function compressCandidate(body, { allowLossy = false, enabled, url, model, format, compressUserMessages, timeoutMs = DEFAULT_TIMEOUT_MS, contextPressure = null, diagnostics = null, signal } = {}) {
+  signal?.throwIfAborted();
   if (!enabled) {
     setDiagnostic(diagnostics, "disabled");
     return null;
@@ -771,12 +798,12 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
         }
       }
       const sourceMessages = allMessages.slice(0, sliceEnd);
-      const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
+      const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy, signal);
       if (!data) return null;
       // Validate response preserves identity (count + ordered roles) before commit.
       const compressed = data.messages;
       if (!Array.isArray(compressed) || compressed.length !== sourceMessages.length) {
-        setDiagnostic(diagnostics, "proxy response did not preserve Claude message count");
+        failDiagnostic(diagnostics, "proxy response did not preserve Claude message count");
         return null;
       }
       for (let i = 0; i < compressed.length; i++) {
@@ -784,7 +811,7 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
         const actual = compressed[i]?.role;
         const shaped = typeof compressed[i]?.content === "string" || Array.isArray(compressed[i]?.content);
         if (actual !== expected || !shaped) {
-          setDiagnostic(diagnostics, "proxy response did not preserve Claude message shape");
+          failDiagnostic(diagnostics, "proxy response did not preserve Claude message shape");
           return null;
         }
       }
@@ -812,7 +839,7 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
         [...claudeToolUseIds].some(([id, pos]) => claudeCandidateUseIds.get(id) !== pos) ||
         [...claudeToolResultIds].some(([id, pos]) => claudeCandidateResultIds.get(id) !== pos);
       if (claudePairingMismatch) {
-        setDiagnostic(diagnostics, "tool pairing identity");
+        failDiagnostic(diagnostics, "tool pairing identity");
         return null;
       }
       // Byte-gain guard — candidate bytes compared to before snapshot. On a
@@ -852,19 +879,19 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
         setDiagnostic(diagnostics, "openai-responses request did not translate to messages[]");
         return null;
       }
-      const data = await callCompress(url, oai.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
+      const data = await callCompress(url, oai.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy, signal);
       if (!data) return null;
       // Candidate-before-mutate guard: require >5% byte shrink before committing input rewrite.
       const candidateResponses = openaiToOpenAIResponsesRequest(model, { ...oai, input: undefined, messages: data.messages }, false);
       if (!Array.isArray(candidateResponses?.input)) {
-        setDiagnostic(diagnostics, "Responses translation did not produce compressed input");
+        failDiagnostic(diagnostics, "Responses translation did not produce compressed input");
         return null;
       }
       const mergedInput = Array.isArray(body.input)
         ? restoreResponsesInstructionItems(body.input, candidateResponses.input)
         : candidateResponses.input;
       if (!mergedInput) {
-        setDiagnostic(diagnostics, "Responses round trip did not preserve input items");
+        failDiagnostic(diagnostics, "Responses round trip did not preserve input items");
         return null;
       }
       // hh-rsp-2: restore name / cache_control lost in the round trip;
@@ -908,7 +935,7 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
         setDiagnostic(diagnostics, "Kiro request did not project to messages[]");
         return null;
       }
-      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
+      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy, signal);
       if (!data) return null;
       // Byte-shrink guard BEFORE mutating any Kiro state: projected-message sizes
       // proxy for body shrink (targets are unchanged by compression).
@@ -957,7 +984,7 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
         setDiagnostic(diagnostics, `${format} request did not project to messages[]`);
         return null;
       }
-      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
+      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy, signal);
       if (!data) return null;
       // Byte-shrink guard BEFORE mutating any part: projected-message sizes
       // proxy for body shrink (targets are unchanged by compression).
@@ -988,7 +1015,7 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
       return null;
     }
     const sourceMessages = container[key];
-    const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy);
+    const data = await callCompress(url, sourceMessages, model, timeoutMs, compressUserMessages, diagnostics || {}, allowLossy, signal);
     if (!data) return null;
     // Structural guard BEFORE any byte math or mutation: a buggy/compromised
     // proxy must not be able to drop/reorder/retag history (silent context loss).
@@ -1018,7 +1045,8 @@ async function compressCandidate(body, { allowLossy = false, enabled, url, model
     if (diagnostics) diagnostics.after = captureSizeSnapshot(body);
     return data;
   } catch (error) {
-    setDiagnostic(diagnostics, `unexpected error: ${error?.message || String(error)}`);
+    signal?.throwIfAborted();
+    failDiagnostic(diagnostics, "unexpected compression error", stageErrorCode(error));
     return null;
   }
 }

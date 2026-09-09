@@ -1,3 +1,4 @@
+import { stageErrorCode } from "./stageOutcome.js";
 /**
  * LLMLingua-2 selective compression (context-tuning suite, task 4).
  *
@@ -57,7 +58,7 @@ const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 function unchanged(messages, skip) {
   const out = { applied: false, messages, compressedBlocks: 0, savedChars: 0 };
-  if (skip) out.skip = skip;
+  if (skip) { out.skip = skip; out.outcome = "skipped"; out.errorCode = null; }
   return out;
 }
 
@@ -158,7 +159,7 @@ async function callHttpEndpoint(url, payload, { signal, fetchImpl }) {
     body: JSON.stringify(payload),
     signal: composeSignal(signal),
   });
-  if (!res.ok) throw new Error(`status ${res.status}`);
+  if (!res.ok) { await res.body?.cancel(); throw Object.assign(new Error("sidecar HTTP error"), { code: "service_http_error" }); }
   const parsed = await readJsonBody(res);
   if (!parsed || typeof parsed.text !== "string") throw new Error("schema mismatch");
   return parsed.text;
@@ -214,6 +215,7 @@ async function callUnixSocket(socketPath, payload, { signal }) {
  * messages is the input reference when nothing was compressed.
  */
 export async function compressBlobs(body, options = {}) {
+  options.signal?.throwIfAborted();
   const messages = body?.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
     return unchanged(messages, "invalid_input");
@@ -229,11 +231,11 @@ export async function compressBlobs(body, options = {}) {
   const target = classifyEndpoint(endpoint);
   if (target.kind === "refused" || target.kind === "none") {
     log?.debug?.("LINGUA", `endpoint refused: ${target.reason || "empty"}`);
-    return unchanged(messages, "endpoint_refused");
+    return { ...unchanged(messages, "endpoint_refused"), outcome: "failed", errorCode: "invalid_configuration" };
   }
   if (target.kind === "http" && typeof fetchImpl !== "function") {
     log?.debug?.("LINGUA", "no fetch implementation available");
-    return unchanged(messages, "backend_error");
+    return { ...unchanged(messages, "backend_error"), outcome: "failed", errorCode: "invalid_response" };
   }
 
   // Candidate collection: {i, blockIndex|null, text, chars, field}; blockIndex
@@ -287,10 +289,12 @@ export async function compressBlobs(body, options = {}) {
       eligible.map((c) => call(c.text, ratioFor(c.chars))),
     );
   } catch (err) {
-    log?.debug?.("LINGUA", `backend failure: ${err?.name || "error"}`);
-    return unchanged(messages, "backend_error");
+    options.signal?.throwIfAborted();
+    log?.debug?.("LINGUA", "backend failure");
+    return { ...unchanged(messages, "backend_error"), outcome: "failed", errorCode: stageErrorCode(err) };
   }
 
+  options.signal?.throwIfAborted();
   const replacementByKey = new Map();
   const charsByKey = new Map();
   let any = false;
@@ -298,7 +302,7 @@ export async function compressBlobs(body, options = {}) {
     const text = compressed[k];
     if (typeof text !== "string") {
       log?.debug?.("LINGUA", "backend failure: schema mismatch");
-      return unchanged(messages, "backend_error");
+      return { ...unchanged(messages, "backend_error"), outcome: "failed", errorCode: "invalid_response" };
     }
     if (text.length === 0 || text === eligible[k].text) continue;
     const key = `${eligible[k].i}:${eligible[k].blockIndex ?? -1}`;

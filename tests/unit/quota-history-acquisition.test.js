@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('open-sse/index.js', () => ({}));
 vi.mock('open-sse/services/usage/claude.js', () => ({ getClaudeUsage: vi.fn() }));
-vi.mock('@/lib/localDb', () => ({ getDailyConnectionUsage: vi.fn(), getProviderConnectionById: vi.fn(), updateProviderConnection: vi.fn(async () => {}) }));
+vi.mock('@/lib/localDb', () => ({ getDailyConnectionUsage: vi.fn(), getProviderConnectionById: vi.fn(), updateProviderConnection: vi.fn(async (id, data) => ({ ...conn, ...data })) }));
 vi.mock('open-sse/executors/index.js', () => ({ getExecutor: vi.fn() }));
 vi.mock('@/lib/network/connectionProxy', () => ({ resolveConnectionProxyConfig: vi.fn(async () => ({})) }));
 import { initDb } from '@/lib/db/index.js';

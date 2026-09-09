@@ -20,7 +20,7 @@ export const COMPATIBILITY_TABLES = {
       id: 'TEXT PRIMARY KEY', ownerScope: 'TEXT NOT NULL',
       fixtureId: 'TEXT NOT NULL', fixtureRevision: 'INTEGER NOT NULL CHECK (fixtureRevision > 0)',
       fixtureHash: 'TEXT NOT NULL',
-      scope: "TEXT NOT NULL CHECK (scope = 'local-translation')",
+      scope: "TEXT NOT NULL CHECK (scope IN ('local-translation','controlled-executor','controlled-gateway-routing'))",
       status: "TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','cancelled','timed-out','interrupted'))",
       implementationVersion: 'TEXT NOT NULL', processOwner: 'TEXT NOT NULL',
       result: 'TEXT CHECK (result IS NULL OR length(CAST(result AS BLOB)) <= 524288)',
@@ -31,6 +31,7 @@ export const COMPATIBILITY_TABLES = {
       'CREATE INDEX IF NOT EXISTS idx_compat_runs_owner ON compatibilityRuns(ownerScope,createdAt DESC,id)',
       'CREATE INDEX IF NOT EXISTS idx_compat_runs_fixture ON compatibilityRuns(fixtureId,fixtureRevision,createdAt DESC)',
       'CREATE INDEX IF NOT EXISTS idx_compat_runs_pending ON compatibilityRuns(processOwner,status)',
+      "CREATE INDEX IF NOT EXISTS idx_compat_runs_comparison ON compatibilityRuns(ownerScope,finishedAt,id) WHERE status IN ('succeeded','failed')",
     ],
   },
 };

@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { pruneHistoricalTools } from "../../open-sse/services/memory/toolPruner.js";
 import { pruneHistoricalMedia } from "../../open-sse/services/memory/mediaPruner.js";
 import { compactContextWindow } from "../../open-sse/services/memory/contextCompactor.js";
-import { recordHandoff, getHandoff, injectPendingHandoff, consumeHandoff } from "../../open-sse/services/memory/handoffStore.js";
+import { injectHandoffPackets } from "../../open-sse/services/memory/handoffStore.js";
 import { applyMemoryEnhancements } from "../../open-sse/services/memory/index.js";
 
   it("Tool Pruner: preserves recent tool turns and truncates older ones", () => {
@@ -110,31 +110,17 @@ import { applyMemoryEnhancements } from "../../open-sse/services/memory/index.js
   expect(body.messages.length).toBe(1 + 2 + 4);
 });
 
-  it("Handoff Store: records, gets, and injects session handoff", () => {
-  const projectKey = "/home/user/code/my-project";
-  recordHandoff(projectKey, {
-    summary: "Auth module migration completed. Next: Add JWT refresh token tests.",
-    agent: "claude-code"
+  it("Handoff insertion preserves approved content and is stable on repeated preparation", () => {
+    const packet = { id: "approved-packet", summary: "Migration completed. Add refresh tests." };
+    const body = { messages: [{ role: "user", content: "Start work on test suite" }] };
+    const result = injectHandoffPackets(body, [packet]);
+    expect(result.injected).toBe(true);
+    expect(body.messages[0].content).toContain("[Operator-approved handoff approved-packet]");
+    expect(body.messages[0].content).toContain("Start work on test suite");
+    const first = JSON.stringify(body);
+    injectHandoffPackets(body, [packet]);
+    expect(JSON.stringify(body)).toBe(first);
   });
-
-  const stored = getHandoff(projectKey);
-  expect(stored).toBeTruthy();
-  expect(stored.summary.includes("Auth module migration")).toBeTruthy();
-
-  const body = {
-    messages: [
-      { role: "user", content: "Start work on test suite" }
-    ]
-  };
-
-  const res = injectPendingHandoff(body, { enabled: true, projectKey });
-  expect(res.injected).toBe(true);
-  expect(body.messages[0].content.includes("[Previous Agent Handoff Context (via tokenproxy)]:")).toBeTruthy();
-  expect(body.messages[0].content.includes("Start work on test suite")).toBeTruthy();
-
-  // After consumption, store is cleared
-  expect(getHandoff(projectKey)).toBe(null);
-});
 
   const conversation = () => ({
   messages: [

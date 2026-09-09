@@ -35,7 +35,8 @@ describe('schema 20 to 21 exact completion binding', () => {
     delete global._dbAdapter; vi.resetModules();
     const {getAdapter:boot}=await import('@/lib/db/driver.js');
     const migrated=await boot();
-    const backups=fs.readdirSync(path.join(tempDir,'db','backups')).filter(name=>name.startsWith('schema-20-to-21'));
+    const { SCHEMA_VERSION } = await import('@/lib/db/schema.js');
+    const backups=fs.readdirSync(path.join(tempDir,'db','backups')).filter(name=>name.startsWith(`schema-20-to-${SCHEMA_VERSION}-`));
     expect(backups).toHaveLength(1);
     expect(fs.existsSync(path.join(tempDir,'db','backups',backups[0],'data.sqlite'))).toBe(true);
     expect(migrated.get('SELECT id,ts,completionId FROM costLedger')).toEqual({id:'cafebabe',ts,completionId:null});

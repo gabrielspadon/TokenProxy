@@ -156,9 +156,16 @@ export function planCascade({ body, modelStr, cascadePairs, sid, now = Date.now(
   }
   const cheapModel = pairs.get(normalizeModelRef(modelStr));
   if (!cheapModel) return { action: "none" };
-  if (isSessionEscalated(sid, now)) {
+  const escalated = isSessionEscalated(sid, now);
+  return planCascadeFromEvidence({ modelStr, cheapModel, sid, escalated, exploration: !escalated && classifyExploration(body) });
+}
+
+/** Pure decision from already classified request facts; no session-store access. */
+export function planCascadeFromEvidence({ modelStr, cheapModel, sid = null, escalated, exploration }) {
+  if (!cheapModel) return { action: "none" };
+  if (escalated) {
     return { action: "strong", strongModel: modelStr, tag: CASCADE_ROUTE_KINDS.strong, sid };
   }
-  if (!classifyExploration(body)) return { action: "none" };
+  if (!exploration) return { action: "none" };
   return { action: "cheap", cheapModel, strongModel: modelStr, tag: CASCADE_ROUTE_KINDS.cheap, sid };
 }

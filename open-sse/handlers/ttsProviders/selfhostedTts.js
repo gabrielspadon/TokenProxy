@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // Self-hosted OpenAI-compatible TTS — POST {baseUrl}/v1/audio/speech.
 //
 // A SPECIAL_ADAPTER rather than a genericFormats handler on purpose: the generic

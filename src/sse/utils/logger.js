@@ -1,3 +1,5 @@
+import { logOutput } from '../../../open-sse/utils/asyncLogOutput.js';
+import { boundedLogRecord } from '../../../open-sse/utils/boundedLogRecord.js';
 // Logger utility for cloud
 
 const LOG_LEVELS = {
@@ -28,19 +30,19 @@ export function nextTag() {
 export function tagForSession(seed) {
   if (!seed) return nextTag();
   let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  for (let i = 0; i < Math.min(seed.length, 4096); i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
   return REQ_TAGS[Math.abs(h) % REQ_TAGS.length];
 }
 
 // Print one correlated line: [time] tag symbol message
 export function line(tag, symbol, message) {
   if (LEVEL > LOG_LEVELS.INFO) return;
-  console.log(`[${formatTime()}] ${tag} ${symbol} ${message}`);
+  logOutput(`[${formatTime()}] ${tag} ${symbol} ${message}`);
 }
 
 // Like line() but always printed regardless of LOG_LEVEL (errors must never be hidden)
 export function errorLine(tag, symbol, message) {
-  console.log(`[${formatTime()}] ${tag} ${symbol} ${message}`);
+  logOutput(`[${formatTime()}] ${tag} ${symbol} ${message}`);
 }
 
 // Format thinking intent for the request line ("high(10k)" / "off" / "auto")
@@ -57,46 +59,42 @@ export function fmtThink(intent) {
 }
 
 function formatData(data) {
-  if (!data) return "";
-  if (typeof data === "string") return data;
-  try {
-    return JSON.stringify(data);
-  } catch {
-    return String(data);
-  }
+  if (!data) return '';
+  const safe = boundedLogRecord(data, { maxBytes: 4096 });
+  return typeof safe === 'string' ? safe : JSON.stringify(safe);
 }
 
 export function debug(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.DEBUG) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] 🔍 [${tag}] ${message}${dataStr}`);
+    logOutput(`[${formatTime()}] 🔍 [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function info(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.INFO) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] ℹ️  [${tag}] ${message}${dataStr}`);
+    logOutput(`[${formatTime()}] ℹ️  [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function warn(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.WARN) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.warn(`[${formatTime()}] ⚠️  [${tag}] ${message}${dataStr}`);
+    logOutput(`[${formatTime()}] ⚠️  [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function error(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.ERROR) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] ❌ [${tag}] ${message}${dataStr}`);
+    logOutput(`[${formatTime()}] ❌ [${tag}] ${message}${dataStr}`);
   }
 }
 
 export function request(method, path, extra) {
   const dataStr = extra ? ` ${formatData(extra)}` : "";
-  console.log(`\x1b[36m[${formatTime()}] 📥 ${method} ${path}${dataStr}\x1b[0m`);
+  logOutput(`\x1b[36m[${formatTime()}] 📥 ${method} ${path}${dataStr}\x1b[0m`);
 }
 
 // Mask sensitive data

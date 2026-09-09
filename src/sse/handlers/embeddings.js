@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import { getRequestIdentity } from "../services/requestIdentity.js";
 import { createUsageAttemptTracker } from "../services/usageAttempt.js";
 import {
@@ -41,6 +43,10 @@ function exactEmbeddingUsage(raw) {
  * @param {Request} request
  */
 export async function handleEmbeddings(request) {
+  return withResourceAdmission(request, () => handleEmbeddingsAdmitted(request));
+}
+
+async function handleEmbeddingsAdmitted(request) {
   let body;
   try {
     body = await request.json();
@@ -146,6 +152,7 @@ async function handleSingleModelEmbeddings(body, modelStr, apiKey, endpoint, res
   let lastStatus = null;
 
   while (true) {
+    throwIfRequestAborted();
     // The admission slot this selection reserved (auth.js). Released on EVERY
     // exit of this attempt - the unavailable returns, the success return, each
     // rotation `continue`, and any throw from the core - because `finally` is

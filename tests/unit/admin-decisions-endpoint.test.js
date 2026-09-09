@@ -66,6 +66,7 @@ describe('GET /api/admin/decisions', () => {
   it('serves what decide() wrote, through the same sink path', async () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     decideMod.decide('CRED', 'refresh-failed', { conn: 'abc12345', why: 'network' });
+    await decideMod.__decide.flush();
     spy.mockRestore();
     const res = await call();
     expect(res.body.total).toBe(1);

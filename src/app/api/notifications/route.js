@@ -8,6 +8,8 @@ import {
 import { evaluate, ensureWatcher } from "@/lib/notifications/watcher.js";
 import { canWriteNotifications } from "./authz.js";
 import { findBlockedError, SSRF_BLOCKED_ERROR_CODE } from "@/shared/utils/ssrfGuard.js";
+import { getAdapter } from '@/lib/db/driver.js';
+import { readDeliveryHistory } from '@/lib/notifications/outbox.mjs';
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +18,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   ensureWatcher();
   const config = await getNotificationsConfig();
+  const retained = readDeliveryHistory(await getAdapter());
   return NextResponse.json(
     {
       config: { ...config, endpoints: config.endpoints.map(redact) },
       events: WEBHOOK_EVENTS,
-      deliveries: getDeliveryHistory(),
+      deliveries: [...retained, ...getDeliveryHistory()]
+        .sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

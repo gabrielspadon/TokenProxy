@@ -52,12 +52,16 @@ export function priceUsage(tokens, snapshot, quantityComplete = true) {
   const estimatedCostUsd = validRates && quantityComplete ? amount(calculateCostFromTokens(tokenOnly, rates)) : null;
   let reportedCostUsd = null, costEvidence = null;
   if (usage.estimated !== true) {
-    for (const field of ["cost_usd", "cost_in_usd"]) {
-      const value = amount(usage[field]);
-      if (value === null) continue;
+    const reported = ["cost_usd", "cost_in_usd"].map((field) => [field, amount(usage[field])]).filter(([, value]) => value !== null);
+    if (reported.length === 2 && reported[0][1] !== reported[1][1]) {
+      // Two reported USD amounts that disagree are not one reported amount.
+      // Keep both as evidence, leave the reported amount unknown, and let the
+      // separately labelled application estimate stand on its own.
+      costEvidence = { source: "upstream-usage", currency: "USD", conflict: Object.fromEntries(reported) };
+    } else if (reported.length) {
+      const [field, value] = reported[0];
       reportedCostUsd = value;
       costEvidence = { field, currency: "USD", source: "upstream-usage" };
-      break;
     }
     // The generic usage extractor has no provider contract for the tick scale.
     // Preserve the observation without turning the legacy divisor into evidence.

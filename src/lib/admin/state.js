@@ -56,6 +56,15 @@ export async function writeDrainDoc(connectionId, doc) {
   await drainKv.set(connectionId, doc);
 }
 
+// Compare-and-set for the two drain verbs. The precondition read and the write
+// used to be separate awaits, so an automated remediation applying its own
+// drain in between was silently overwritten. Re-reading and writing inside one
+// synchronous SQLite transaction closes that window: the caller either writes
+// against exactly the document it read, or gets the current one back.
+export async function swapDrainDoc(connectionId, expected, next) {
+  return await drainKv.swap(connectionId, expected, next, versionOf);
+}
+
 /**
  * In-flight streams for one connection, from the counters usageRepo keeps.
  *

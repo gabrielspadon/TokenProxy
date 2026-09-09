@@ -467,3 +467,8 @@ describe("incident replay: diagnose the quota lock + failover from the log alone
     expect(rendered).toBe(readFileSync(FIXTURE, "utf8"));
   });
 });
+
+// Schema/folding tests capture admitted lines; bounded asynchronous transport has its own suite.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

@@ -62,16 +62,14 @@ describe('GET /api/admin/notification-rules', () => {
     const body = await response.json();
     expect(body.rules).toEqual([]);
     expect(body.conditions.map((condition) => condition.kind).sort()).toEqual([
+      'compatibility_regression',
+      'compression_saver_failure',
       'operation_failure',
       'quota_risk',
       'repeated_fallback',
       'stale_telemetry',
     ]);
-    const saver = body.unavailableConditions.find(
-      (entry) => entry.kind === 'compression_saver_failure'
-    );
-    expect(saver.reason).toBeTruthy();
-    expect(saver.wouldRequire).toBeTruthy();
+    expect(body.unavailableConditions.some(entry => entry.kind === 'compression_saver_failure')).toBe(false);
   });
 });
 
@@ -85,7 +83,7 @@ describe('rule mutation', () => {
     const bad = await POST(
       post('http://localhost/api/admin/notification-rules', {
         ...RULE,
-        conditionKind: 'compression_saver_failure',
+        conditionKind: 'unrecorded_condition',
       })
     );
     expect(bad.status).toBe(400);

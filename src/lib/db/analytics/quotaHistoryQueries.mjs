@@ -8,7 +8,7 @@ const date = (v) => typeof v === "string" && v.trim() && Number.isFinite(Date.pa
 export function parseQuotaHistoryQuery(params, { now = Date.now() } = {}) {
   const kind = params.get("kind") ?? "observations";
   const allowed = new Set(["kind","timeField","start","end","since","until","page","pageSize",
-    "connectionId","provider","scope","source", ...(kind === "checks" ? ["eventType","checkId"] : ["unit","resourceType","observationKind"])]);
+    "connectionId","provider","scope","source","unit","resourceType", ...(kind === "checks" ? ["eventType","checkId","jobId","outcome","targetModel","observationId"] : ["observationKind","id"])]);
   const seen = new Set();
   for (const [key] of params) {
     if (!allowed.has(key) || seen.has(key)) throw new TypeError("Unknown or duplicate history parameter");
@@ -43,7 +43,7 @@ export function parseQuotaHistoryQuery(params, { now = Date.now() } = {}) {
   const end = bound("end", "until", new Date(now).toISOString());
   if (!start || !end || start >= end) throw new TypeError("Invalid history time range");
   const filters = {};
-  for (const key of ["connectionId", "provider", "scope", "source", ...(kind === "checks" ? ["eventType", "checkId"] : ["unit", "resourceType", "observationKind"])]) {
+  for (const key of ["connectionId", "provider", "scope", "source", "unit", "resourceType", ...(kind === "checks" ? ["eventType", "checkId", "jobId", "outcome", "targetModel", "observationId"] : ["observationKind","id"])]) {
     if (!params.has(key)) continue;
     const value = text(params.get(key));
     if (!value) throw new TypeError(`Invalid ${key}`);

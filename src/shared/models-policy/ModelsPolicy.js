@@ -6,6 +6,7 @@ import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
 import { PolicyEditor } from './PolicyEditor';
 import { PolicyHistory } from './PolicyHistory';
+import { ConfigurationDomains } from './ConfigurationDomains';
 import { RoutingSimulator } from './RoutingSimulator';
 import { CascadePolicy } from './CascadePolicy';
 import { PlanTransfer } from './PlanTransfer';
@@ -345,14 +346,15 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
           {catalogControls && <Tabs.Tab value="catalog">Catalog controls</Tabs.Tab>}
           {catalogTools && <Tabs.Tab value="catalog-tools">Catalog tools</Tabs.Tab>}
           <Tabs.Tab value="cascade">Solo chat cascade</Tabs.Tab>
-          <Tabs.Tab value="simulator">Offline account decision</Tabs.Tab>
+          <Tabs.Tab value="simulator">Offline route preview</Tabs.Tab>
           <Tabs.Tab value="history">History and receipts</Tabs.Tab>
+          <Tabs.Tab value="configuration">Configuration versions</Tabs.Tab>
           <Tabs.Tab value="transfer">Import and export</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="editor" keepMounted>
       <div className={styles.toolbar}>
         <Group gap="xs">
-          <Badge variant="light" color={dirty ? 'orange' : 'teal'}>
+          <Badge variant="light" color={dirty ? 'orange' : 'teal'} c={dirty ? 'var(--ember)' : 'var(--positive)'}>
             {draft
               ? draft.id
                 ? `Draft r${draft.revision}${dirty ? ' · unsaved edits' : ''}`
@@ -417,6 +419,7 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
             </div>
           )}
         </Tabs.Panel>
+        <Tabs.Panel value="configuration"><ConfigurationDomains /></Tabs.Panel>
         <Tabs.Panel value="history">
           <div className={styles.surface}>
             <PolicyHistory

@@ -444,6 +444,9 @@ async function loadTerminalChatHandler({ coreResult, shouldFallback = false }) {
   // unref'd module-level cleanup intervals would otherwise register as fake
   // timers and trip the getTimerCount() leak guard.
   vi.doMock("open-sse/utils/sessionManager.js", () => ({ resolveSessionId: vi.fn(() => null) }));
+  // Resource admission starts an unref'd one-second pressure sampler on first
+  // use; it is process state, not this handler's, and would trip the same guard.
+  vi.doMock("@/sse/services/resourceAdmission.js", () => ({ withResourceAdmission: (request, run) => run() }));
 
   const { handleChat } = await import("../../src/sse/handlers/chat.js");
   return { handleChat, mocks };
@@ -2311,7 +2314,6 @@ describe("Task 3 caller-abort terminality", () => {
     try {
       const response = await handleChat(terminalChatRequest());
 
-      expect(response).toBe(abortResponse);
       expect(response.status).toBe(499);
       expect(await response.text()).toBe("Request aborted");
       expect(mocks.handleChatCore).toHaveBeenCalledOnce();

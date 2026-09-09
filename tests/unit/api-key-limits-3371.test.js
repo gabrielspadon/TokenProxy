@@ -70,12 +70,11 @@ describe("the schema change is additive (#3371)", () => {
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(1);
   });
 
-  it("no versioned migration was added, so the chain is unchanged", () => {
-    // Additive columns and indexes are syncSchemaFromTables' job; a migration
-    // file is for the destructive changes it cannot do. The ceilings are in the
-    // declarative schema, so the chain stays at its initial version.
-    expect(latestVersion()).toBe(1);
+  it("the versioned migration chain stays ordered and unique", () => {
+    // API key ceilings remain additive; unrelated constraint changes can extend
+    // the ordered migration chain without altering the limit contract.
     const versions = MIGRATIONS.map((m) => m.version);
+    expect(latestVersion()).toBe(versions.at(-1));
     expect(versions).toEqual([...versions].sort((a, b) => a - b));
     expect(new Set(versions).size).toBe(versions.length);
   });

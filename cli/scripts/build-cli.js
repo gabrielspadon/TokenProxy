@@ -249,6 +249,8 @@ function buildCliPackage() {
 
   // Worker entrypoints are loaded by path, outside the Next server bundle.
   copyRecursive(path.join(appDir, "src/lib/db/analytics"), path.join(cliAppDir, "src/lib/db/analytics"));
+  fs.mkdirSync(path.join(cliAppDir, "src/lib/pxpipe"), { recursive: true });
+  fs.copyFileSync(path.join(appDir, "src/lib/pxpipe/worker.mjs"), path.join(cliAppDir, "src/lib/pxpipe/worker.mjs"));
 
   // Step 3a: Copy custom server (injects real socket IP, strips spoofable XFF).
   const customServerSrc = path.join(appDir, "custom-server.js");

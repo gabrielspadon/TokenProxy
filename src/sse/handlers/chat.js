@@ -1,3 +1,4 @@
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import "open-sse/index.js";
 import { getRequestIdentity } from "../services/requestIdentity.js";
 
@@ -211,7 +212,8 @@ function queueReliefMs(state, now) {
  * body (releaseAccountLeaseOnResponse is the shape) if stream-duration
  * concurrency ever needs bounding too.
  */
-function acquireAdmission(key) {
+function acquireAdmission(key, signal) {
+  if (signal?.aborted) return Promise.resolve({ admitted: false, why: "aborted", waitedMs: 0 });
   const now = Date.now();
   sweepAdmissionKeys(now);
   let state = admissionKeys.get(key);
@@ -241,6 +243,7 @@ function acquireAdmission(key) {
       if (waiter.settled) return;
       waiter.settled = true;
       clearTimeout(waiter.timer);
+      signal?.removeEventListener("abort", waiter.onAbort);
       const at = state.queue.indexOf(waiter);
       if (at !== -1) state.queue.splice(at, 1);
       const endedAt = Date.now();
@@ -253,7 +256,7 @@ function acquireAdmission(key) {
       if (state.active === 0 && state.queue.length === 0) state.idleSince = endedAt;
       resolve({
         admitted: false,
-        why: "wait-timeout",
+        why: signal?.aborted ? "aborted" : "wait-timeout",
         waitedMs,
         retryAfterMs: queueReliefMs(state, endedAt),
         queued: state.queue.length,
@@ -264,6 +267,9 @@ function acquireAdmission(key) {
     // A queued request is never the reason a process refuses to exit.
     waiter.timer?.unref?.();
     state.queue.push(waiter);
+    waiter.onAbort = () => waiter.settle(false);
+    signal?.addEventListener("abort", waiter.onAbort, { once: true });
+    if (signal?.aborted) waiter.onAbort();
   });
 }
 
@@ -318,6 +324,15 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
+  if (Number.isFinite(options.deadline)) {
+    const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(options.deadline - Date.now())));
+    const caller = options.signal || request?.signal;
+    options = { ...options, signal: caller ? AbortSignal.any([caller, timeout]) : timeout };
+  }
+  return withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline });
+}
+
+async function handleChatAdmitted(request, clientRawRequest = null, options = {}) {
   const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
   if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const apiKey = resolvedApiKey.valid ? resolvedApiKey.apiKey : null;
@@ -364,8 +379,9 @@ export async function handleChat(request, clientRawRequest = null, options = {})
 
   // AUTHENTICATED: shaped, not refused. A wait is the answer; a 429 is only
   // what is left when the queue itself is out of room.
-  const slot = await acquireAdmission(rateLimitKey);
+  const slot = await acquireAdmission(rateLimitKey, options.signal || request?.signal);
   if (!slot.admitted) {
+    if (slot.why === "aborted") return errorResponse(499, "Request aborted");
     decide("ADM", "evicted", {
       rid,
       key: keyTag,
@@ -751,9 +767,16 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // Same request object handleChat saw, so readRid's memoised WeakMap hands
   // back the SAME rid every hop of a recursive chat call.
   const rid = requestRid(request);
+  // One configuration snapshot per dispatch. Every account attempt below
+  // prepares the SAME request, so re-reading the settings row per attempt
+  // both repeats the work and lets one request's attempts disagree about the
+  // operator configuration. The read stays lazy: a dispatch that never needs
+  // it never pays for it, and concurrent callers share the one promise.
+  let settingsOnce = null;
+  const dispatchSettings = () => (settingsOnce ??= getSettings());
   // An explicit connection also disambiguates a bare default before admission.
   const pinnedConnectionId = comboChain
-    ? resolveComboMemberConnection(comboChain, modelStr, await getSettings())
+    ? resolveComboMemberConnection(comboChain, modelStr, await dispatchSettings())
     : null;
   const requestedConnectionId = request?.headers?.get(REQUEST_CONNECTION_HEADER) || null;
   const modelInfo = await resolveRequestModel(modelStr, { preferredConnectionId: pinnedConnectionId || requestedConnectionId });
@@ -775,7 +798,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         return errorResponse(HTTP_STATUS.BAD_REQUEST, `Combo "${modelStr}" contains itself (${cycle})`);
       }
       chain.add(modelStr);
-      const chatSettings = await getSettings();
+      const chatSettings = await dispatchSettings();
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -837,7 +860,9 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // fallback already read as "try the next candidate" — which is what the
   // report asks for: spread a combo over its members instead of piling every
   // request onto the first one. Unset (the default) skips the lookup entirely.
-  const overflow = await providerConcurrencyOverflow(provider);
+  // Fail-open on an unreadable settings row is this check's contract, so the
+  // snapshot is offered rather than required here.
+  const overflow = await providerConcurrencyOverflow(provider, await dispatchSettings().catch(() => null));
   if (overflow) {
     log.warn("CHAT", `[${provider}/${model}] ${overflow}`);
     // A LOCAL admission refusal, not a claim that the provider is out of
@@ -1013,7 +1038,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       }
 
       // Use shared chatCore
-      const chatSettings = await getSettings();
+      const chatSettings = await dispatchSettings();
       // The token saver was global, so a combo mixing an expensive model with a
       // cheap one had to be saved for both or neither (#2289, #2037). The chain
       // names the combo this attempt came from, so a combo's own overrides apply

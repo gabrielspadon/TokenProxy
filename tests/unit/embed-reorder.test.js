@@ -215,7 +215,7 @@ describe("reorderByRelevance", () => {
       messages,
       moved: 0,
       notes: [],
-      error: "embed http 500",
+      error: "service_http_error", outcome: "failed", errorCode: "service_http_error",
     });
   });
 
@@ -236,7 +236,7 @@ describe("reorderByRelevance", () => {
     const res = await reorderByRelevance(messages, OPTS);
     expect(res.messages).toBe(messages);
     expect(res.moved).toBe(0);
-    expect(res.error).toBe("timed out");
+    expect(res.error).toBe("service_timeout");
   });
 
   it("fails open on malformed response", async () => {
@@ -254,7 +254,7 @@ describe("reorderByRelevance", () => {
     const res = await reorderByRelevance(messages, OPTS);
     expect(res.messages).toBe(messages);
     expect(res.moved).toBe(0);
-    expect(res.error).toBe("embed malformed response");
+    expect(res.error).toBe("invalid_response");
   });
 
   it("fails open on zero vectors", async () => {
@@ -281,7 +281,7 @@ describe("reorderByRelevance", () => {
     const res = await reorderByRelevance(messages, OPTS);
     expect(res.messages).toBe(messages);
     expect(res.moved).toBe(0);
-    expect(res.error).toBe("embed zero vector");
+    expect(res.error).toBe("invalid_response");
   });
 
   it("skips the fetch entirely on full cache hit", async () => {
@@ -420,5 +420,39 @@ describe("reorderByRelevance", () => {
     expect(second.messages.slice(4, 6)).toEqual([messages2[4], messages2[5]]);
     expect(second.messages.slice(6)).toEqual([messages2[6], messages2[7]]);
     expect(second.moved).toBe(2);
+  });
+
+  // PERFORMANCE-DELIVERY item 5: a preparation cache key carries the
+  // configuration that produced the value. Two services answering to the same
+  // model identifier hold different weights, so an operator who repoints the
+  // embedding endpoint must not be served the previous service's vectors.
+  it("keys cached vectors on the endpoint, not the model name alone", async () => {
+    const messages = deepFreeze([
+      { role: "user", content: "whale song frequency research" },
+      { role: "assistant", content: "whale songs carry across ocean basins" },
+      { role: "user", content: "bird migration routes" },
+      { role: "assistant", content: "birds migrate seasonally" },
+      ...TAIL,
+    ]);
+    const cache = new Map();
+    const fetchMock = embedOk();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await reorderByRelevance(messages, { ...OPTS, cache });
+    const afterFirst = fetchMock.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    // Same endpoint, same model: served entirely from the cache.
+    await reorderByRelevance(messages, { ...OPTS, cache });
+    expect(fetchMock.mock.calls.length).toBe(afterFirst);
+
+    // Different endpoint, same model name: must re-embed against the new one.
+    await reorderByRelevance(messages, {
+      ...OPTS,
+      embedUrl: "http://other-embed.test/v1/embeddings",
+      cache,
+    });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(afterFirst);
+    expect(fetchMock.mock.calls.at(-1)[0]).toBe("http://other-embed.test/v1/embeddings");
   });
 });

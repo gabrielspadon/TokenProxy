@@ -54,7 +54,10 @@ describe("a combo can pin one member to one account (#1477)", () => {
 
   it("the handler pins strictly, because a named account must not be substituted", () => {
     expect(chat).toContain("credentialOptions.strictPreferredConnection = true;");
-    expect(chat).toContain("resolveComboMemberConnection(comboChain, modelStr, await getSettings())");
+    // The settings read is now the dispatch-scoped snapshot rather than a bare
+    // getSettings() call, but it is still the SAME configuration this dispatch
+    // resolves every other decision against, which is what pinning requires.
+    expect(chat).toContain("resolveComboMemberConnection(comboChain, modelStr, await dispatchSettings())");
   });
 
   it("a replay pin still wins, since it is about reaching the account that just failed", () => {

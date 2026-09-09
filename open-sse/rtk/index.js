@@ -1,3 +1,4 @@
+import { reportStageOutcome } from "../utils/stageOutcome.js";
 // RTK port: compress tool_result content in LLM request bodies
 // Applied by chatCore after translation, before optional Headroom compression.
 import { RAW_CAP, MIN_COMPRESS_SIZE, ELIDE_MIN_CHARS } from "./constants.js";
@@ -47,22 +48,25 @@ function stageText(node, key, stats, shape, patches, allowLossy) {
   if (value !== original) patches.push({ node, key, value, original });
 }
 
-export function compressMessages(body, enabled, { allowLossy = false } = {}) {
+export function compressMessages(body, enabled, { allowLossy = false, diagnostics } = {}) {
   try {
-    return compressBody(body, enabled, allowLossy);
+    const result = compressBody(body, enabled, allowLossy, diagnostics);
+    if (result?.outcome) reportStageOutcome(diagnostics, result.outcome, result.errorCode);
+    return result;
   } catch (error) {
-    console.warn("[RTK] request traversal failed:", error?.message);
+    reportStageOutcome(diagnostics, "failed", "transform_exception");
+    console.warn("[RTK] request traversal failed");
     return null;
   }
 }
 
-function compressBody(body, enabled, allowLossy) {
+function compressBody(body, enabled, allowLossy, diagnostics) {
   if (!enabled) return null;
   if (!body) return null;
 
   // Kiro format: conversationState.history + conversationState.currentMessage
   if (body.conversationState) {
-    return compressKiroFormat(body, allowLossy);
+    return compressKiroFormat(body, allowLossy, diagnostics);
   }
 
   // Support both OpenAI/Claude "messages" and OpenAI Responses "input"
@@ -137,14 +141,15 @@ function compressBody(body, enabled, allowLossy) {
     }
     commitReplacements(patches);
   } catch (e) {
-    console.warn("[RTK] compressMessages error:", e.message);
+    reportStageOutcome(diagnostics, "failed", "transform_exception");
+    console.warn("[RTK] compressMessages failed");
     return null;
   }
   return stats;
 }
 
 // Compress Kiro format: conversationState.history[].userInputMessage.userInputMessageContext.toolResults[].content[].text
-function compressKiroFormat(body, allowLossy) {
+function compressKiroFormat(body, allowLossy, diagnostics) {
   const stats = newStats(allowLossy);
   const patches = [];
   try {
@@ -169,7 +174,8 @@ function compressKiroFormat(body, allowLossy) {
     }
     commitReplacements(patches);
   } catch (e) {
-    console.warn("[RTK] compressKiroFormat error:", e.message);
+    reportStageOutcome(diagnostics, "failed", "transform_exception");
+    console.warn("[RTK] compressKiroFormat failed");
     return null;
   }
   return stats;
@@ -193,7 +199,7 @@ function compressText(text, stats, shape, allowLossy) {
     return text;
   }
 
-  const out = fn === jsonCompact ? compact : safeApply(fn, text);
+  const out = fn === jsonCompact ? compact : safeApply(fn, text, () => reportStageOutcome(stats, "failed", "transform_exception"));
   const bytesOut = Buffer.byteLength(out, "utf8");
 
   // Safety: never return empty, never grow the input

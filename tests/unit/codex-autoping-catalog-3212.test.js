@@ -172,7 +172,7 @@ describe('codex auto-ping model selection is wired (#3212)', () => {
       getExecutor: vi.fn(() => ({
         execute: vi
           .fn()
-          .mockResolvedValue({ response: { ok: true, text: vi.fn().mockResolvedValue('') } }),
+          .mockResolvedValue({ response: { ok: true, status: 200, text: vi.fn().mockResolvedValue('') } }),
       })),
       getUsageForProvider,
     };

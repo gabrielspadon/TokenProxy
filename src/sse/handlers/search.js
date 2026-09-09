@@ -1,3 +1,5 @@
+import { throwIfRequestAborted } from '../../../open-sse/utils/requestLifetime.js';
+import { withResourceAdmission, withPublicProviderAdmission } from '../services/resourceAdmission.js';
 import { withReplaySafety } from "open-sse/utils/replaySafety.js";
 import { refuseUncoveredBudget } from "../services/budgetDispatch.js";
 import {
@@ -28,6 +30,10 @@ import { refuseDisallowedModel } from "@/sse/services/modelAccess.js";
  * @param {Request} request
  */
 export async function handleSearch(request) {
+  return withResourceAdmission(request, () => handleSearchAdmitted(request));
+}
+
+async function handleSearchAdmitted(request) {
   let body;
   try {
     body = await request.json();
@@ -154,13 +160,13 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   // No-auth providers (e.g. searxng) bypass credential lookup
   if (resolvedProvider.noAuth) {
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
-    const result = await handleSearchCore({
+    const result = await withPublicProviderAdmission(providerId, () => handleSearchCore({
       body: coreBody,
       provider: resolvedProvider,
       providerConfig,
       credentials: null,
       log
-    });
+    }));
     if (result.success) return result.response;
     return result.response;
   }
@@ -183,6 +189,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   const searchLockKey = `websearch:${providerId}`;
 
   while (true) {
+    throwIfRequestAborted();
     // Provider that actually owns the connection in use — differs from
     // providerId once we fall back, and error locks must be attributed to it.
     let credentialProviderId = providerId;

@@ -55,7 +55,7 @@ const nextConfig = {
   // letter). That throw happens at module scope, so every consumer of `open` dies on
   // import — including xAI/Grok token refresh, which loads the OAuth service that imports
   // it. Keeping it external preserves the real `import.meta.url` at runtime.
-  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "open"],
+  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "open", "gpt-tokenizer"],
   turbopack: {
     root: tracingRoot
   },
@@ -72,9 +72,14 @@ const nextConfig = {
     // src/lib/notifications and counterfactual evidence imports the shared
     // completion identity helper. A miss kills the whole worker, which
     // also serves Capacity, Context and Economics.
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/db/completionIdentity.mjs", "./src/lib/notifications/*.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES, ...COMPATIBILITY_WORKER_FILES],
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/db/completionIdentity.mjs", "./src/lib/notifications/*.mjs", "./src/lib/pxpipe/worker.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES, ...COMPATIBILITY_WORKER_FILES],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
+    // The local tokenizer worker (open-sse/utils/localTokenizer.js) requires the
+    // gpt-tokenizer encoding modules by path at runtime, so the trace cannot see
+    // them. The worker itself is an inline script, so nothing under src/ is
+    // loaded by path for this route.
+    "/api/v1/messages/count_tokens": ["./node_modules/gpt-tokenizer/**/*"],
   },
   images: {
     unoptimized: true

@@ -6,7 +6,7 @@ export const STAGES = [
   ['headroom', 'Headroom'], ['qac', 'Query-aware compression'],
   ['pairs', 'Pair pruning'], ['reorder', 'Message reorder'],
   ['midinject', 'Boundary note'], ['diet', 'Expired result pruning'], ['lingua', 'Selective prose compression'],
-  ['epochMicro', 'Boundary-aware clearing'], ['epochAuto', 'Boundary-aware summary'], ['final', 'Final normalization'],
+  ['epochMicro', 'Boundary-aware clearing'], ['epochAuto', 'Boundary-aware summary'], ['handoff', 'Approved handoff'], ['final', 'Final normalization'],
 ];
 export const IDENTITY = {
   explicit: 'Explicit session', inferred: 'Inferred locality',
@@ -27,7 +27,7 @@ export const CONTROLS = {
   schemaAllowLossy: 'Lossy schemas allowed', headroomAllowLossy: 'Lossy Headroom allowed',
   pxpipeAllowLossy: 'Visual conversion allowed',
   contextStructure: 'Structure measurement', epochMicro: 'Boundary-aware clearing', epochAuto: 'Boundary-aware summary',
-  diet: 'Expired result pruning', lingua: 'Selective prose compression', adaptiveCacheTtl: 'Adaptive cache lifetime',
+  diet: 'Expired result pruning', lingua: 'Selective prose compression', handoff: 'Approved handoff', adaptiveCacheTtl: 'Adaptive cache lifetime',
 };
 export const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 export function quantity(value, compact = false) {
@@ -43,7 +43,7 @@ export function utc(value, short = false) {
 }
 export function contextUrl(scope, { sessionId, requestId, page = 1, projectLabel, clientTool } = {}) {
   const query = new URLSearchParams({ page: String(page), pageSize: sessionId ? '25' : '20' });
-  for (const key of ['provider', 'model', 'connectionId']) if (scope[key]) query.set(key, scope[key]);
+  for (const key of ['provider', 'model', 'connectionId', 'projectId']) if (scope[key]) query.set(key, scope[key]);
   if (scope.start) query.set('from', scope.start);
   if (scope.end) query.set('until', scope.end);
   if (projectLabel) query.set('projectLabel', projectLabel);

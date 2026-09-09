@@ -1,7 +1,7 @@
 import { getProviderConnectionById } from "@/lib/db/repos/connectionsRepo.js";
 import { requireAdmin } from "@/lib/admin/guard.js";
 import { adminError, adminJson, invalidIfMatch, parseAdminBody } from "@/lib/admin/policy.js";
-import { readDrainDoc, toDrainState, versionOf, writeDrainDoc } from "@/lib/admin/state.js";
+import { readDrainDoc, swapDrainDoc, toDrainState, versionOf } from "@/lib/admin/state.js";
 import { decide, idPrefix } from "@/shared/observability/decide.js";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +22,15 @@ export const revalidate = 0;
  * ABI's byte-identical clause is about this exact path, so every 4xx below
  * returns before the write.
  */
+
+// The document changed between the precondition read and the write, which is
+// what an automated remediation acting on the same account looks like. Same
+// 412 shape as a stale ifMatch: nothing was written, reload and decide again.
+function raced(current) {
+  return adminError(412, "version_conflict", "DrainState changed while this request was being processed.", {
+    currentVersion: versionOf(current),
+  });
+}
 
 // Shared by both verbs. Returns the refusal to send, or the document to base
 // the new state on.
@@ -57,7 +66,8 @@ export async function POST(request, { params }) {
   if (doc?.isDraining) return adminJson(toDrainState(connectionId, doc));
 
   const next = { isDraining: true, requestedAt: new Date().toISOString(), completedAt: null };
-  await writeDrainDoc(connectionId, next);
+  const swap = await swapDrainDoc(connectionId, doc, next);
+  if (!swap.written) return raced(swap.current);
   // D-11: DRAIN was declared but never emitted. Only an actual state
   // transition speaks — the idempotent early return above stays silent.
   decide("DRAIN", "begin", { conn: idPrefix(connectionId) });
@@ -95,7 +105,8 @@ export async function DELETE(request, { params }) {
     requestedAt: doc.requestedAt ?? null,
     completedAt: new Date().toISOString(),
   };
-  await writeDrainDoc(connectionId, next);
+  const swap = await swapDrainDoc(connectionId, doc, next);
+  if (!swap.written) return raced(swap.current);
   // D-11: the drain completing is the matching end marker for DRAIN.begin.
   decide("DRAIN", "end", { conn: idPrefix(connectionId) });
   return adminJson(toDrainState(connectionId, next));

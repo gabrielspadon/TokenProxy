@@ -2,7 +2,16 @@
 // formats whose upstream providers cannot fetch remote URLs themselves
 // (they require inline base64). Runs on the source-format body.
 import { FORMATS } from "../formats.js";
-import { fetchImageAsBase64, parseDataUri } from "./image.js";
+import { fetchImageAsBase64 } from "./image.js";
+import { MAX_REMOTE_MEDIA_BYTES, REMOTE_MEDIA_CONCURRENCY } from "../../config/mediaConfig.js";
+
+export class MediaAggregateLimitError extends Error {
+  constructor() {
+    super('Remote images exceed the per-request media byte limit.');
+    this.name = 'MediaAggregateLimitError';
+    this.code = 'media_aggregate_limit';
+  }
+}
 
 // Targets that require inline base64 images (cannot accept remote URLs).
 const TARGETS_NEED_BASE64 = new Set([
@@ -77,15 +86,47 @@ function collectImageRefs(body, sourceFormat) {
  * @returns {Promise<number>} count of images converted
  */
 export async function prefetchRemoteImages(body, sourceFormat, targetFormat, options = {}) {
+  options.signal?.throwIfAborted();
   if (!body || !TARGETS_NEED_BASE64.has(targetFormat)) return 0;
   const refs = collectImageRefs(body, sourceFormat);
   if (!refs.length) return 0;
 
+  const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+  const maxTotalBytes = Math.min(MAX_REMOTE_MEDIA_BYTES, options.maxTotalBytes ?? MAX_REMOTE_MEDIA_BYTES);
+  const concurrency = Math.min(REMOTE_MEDIA_CONCURRENCY, options.concurrency ?? REMOTE_MEDIA_CONCURRENCY);
+  if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 || !Number.isSafeInteger(concurrency) || concurrency < 1) throw new RangeError('Invalid remote media limits');
+  const occurrences = new Map();
+  for (const ref of refs) occurrences.set(ref.get(), (occurrences.get(ref.get()) || 0) + 1);
+  const urls = [...occurrences.keys()], results = new Map();
+  let cursor = 0, totalBytes = 0;
+  function consumeBytes(size, copies) {
+    totalBytes += size * copies;
+    if (totalBytes > maxTotalBytes) {
+      const error = new MediaAggregateLimitError();
+      controller.abort(error);
+      throw error;
+    }
+  }
+  async function worker() {
+    while (cursor < urls.length) {
+      signal.throwIfAborted();
+      const url = urls[cursor++];
+      const fetched = await fetchImageAsBase64(url, { ...options, signal,
+        consumeBytes: size => consumeBytes(size, occurrences.get(url)) });
+      signal.throwIfAborted();
+      results.set(url, fetched);
+    }
+  }
+  const settled = await Promise.allSettled(Array.from({ length: Math.min(concurrency, urls.length) }, worker));
+  signal.throwIfAborted();
+  const failure = settled.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
   let converted = 0;
+  // Commit only after the complete preparation succeeds; a failed/cancelled
+  // sibling cannot leave a half-rewritten request or change reference order.
   for (const ref of refs) {
-    const url = ref.get();
-    if (parseDataUri(url)) continue; // already inline
-    const fetched = await fetchImageAsBase64(url, options);
+    const fetched = results.get(ref.get());
     if (!fetched) continue;
     if (ref.set) ref.set(fetched.url);
     else if (ref.part) { delete ref.part.fileData; ref.part.inlineData = { mimeType: fetched.mimeType, data: fetched.url.split(",")[1] }; }

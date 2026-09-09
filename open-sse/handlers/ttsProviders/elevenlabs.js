@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 // ElevenLabs TTS — voice id with optional model_id prefix
 import { Buffer } from "node:buffer";
 

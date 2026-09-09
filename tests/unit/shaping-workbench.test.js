@@ -157,7 +157,7 @@ it('validates control changes, records an immutable version and refuses stale re
   expect((await call('POST', 'controls', request)).status).toBe(409);
 });
 
-it.each(['memoryHandoffEnabled', 'headroomLossless'])('preserves unavailable saved %s without offering an execution change', async key => {
+it.each(['headroomLossless'])('preserves unavailable saved %s without offering an execution change', async key => {
   const current = (await call()).body;
   expect(current.unavailableControls[key]).toBeTruthy();
   expect((await call('POST', 'controls', { patch: { [key]: true }, expectedCurrent: current.currentHash, consent: consentRequired({ ...current.settings, [key]: true }) })).status).toBe(422);

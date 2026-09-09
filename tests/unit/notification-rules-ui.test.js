@@ -104,8 +104,11 @@ describe('evidence links', () => {
       '/dashboard?connectionId=conn-1'
     );
     expect(evidenceHref('accountSwitch', 's1', event)).toBe('/dashboard?connectionId=conn-1');
-    // Operation events have no operator surface yet; no link beats a broken one.
-    expect(evidenceHref('operationEvent', '42', event)).toBeNull();
+    const operation = new URL(evidenceHref('operationEvent', '42', event), 'http://localhost');
+    expect(operation.pathname).toBe('/dashboard/operations');
+    expect(operation.searchParams.get('eventId')).toBe('42');
+    expect(operation.searchParams.get('event')).toBe('42');
+    expect(evidenceHref('operationEvent', '42 OR 1=1', event)).toBeNull();
   });
 
   it('returns no link rather than a broken one when there is nothing to point at', () => {

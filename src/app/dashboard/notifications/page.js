@@ -1,6 +1,7 @@
 'use client';
 import { Button, Input } from '@mantine/core';
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { Freshness } from '@/shared/components/Freshness';
 import { Icon } from '@/shared/components/Icon';
@@ -13,12 +14,12 @@ import { fmtNum, fmtRelative } from '@/shared/format';
 import { NotificationRules } from '@/shared/workspace/NotificationRules';
 import './styles.css';
 
-// §18. Three events exist and all three are derived from state the routing
-// path already records. The words are §18's own.
 const EVENTS = {
   'provider.unhealthy': 'An account became unhealthy',
   'provider.recovered': 'An account recovered',
   'high.error.rate': 'The error rate crossed its threshold',
+  'rule.fired': 'A configured rule produced an alert',
+  'project.budget.alert': 'A project reached its recorded budget threshold',
 };
 const OPERATOR = 'An operator credential, or a call from the machine that runs the gateway.';
 // PUT merges at the top level only, so any write that touches the list sends
@@ -136,9 +137,9 @@ function RateForm({ rate, onSubmit }) {
     });
   };
   return (
-    <form className="notifications-form panel" onSubmit={submit}>
+    <form className="notifications-rate-form panel" onSubmit={submit}>
       <label className="field">
-        <span>Error rate that counts as a problem, in percent</span>
+        <span>Error threshold (%)</span>
         <Input
           type="number"
           min="1"
@@ -150,7 +151,7 @@ function RateForm({ rate, onSubmit }) {
         />
       </label>
       <label className="field">
-        <span>Window, in seconds</span>
+        <span>Window (seconds)</span>
         <Input
           type="number"
           min="60"
@@ -162,7 +163,7 @@ function RateForm({ rate, onSubmit }) {
         />
       </label>
       <label className="field">
-        <span>Fewest requests worth judging on</span>
+        <span>Minimum requests</span>
         <Input
           type="number"
           min="1"
@@ -183,7 +184,13 @@ function RateForm({ rate, onSubmit }) {
 }
 
 export default function NotificationsPage() {
-  const [task, setTask] = useState('overview');
+  return <Suspense fallback={<p>Loading notification workspace…</p>}><NotificationsContent/></Suspense>;
+}
+function NotificationsContent() {
+  const eventId=useSearchParams().get('event');
+  const [selection,setSelection]=useState({eventId:null,task:'overview'});
+  const task=selection.eventId===eventId?selection.task:eventId?'rules':'overview';
+  const setTask=task=>setSelection({eventId,task});
   const notif = usePoll('/api/notifications', 15000);
   const [ask, setAsk] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -344,7 +351,7 @@ export default function NotificationsPage() {
           silently the first time it is seen, so a restart does not replay an old incident. A
           destination that does not answer delays no request and fails none.
         </p>
-        <p className="caption">Automatic evaluation follows traffic updates. An idle gateway has no independent evaluation timer. Retained-evidence rules below create local alerts and do not send these webhooks.</p>
+        <p className="caption">Automatic evaluation runs during traffic and idle periods. Retained-evidence rules are checked at most once every five minutes. Rule and project alerts queue delivery only to destinations subscribed when the alert is recorded.</p>
       </section>
 
       <section aria-labelledby="h-where" className={taskPanelClass} data-task-panel hidden={task !== 'destinations'}>
@@ -492,11 +499,10 @@ export default function NotificationsPage() {
       <section aria-labelledby="h-rate" className={taskPanelClass} data-task-panel hidden={task !== 'rules'}>
         <h2 id="h-rate">
           <Icon name="i-alert" />
-          When the error rate counts as a problem
+          Error-rate alerts
         </h2>
         <p className="caption">
-          Below the fewest requests worth judging on, the rule does not evaluate at all, so a
-          handful of failures is never an alarm.
+          Alert when the threshold is reached within the window, after enough requests have completed.
         </p>
         {cfg ? (
           <RateForm
@@ -543,7 +549,9 @@ export default function NotificationsPage() {
                 <span>{EVENTS[d.event] || <span>{d.event}</span>}</span>
                 <span className="who">
                   <span className="status" data-tone={d.ok ? 'ok' : 'bad'}>
-                    {d.ok ? 'Delivered' : 'Not delivered'}
+                    {d.state ? ({ queued: 'Queued', delivering: 'Sending', delivered: 'Delivered',
+                      failed: 'Failed', cancelled: 'Cancelled', uncertain: 'Unconfirmed' }[d.state] ?? d.state)
+                      : d.ok ? 'Delivered' : 'Not delivered'}
                   </span>
                   <span className="sub">
                     {[
@@ -560,18 +568,16 @@ export default function NotificationsPage() {
           </div>
         ) : null}
         <p className="caption">
-          The log holds the last fifty deliveries and lives inside the gateway process, so a restart
-          empties it. A test send is not recorded here; its result appears beside the button that
-          sent it.
+          The latest fifty delivery results appear here. Rule and project alerts retain their
+          delivery state across restarts. An unconfirmed send is never automatically replayed
+          after a stopped sender. Test results appear beside the test button.
         </p>
       </section>
 
-      {/* Rules are durable and evidence-backed, unlike the in-process delivery
-          log above: they persist in the database and alert on retained
-          measurements rather than on a webhook round trip. */}
+      {/* Alert evidence and delivery confirmation remain separate records. */}
       <section aria-labelledby="h-rules" className={taskPanelClass} data-task-panel hidden={task !== 'rules'}>
         <h2 id="h-rules">Rules</h2>
-        <NotificationRules />
+        <NotificationRules selectedEventId={eventId}/>
       </section>
 
       <Confirm

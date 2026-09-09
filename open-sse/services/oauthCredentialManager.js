@@ -5,6 +5,9 @@ import {
 } from "./tokenRefresh.js";
 import { PROVIDER_OAUTH } from "../providers/index.js";
 
+import { credentialRevision, credentialContentRevision, waitForRefresh } from "./tokenRefresh/credentialRevision.js";
+import { MAX_REFRESH_ENTRIES, withRefreshContext } from "./tokenRefresh/dedup.js";
+
 // Single source: codex.oauth.maxRefreshAgeMs (8 days) — proactive refresh window
 export const CODEX_MAX_REFRESH_AGE_MS = PROVIDER_OAUTH["codex"]?.maxRefreshAgeMs;
 
@@ -124,14 +127,8 @@ export function mergeRefreshedCredentials(provider, currentCredentials, refreshe
 }
 
 function getRefreshLockKey(provider, credentials) {
-  const stableId =
-    credentials?.connectionId ||
-    credentials?.id ||
-    credentials?.email ||
-    credentials?.name ||
-    credentials?.refreshToken?.slice?.(-16) ||
-    "default";
-  return `${provider}:${stableId}`;
+  const stableId = credentials?.connectionId || credentials?.id || "unbound";
+  return `${provider}:${stableId}:${credentialRevision(credentials)}`;
 }
 
 export async function withCredentialRefreshLock(provider, credentials, refreshFn) {
@@ -139,6 +136,7 @@ export async function withCredentialRefreshLock(provider, credentials, refreshFn
   const existing = refreshLocks.get(key);
   if (existing) return existing;
 
+  if (refreshLocks.size >= MAX_REFRESH_ENTRIES) throw Object.assign(new Error("Refresh capacity reached; retry later"), {code:"REFRESH_CAPACITY"});
   const pending = Promise.resolve()
     .then(refreshFn)
     .finally(() => {
@@ -149,11 +147,12 @@ export async function withCredentialRefreshLock(provider, credentials, refreshFn
   return pending;
 }
 
-export async function refreshProviderCredentials(provider, credentials, log) {
+export async function refreshProviderCredentials(provider, credentials, log, {signal} = {}) {
   if (!credentials) return null;
+  signal?.throwIfAborted();
 
-  return withCredentialRefreshLock(provider, credentials, async () => {
-    const refreshed = await refreshTokenByProvider(provider, credentials, log);
+  return waitForRefresh(withCredentialRefreshLock(provider, credentials, async () => {
+    const refreshed = await withRefreshContext({revision:credentialContentRevision(credentials),credentialRevision:credentialRevision(credentials),credentials}, () => refreshTokenByProvider(provider, credentials, log));
     return mergeRefreshedCredentials(provider, credentials, refreshed);
-  });
+  }),signal);
 }

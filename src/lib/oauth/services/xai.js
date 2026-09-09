@@ -49,11 +49,11 @@ export function validateOAuthEndpoint(rawUrl, field) {
 /**
  * Discover authorization + token endpoints. Cached process-wide.
  */
-export async function discoverEndpoints() {
+export async function discoverEndpoints(fetcher = fetch) {
   if (cachedDiscovery) return cachedDiscovery;
 
   try {
-    const res = await fetch(XAI_CONFIG.discoveryUrl, {
+    const res = await fetcher(XAI_CONFIG.discoveryUrl, {
       headers: { Accept: "application/json" },
     });
     if (res.ok) {
@@ -152,9 +152,9 @@ export class XaiService extends OAuthService {
   /**
    * Refresh an access token using a refresh_token.
    */
-  async refreshAccessToken(refreshToken) {
-    const { tokenUrl } = await discoverEndpoints();
-    const res = await fetch(tokenUrl, {
+  async refreshAccessToken(refreshToken, {fetcher = fetch} = {}) {
+    const { tokenUrl } = await discoverEndpoints(fetcher);
+    const res = await fetcher(tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",

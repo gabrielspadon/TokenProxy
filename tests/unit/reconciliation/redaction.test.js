@@ -226,7 +226,8 @@ describe('G5 — the persisted DB row never holds the secret', () => {
     };
     const stored = await save(detail);
     expect(stored.request._truncated).toBe(true);
-    expect(stored.request._preview).not.toContain(CANARY);
+    expect(JSON.stringify(stored.request)).not.toContain(CANARY);
+    expect(stored.request.blob).toBe('[omitted: retention limit]');
     expect(everywhere(stored).canaries).toEqual([]);
   });
 
@@ -291,7 +292,7 @@ describe('G5 — the disk log never holds the secret', () => {
 
   /** Everything the session wrote, as one string — files, not parsed objects. */
   function sessionBytes() {
-    const root = path.join(tempDir, 'logs');
+    const root = path.join(tempDir, 'logs', 'requests-v2');
     let out = '';
     for (const session of fs.readdirSync(root)) {
       const dir = path.join(root, session);
@@ -300,7 +301,7 @@ describe('G5 — the disk log never holds the secret', () => {
     return out;
   }
 
-  it('writes no canary to disk from any stage, header, body or stream frame', () => {
+  it('writes no canary to disk from any stage, header, body or stream frame', async () => {
     const planted = plantedDetail('g5-disk');
 
     logger.logClientRawRequest('/v1/chat/completions', planted.request, planted.request.headers);
@@ -323,6 +324,7 @@ describe('G5 — the disk log never holds the secret', () => {
     logger.appendConvertedChunk(`data: {"delta":"${CANARY_JWT}"}\n\n`);
     logger.logError(new Error(`upstream refused ${CANARY}`), planted.request);
 
+    await logger.close();
     const bytes = sessionBytes();
     for (const canary of [CANARY, CANARY_JWT, CANARY_GOOGLE]) {
       expect(bytes.includes(canary), canary.slice(0, 12)).toBe(false);

@@ -178,3 +178,8 @@ describe("UP lines (chat.js admission/retry loop)", () => {
     expect(dispatchMocks.handleChatCore).toHaveBeenCalledTimes(1);
   });
 });
+
+// Schema/folding tests capture admitted lines; bounded asynchronous transport has its own suite.
+vi.mock('../../open-sse/utils/asyncLogOutput.js', () => ({
+  logOutput: line => console.log(line), flushLogOutput: async () => {}, logOutputStatus: () => ({}),
+}));

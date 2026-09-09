@@ -219,6 +219,20 @@ export function warmAllowed({ name, state, now, periods = {}, config = {}, reset
   const entry = stateFor(state, name);
   const lastWarmedAt = toMs(entry.lastWarmedAt);
   const unstartedSince = toMs(entry.unstartedSince);
+  const attemptedAt = toMs(entry.lastAttemptedAt);
+
+  // An interrupted dispatch can already have spent quota. A restart or another
+  // tick cannot authorize replay. Only a separately observed later reset cycle
+  // can admit another warm; an absent reset is not evidence of such a cycle.
+  if (['dispatching', 'uncertain'].includes(entry.lastAttemptOutcome)) {
+    if (!resetKey || resetKey === entry.lastAttemptedResetKey ||
+        toMs(resetKey) === null || attemptedAt === null || toMs(resetKey) <= attemptedAt) {
+      return { allowed: false, reason: `warm-outcome-uncertain:${name}` };
+    }
+  }
+  if (entry.lastAttemptOutcome === 'rejected' && attemptedAt !== null && nowMs - attemptedAt < minInterval) {
+    return { allowed: false, reason: `attempted-recently:${name}` };
+  }
 
   // ALREADY WARMED THIS INSTANCE of the window. Checked before the interval and
   // the backoff, because it is the strongest statement of the three: the reset

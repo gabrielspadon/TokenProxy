@@ -28,36 +28,12 @@ const mocks = vi.hoisted(() => ({
 const store = new Map();
 const snapshot = () => JSON.stringify([...store.entries()].sort());
 
+import { makeMemoryKv } from './kvMemory.js';
+
 vi.mock('next/server', () => ({
   NextResponse: { json: (body, init) => Response.json(body, init) },
 }));
-vi.mock('@/lib/db/helpers/kvStore.js', () => ({
-  makeKv: (scope) => ({
-    async get(key, fallback = null) {
-      const v = store.get(`${scope}:${key}`);
-      return v === undefined ? fallback : JSON.parse(v);
-    },
-    async getAll() {
-      const out = {};
-      for (const [k, v] of store) {
-        if (k.startsWith(`${scope}:`)) out[k.slice(scope.length + 1)] = JSON.parse(v);
-      }
-      return out;
-    },
-    async set(key, value) {
-      store.set(`${scope}:${key}`, JSON.stringify(value));
-    },
-    async setMany(obj) {
-      for (const [k, v] of Object.entries(obj)) store.set(`${scope}:${k}`, JSON.stringify(v));
-    },
-    async remove(key) {
-      store.delete(`${scope}:${key}`);
-    },
-    async clear() {
-      for (const k of [...store.keys()]) if (k.startsWith(`${scope}:`)) store.delete(k);
-    },
-  }),
-}));
+vi.mock('@/lib/db/helpers/kvStore.js', () => ({ makeKv: makeMemoryKv(store) }));
 vi.mock('@/lib/admin/guard.js', () => ({ requireAdmin: mocks.requireAdmin }));
 vi.mock('@/lib/db/version.js', () => ({ getAppVersion: () => '0.0.1' }));
 

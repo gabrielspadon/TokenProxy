@@ -260,7 +260,7 @@ export default function SessionsPage() {
       <div className="screen-head">
         <h1>Sessions</h1>
         <Button component={Link} href="/dashboard/models" variant="default" size="compact-sm">Open policy workbench</Button>
-        <Freshness status={stream.status} lastDataAt={receivedAt} />
+        <Freshness status={stream.status} reason={stream.reason} lastDataAt={stream.lastDataAt || receivedAt} />
       </div>
 
       <ScopeBar />

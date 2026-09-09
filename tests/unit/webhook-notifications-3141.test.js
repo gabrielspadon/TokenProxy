@@ -102,6 +102,33 @@ describe("deliver", () => {
     await deliver(endpoint, "test", {}, { fetchImpl, wait: noWait, retries: 0 });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it("cancels unused response bodies and retains a stable receiver deduplication ID", async () => {
+    const cancel = vi.fn(async () => {});
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 204, body: { cancel } }));
+    await deliver(endpoint, 'rule.fired', { alertId: 'fixture-alert' }, {
+      fetchImpl, deliveryId: 'fixture-delivery',
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][1].headers['x-tp-delivery-id']).toBe('fixture-delivery');
+  });
+
+  it("stops a retry delay promptly on caller cancellation without another send", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn(async () => { queueMicrotask(() => controller.abort()); return status(503); });
+    const result = await deliver(endpoint, 'rule.fired', {}, { fetchImpl, signal: controller.signal });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, uncertain: true, attempts: 1 });
+  });
+
+  it("does no network work for an already cancelled delivery", async () => {
+    const fetchImpl = vi.fn();
+    const result = await deliver(endpoint, 'rule.fired', {}, {
+      fetchImpl, signal: AbortSignal.abort(),
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ cancelled: true, attempts: 0 });
+  });
 });
 
 describe("dispatch", () => {

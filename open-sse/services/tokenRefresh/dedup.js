@@ -1,8 +1,13 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { decide } from "../../../src/shared/observability/decide.js";
 
 const REFRESH_RESULT_TTL_MS = 10_000;
 const refreshDedupCache = new Map();
+export const MAX_REFRESH_ENTRIES = 256;
+const refreshContext = new AsyncLocalStorage();
+export const withRefreshContext = (context, fn) => refreshContext.run(context, fn);
+export const getRefreshContext = () => refreshContext.getStore();
 
 /** How long a connection stays listed as a chain peer after it last
  *  refreshed with that token. */
@@ -62,6 +67,7 @@ export function connsLabel(conns) {
 function reportChainReuse(chain, entry, conn) {
   if (!conn || !entry.conn || entry.conn === conn) return;
   if (entry.reusers.has(conn)) return;
+  if (entry.reusers.size >= CHAIN_CONN_MAX) return;
   entry.reusers.add(conn);
   decide("CRED", "dedup-reuse", {
     chain,
@@ -69,13 +75,22 @@ function reportChainReuse(chain, entry, conn) {
   });
 }
 
-export async function dedupRefresh(provider, oldToken, fn, log, conn = null) {
+export async function dedupRefresh(provider, oldToken, fn, log, conn = null, contextRevision = null) {
   if (!oldToken) return fn();
-  const key = `${provider}:${oldToken}`;
+  const key = createHash("sha256").update(`${provider}:${oldToken}`).digest("hex");
+  const activeContext = getRefreshContext();
+  const context = activeContext?.revision ?? contextRevision;
+  const owner = activeContext?.credentials?.connectionId || activeContext?.credentials?.id;
+  const revision = activeContext?.credentialRevision;
   const chain = tokenFingerprint(oldToken);
   noteChainMember(chain, conn);
   const hit = refreshDedupCache.get(key);
-  if (hit) {
+  if (hit && (hit.promise || hit.expiresAt > Date.now())) {
+    if (hit.context !== context || owner && hit.revisions.has(owner) && hit.revisions.get(owner) !== revision) throw Object.assign(new Error("Refresh already owned by a different credential revision or transport; reload credentials"), {code:"REFRESH_CONTEXT_CONFLICT"});
+    if (owner && !hit.revisions.has(owner)) {
+      if (hit.revisions.size >= CHAIN_CONN_MAX) throw Object.assign(new Error("Refresh peer capacity reached; retry later"), {code:"REFRESH_CAPACITY"});
+      hit.revisions.set(owner,revision);
+    }
     if (hit.promise) {
       log?.info?.("TOKEN_REFRESH", `Reusing in-flight refresh for ${provider}`);
       reportChainReuse(chain, hit, conn);
@@ -87,8 +102,13 @@ export async function dedupRefresh(provider, oldToken, fn, log, conn = null) {
       return hit.result;
     }
   }
-  const entry = { conn, reusers: new Set() };
-  entry.promise = (async () => {
+  if (hit) refreshDedupCache.delete(key);
+  if (refreshDedupCache.size >= MAX_REFRESH_ENTRIES) {
+    for (const [cachedKey,cached] of refreshDedupCache) if (!cached.promise && cached.expiresAt <= Date.now()) refreshDedupCache.delete(cachedKey);
+    if (refreshDedupCache.size >= MAX_REFRESH_ENTRIES) throw Object.assign(new Error("Refresh capacity reached; retry later"), {code:"REFRESH_CAPACITY"});
+  }
+  const entry = { conn, context, revisions:new Map(owner ? [[owner,revision]] : []), reusers: new Set() };
+  entry.promise = Promise.resolve().then(async () => {
     try {
       const result = await fn();
       delete entry.promise;
@@ -108,7 +128,7 @@ export async function dedupRefresh(provider, oldToken, fn, log, conn = null) {
         t.unref?.();
       }
     }
-  })();
+  });
   refreshDedupCache.set(key, entry);
   return entry.promise;
 }

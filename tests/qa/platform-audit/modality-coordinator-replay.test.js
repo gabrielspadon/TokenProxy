@@ -25,6 +25,10 @@ const { handleFetch } = await import('../../../src/sse/handlers/fetch.js');
 const { handleJsonProxy } = await import('../../../src/sse/handlers/jsonProxy.js');
 const { handleVideoCreate } = await import('../../../src/sse/handlers/videoGeneration.js');
 const jsonRequest = (body) => new Request('http://localhost/v1/fixture', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: 'openai/fixture-model', ...body }) });
+// A handler test is the HTTP consumer: an unread body holds the admission
+// stream permit, and four unread anonymous responses make the fifth wait out
+// the whole admission window. Read each body before handing the response back.
+const consumed = (run) => async () => { const response = await run(); return new Response(await response.text(), { status: response.status, headers: response.headers }); };
 const cases = [
   ['embedding', () => handleEmbeddings(jsonRequest({ input: 'fixture' }))],
   ['image', () => handleImageGeneration(jsonRequest({ prompt: 'fixture' }))],
@@ -36,7 +40,7 @@ const cases = [
   ['moderation', () => handleJsonProxy(jsonRequest({ model:'mistral/mistral-moderation-latest',input:'fixture' }), 'moderation')],
   ['video', () => handleVideoCreate(jsonRequest({ model:'xai/grok-imagine-video',prompt:'fixture' }), 'generations')],
   ['transcription', () => { const form = new FormData(); form.set('model', 'openai/fixture-model'); form.set('file', new File(['fixture'], 'fixture.wav')); return handleStt(new Request('http://localhost/v1/audio/transcriptions', { method: 'POST', body: form })); }],
-];
+].map(([name, run]) => [name, consumed(run)]);
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.core.mockReset();

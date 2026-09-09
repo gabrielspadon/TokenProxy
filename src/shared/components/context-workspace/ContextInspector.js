@@ -7,11 +7,13 @@ import { CONTROLS, IDENTITY, IDENTITY_NOTE, STAGES, finite, orderedStages, quant
 import styles from './context.module.css';
 import { ContextStructureEvidence, ContextClientEvents, ContextCostEvidence, ContextAttemptComparison } from '@/shared/workspace/ContextEvidence';
 
+import { ContextRoutingHistory } from './ContextRoutingHistory';
+
 const STAGE_NAMES = Object.fromEntries(STAGES);
 function Facts({ rows }) {
   return <dl className={styles.facts}>{rows.map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value ?? 'Unknown'}</dd></div>)}</dl>;
 }
-export function StageLedger({ stages = [] }) {
+export function StageLedger({ stages = [], requestId }) {
   if (!stages.length) return <p className={styles.muted}>No stage boundaries were recorded for this attempt.</p>;
   const maximumChange = Math.max(0, ...stages.map(stage => finite(stage.deltaBytes) ? Math.abs(stage.deltaBytes) : 0));
   return <div className={styles.stageRegion} tabIndex={0} role="region" aria-label="Ordered stage measurements, scroll horizontally for all columns">
@@ -21,31 +23,36 @@ export function StageLedger({ stages = [] }) {
         <Table.Td><span className={styles.ordinal}>{String(stage.ordinal + 1).padStart(2, '0')}</span>{STAGE_NAMES[stage.stage] || stage.stage}</Table.Td>
         <Table.Td>{quantity(stage.beforeBytes)} B</Table.Td><Table.Td>{quantity(stage.afterBytes)} B</Table.Td>
         <Table.Td className={styles.numeric} data-expansion={stage.deltaBytes > 0 || undefined}><span className={styles.stageChange}>{signedBytes(stage.deltaBytes)}<span className={styles.stageRail} aria-hidden="true">{finite(stage.deltaBytes) && <i data-expansion={stage.deltaBytes > 0 || undefined} style={{ width: `${maximumChange ? Math.abs(stage.deltaBytes) / maximumChange * 50 : 0}%` }} />}</span></span></Table.Td>
-        <Table.Td><span className={styles.outcome} data-applied={stage.outcome === 'applied' || undefined}>{stage.outcome || 'Unknown'}</span><span className={styles.risk}>{stage.risk || 'Risk not recorded'}</span></Table.Td>
+        <Table.Td><span className={styles.outcome} data-applied={stage.outcomeSource === 'execution' && stage.outcome === 'applied' || undefined}>{stage.outcomeSource === 'execution' ? stage.outcome || 'Unknown' : 'Historical byte measurement'}</span>{stage.outcomeSource === 'execution' && stage.errorCode && <small>{stage.errorCode.replaceAll('_',' ')}</small>}{stage.outcomeSource === 'execution' && stage.executionRequestId && <small>{requestId != null && String(stage.executionRequestId) !== String(requestId) ? 'Reused preparation from attempt ' : 'Prepared for attempt '}{stage.executionRequestId}</small>}<span className={styles.risk}>{stage.risk || 'Risk not recorded'}</span></Table.Td>
       </Table.Tr>)}</Table.Tbody>
     </Table>
-    <p className={styles.footnote}>Change = after − before. Bars share a signed byte scale centered at zero. Source is the retained gateway stage boundary. Detailed execution and skip reasons are not retained in this ledger. Negative values reduce the measured body. Missing stages are unobserved; this is not a complete pipeline total. Byte changes are not token, cost or semantic-equivalence measurements.</p>
+    <p className={styles.footnote}>Change = after − before. Bars share a signed byte scale centered at zero. Execution outcomes and failure codes appear only when explicitly recorded. Historical byte measurements do not establish execution, failure or cancellation. Negative values reduce the measured body. Missing stages are unobserved; this is not a complete pipeline total. Byte changes are not token, cost or semantic-equivalence measurements.</p>
   </div>;
 }
 function RecordedControls({ controls = {} }) {
   return <><div className={styles.controls}>{Object.entries(CONTROLS).map(([key, label]) => <div key={key}><span>{label}</span><Badge size="sm" variant="light" color={controls[key] === true ? key.endsWith('AllowLossy') ? 'orange' : 'teal' : 'gray'}>{controls[key] === true ? 'Enabled' : controls[key] === false ? 'Disabled' : 'Unknown'}</Badge></div>)}</div><p className={styles.footnote}>These settings were recorded with this request. Enabled does not mean a stage changed the body. <Link href="/dashboard/shaping">Open current shaping controls</Link></p></>;
 }
-function RoutingReceipts({ detail, accountName }) {
-  return <div className={styles.routing}>
-    <p className={styles.footnote}>{detail.routingScope || 'Latest retained routing receipts are independent of the selected request interval.'}</p>
-    <div className={styles.routingColumns}>
-      <section><h3>Stored account pins</h3>{detail.pins?.length ? <Table className={styles.table} aria-label="Stored account pins"><Table.Thead><Table.Tr><Table.Th>Model / account</Table.Th><Table.Th>Pinned · UTC</Table.Th><Table.Th>Expiry · UTC</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{detail.pins.map((pin, index) => <Table.Tr key={`${pin.model}-${index}`}><Table.Td>{pin.model}<small>{accountName(pin.connectionId)}</small></Table.Td><Table.Td>{utc(pin.pinnedAt)}</Table.Td><Table.Td>{utc(pin.expiresAt)}</Table.Td></Table.Tr>)}</Table.Tbody></Table> : <p className={styles.muted}>No retained pins for this identity.</p>}</section>
-      <section><h3>Account switch receipts</h3>{detail.switches?.length ? <Table className={styles.table} aria-label="Account switch receipts"><Table.Thead><Table.Tr><Table.Th>When · UTC</Table.Th><Table.Th>Transition</Table.Th><Table.Th>Recorded reason</Table.Th></Table.Tr></Table.Thead><Table.Tbody>{detail.switches.map((item) => <Table.Tr key={item.id}><Table.Td>{utc(item.switchedAt)}</Table.Td><Table.Td>{accountName(item.fromConnectionId)} → {accountName(item.toConnectionId)}<small>{item.model}</small></Table.Td><Table.Td>{item.trigger || 'Unknown'}<small>{item.reason}</small></Table.Td></Table.Tr>)}</Table.Tbody></Table> : <p className={styles.muted}>No retained switch receipts for this identity.</p>}</section>
-    </div>
-  </div>;
+export function HandoffEvidence({ rows, requestId, onInspect }) {
+  if (!rows?.length) return null;
+  return <section className={styles.measurementSection}><h3>Approved handoff evidence</h3>{rows.map(row => <div key={row.handoffId}>
+    <Facts rows={[
+      ['Packet', row.handoffId], ['Project', row.projectId], ['Content fingerprint', row.contentHash],
+      ['Preparation origin', row.executionRequestId], ['Applied · UTC', utc(row.appliedAt)],
+      ['Expiry · UTC', utc(row.expiresAt)], ['Revoked · UTC', row.revokedAt ? utc(row.revokedAt) : 'Not revoked'],
+    ]} />
+    <p className={styles.footnote}>{row.executionRequestId === requestId ? 'Prepared for this attempt.' : 'Reused preparation; this retry did not create another summary.'} This is an operator-approved addition, not a client-reported handoff event. Summary content is omitted.</p>
+    {['source', 'target'].map(side => <p key={side}><button className="button quiet" disabled={!onInspect || !Number.isSafeInteger(row[`${side}SessionId`]) || row[`${side}SessionId`] < 1} onClick={() => onInspect({ kind: 'context-attempt', id: row[`${side}RequestId`], sessionId: row[`${side}SessionId`] })}>Inspect {side} request</button> <code>{row[`${side}RequestId`]}</code></p>)}
+    <p className={styles.footnote}>Unavailable links have no retained Context session. Manage expiry or revocation in <Link href="/dashboard/shaping">Token savings → Profiles and comparison</Link>.</p>
+  </div>)}</section>;
 }
-export function ContextInspector({ turn, detail, accounts = [], baseline, onBaseline, onClearBaseline, onSnapshot, onEconomics }) {
+
+export function ContextInspector({ turn, detail, accounts = [], baseline, onBaseline, onClearBaseline, onSnapshot, onEconomics, onHandoff }) {
   const [view, setView] = useState('evidence');
   const accountName = (id) => accounts.find((account) => account.connectionId === id)?.displayName || id || 'Unknown account';
   const source = turn.usageSource === 'provider' ? 'Provider reported' : turn.usageSource === 'estimated' ? 'Estimated only' : 'Usage missing';
   return <div className={styles.inspector}>
     <SegmentedControl className={styles.evidenceTabs} aria-label="Request detail view" size="xs" value={view} onChange={setView} data={[{ value: 'evidence', label: 'Request & stages' }, { value: 'structure', label: 'Structure' }, { value: 'events', label: 'Client reports' }, { value: 'compare', label: 'Compare' }, { value: 'controls', label: 'Recorded controls' }, { value: 'routing', label: 'Session routing' }]} />
-    {view === 'structure' ? <ContextStructureEvidence turn={turn} /> : view === 'events' ? <ContextClientEvents key={turn.id} turn={turn} sessionId={detail.session?.id} onSnapshot={onSnapshot} /> : view === 'compare' ? <ContextAttemptComparison turn={turn} baseline={baseline} onBaseline={onBaseline} onClear={onClearBaseline} /> : view === 'controls' ? <RecordedControls controls={turn.controls} /> : view === 'routing' ? <RoutingReceipts detail={detail} accountName={accountName} /> : <div className={styles.evidenceGrid}>
+    {view === 'structure' ? <ContextStructureEvidence turn={turn} /> : view === 'events' ? <ContextClientEvents key={turn.id} turn={turn} sessionId={detail.session?.id} onSnapshot={onSnapshot} /> : view === 'compare' ? <ContextAttemptComparison turn={turn} baseline={baseline} onBaseline={onBaseline} onClear={onClearBaseline} /> : view === 'controls' ? <RecordedControls controls={turn.controls} /> : view === 'routing' ? <ContextRoutingHistory sessionId={detail.session.id} accountName={accountName} onSnapshot={onSnapshot} /> : <div className={styles.evidenceGrid}>
       <section className={styles.attemptOverview} aria-label="Selected attempt summary">
         <div className={styles.attemptRoute}><ProviderMark provider={turn.provider} size="small" /><div><strong>{turn.model || 'Unknown model'}</strong><span>{accountName(turn.connectionId)}</span></div><Badge variant="light" color={turn.status === 'success' || turn.status === 'ok' ? 'teal' : 'gray'}>{turn.status === 'pending' ? 'Incomplete' : turn.status || 'Unknown'}</Badge></div>
         <p className={styles.requestedModel}>Requested model <strong>{turn.requestedModel || 'Unknown'}</strong></p>
@@ -53,7 +60,8 @@ export function ContextInspector({ turn, detail, accounts = [], baseline, onBase
         <div className={styles.attemptDelta}><span>Measured body change</span><strong data-expansion={turn.savedBytes < 0 || undefined}>{signedBytes(finite(turn.savedBytes) ? -turn.savedBytes : null)}</strong><span>{quantity(turn.latencyMs)} ms recorded latency</span></div>
         <p className={styles.footnote}>Input includes cache; these token quantities are not additive. Byte change measures the request body and does not establish monetary savings.</p>
       </section>
-      <section className={styles.stageSection}><h3>Shaping sequence <span>{turn.stages?.length ?? 0} recorded boundaries</span></h3><StageLedger stages={turn.stages} /></section>
+      <section className={styles.stageSection}><h3>Shaping sequence <span>{turn.stages?.length ?? 0} recorded boundaries</span></h3><StageLedger stages={turn.stages} requestId={turn.id} /></section>
+      <HandoffEvidence rows={turn.handoffs} requestId={turn.id} onInspect={onHandoff} />
       <section className={styles.measurementSection}><h3>Request evidence <Badge variant="light" color={turn.usageSource === 'provider' ? 'teal' : 'gray'} size="sm">{source}</Badge></h3>
         <Facts rows={[
           ['Time · UTC', utc(turn.timestamp)], ['Recorded state', turn.status === 'pending' ? 'Pending / incomplete' : turn.status],

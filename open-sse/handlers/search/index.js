@@ -1,3 +1,4 @@
+import { requestFetch as fetch } from '../../utils/requestLifetime.js';
 /**
  * Search Dispatcher — routes /v1/search requests to dedicated search APIs
  * or chat-based LLM search wrappers, with retry-friendly error envelope.

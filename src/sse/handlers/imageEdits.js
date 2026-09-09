@@ -1,3 +1,4 @@
+import { withResourceAdmission } from '../services/resourceAdmission.js';
 import { Buffer } from "node:buffer";
 import { handleImageGeneration } from "./imageGeneration.js";
 import { errorResponse } from "open-sse/utils/error.js";
@@ -232,6 +233,10 @@ export async function buildImageEditBody(request) {
  * @param {Request} request
  */
 export async function handleImageEdits(request) {
+  return withResourceAdmission(request, () => handleImageEditsAdmitted(request));
+}
+
+async function handleImageEditsAdmitted(request) {
   const parsed = await buildImageEditBody(request);
   if (parsed.error) return errorResponse(parsed.status, parsed.error);
 

@@ -14,11 +14,9 @@
 //     ← requestStats, via getTrafficWindow() (requestStatsRepo.js:397), the
 //       exact source /api/system/state already reports errorRate from.
 //
-// THE TRIGGER IS ALSO NOT NEW. statsEmitter "update" (usageRepo.js:123) is
-// already emitted, debounced, after every batch of request writes, so this
-// module owns no timer: it evaluates when traffic happens and is idle
-// otherwise. Evaluation is throttled to MIN_INTERVAL_MS so a busy gateway
-// pays one connection scan per interval, not one per request.
+// Traffic and one unreferenced background timer share the same throttles.
+// Idle gateways therefore still observe stale evidence. Shutdown removes both
+// triggers and aborts outstanding analytics before its worker/database close.
 //
 //   notification rules
 //     ← the operator's own rules, evaluated by evaluateEnabledRules()
@@ -33,6 +31,7 @@ import { getProviderConnections, isConnectionDegraded } from "@/lib/db/repos/con
 import { getTrafficWindow } from "@/lib/db/repos/requestStatsRepo.js";
 import { statsEmitter } from "@/lib/db/repos/usageRepo.js";
 import { emit, getNotificationsConfig } from "./webhooks.js";
+import { registerShutdownFlusher } from "@/lib/shutdown.js";
 
 const MIN_INTERVAL_MS = 30000;
 
@@ -175,16 +174,18 @@ export async function evaluate(deps = {}) {
  * profile is touched by a firing.
  */
 export async function evaluateRules(deps = {}) {
-  const { state = g, rules: run, notBefore = state.startedAt } = deps;
+  const { state = g, rules: run, signal, notBefore = state.startedAt } = deps;
   try {
+    signal?.throwIfAborted();
     const evaluator =
       run ??
       (await import("@/lib/db/repos/notificationRulesRepo.js")).evaluateEnabledRules;
     // No start/end: the evaluator's default window is the retained population,
     // and narrowing it would cut the history a long durationSeconds needs to
     // establish a sustain. notBefore, not a shorter window, is what stops replay.
-    return await evaluator({ notBefore });
+    return await evaluator({ notBefore, ...(signal ? { signal } : {}) });
   } catch (err) {
+    if (signal?.aborted) return { skipped: "aborted", evaluated: 0, fired: 0, events: [] };
     console.warn("[Notifications] rule evaluation failed:", err?.message || err);
     return {
       skipped: "error",
@@ -210,6 +211,7 @@ export async function evaluateRules(deps = {}) {
  */
 export async function onStatsUpdate(deps = {}) {
   const { state = g, now = Date.now() } = deps;
+  if (deps.signal?.aborted) return;
   const pending = [];
   if (!state.running && now - state.lastRunAt >= MIN_INTERVAL_MS) {
     state.running = true;
@@ -229,6 +231,20 @@ export async function onStatsUpdate(deps = {}) {
       }),
     );
   }
+  if (deps.deliveries && !state.deliveryRunning && now - (state.lastDeliveryRunAt ?? 0) >= MIN_INTERVAL_MS) {
+    state.deliveryRunning = true;
+    state.lastDeliveryRunAt = now;
+    pending.push(Promise.resolve().then(() => deps.deliveries({ signal: deps.signal })).catch(err => {
+      if (!deps.signal?.aborted) console.warn('[Notifications] delivery queue unavailable:', err?.name ?? 'Error');
+    }).finally(() => { state.deliveryRunning = false; }));
+  }
+  if (deps.actions && !state.actionRunning && now - (state.lastActionRunAt ?? 0) >= MIN_INTERVAL_MS) {
+    state.actionRunning = true;
+    state.lastActionRunAt = now;
+    pending.push(Promise.resolve().then(() => deps.actions({ signal: deps.signal })).catch(() => {
+      if (!deps.signal?.aborted) console.warn('[Notifications] authorized local actions are unavailable.');
+    }).finally(() => { state.actionRunning = false; }));
+  }
   await Promise.all(pending);
 }
 
@@ -240,9 +256,46 @@ export async function onStatsUpdate(deps = {}) {
  * scans without anyone opening the dashboard. The /api/notifications calls stay
  * as a fallback for a bare entrypoint that never runs the instrumentation hook.
  */
-export function ensureWatcher() {
-  if (g.subscribed) return false;
-  g.subscribed = true;
-  statsEmitter.on("update", () => { onStatsUpdate().catch(() => {}); });
+export function ensureWatcher(deps = {}) {
+  const { state = g, emitter = statsEmitter } = deps;
+  if (state.subscribed) return false;
+  state.subscribed = true;
+  state.stopPromise = null;
+  state.controller = new AbortController();
+  state.jobs = new Set();
+  state.emitter = emitter;
+  const signal = state.controller.signal;
+  state.handler = () => {
+    if (signal.aborted) return;
+    const deliveries = deps.deliveries ?? (async options => {
+      const { drainNotifications } = await import('./delivery.js');
+      return drainNotifications(options);
+    });
+    const actions = deps.actions ?? (async options => {
+      const { drainAuthorizedActions } = await import('./remediationQueue.js');
+      return drainAuthorizedActions(options);
+    });
+    const job = onStatsUpdate({ ...deps, state, signal, deliveries, actions }).catch(() => {});
+    state.jobs.add(job);
+    job.finally(() => state.jobs.delete(job));
+  };
+  emitter.on("update", state.handler);
+  state.timer = setInterval(state.handler, MIN_INTERVAL_MS);
+  state.timer.unref?.();
+  state.unregisterShutdown = registerShutdownFlusher(() => stopWatcher({ state }), -90);
+  state.handler();
   return true;
+}
+
+export function stopWatcher({ state = g } = {}) {
+  if (state.stopPromise) return state.stopPromise;
+  state.subscribed = false;
+  clearInterval(state.timer);
+  state.timer = null;
+  state.emitter?.removeListener?.("update", state.handler);
+  state.unregisterShutdown?.();
+  state.unregisterShutdown = null;
+  state.controller?.abort(new DOMException("Notification watcher stopped", "AbortError"));
+  state.stopPromise = Promise.allSettled([...(state.jobs ?? [])]).then(() => undefined);
+  return state.stopPromise;
 }
