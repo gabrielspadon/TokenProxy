@@ -10,6 +10,10 @@ assert.equal(owner.kind, 'tokenproxy-redesign-preview-v1');
 assert.equal(owner.root, root);
 assert.equal(owner.runId, run.runId);
 assert.match(run.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+// A dev preview only gets `routeTable` once redesign-preview.mjs proved a deep dynamic
+// route resolves. Without it the 200 assertions below are probing a possibly truncated
+// route table, and their failure would read as a broken handler instead.
+if (run.mode === 'dev') assert.ok(run.routeTable?.canaryStatus, 'dev process.json carries no routeTable receipt; start it through scripts/redesign-preview.mjs so the route-table probe runs');
 const identity = async () => {
   const response = await fetch(`${run.url}/__redesign_owner`, { headers: { 'x-redesign-owner': auth.ownerToken }, signal: AbortSignal.timeout(5000) });
   const value = await response.json();

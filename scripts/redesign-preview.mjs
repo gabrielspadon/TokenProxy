@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, openSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, openSync, realpathSync, utimesSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve, relative } from 'node:path';
@@ -68,6 +68,80 @@ async function identity(root, method = 'GET', pathname = '/__redesign_owner') {
   return { ...receipt, guard: body.guard };
 }
 
+// Next's dev bundler resolves its startup promise on Watchpack's FIRST aggregation
+// (setup-dev-bundler.js:852) and never re-arms. With Next's aggregateTimeout of 5ms
+// (setup-dev-bundler.js:291) that aggregation is routinely partial. Its handler clears
+// and repopulates the route sets on every aggregation (setup-dev-bundler.js:325-329),
+// so the table is never permanently truncated: it is whatever the LAST aggregation saw,
+// and on a quiet tree the startup one is the only aggregation there is. A partial one
+// leaves a deep route answering with Next's /_not-found HTML exactly as a nonexistent
+// path does. Touching a watched route file forces a fresh aggregation, repairing the
+// table in place. That touch is an mtime write to the shared tracked tree: it changes no
+// content, so source-manifest provenance is unaffected, but every other watcher on this
+// tree recompiles, which is why this launcher owns the touch rather than each caller. That
+// recompile is not by itself a wedge: three concurrent two-preview starts on this host all
+// reached the canary 405 (attempts 1-2), because each preview compiles into its own
+// NEXT_DIST_DIR and the probe's retry budget absorbs a re-aggregation it did not ask for.
+// Prefer one preview at a time anyway, since every extra watcher spends the same CPU twice.
+const canaryRoute = '/api/admin/compatibility/runs/00000000-0000-4000-8000-000000000000/cancel';
+const canaryFile = join(project, 'src/app/api/admin/compatibility/runs/[id]/cancel/route.js');
+// That route exports POST only, so a routed, authenticated GET is Next's auto-implemented
+// 405. Assert that positively. Scoring "anything that is not 404 HTML" as ready would
+// bless an error page, and the 405 is the only answer that proves the entry resolved.
+const canaryRouted = 405;
+const canaryAttempts = 10;
+
+// A child killed by a signal keeps `exitCode === null` and reports the signal in
+// `signalCode`, so a guard reading exitCode alone treats an OOM-killed preview as
+// still starting. That kill is not hypothetical here: rendered-acceptance-run.mjs
+// documents a dev server dying on a 4 GB heap. Read both.
+const childDead = child => child.exitCode !== null || child.signalCode !== null;
+const childDeath = child => child.signalCode ? `killed by ${child.signalCode}` : `exited with code ${child.exitCode}`;
+
+async function devRouteTableReady(root, receipt, child) {
+  if (!existsSync(canaryFile)) throw new Error(`Dev preview route-table canary is missing; update canaryFile/canaryRoute together: ${canaryFile}`);
+  // Assert the canary still exports POST only. The 405 this probe waits for is
+  // Next's auto-implemented answer for an unexported method; the day someone adds
+  // `export function GET` here, every dev start burns the full retry budget and
+  // then reports a bundler fault that never happened.
+  const canarySource = await readFile(canaryFile, 'utf8');
+  if (/^\s*export\s+(async\s+)?function\s+GET\b/m.test(canarySource) || /^\s*export\s+const\s+GET\b/m.test(canarySource)) throw new Error(`Dev preview canary now exports GET, so a routed GET no longer answers ${canaryRouted}; pick another method-free route or change canaryRouted: ${canaryFile}`);
+  const auth = await json(join(root, 'preview-auth.json'));
+  const base = `http://127.0.0.1:${receipt.port}`;
+  let last = 'no attempt completed';
+  for (let attempt = 0; attempt < canaryAttempts; attempt++) {
+    // Without this the probe spends its whole budget interrogating a corpse and
+    // then blames the route table, which is the one diagnosis that sends the
+    // reader to the bundler instead of to server.log.
+    if (childDead(child)) throw new Error(`Preview died during the route-table probe (${childDeath(child)}); inspect its private server.log`);
+    // Login resolves through the same truncated table as the canary, and a cold compile
+    // can outrun any single timeout, so every failure in here is an observation to retry.
+    // Tearing down a healthy preview because its route table is not repaired YET is the
+    // one outcome this probe must never produce.
+    try {
+      const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: auth.initialPassword }), signal: AbortSignal.timeout(60000) });
+      await login.arrayBuffer();
+      if (!login.ok) last = `login answered ${login.status}`;
+      else {
+        const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+        const response = await fetch(`${base}${canaryRoute}`, { headers: { cookie }, signal: AbortSignal.timeout(60000) });
+        await response.arrayBuffer();
+        if (response.status === canaryRouted) return { attempts: attempt + 1, canaryRoute, canaryStatus: response.status, scope: 'one deep dynamic route resolved; not an assertion that every route aggregated' };
+        last = `canary answered ${response.status}`;
+      }
+    // undici reports a refused connection, a hang-up and a DNS failure all as
+    // `TypeError`; the discriminating value is on the cause. Keep both, because
+    // this string is the entire content of the terminal error below.
+    } catch (error) { last = `canary request failed with ${error.cause?.code ?? error.name}`; }
+    if (attempt === canaryAttempts - 1) break;
+    // Removing the canary mid-probe must not become a preview kill either.
+    try { const now = new Date(); utimesSync(canaryFile, now, now); }
+    catch (error) { last = `${last}; forced re-aggregation failed with ${error.code || error.name}`; }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error(`Dev preview route table stayed truncated after forced re-aggregation (${last})`);
+}
+
 async function start(root, dist, buildReceiptPath, mode = 'production', preferredPort = 0) {
   const owner = await owned(root);
   const previous = await json(join(root, 'process.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
@@ -97,15 +171,24 @@ async function start(root, dist, buildReceiptPath, mode = 'production', preferre
   await save(join(root, 'process.json'), receipt);
   try {
     const readinessAttempts = mode === 'dev' ? 240 : 80;
+    let ready;
     for (let attempt = 0; attempt < readinessAttempts; attempt++) {
       if (spawnError) throw spawnError;
-      if (child.exitCode !== null) throw new Error('Preview exited before readiness; inspect its private server.log');
-      try { const live = await identity(root); child.unref(); return live; } catch (error) { if (attempt === readinessAttempts - 1) throw error; }
+      if (childDead(child)) throw new Error(`Preview ${childDeath(child)} before readiness; inspect its private server.log`);
+      try { ready = await identity(root); break; } catch (error) { if (attempt === readinessAttempts - 1) throw error; }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
+    // The loop leaves only two ways: `break` with `ready` set, or a rethrow on the
+    // last attempt. There is no third, so no `if (!ready)` arm is reachable here.
+    if (mode !== 'dev') { child.unref(); return ready; }
+    const routeTable = await devRouteTableReady(root, ready, child);
+    const repaired = { ...receipt, routeTable };
+    await save(join(root, 'process.json'), repaired);
+    child.unref();
+    return { ...ready, routeTable };
   } catch (error) {
     // This ChildProcess object is from this invocation, never a PID loaded from disk.
-    if (child.exitCode === null) child.kill('SIGTERM');
+    if (!childDead(child)) child.kill('SIGTERM');
     throw error;
   }
 }
@@ -160,7 +243,7 @@ async function main() {
     await save(`${resolve(file)}.json`, receipt);
     return receipt;
   }
-  return { usage: 'node scripts/redesign-preview.mjs build-check|build; start --mode dev --scenario representative; start --mode production --dist .next --build-receipt /absolute/receipt; status|stop|recover-stopped --run /absolute/run; capture --run /absolute/run --route /dashboard --viewport 1440x900 --file /absolute/image.png; catalog', note: 'Dev compilation writes only into its owned runtime. Production uses an existing standalone build. Both modes block provider effects and keep disposable DATA_DIR.' };
+  return { usage: 'node scripts/redesign-preview.mjs build-check|build; start --mode dev --scenario representative; start --mode production --dist .next --build-receipt /absolute/receipt; status|stop|recover-stopped --run /absolute/run; capture --run /absolute/run --route /dashboard --viewport 1440x900 --file /absolute/image.png; catalog', note: 'Dev compilation writes its Next cache only into its owned runtime, but its route-table probe touches the mtime of one tracked source file in the shared tree, so a second watcher on this checkout recompiles alongside it; measured concurrent starts still resolved, but prefer one at a time. Production uses an existing standalone build. Both modes block provider effects and keep disposable DATA_DIR.' };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().then(value => console.log(JSON.stringify(value, null, 2))).catch(error => { console.error(error.message); process.exitCode = 1; });
