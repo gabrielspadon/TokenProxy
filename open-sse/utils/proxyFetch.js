@@ -719,8 +719,6 @@ async function performProxyAwareFetch(url, options, proxyOptions, attempt) {
     }
   }
 
-  // got-scraping disabled — use native fetch directly
-  // (Re-enable per-host by wrapping with tryGotScrapingFetch when needed)
   return fetchDirect(url, options, attempt);
 }
 
