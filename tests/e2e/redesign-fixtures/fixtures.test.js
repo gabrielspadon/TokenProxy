@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { afterAll } from 'vitest';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
@@ -9,6 +10,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { seed } from './seed.mjs';
 import { CLOCK, SCENARIOS, VERSION } from './catalog.mjs';
 import { installRedesignBrowser, authenticateRedesign } from './browser.mjs';
+
+// Every mkdtemp below seeds a full SQLite runtime and nothing removed any of them: 90 roots
+// and 76 MB had accumulated on this host, growing by seven per suite run. Route them all
+// through one helper so the cleanup cannot be forgotten at a new call site.
+const roots = [];
+const tempRoot = async () => { const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-')); roots.push(root); return root; };
+afterAll(async () => { await Promise.all(roots.map(root => rm(root, { recursive: true, force: true }))); });
 
 // The guards install on page.context(), so the double records what the CONTEXT was asked for
 // and keeps the page's own route list separate. That separation is the point: a per-fault route
@@ -25,10 +33,10 @@ const browserDouble = () => {
     setDefaultNavigationTimeout: value => { context.navigationTimeouts.push(value); },
   };
   const page = {
-    routes: [],
+    routes: [], scripts: [],
     context: () => context,
     route: async (pattern, handler) => { page.routes.push({ pattern, handler }); },
-    addInitScript: async (script, argument) => { context.scripts.push({ script, argument }); },
+    addInitScript: async (script, argument) => { page.scripts.push({ script, argument }); },
     exposeFunction: context.exposeFunction,
   };
   return { page, context };
@@ -38,7 +46,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   it('seeds repeatable canonical rows with credentialless accounts and separated costs', async () => {
     const snapshots = [];
     for (let repetition = 0; repetition < 2; repetition++) {
-      const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+      const root = await tempRoot();
       const receipt = await seed(root, 'populated');
       const db = new DatabaseSync(join(root, 'runtime/db/data.sqlite'), { readOnly: true });
       try {
@@ -57,14 +65,14 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it.each(['empty', 'single'])('seeds %s with its exact population', async scenario => {
-    const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+    const root = await tempRoot();
     await seed(root, scenario);
     const db = new DatabaseSync(join(root, 'runtime/db/data.sqlite'), { readOnly: true });
     try { expect(db.prepare('SELECT COUNT(*) AS count FROM providerConnections').get().count).toBe(SCENARIOS[scenario].accounts); } finally { db.close(); }
   });
 
   it('seeds edge identities, exact budget links, expiry and partial-deletion preconditions without inventing cost evidence', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+    const root = await tempRoot();
     const receipt = await seed(root, 'edge-cases');
     const db = new DatabaseSync(join(root, 'runtime/db/data.sqlite'), { readOnly: true });
     try {
@@ -165,7 +173,16 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     const production = browserDouble();
     await installRedesignBrowser(production.page, { baseUrl: dev.url, runtimeReceipt: { ...dev, mode: 'production' } });
     expect(production.context.navigationTimeouts).toEqual([]);
+    // On the CONTEXT, not the page. A page-scoped clock script would leave a window.open popup
+    // on the real clock while the receipt still claimed 'anchored advancing synthetic', which is
+    // the same scope failure the route catch-all is guarded against.
     expect(production.context.scripts).toHaveLength(1);
+    expect(production.page.scripts).toEqual([]);
+    // An anchored receipt with no clock must throw here rather than install a proxy whose
+    // timestamp is NaN and then report the page as anchored.
+    await expect(installRedesignBrowser(browserDouble().page, { baseUrl: dev.url, runtimeReceipt: { ...dev, mode: 'production', clock: null } })).rejects.toThrow('Fixture clock is required');
+    const { clock: _dropped, ...clockless } = dev;
+    await expect(installRedesignBrowser(browserDouble().page, { baseUrl: dev.url, runtimeReceipt: { ...clockless, mode: 'production' } })).rejects.toThrow('Fixture clock is required');
     // An unparseable clock must throw here, where the bad value is still visible, rather than
     // handing every in-page `new Date()` a NaN through the proxy.
     await expect(installRedesignBrowser(browserDouble().page, { baseUrl: dev.url, runtimeReceipt: { ...dev, mode: 'production', clock: 'yesterday' } })).rejects.toThrow('not a parseable date: yesterday');
@@ -175,7 +192,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     // context.request is routed at no scope, so the context catch-all cannot cover this client
     // and the guard lives at the call site instead. A process.json rewritten to point off-host
     // must not produce a request; it must throw naming the origin.
-    const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+    const root = await tempRoot();
     await writeFile(join(root, 'preview-auth.json'), JSON.stringify({ initialPassword: 'synthetic' }));
     const requested = [];
     const context = { request: { post: async url => { requested.push(url); return { ok: () => true }; } } };
@@ -187,7 +204,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it('seeds twelve representative accounts with local eligibility and exact retained histories', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+    const root = await tempRoot();
     const receipt = await seed(root, 'representative');
     const db = new DatabaseSync(join(root, 'runtime/db/data.sqlite'), { readOnly: true });
     try {
@@ -205,13 +222,17 @@ describe('redesign fixture isolation and retained arithmetic', () => {
       // the receipt counts only what representative-seed.mjs adds.
       expect(db.prepare("SELECT COUNT(*) AS count FROM quotaObservations WHERE source='synthetic-fixture'").get().count).toBe(receipt.representative.additionalQuotaObservations);
       expect(receipt.representative.additionalQuotaObservations).toBe(36);
-      const confidence = db.prepare('SELECT DISTINCT confidence FROM quotaWindows').all().map(row => row.confidence);
-      expect(confidence).toEqual(expect.arrayContaining(['fresh','stale','unknown']));
+      // Scoped to the representative seed's own scope. Unscoped, capacity-economics-seed.mjs:44-49
+      // supplies all three values by itself, so representative-seed.mjs:17 could collapse to a
+      // single confidence and this assertion would still pass. Same scoping the quotaObservations
+      // count above already needed, for the same reason.
+      const confidence = db.prepare("SELECT DISTINCT confidence FROM quotaWindows WHERE scope='Synthetic session allowance' ORDER BY confidence").all().map(row => row.confidence);
+      expect(confidence).toEqual(['fresh','stale','unknown']);
     } finally { db.close(); }
   });
 
   it('anchors dev rows to one UTC minute while preserving stable identities and relative observation ages', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-'));
+    const root = await tempRoot();
     const clock = '2026-09-09T18:30:00.000Z';
     const receipt = await seed(root, 'representative', { clock });
     const db = new DatabaseSync(join(root, 'runtime/db/data.sqlite'), { readOnly: true });
@@ -237,7 +258,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     globalThis.fetch = async () => { nativeCalls++; throw new Error('Native fetch must not be reached'); };
     Object.defineProperty(globalThis, 'location', { configurable: true, value: { origin: 'http://127.0.0.1:61234' } });
     try {
-      context.scripts.at(-1).script();
+      page.scripts.at(-1).script();
       const response = await globalThis.fetch('/v1/chat/completions', { method: 'POST' });
       const reader = response.body.getReader();
       expect(new TextDecoder().decode((await reader.read()).value)).toContain('Synthetic interrupted event');
@@ -258,7 +279,7 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it('blocks fetch, sockets, DNS and subprocesses while fixing the synthetic clock', async () => {
-    const root = realpathSync(await mkdtemp(join(tmpdir(), 'tokenproxy-redesign-test-')));
+    const root = realpathSync(await tempRoot());
     await mkdir(join(root, 'runtime'));
     await writeFile(join(root, 'owner.json'), JSON.stringify({ kind: 'tokenproxy-redesign-preview-v1', root, runId: 'test', realHome: homedir() }));
     await writeFile(join(root, 'fixture-manifest.json'), JSON.stringify({ accounts: [{ id: 'fixture-account', provider: 'xai' }] }));

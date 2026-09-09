@@ -68,8 +68,14 @@ export async function installRedesignBrowser(page, { baseUrl, operator = false, 
   // Date.parse of an unparseable clock is NaN, and the proxy below would then hand every
   // in-page `new Date()` a NaN timestamp instead of throwing. Fail here, where the bad
   // value is still visible, rather than in a screenshot full of "Invalid Date".
+  const anchored = Boolean(operator || runtimeReceipt && runtimeReceipt.mode !== 'dev');
+  // Exempting null from the parseability check and then installing the proxy anyway hands every
+  // in-page `new Date()` a NaN timestamp, which is the "Invalid Date" outcome this guard exists
+  // to prevent. A receipt that anchors the clock must carry one; fixtures.test.js:166 already
+  // hand-builds receipts, so the permissive path is reachable from the suite that exists today.
+  if (anchored && (clock === null || clock === undefined)) throw new Error('Fixture clock is required for an anchored preview; this receipt carries none');
   if (clock !== null && Number.isNaN(Date.parse(clock))) throw new Error(`Fixture clock is not a parseable date: ${clock}`);
-  if (operator || runtimeReceipt && runtimeReceipt.mode !== 'dev') await context.addInitScript(({ clock }) => {
+  if (anchored) await context.addInitScript(({ clock }) => {
     const NativeDate = Date;
     const timestamp = NativeDate.parse(clock);
     const started = performance.now();
@@ -120,7 +126,7 @@ export async function installRedesignBrowser(page, { baseUrl, operator = false, 
       };
     });
   }
-  return { fixtureVersion: operator ? 'operator-presentation-v1' : runtimeReceipt?.fixtureVersion ?? null, browserFixtureVersion: VERSION, runtimeAttribution: runtimeReceipt ? 'supplied owned runtime receipt' : 'runtime fixture version unknown; supply process.json receipt', clock, browserClock: operator || runtimeReceipt && runtimeReceipt.mode !== 'dev' ? 'anchored advancing synthetic' : 'real', persistence: !operator && !fault, outboundFailures, fault, faults };
+  return { fixtureVersion: operator ? 'operator-presentation-v1' : runtimeReceipt?.fixtureVersion ?? null, browserFixtureVersion: VERSION, runtimeAttribution: runtimeReceipt ? 'supplied owned runtime receipt' : 'runtime fixture version unknown; supply process.json receipt', clock, browserClock: anchored ? 'anchored advancing synthetic' : 'real', persistence: !operator && !fault, outboundFailures, fault, faults };
 }
 
 export async function authenticateRedesign(context, root) {
