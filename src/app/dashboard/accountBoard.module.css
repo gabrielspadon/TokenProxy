@@ -155,7 +155,9 @@
 .nameLine { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .nameButton {
   min-width: 0;
-  padding: 0;
+  padding: 1px 3px;
+  margin-inline-start: -3px;
+  border-radius: 3px;
   border: 0;
   background: none;
   color: var(--ink);
@@ -195,7 +197,9 @@
 .board[data-advanced] .line { grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto 54px; }
 .lineLabel {
   min-width: 0;
-  padding: 0;
+  padding: 1px 3px;
+  margin-inline-start: -3px;
+  border-radius: 3px;
   border: 0;
   background: none;
   color: var(--ink);
@@ -233,7 +237,8 @@
 .priority :global(.mantine-Input-input) { min-height: 24px; height: 24px; padding-inline: 4px; text-align: center; font-size: var(--type-dense); }
 .actions :global(.mantine-ActionIcon-root) { width: 26px; height: 26px; min-width: 26px; min-height: 26px; }
 
-.detail { padding: 6px 10px 12px 34px; background: var(--raised); border-top: 1px solid var(--rule); }
+.row .detail { padding: 6px 10px 12px 34px; background: var(--raised); border-top: 1px solid var(--rule); }
+.detail { background: var(--raised); border-top: 1px solid var(--rule); }
 .tabList { margin-bottom: 8px; }
 .tab { font-size: var(--type-dense); padding: 6px 10px; }
 .tabPanel { font-size: var(--type-dense); }
@@ -243,7 +248,7 @@
 .muted { color: var(--slate); font-size: var(--type-dense); }
 .passed { color: var(--ember); }
 .empty { padding: 20px; color: var(--slate); font-size: var(--type-ui); text-align: center; display: flex; gap: 8px; justify-content: center; align-items: center; }
-.linkButton { padding: 0; border: 0; background: none; color: var(--signal-deep); font: inherit; text-decoration: underline; cursor: pointer; }
+.linkButton { padding: 1px 3px; margin-inline: -3px; border: 0; border-radius: 3px; background: none; color: var(--signal-deep); font: inherit; text-decoration: underline; cursor: pointer; }
 
 @container board (max-width: 900px) {
   .head { display: none; }
@@ -286,3 +291,63 @@
   }
 }
 @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
+
+/* Everyday: compact progress cards grouped by state. */
+.density { flex-shrink: 0; }
+.group { padding: 6px 10px 10px; border-bottom: 1px solid var(--rule); }
+.group:last-of-type { border-bottom: 0; }
+.groupTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+  font-size: var(--type-dense);
+  font-weight: 600;
+  color: var(--ink);
+}
+.groupTitle i { width: 7px; height: 7px; border-radius: 50%; background: var(--slate); }
+.groupTitle[data-tone='positive'] i { background: var(--positive); }
+.groupTitle[data-tone='ember'] i { background: var(--ember); }
+.groupTitle[data-tone='refusal'] i { background: var(--refusal); }
+.groupTitle span { color: var(--slate); font-weight: 500; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 8px; align-items: start; }
+.card {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--raised);
+}
+.card[data-expanded] { grid-column: 1 / -1; border-color: var(--signal); box-shadow: inset 3px 0 var(--signal); }
+.card[data-bucket='low'] { border-color: color-mix(in srgb, var(--ember) 45%, var(--rule)); }
+.card[data-bucket='attention'] { border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule)); }
+.cardHead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cardHead :global(.provider-mark) { width: 22px; height: 22px; min-width: 22px; border-radius: 6px; border: 1px solid var(--rule); background: var(--raised); }
+.cardHead :global(.provider-mark img) { width: 18px; height: 18px; }
+.cardHead .identityText { flex: 1; }
+.cardHead :global(.mantine-ActionIcon-root) { width: 26px; height: 26px; min-width: 26px; min-height: 26px; }
+.cardState { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.cardAttempts { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
+.cardWindows { display: grid; gap: 4px; margin-top: 6px; }
+.cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) 40px minmax(0, auto); }
+.cardWindows .lineReset { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cardWindows .meter { height: 8px; border-radius: 4px; }
+.cardWindows .fill { border-radius: 4px; }
+.card .detail { padding: 8px 0 0; margin-top: 8px; }
+.messages:empty { display: none; }
+
+/* Density. Tidy is the default; comfy adds room everywhere. */
+.board[data-density='comfy'] .main { min-height: 52px; padding-block: 8px; }
+.board[data-density='comfy'] .quota { gap: 6px; }
+.board[data-density='comfy'] .line { min-height: 22px; }
+.board[data-density='comfy'] .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.board[data-density='comfy'] .card { padding: 14px 16px; }
+.board[data-density='comfy'] .cardWindows { gap: 8px; margin-top: 10px; }
+.board[data-density='comfy'] .cardState { margin-top: 10px; }
+.board[data-density='comfy'] .fleet,
+.board[data-density='comfy'] .toolbar { padding-block: 10px; }
+.board[data-density='comfy'] .group { padding: 10px 14px 14px; }
+@container board (max-width: 520px) {
+  .cardWindows .line { grid-template-columns: minmax(70px, 0.8fr) minmax(56px, 1fr) 40px; }
+  .cardWindows .lineReset { grid-column: 1 / -1; }
+}

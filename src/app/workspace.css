@@ -127,7 +127,8 @@ h1 { font-size: var(--type-title); font-weight: 600; line-height: 1.2; letter-sp
 h2 { font-size: var(--type-section); font-weight: 600; line-height: 1.4; }
 h3 { font-size: var(--type-ui); font-weight: 600; line-height: var(--line-ui); }
 button, input, select, textarea { font-family: inherit; }
-:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+/* The focus ring sits inside the element's box so focus never grows an item. */
+:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 ::selection { background: var(--signal-wash); color: var(--ink); }
 pre, code { font-family: var(--mono); }
 pre { overflow: auto; max-width: 100%; }

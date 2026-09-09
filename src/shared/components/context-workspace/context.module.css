@@ -17,7 +17,7 @@
 .rejection :global(.mantine-Alert-title) { margin-bottom: 0; color: var(--ink); }
 .scopeActivity { border-bottom: 1px solid var(--rule); }
 .scopeActivity > summary { cursor: pointer; padding: 9px 0; font-size: 13px; color: var(--slate); }
-.scopeActivity > summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.scopeActivity > summary:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 0; padding: 12px 0; background: transparent; border: 0; }
 .toolbar > div:first-child { display: flex; gap: 12px; align-items: baseline; }
 .toolbar h2,.sessionHeading h2 { font-weight: 500; font-size: 16px; margin: 0; }

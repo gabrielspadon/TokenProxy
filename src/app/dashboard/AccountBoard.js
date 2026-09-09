@@ -8,6 +8,7 @@ import {
   Checkbox,
   Loader,
   NumberInput,
+  SegmentedControl,
   Select,
   Table,
   Text,
@@ -39,6 +40,7 @@ import {
   accountStateWord,
   filterAccounts,
   fleetSummary,
+  orderCards,
   providerList,
   resetShort,
   windowLines,
@@ -479,6 +481,128 @@ function AccountRow({
   );
 }
 
+// Everyday: one compact card per account, progress first. Pause, rename and
+// expand stay direct; priority, drain, thresholds and comparison live in Advanced.
+function AccountCard({
+  account,
+  now,
+  anchor,
+  expanded,
+  selectedScope,
+  busy,
+  verdict,
+  onToggle,
+  onInspect,
+  onRename,
+  onPause,
+}) {
+  const id = accountControlId(account);
+  const name = account.displayName || account.name || id;
+  const bucket = accountBucket(account, now);
+  const word = accountStateWord(account, now);
+  const evidence = accountControlEvidence(account, now);
+  const paused = account.isActive === false;
+  const lines = windowLines(account);
+  const record = account.activity;
+  return (
+    <article
+      className={styles.card}
+      data-account-id={id}
+      data-expanded={expanded || undefined}
+      data-bucket={bucket}
+      aria-label={name}
+    >
+      <header className={styles.cardHead}>
+        <ProviderMark provider={account.provider} size="small" />
+        <div className={styles.identityText}>
+          <NameField
+            name={name}
+            disabled={!!busy}
+            expanded={expanded}
+            onOpen={() => onToggle(null)}
+            onCommit={onRename}
+          />
+          <small>{providerIdentity(account.provider).name}</small>
+        </div>
+        <Tooltip label={paused ? 'Resume' : 'Pause'}>
+          <ActionIcon
+            variant={paused ? 'light' : 'subtle'}
+            color={paused ? 'teal' : 'gray'}
+            aria-label={`${paused ? 'Resume' : 'Pause'} ${name}`}
+            loading={busy === 'pause'}
+            disabled={(!!busy && busy !== 'pause') || typeof account.isActive !== 'boolean'}
+            onClick={onPause}
+          >
+            <Icon name={paused ? 'i-play' : 'i-pause'} />
+          </ActionIcon>
+        </Tooltip>
+        <Tooltip label={expanded ? 'Collapse' : 'Details'}>
+          <button
+            type="button"
+            className={styles.caret}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? 'Collapse' : 'Expand'} ${name}`}
+            onClick={() => onToggle(null)}
+          >
+            <Icon name={expanded ? 'i-chevron-up' : 'i-chevron-down'} />
+          </button>
+        </Tooltip>
+      </header>
+      <div className={styles.cardState}>
+        <Tooltip label={[evidence.health, ...evidence.gates, account.lastError].filter(Boolean).join('. ')}>
+          <span className={styles.stateWord} data-tone={TONE[bucket]}>
+            <i />
+            {word}
+          </span>
+        </Tooltip>
+        {verdict ? (
+          <Badge
+            size="xs"
+            variant="light"
+            color={verdict.verdict === 'admissible' ? 'teal' : verdict.verdict === 'blocked' ? 'orange' : 'gray'}
+            title={verdict.reasons?.map((reason) => reason.label).join('; ') || undefined}
+          >
+            {verdict.verdict}
+          </Badge>
+        ) : null}
+        <span className={styles.spacer} />
+        <span className={styles.cardAttempts}>
+          {account.activityState
+            ? account.activityState
+            : record
+              ? `${number(record.records)} attempts`
+              : 'No attempts'}
+        </span>
+      </div>
+      <div className={styles.cardWindows}>
+        {lines.map((window) => (
+          <QuotaLine
+            key={window.key}
+            window={window}
+            now={now}
+            advanced={false}
+            disabled
+            onInspect={onInspect}
+            onThreshold={() => {}}
+          />
+        ))}
+        {!lines.length ? <span className={styles.muted}>No quota recorded</span> : null}
+      </div>
+      {expanded ? (
+        <div className={styles.detail} role="region" aria-label="Selection details">
+          <AccountDetail
+            key={`${id}:${selectedScope || 'overview'}`}
+            row={account}
+            anchor={anchor}
+            selectedScope={selectedScope}
+            verdict={verdict}
+          />
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function ComparisonRow({ account, now }) {
   const { scope, observeSnapshot } = useWorkspace();
   const id = accountControlId(account);
@@ -511,7 +635,10 @@ function ComparisonRow({ account, now }) {
   );
 }
 
-export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
+// `anchor` is the evidence clock the detail views read (a number, 0 until the
+// quota list answers); `now` is the ranking clock, which the page pins to the
+// snapshot in an isolated preview and to the wall clock otherwise.
+export function AccountBoard({ rows, drains, anchor, now, advanced, density, onDensity, onChanged }) {
   const {
     scope,
     setScope,
@@ -523,16 +650,10 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
     health,
   } = useWorkspace();
   const resource = useResource('/api/providers');
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setClock(Date.now()), 30000);
-    return () => clearInterval(timer);
-  }, []);
-  const now = Number.isFinite(anchor) && anchor > 0 ? anchor : clock;
   const [query, setQuery] = useState('');
   const [bucket, setBucket] = useState(null);
   const [sort, setSort] = useState('name');
-  const [sortAt, setSortAt] = useState(() => Date.now());
+  const [sortAt, setSortAt] = useState(now);
   const [busy, setBusy] = useState({});
   const [adding, setAdding] = useState(false);
   const [comparing, setComparing] = useState(false);
@@ -547,11 +668,7 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
       (!scope.connectionId || accountControlId(account) === scope.connectionId)
   );
   const summary = fleetSummary(scoped, now);
-  const visible = sortAccountControls(
-    filterAccounts(scoped, { query, bucket }, now),
-    sort,
-    Number.isFinite(anchor) && anchor > 0 ? anchor : sortAt
-  );
+  const visible = sortAccountControls(filterAccounts(scoped, { query, bucket }, now), sort, sortAt);
   const verdicts = useEligibility(scope.model, providers);
   const compared = accounts.filter((account) => comparisonIds.includes(accountControlId(account)));
   const selectedScope = selectedRecord?.windowScope || null;
@@ -559,7 +676,7 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
   const empty = inventoryKnown && !accounts.length && !resource.loading && !resource.error;
 
   function refresh() {
-    setSortAt(clock);
+    setSortAt(now);
     resource.refresh();
     onChanged?.();
   }
@@ -639,6 +756,8 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
       className={styles.board}
       aria-label="Account control panel"
       data-advanced={advanced || undefined}
+      data-layout={advanced ? 'rows' : 'cards'}
+      data-density={density}
     >
       <div className={styles.fleet} role="group" aria-label="Account summary">
         <button
@@ -705,20 +824,35 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
             ))}
           </div>
         ) : null}
-        <Select
-          size="xs"
-          aria-label="Sort accounts"
-          data={SORTS}
-          value={sort}
-          onChange={(value) => {
-            if (!value) return;
-            setSort(value);
-            setSortAt(clock);
-          }}
-          leftSection={<Icon name="i-sort" />}
-          className={styles.sort}
-          allowDeselect={false}
-        />
+        {advanced ? (
+          <Select
+            size="xs"
+            aria-label="Sort accounts"
+            data={SORTS}
+            value={sort}
+            onChange={(value) => {
+              if (!value) return;
+              setSort(value);
+              setSortAt(now);
+            }}
+            leftSection={<Icon name="i-sort" />}
+            className={styles.sort}
+            allowDeselect={false}
+          />
+        ) : null}
+        <Tooltip label="How much room each account takes">
+          <SegmentedControl
+            size="xs"
+            aria-label="Density"
+            value={density}
+            onChange={onDensity}
+            data={[
+              { value: 'comfy', label: 'Comfy' },
+              { value: 'tidy', label: 'Tidy' },
+            ]}
+            className={styles.density}
+          />
+        </Tooltip>
         <span className={styles.spacer} />
         {advanced ? (
           <Button
@@ -837,17 +971,65 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
           {health.error}
         </Text>
       ) : null}
-      <div className={styles.head} aria-hidden="true">
-        <span />
-        {advanced ? <span /> : null}
-        <span>Account</span>
-        <span>State</span>
-        <span>Quota remaining</span>
-        <span>Activity</span>
-        <span>{advanced ? 'Priority · drain · pause' : ''}</span>
-      </div>
-      <div className={styles.rows}>
-        {visible.map((account) => {
+      {advanced ? (
+        <div className={styles.head} aria-hidden="true">
+          <span />
+          <span />
+          <span>Account</span>
+          <span>State</span>
+          <span>Quota remaining</span>
+          <span>Activity</span>
+          <span>Priority · drain · pause</span>
+        </div>
+      ) : null}
+      {!advanced
+        ? BUCKETS.map((item) => {
+            const members = orderCards(
+              visible.filter((account) => accountBucket(account, now) === item.id),
+              now
+            );
+            if (!members.length) return null;
+            return (
+              <section key={item.id} className={styles.group} aria-label={`${item.label} accounts`}>
+                <h3 className={styles.groupTitle} data-tone={item.tone}>
+                  <i />
+                  {item.label}
+                  <span>{members.length}</span>
+                </h3>
+                <div className={styles.cards}>
+                  {members.map((account) => {
+                    const id = accountControlId(account);
+                    return (
+                      <AccountCard
+                        key={id}
+                        account={account}
+                        now={now}
+                        anchor={anchor}
+                        expanded={selectedAccountId === id}
+                        selectedScope={selectedAccountId === id ? selectedScope : null}
+                        busy={rowBusy(id)}
+                        verdict={verdicts[id]}
+                        onToggle={() => toggle(id)}
+                        onInspect={(windowScope) => toggle(id, windowScope)}
+                        onRename={(name) => rename(account, name)}
+                        onPause={() =>
+                          savePolicy(
+                            account,
+                            'pause',
+                            { isActive: account.isActive === false },
+                            account.isActive === false ? 'Resume' : 'Pause'
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })
+        : null}
+      <div className={styles.rows} hidden={!advanced}>
+        {advanced && visible.map((account) => {
           const id = accountControlId(account);
           return (
             <AccountRow
@@ -897,6 +1079,8 @@ export function AccountBoard({ rows, drains, anchor, advanced, onChanged }) {
             />
           );
         })}
+      </div>
+      <div className={styles.messages}>
         {health.loading && !accounts.length ? (
           <div className={styles.empty}>
             <Loader size="xs" /> Reading accounts…

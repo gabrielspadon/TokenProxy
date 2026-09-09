@@ -20,7 +20,7 @@
 .facts dt { color: var(--slate); font-size: 13px; }
 .facts dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .workbench summary { cursor: pointer; font-size: 14px; line-height: 1.5; padding: 8px 0; }
-.workbench :is(summary, pre):focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.workbench :is(summary, pre):focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .workbench a { color: var(--signal); text-underline-offset: 3px; }
 @media (max-width: 1050px) { .layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 600px) { .scope { grid-template-columns: minmax(0, 1fr); gap: 12px; } .facts div { grid-template-columns: minmax(0, 1fr); gap: 2px; } .workbench :global(.mantine-Button-root) { min-height: 44px; height: auto; } .workbench :global(.mantine-Button-label) { white-space: normal; } }

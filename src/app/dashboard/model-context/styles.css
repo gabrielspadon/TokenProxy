@@ -35,7 +35,7 @@
 .model-context-page th:nth-child(2), .model-context-page th:nth-child(3) { text-align: end; }
 .model-context-page tr[data-selected] { background: var(--signal-wash); box-shadow: inset 3px 0 var(--signal); }
 .model-context-page tbody tr:hover { background: var(--signal-wash); }
-.model-context-page button:focus-visible, .model-context-page summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.model-context-page button:focus-visible, .model-context-page summary:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .model-context-pagination { padding: 10px 14px; border-top: 1px solid var(--rule); font-size: 13px; }
 .model-context-inspector { padding: 14px 18px; }
 .model-context-facts { display: grid; grid-template-columns: minmax(0,1fr); gap: 16px; }

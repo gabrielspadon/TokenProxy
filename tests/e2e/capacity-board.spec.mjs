@@ -113,6 +113,41 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await check(`Everyday board fits ${width}px without a horizontal scroll`, () => fits(`everyday ${width}`));
     }
     await page.setViewportSize({ width: 1440, height: 1000 });
+    await check('Everyday is compact cards grouped by state; Advanced is rows; both switch density', async () => {
+      await expect(board).toHaveAttribute('data-layout', 'cards');
+      await expect(board.getByRole('region', { name: 'Ready accounts', exact: true })).toBeVisible();
+      await expect(board.getByRole('region', { name: 'Paused accounts', exact: true })).toBeVisible();
+      const densityControl = board.getByRole('radiogroup', { name: 'Density', exact: true });
+      await expect(board).toHaveAttribute('data-density', 'tidy');
+      await densityControl.getByText('Comfy', { exact: true }).click();
+      await expect(board).toHaveAttribute('data-density', 'comfy');
+      await page.reload();
+      await expect(board).toHaveAttribute('data-density', 'comfy', { timeout: 60000 });
+      await board.getByRole('radiogroup', { name: 'Density', exact: true }).getByText('Tidy', { exact: true }).click();
+      await expect(board).toHaveAttribute('data-density', 'tidy');
+      await capture('board-everyday-cards-1440');
+    });
+    await check('The three views keep the activity table, reset horizon and model support reachable', async () => {
+      const views = page.getByRole('radiogroup', { name: 'Capacity view', exact: true });
+      await views.getByText('Activity & analysis', { exact: true }).click();
+      await expect(page.getByRole('textbox', { name: 'Search configured accounts', exact: true })).toBeVisible();
+      await expect(page.getByRole('table', { name: 'Configured account capacity', exact: true })).toBeVisible({ timeout: 60000 });
+      await expect(page.getByText('Reset horizon', { exact: true })).toBeVisible();
+      await capture('board-analysis-1440');
+      await views.getByText('Model support', { exact: true }).click();
+      await expect(page.getByRole('combobox', { name: 'Model to inspect', exact: true })).toBeVisible();
+      await page.getByRole('combobox', { name: 'Model to inspect', exact: true }).fill('gpt-5.2');
+      await page.getByRole('option', { name: 'OpenAI / gpt-5.2', exact: true }).click();
+      const archive = 'Synthetic archive workload';
+      await expect(page.getByRole('table')).toContainText(archive, { timeout: 30000 });
+      await capture('board-model-support-1440');
+      // A chosen account lands back on the board, expanded.
+      await page.getByRole('table').getByRole('button', { name: archive, exact: true }).click();
+      await expect(board).toBeVisible();
+      await expect(board.locator('[data-expanded]')).toHaveCount(1);
+      await expect(board.getByRole('region', { name: 'Selection details', exact: true })).toBeVisible();
+      await board.getByRole('button', { name: `Collapse ${archive}`, exact: true }).click();
+    });
     await check('Everyday keeps pause, rename and expand direct and hides priority, drain and thresholds', async () => {
       await expect(row.getByRole('button', { name: `Pause ${NAME}`, exact: true })).toBeVisible();
       await expect(row.getByRole('button', { name: `Rename ${NAME}`, exact: true })).toBeAttached();
@@ -180,6 +215,7 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
     });
     await level('Advanced');
     await check('Advanced exposes priority, drain, thresholds and comparison beside each account', async () => {
+      await expect(board).toHaveAttribute('data-layout', 'rows');
       await expect(row.getByLabel(`Priority for ${NAME}`, { exact: true })).toBeVisible();
       await expect(row.getByRole('button', { name: `Drain ${NAME}`, exact: true })).toBeVisible();
       await expect(row.getByLabel(`Auto-pause threshold for ${windowKey}`, { exact: true })).toBeVisible();

@@ -15,7 +15,7 @@
 .disclosure { font-size: 13px; margin: 10px 0; border-top: 1px solid var(--rule); padding-top: 9px; }
 .disclosure summary { color: var(--ink); cursor: pointer; padding: 4px 0; font-weight: 500; }
 .disclosure p { color: var(--slate); line-height: 1.5; max-width: 100ch; }
-.disclosure summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.disclosure summary:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .fingerprints { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
 .fingerprints h4, .event h4, .costs h4 { font-size: 13px; margin: 4px 0 8px; font-weight: 600; }
 .fingerprints dl, .identities { margin: 0; }

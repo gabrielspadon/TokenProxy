@@ -148,7 +148,7 @@
 .table button:focus-visible,
 .fixtureRow button:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 @media (max-width: 1100px) {
   .grid {

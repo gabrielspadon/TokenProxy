@@ -1,5 +1,6 @@
 .activity { margin: 4px 24px 0; padding: 8px 12px; background: var(--raised); border: 1px solid var(--rule); border-radius: 10px; min-width: 0; }
-.header { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.header { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.selectors { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .header h2 { margin: 0; font-size: var(--type-ui); font-weight: 600; }
 .summary { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 4px 0 6px; }
 .summary > div { display: flex; gap: 10px; align-items: baseline; }
@@ -10,10 +11,6 @@
 .legend i { width: 12px; height: 3px; border-radius: 1px; }
 .foot { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: var(--type-dense); line-height: 1.4; color: var(--slate); border-top: 1px solid var(--rule); padding-top: 5px; margin-top: 2px; }
 .state { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; min-height: 60px; color: var(--slate); font-size: var(--type-ui); }
-.data { padding-block: 8px; }
-.tableScroll { overflow-x: auto; margin-bottom: 8px; }
-.tableScroll table { font-size: var(--type-dense); font-variant-numeric: tabular-nums; }
-.tableScroll td:not(:first-child) { text-align: right; }
 @media (max-width: 760px) {
   .activity { margin: 4px 12px 0; padding: 8px; }
   .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

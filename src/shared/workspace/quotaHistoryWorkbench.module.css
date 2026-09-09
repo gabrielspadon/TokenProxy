@@ -121,7 +121,7 @@
 }
 .table button:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 .table tr[data-selected] {
   background: var(--paper);

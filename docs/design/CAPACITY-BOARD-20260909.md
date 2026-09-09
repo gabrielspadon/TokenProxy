@@ -44,6 +44,30 @@ The inline Add account row covers an API key or a provider sign-in. Providers
 that need endpoint, region or workspace fields keep their full form in
 Connections, and the row says so.
 
+## Two levels, one density switch
+
+Everyday is compact progress cards grouped by state (ready, low quota,
+paused, attention), most headroom first inside a group. A card carries the
+mark, an editable name, the state word, one meter per quota window with its
+reset, the attempt count, and pause or resume; expanding it opens the same
+evidence tabs inline. Advanced is the dense row board with priority, drain,
+auto-pause thresholds and comparison. Both levels carry a comfy or tidy
+density switch, stored per browser, defaulting to tidy.
+
+The three upper-right views are back: Accounts (the board or the cards),
+Activity & analysis (the sortable account table with recorded activity, the
+uncached, cached-read and cache-write split, every retained window, and the
+seven-day reset horizon) and Model support (every account's persisted
+admission verdict and support evidence for one model). Choosing an account
+in either read view lands on the board with that account expanded.
+
+The Requests & cache block keeps its four totals and offers three charts:
+Requests (request and attempt counts over cache token tracks), Tokens (input,
+output, cache read and cache write over time) and Calendar (a per-day heatmap
+of one of those four token metrics, GitHub style, a bucket counted on the UTC
+day it starts). Balloons render on the document body so the small chart box
+cannot crop them. Selecting an interval or a day narrows the shared scope.
+
 ## Global controls
 
 Buttons, inputs, selects, segmented controls, tables and the header follow one

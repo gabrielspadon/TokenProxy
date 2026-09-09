@@ -8,6 +8,7 @@ import { BarChart, LineChart, ScatterChart, HeatmapChart } from 'echarts/charts'
 import {
   AriaComponent,
   BrushComponent,
+  CalendarComponent,
   DataZoomComponent,
   DatasetComponent,
   GridComponent,
@@ -27,6 +28,7 @@ echarts.use([
   HeatmapChart,
   AriaComponent,
   BrushComponent,
+  CalendarComponent,
   DataZoomComponent,
   DatasetComponent,
   GridComponent,

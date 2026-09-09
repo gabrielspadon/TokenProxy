@@ -43,7 +43,7 @@
    focused and blurred computed styles were byte-identical before this rule. */
 .filter input:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 .grid {
   display: grid;
@@ -102,7 +102,7 @@
 }
 .rowButton:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 .rowButton code {
   font-family: var(--mono);
@@ -217,7 +217,7 @@
 }
 .limits summary:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 .limits ul {
   padding-inline-start: 18px;

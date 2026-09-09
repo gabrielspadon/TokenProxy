@@ -297,7 +297,7 @@
   .shaping-page .mantine-Input-input { min-height: 36px; font-size: 14px; }
   .shaping-plan-overrides,.shaping-runtime-settings { padding: 24px; color: var(--ink); background: var(--raised); }
   .shaping-plan-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; max-height: 560px; overflow: auto; margin-block: 24px; padding: 4px; }
-  .shaping-plan-fields:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+  .shaping-plan-fields:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
   .shaping-plan-review { border-block: 1px solid var(--rule); padding-block: 16px; margin-block: 16px; }
   .shaping-plan-review dl > div { display: grid; grid-template-columns: minmax(0,1fr) minmax(100px,1fr); gap: 16px; padding-block: 8px; }
   .shaping-plan-review dd { margin: 0; }

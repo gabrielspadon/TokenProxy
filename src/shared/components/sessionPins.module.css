@@ -66,7 +66,7 @@
 }
 .table button:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 .table tr[data-selected] {
   background: var(--signal-wash);
@@ -127,7 +127,7 @@
 .field select:focus-visible,
 .field input:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 1px;
+  outline-offset: -2px;
 }
 .preview {
   margin-top: 14px;
@@ -213,7 +213,7 @@
 }
 .timelineList button:focus-visible {
   outline: 2px solid var(--signal);
-  outline-offset: 3px;
+  outline-offset: -2px;
 }
 .timelineKind {
   font-weight: 600;

@@ -10,3 +10,7 @@
     padding: 8px 12px 0;
   }
 }
+.views { max-width: 100%; }
+@media (max-width: 760px) {
+  .views { width: 100%; }
+}
