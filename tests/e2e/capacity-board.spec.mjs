@@ -130,13 +130,32 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
     await check('The three views keep the activity table, reset horizon and model support reachable', async () => {
       const views = page.getByRole('radiogroup', { name: 'Capacity view', exact: true });
       await views.getByText('Activity & analysis', { exact: true }).click();
+      const analysis = page.getByRole('region', { name: 'Activity and analysis', exact: true });
       await expect(page.getByRole('textbox', { name: 'Search configured accounts', exact: true })).toBeVisible();
+      // Everyday is the board's grouped cards; Advanced keeps the sortable table.
+      await expect(analysis).toHaveAttribute('data-layout', 'cards', { timeout: 60000 });
+      await expect(analysis.getByRole('region', { name: 'Ready accounts', exact: true })).toBeVisible();
+      expect(await analysis.getByRole('region', { name: /accounts$/ }).count()).toBeGreaterThan(0);
+      await expect(analysis.getByRole('table', { name: 'Configured account capacity', exact: true })).toHaveCount(0);
+      await expect(page.getByText('Reset horizon', { exact: true })).toBeVisible();
+      await capture('board-analysis-everyday-1440');
+      await level('Advanced');
+      await expect(analysis).toHaveAttribute('data-layout', 'table', { timeout: 60000 });
       await expect(page.getByRole('table', { name: 'Configured account capacity', exact: true })).toBeVisible({ timeout: 60000 });
       await expect(page.getByText('Reset horizon', { exact: true })).toBeVisible();
       await capture('board-analysis-1440');
+      await level('Everyday');
+      await expect(analysis).toHaveAttribute('data-layout', 'cards', { timeout: 60000 });
       await views.getByText('Model support', { exact: true }).click();
       await expect(page.getByRole('combobox', { name: 'Model to inspect', exact: true })).toBeVisible();
+      // Only providers with an account are offered, under their own names.
+      await page.getByRole('combobox', { name: 'Model to inspect', exact: true }).fill('claude');
+      const offered = await page.getByRole('option').allInnerTexts();
+      expect(offered.length).toBeGreaterThan(0);
+      expect(offered.every(label => label.startsWith('Claude / '))).toBe(true);
       await page.getByRole('combobox', { name: 'Model to inspect', exact: true }).fill('gpt-5.2');
+      const gpt = await page.getByRole('option').allInnerTexts();
+      expect(gpt.every(label => /^(OpenAI|Codex) \/ /.test(label))).toBe(true);
       await page.getByRole('option', { name: 'OpenAI / gpt-5.2', exact: true }).click();
       const archive = 'Synthetic archive workload';
       await expect(page.getByRole('table')).toContainText(archive, { timeout: 30000 });
@@ -156,6 +175,25 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await expect(row.getByRole('button', { name: `Drain ${NAME}`, exact: true })).toHaveCount(0);
       await expect(row.getByLabel(`Auto-pause threshold for ${windowKey}`, { exact: true })).toHaveCount(0);
       await expect(board.getByRole('checkbox', { name: `Compare ${NAME}`, exact: true })).toHaveCount(0);
+    });
+    await check('A window hides from its line, returns from its chip, and the choice survives a reload', async () => {
+      const meters = () => row.getByRole('meter');
+      const before = await meters().count();
+      expect(before).toBeGreaterThan(0);
+      await expect(board.locator('[data-level]').first()).toBeAttached();
+      const hide = row.getByRole('button', { name: /^Hide / }).first();
+      const label = (await hide.getAttribute('aria-label')).replace(/^Hide /, '');
+      await hide.click();
+      await expect(meters()).toHaveCount(before - 1);
+      await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toBeVisible();
+      await capture('board-everyday-hidden-window-1440');
+      await page.reload();
+      await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toBeVisible({ timeout: 60000 });
+      await expect(meters()).toHaveCount(before - 1);
+      await row.getByRole('button', { name: `Show ${label}`, exact: true }).click();
+      await expect(meters()).toHaveCount(before);
+      await expect(row.getByRole('button', { name: `Show ${label}`, exact: true })).toHaveCount(0);
+      expect(await page.evaluate(() => JSON.parse(localStorage.getItem('tokenproxy.capacity-hidden-windows') || '[]'))).toEqual([]);
     });
     await check('Search and the paused chip change the actual row collection', async () => {
       const search = board.getByRole('searchbox', { name: 'Search accounts', exact: true });
@@ -339,7 +377,11 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await board.getByRole('button', { name: 'Add account', exact: true }).click();
       const form = board.getByRole('form', { name: 'Add account', exact: true });
       await form.getByRole('combobox', { name: 'Provider', exact: true }).click();
-      await page.getByRole('option', { name: 'OpenAI', exact: true }).click();
+      // Popular providers lead the list and appear again in the full list.
+      await expect(page.getByText('Popular', { exact: true })).toBeVisible();
+      await expect(page.getByText('All providers', { exact: true })).toBeVisible();
+      await expect(page.getByRole('option', { name: 'Claude Code', exact: true })).toHaveCount(2);
+      await page.getByRole('option', { name: 'OpenAI', exact: true }).first().click();
       await expect(form.getByLabel('API key', { exact: true })).toBeVisible();
       await expect(form.getByRole('button', { name: 'Add', exact: true })).toBeDisabled();
       await expect(page.getByRole('dialog')).toHaveCount(0);
