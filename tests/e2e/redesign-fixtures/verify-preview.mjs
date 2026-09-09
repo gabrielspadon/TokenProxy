@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile, realpath } from 'node:fs/promises';
+import { chmod, readFile, writeFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // Read-only application verification. Authentication changes only its session.
@@ -44,5 +44,9 @@ for (const path of paths) {
 assert.equal(accounts.length, seed.accounts);
 const live = await identity();
 const receipt = { version: 'redesign-preview-read-v1', runId: run.runId, mode: run.mode, url: run.url, dataDir: run.dataDir || join(root, 'runtime'), fixtureVersion: run.fixtureVersion, clock: run.clock, sourceManifestHash: run.sourceManifestHash, sourceAttribution: run.sourceAttribution, recordedAt: new Date().toISOString(), accountCount: accounts.length, enabledCount: accounts.filter(account => account.isActive).length, providers: [...new Set(accounts.map(account => account.provider))], results, guard: live.guard, dataSource: 'actual authenticated application handlers reading disposable retained SQLite; no presentation interception', providerHealth: 'Qualification and entitlement remain unknown unless explicitly reported as synthetic evidence.', browserInspected: false };
+// writeFile's `mode` applies only when it CREATES the file, so a re-run over an existing
+// receipt keeps whatever mode that file already had. chmod after the write is what actually
+// holds 0o600 across runs.
 await writeFile(join(root, 'preview-verification.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+await chmod(join(root, 'preview-verification.json'), 0o600);
 console.log(JSON.stringify(receipt, null, 2));
