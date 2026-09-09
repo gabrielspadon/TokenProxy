@@ -41,7 +41,9 @@ async function clickResponse(name, suffix, status = 200) {
 }
 async function chooseVersion(id) {
   await page.getByRole('button', { name: 'Refresh configuration', exact: true }).click();
-  await page.getByLabel('Retained version to compare', { exact: true }).click();
+  // getByLabel also matches the Mantine listbox that is labelled by the same
+  // control, which is a strict-mode violation; the combobox role is unique.
+  await page.getByRole('combobox', { name: 'Retained version to compare', exact: true }).click();
   await page.getByRole('option', { name: new RegExp(`^v${id} ·`) }).click();
   await page
     .getByRole('checkbox', { name: `Restore /accounts/${account}/maxConcurrent`, exact: true })
