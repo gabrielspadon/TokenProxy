@@ -128,7 +128,7 @@ export default function CapacityPage() {
             }}
           />
         ) : view === 'analysis' ? (
-          <CapacityAnalysis rows={rows} anchor={anchor} now={now} onSelect={select} />
+          <CapacityAnalysis rows={rows} anchor={anchor} now={now} onSelect={select} advanced={advanced} density={density} />
         ) : (
           <CapacityModelSupport accounts={accounts} onSelect={select} />
         )}
