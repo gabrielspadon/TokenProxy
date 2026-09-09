@@ -44,6 +44,8 @@ const devin = {
   flowType: "authorization_code_pkce",
   fixedPort: DEVIN_CONFIG.callbackPort,
   callbackPath: DEVIN_CONFIG.callbackPath,
+  // startDevinProxy binds this address and reports it back as its callbackUrl.
+  loopbackRedirectUri: `http://127.0.0.1:${DEVIN_CONFIG.callbackPort}${DEVIN_CONFIG.callbackPath}`,
   prepareConfig: async (config) => config,
   buildAuthUrl: (config, redirectUri, state, codeChallenge) => buildDevinAuthUrl(config, redirectUri, state, codeChallenge),
   exchangeToken: async (config, code, redirectUri, codeVerifier, state) => {

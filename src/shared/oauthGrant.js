@@ -8,6 +8,9 @@ import { call } from "@/shared/api";
 
 const PROXY_QUERY = ["codex", "xai"]; // start-proxy?app_port=&state=&code_verifier=&redirect_uri=
 const PROXY_SESSION = ["trae", "windsurf", "zed", "devin"]; // start-proxy then register-session
+// Flows that never navigate the browser, so they open no sign-in window.
+const WINDOWLESS_FLOWS = new Set(["device_code", "browser_token", "import_token"]);
+const POPUP_BLOCKED = "The browser blocked the sign-in window. Allow pop-ups for this page, then try again.";
 
 export const requiresCredentialDocument = provider => PROXY_QUERY.includes(provider) || PROXY_SESSION.includes(provider);
 
@@ -22,15 +25,39 @@ export function credentialDocument(text, force = false) {
   return { ...body, ...(force ? { force: true } : {}) };
 }
 
+// Every local callback proxy closes itself after five minutes (OAUTH_TIMEOUT in
+// src/lib/oauth/constants/oauth.js), so a wait that outlives that deadline can
+// never succeed. Both waits below end on it, because a grant with no end state
+// leaves the row spinning with nothing to report.
+const GRANT_DEADLINE_MS = 300_000;
+const GRANT_TIMED_OUT = "The sign-in did not finish in time. Close the sign-in window and start again.";
+
+// The sign-in window is opened inside the caller's own event handler, BEFORE the
+// first await. A window.open issued after an await has spent its transient user
+// activation, which Firefox and Safari refuse outright, and a refused open used to
+// leave the row waiting on a window that never existed. `noopener` is deliberately
+// absent: src/app/callback/page.js relays the provider's answer through
+// window.opener.postMessage, which is null under noopener.
+function openSignInWindow() {
+  try { return window.open("about:blank", "tokenproxy_oauth", "width=600,height=700"); } catch { return null; }
+}
+
+function showAuthUrl(win, url) {
+  if (!win || win.closed) return false;
+  try { win.location.href = url; return true; } catch { return false; }
+}
+
 // Poll /poll-status until done or error. The gateway clears the session on
 // either, so a second read after "done" would say "unknown"; stop at the first.
 async function pollStatus(provider, state, signal) {
+  const deadline = Date.now() + GRANT_DEADLINE_MS;
   for (;;) {
     if (signal?.aborted) return { status: "error", error: "Cancelled." };
     await new Promise((r) => setTimeout(r, 2000));
     const r = await call(`/api/oauth/${provider}/poll-status?state=${encodeURIComponent(state)}`);
     if (!r.ok) return { status: "error", error: r.body?.error || `HTTP ${r.status}` };
     if (r.body.status === "done" || r.body.status === "error") return r.body;
+    if (Date.now() >= deadline) return { status: "error", error: GRANT_TIMED_OUT };
   }
 }
 
@@ -57,7 +84,9 @@ function waitForCallback(expectedState, signal) {
       } catch { /* not ours */ }
     };
     const onAbort = () => { cleanup(); resolve(null); };
+    const expiry = setTimeout(() => { cleanup(); resolve({ error: GRANT_TIMED_OUT }); }, GRANT_DEADLINE_MS);
     function cleanup() {
+      clearTimeout(expiry);
       window.removeEventListener("message", onMessage);
       window.removeEventListener("storage", onStorage);
       signal?.removeEventListener("abort", onAbort);
@@ -76,6 +105,11 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
   if (reauth?.reauthConnectionId && requiresCredentialDocument(provider)) return { ok: false, status: 409, body: { error: 'Use a credential document to replace this account. The local callback flow creates a new account.' } };
   const say = report || (() => {});
   const origin = window.location.origin;
+  // Opened now, while the caller's click is still the running task. Flows that
+  // never navigate the browser (device code, pasted token) get no window.
+  const win = WINDOWLESS_FLOWS.has(flowType) ? null : openSignInWindow();
+  if (!win && !WINDOWLESS_FLOWS.has(flowType)) return { ok: false, status: 0, body: { error: POPUP_BLOCKED } };
+  const stop = (result) => { try { win?.close(); } catch { /* already gone */ } return result; };
 
   if (flowType === "device_code") {
     const query = new URLSearchParams();
@@ -105,47 +139,53 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
   const authorizeQuery = new URLSearchParams({ redirect_uri: redirectUri });
   for (const field of ['baseUrl', 'clientId']) if (meta[field]) authorizeQuery.set(field, meta[field]);
   const auth = await call(`/api/oauth/${provider}/authorize?${authorizeQuery}`);
-  if (!auth.ok) return { ok: false, status: auth.status, body: auth.body };
+  if (!auth.ok) return stop({ ok: false, status: auth.status, body: auth.body });
   const a = auth.body;
+  // a.redirectUri is authoritative: a fixed-port provider overrides the one asked
+  // for above with the loopback URI its own proxy listens on.
 
   if (PROXY_QUERY.includes(provider) && a.fixedPort) {
-    const q = new URLSearchParams({ app_port: String(a.fixedPort), state: a.state, code_verifier: a.codeVerifier, redirect_uri: a.redirectUri });
+    // app_port is THIS dashboard's port, not the proxy's. The proxy uses it only for
+    // its channel fallback, where it 302s the callback back to /callback here; naming
+    // the proxy's own port there sends the redirect back into the socket that issued it.
+    const appPort = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+    const q = new URLSearchParams({ app_port: appPort, state: a.state, code_verifier: a.codeVerifier, redirect_uri: a.redirectUri });
     const sp = await call(`/api/oauth/${provider}/start-proxy?${q}`);
-    if (!sp.ok || !sp.body.success) return { ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body };
-    window.open(a.authUrl, "_blank", "noopener");
+    if (!sp.ok || !sp.body.success) return stop({ ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body });
+    if (!showAuthUrl(win, a.authUrl)) return stop({ ok: false, status: 0, body: { error: POPUP_BLOCKED } });
     say("Finish the sign-in in the window that opened.");
     const done = await pollStatus(provider, a.state, signal);
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
-    if (done.status !== "done") return { ok: false, status: 0, body: { error: done.error || "The provider refused the sign-in." } };
+    if (done.status !== "done") return stop({ ok: false, status: 0, body: { error: done.error || "The provider refused the sign-in." } });
     return { ok: true, connection: { id: done.connectionId, provider, email: done.email } };
   }
 
   if (PROXY_SESSION.includes(provider)) {
     const sp = await call(`/api/oauth/${provider}/start-proxy`);
-    if (!sp.ok || !sp.body.success) return { ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body };
+    if (!sp.ok || !sp.body.success) return stop({ ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body });
     const reg = await call(`/api/oauth/${provider}/register-session?state=${encodeURIComponent(a.state)}`, {
       method: "POST", body: { codeVerifier: a.codeVerifier, redirectUri: sp.body.callbackUrl },
     });
-    if (!reg.ok || !reg.body.success) return { ok: false, status: reg.status, body: { error: "The sign-in session could not be registered." } };
-    window.open(a.authUrl, "_blank", "noopener");
+    if (!reg.ok || !reg.body.success) return stop({ ok: false, status: reg.status, body: { error: "The sign-in session could not be registered." } });
+    if (!showAuthUrl(win, a.authUrl)) return stop({ ok: false, status: 0, body: { error: POPUP_BLOCKED } });
     say("Finish the sign-in in the window that opened.");
     const done = await pollStatus(provider, a.state, signal);
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
-    if (done.status !== "done") return { ok: false, status: 0, body: { error: done.error || "The provider refused the sign-in." } };
+    if (done.status !== "done") return stop({ ok: false, status: 0, body: { error: done.error || "The provider refused the sign-in." } });
     return { ok: true, connection: { id: done.connectionId, provider, email: done.email } };
   }
 
   // Plain browser redirect through /callback (authorization_code[_pkce]).
-  window.open(a.authUrl, "_blank", "noopener");
+  if (!showAuthUrl(win, a.authUrl)) return stop({ ok: false, status: 0, body: { error: POPUP_BLOCKED } });
   say("Finish the sign-in in the window that opened.");
   const data = await waitForCallback(a.state, signal);
-  if (!data) return { ok: false, status: 0, body: { error: "Cancelled." } };
-  if (data.error) return { ok: false, status: 0, body: { error: data.error } };
+  if (!data) return stop({ ok: false, status: 0, body: { error: "Cancelled." } });
+  if (data.error) return stop({ ok: false, status: 0, body: { error: data.error } });
   const ex = await call(`/api/oauth/${provider}/exchange`, {
     method: "POST",
     body: { code: data.code || data.token, redirectUri: a.redirectUri || redirectUri, codeVerifier: a.codeVerifier, state: data.state || a.state, ...(Object.keys(meta).length ? { meta } : {}), ...(reauth || {}) },
   });
-  if (!ex.ok || !ex.body?.success) return { ok: false, status: ex.status, body: ex.body };
+  if (!ex.ok || !ex.body?.success) return stop({ ok: false, status: ex.status, body: ex.body });
   return { ok: true, connection: ex.body.connection };
 }
 
