@@ -107,6 +107,7 @@ function collectInput(body = {}) {
 export function estimateAnthropicInputTokens(body = {}) { return collectInput(body).estimate; }
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const STAGE_BYTES = 64 * 1024;
 let readers = 0;
 const response = (body, status = 200) => Response.json(body, { status, headers: CORS_HEADERS });
 
@@ -114,7 +115,11 @@ async function readBody(request) {
   if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) throw Object.assign(new Error('Body exceeds 4 MiB'), { status: 413 });
   const reader = request.body?.getReader();
   if (!reader) throw new Error('JSON body is required');
-  const chunks = []; let size = 0;
+  // Chunks are staged into fixed 64 KiB blocks. A client that trickles one
+  // byte per chunk would otherwise hold up to four million small Buffers for
+  // a body that is within the byte limit; staging bounds the object count at
+  // MAX_BODY_BYTES / STAGE_BYTES regardless of how the body arrives.
+  const blocks = []; let stage = null, staged = 0, size = 0;
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(10000)]);
   const abort = () => { void reader.cancel().catch(() => {}); };
   signal.addEventListener('abort', abort, { once: true });
@@ -126,9 +131,16 @@ async function readBody(request) {
       if (done) break;
       size += value.byteLength;
       if (size > MAX_BODY_BYTES) throw Object.assign(new Error('Body exceeds 4 MiB'), { status: 413 });
-      chunks.push(value);
+      for (let offset = 0; offset < value.byteLength;) {
+        if (!stage) { stage = Buffer.allocUnsafe(STAGE_BYTES); staged = 0; }
+        const copied = Math.min(STAGE_BYTES - staged, value.byteLength - offset);
+        stage.set(value.subarray(offset, offset + copied), staged);
+        staged += copied; offset += copied;
+        if (staged === STAGE_BYTES) { blocks.push(stage); stage = null; }
+      }
     }
-    return JSON.parse(Buffer.concat(chunks, size).toString('utf8'));
+    if (stage) blocks.push(stage.subarray(0, staged));
+    return JSON.parse(Buffer.concat(blocks, size).toString('utf8'));
   } finally { signal.removeEventListener('abort', abort); void reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
