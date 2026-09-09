@@ -62,8 +62,8 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it('attributes browser fixtures to immutable runtime receipts and registers explicit faults separately', async () => {
-    const handlers = [], scripts = [];
-    const page = { route: async (pattern, handler) => handlers.push({ pattern, handler }), routeWebSocket: async () => {}, addInitScript: async (script, argument) => scripts.push({ script, argument }) };
+    const handlers = [], scripts = [], listeners = [];
+    const page = { route: async (pattern, handler) => handlers.push({ pattern, handler }), on: (event, handler) => { listeners.push({ event, handler }); }, routeWebSocket: async () => {}, addInitScript: async (script, argument) => scripts.push({ script, argument }) };
     const runtimeReceipt = { url: 'http://127.0.0.1:61234', clock: CLOCK, fixtureVersion: 'redesign-workspace-v1' };
     const receipt = await installRedesignBrowser(page, { baseUrl: runtimeReceipt.url, runtimeReceipt, fault: 'version-conflict' });
     expect(receipt.fixtureVersion).toBe('redesign-workspace-v1');
@@ -73,6 +73,15 @@ describe('redesign fixture isolation and retained arithmetic', () => {
     await handlers.at(-1).handler({ request: () => ({ method: () => 'PATCH' }), fulfill: async value => { body = value; } });
     expect(body.status).toBe(409);
     expect(JSON.parse(body.body).code).toBe('draft_revision_conflict');
+    // A redirect TARGET never reaches the route handler, so this request listener is the only
+    // thing that records an off-origin hop. Same-origin and non-redirect requests stay silent.
+    const onRequest = listeners[0].handler;
+    const hop = url => ({ url: () => url, resourceType: () => 'document', redirectedFrom: () => ({ url: () => `${runtimeReceipt.url}/go` }) });
+    onRequest({ url: () => 'https://example.com/direct', resourceType: () => 'document', redirectedFrom: () => null });
+    onRequest(hop(`${runtimeReceipt.url}/local`));
+    expect(receipt.outboundFailures).toEqual([]);
+    onRequest(hop('https://example.com/leak'));
+    expect(receipt.outboundFailures).toEqual([{ origin: 'https://example.com', resourceType: 'document', viaRedirectFrom: `${runtimeReceipt.url}/go`, blocked: false }]);
     expect((await installRedesignBrowser(page, { baseUrl: runtimeReceipt.url })).fixtureVersion).toBeNull();
     await expect(installRedesignBrowser(page, { baseUrl: runtimeReceipt.url, runtimeReceipt: { ...runtimeReceipt, url: 'http://127.0.0.1:60000' } })).rejects.toThrow('another preview');
     expect(scripts[0].argument.clock).toBe(CLOCK);
@@ -127,14 +136,14 @@ describe('redesign fixture isolation and retained arithmetic', () => {
   });
 
   it('models lost activation response after a local handler and streaming interruption without dispatch', async () => {
-    const handlers = [], scripts = [];
-    const page = { route: async (pattern, handler) => handlers.push({ pattern, handler }), routeWebSocket: async () => {}, addInitScript: async (script, argument) => scripts.push({ script, argument }) };
+    const handlers = [], scripts = [], listeners = [];
+    const page = { route: async (pattern, handler) => handlers.push({ pattern, handler }), on: (event, handler) => { listeners.push({ event, handler }); }, routeWebSocket: async () => {}, addInitScript: async (script, argument) => scripts.push({ script, argument }), exposeFunction: async (name, fn) => { globalThis[name] = async (...args) => fn(...args); } };
     const receipt = await installRedesignBrowser(page, { baseUrl: 'http://127.0.0.1:61234', fault: 'interrupted-activation' });
     const events = [];
     await handlers.at(-1).handler({ request: () => ({ method: () => 'POST' }), fetch: async () => { events.push('local-handler'); return { status: () => 207 }; }, abort: async () => events.push('lost-response') });
     expect(events).toEqual(['local-handler', 'lost-response']);
     expect(receipt.faults[0].gatewayStatus).toBe(207);
-    await installRedesignBrowser(page, { baseUrl: 'http://127.0.0.1:61234', fault: 'stream-interruption' });
+    const streamReceipt = await installRedesignBrowser(page, { baseUrl: 'http://127.0.0.1:61234', fault: 'stream-interruption' });
     const oldFetch = globalThis.fetch, oldLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
     let nativeCalls = 0;
     globalThis.fetch = async () => { nativeCalls++; throw new Error('Native fetch must not be reached'); };
@@ -147,8 +156,15 @@ describe('redesign fixture isolation and retained arithmetic', () => {
       await expect(reader.read()).rejects.toThrow('Synthetic browser stream interruption');
       reader.releaseLock();
       expect(nativeCalls).toBe(0);
+      expect(streamReceipt.faults).toEqual([expect.objectContaining({ kind: 'stream-interruption' })]);
+      // A lowercase method must take the fault path too; only `new Request()` normalizes.
+      const lowercase = await globalThis.fetch('/v1/chat/completions', { method: 'post' });
+      expect(lowercase.headers.get('x-tokenproxy-preview-kind')).toBe('synthetic-browser-fault');
+      await lowercase.body.cancel();
+      expect(nativeCalls).toBe(0);
     } finally {
       globalThis.fetch = oldFetch;
+      delete globalThis.__redesignRecordFault;
       if (oldLocation) Object.defineProperty(globalThis, 'location', oldLocation); else delete globalThis.location;
     }
   });
