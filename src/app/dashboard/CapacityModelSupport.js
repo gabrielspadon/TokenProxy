@@ -4,6 +4,7 @@ import { Badge, Group, Loader, Select, Table, Text, UnstyledButton } from '@mant
 import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
+import { modelsForAccounts, providerIdOf } from '@/shared/workspace/scopeOptions';
 import shared from '@/shared/workspace/workspace.module.css';
 import styles from './capacityViews.module.css';
 
@@ -14,9 +15,9 @@ const EMPTY = [];
 export function CapacityModelSupport({ accounts, onSelect }) {
   const { scope, models, observeSnapshot } = useWorkspace();
   const [chosenKey, setChosenKey] = useState(null);
-  const choices = (models.data?.models || EMPTY).filter(
-    (item) => !scope.provider || item.provider === scope.provider
-  );
+  // Only models of providers that have an account; a model nobody can route
+  // to has no admission verdict worth reading.
+  const choices = modelsForAccounts(models.data?.models || EMPTY, accounts, scope.provider);
   const pairs = [
     ...new Map(
       choices.map((item) => [JSON.stringify([item.provider, item.model]), item])
@@ -29,7 +30,7 @@ export function CapacityModelSupport({ accounts, onSelect }) {
   const provider = chosen?.[1].provider;
   const modelOptions = pairs.map(([value, item]) => ({
     value,
-    label: `${providerIdentity(item.provider).name} / ${item.model}`,
+    label: `${providerIdentity(providerIdOf(item.provider)).name} / ${item.model}`,
   }));
   const query = new URLSearchParams({
     ...(provider ? { provider } : {}),

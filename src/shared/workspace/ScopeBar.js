@@ -7,6 +7,7 @@ import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
 import styles from './workspace.module.css';
 import { Investigations,SelectionEvidence } from './Investigations';
+import { modelsForAccounts } from './scopeOptions';
 
 const PERIODS = [
   { value: 'all', label: 'All retained history' },
@@ -33,9 +34,7 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
     label: providerIdentity(value).name,
   }));
   const modelOptions = unique(
-    (models.data?.models || [])
-      .filter((model) => !scope.provider || model.provider === scope.provider)
-      .map((model) => model.model)
+    modelsForAccounts(models.data?.models || [], accounts, scope.provider).map((model) => model.model)
   );
   const accountOptions = accounts
     .filter((account) => !scope.provider || account.provider === scope.provider)
