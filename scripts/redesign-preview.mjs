@@ -154,7 +154,10 @@ async function start(root, dist, buildReceiptPath, mode = 'production', preferre
   const buildId = mode === 'dev' ? null : (await readFile(resolve(project, dist, 'BUILD_ID'), 'utf8')).trim();
   const buildReceipt = buildReceiptPath ? await json(resolve(buildReceiptPath)) : null;
   if (buildReceipt && (buildReceipt.buildExit !== 0 || !/^[a-f\d]{64}$/.test(buildReceipt.sourceManifest) || !/^[a-f\d]{40}$/.test(buildReceipt.base))) throw new Error('Build receipt must report successful build and source revision/hash');
-  if (buildReceipt && (buildReceipt.sourceStable === false || buildReceipt.buildId && buildReceipt.buildId !== buildId)) throw new Error('Build receipt source drift or BUILD_ID mismatch');
+  // `receipt.buildId && …` would let a receipt with the field absent take the permissive path,
+  // which is the wrong failure direction for the one check that ties a receipt to this build.
+  // build.mjs:74-76 always populates it for a successful build, so requiring it costs nothing.
+  if (buildReceipt && (buildReceipt.sourceStable === false || buildReceipt.buildId !== buildId)) throw new Error('Build receipt source drift or BUILD_ID mismatch');
   if (buildReceipt) await save(join(root, 'build-receipt.json'), { ...buildReceipt, suppliedReceipt: resolve(buildReceiptPath), buildId });
   const port = await availablePort(preferredPort);
   const descriptor = openSync(join(root, 'server.log'), 'a', 0o600);
