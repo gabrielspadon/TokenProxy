@@ -5,7 +5,7 @@ const destination=resolve(process.argv[2]);
 const audit=String.raw`
 from pathlib import Path
 import json,re,hashlib,subprocess,os
-home=Path.home(); binary=home/'.local/share/claude/versions/2.1.263';data=binary.read_bytes();source=data.decode('utf8','ignore');settings=home/'.claude/settings.json';config=json.loads(settings.read_text())
+home=Path.home(); vdir=home/'.local/share/claude/versions'; binary=sorted([p for p in vdir.iterdir() if re.fullmatch(r'\d+\.\d+\.\d+',p.name)],key=lambda p:[int(x) for x in p.name.split('.')])[-1];data=binary.read_bytes();source=data.decode('utf8','ignore');settings=home/'.claude/settings.json';config=json.loads(settings.read_text())
 fragments={}
 patterns={'threshold':r'function \w+\(\w+,\w+\)\{let \w+=\w+-13000.{0,350}?return \w+\}', 'effective':r'function \w+\(\w+,\w+\)\{let \w+=Math.min\(\w+\(\w+\),\w+\),.{0,180}?return \w+-\w+\}'}
 for key,pattern in patterns.items():
@@ -30,8 +30,10 @@ if Path('/proc').exists():
   except (PermissionError,FileNotFoundError,ProcessLookupError):continue
 print(json.dumps({'version':subprocess.check_output([str(binary),'--version'],text=True).strip(),'binary':str(binary),'sha256':hashlib.sha256(data).hexdigest(),'settingsPath':str(settings),'selectedSettings':{'model':config.get('model'),'autoCompactWindow':config.get('autoCompactWindow'),'env':{k:v for k,v in config.get('env',{}).items() if k in ['CLAUDE_AUTOCOMPACT_PCT_OVERRIDE','CLAUDE_CODE_AUTO_COMPACT_WINDOW','CLAUDE_CODE_MAX_OUTPUT_TOKENS','CLAUDE_CODE_DISABLE_1M_CONTEXT']}},'sourceFragments':fragments,'fragmentHashes':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in fragments.items()},'registry':str(registry),'registryHash':hashlib.sha256(registry.read_bytes()).hexdigest(),'lanes':lanes,'launcher':str(launcher),'launcherHash':hashlib.sha256(launcher.read_bytes()).hexdigest(),'launcherModelSelection':text[start:end],'activeProcesses':processes},indent=2))
 `;
+const local=process.platform==='darwin'?'mac':'rtx';
+const peers={mac:process.env.TOKENPROXY_MAC_SSH||'gabrielspadon@100.64.0.90',rtx:process.env.TOKENPROXY_RTX_SSH||'rtx'};
 for(const host of ['mac','rtx']){
- const output=host==='mac'?execFileSync('python3',['-'],{input:audit,encoding:'utf8',maxBuffer:4*1024*1024}):execFileSync('ssh',['-o','BatchMode=yes','-o','ConnectTimeout=10','rtx','python3','-'],{input:audit,encoding:'utf8',maxBuffer:4*1024*1024,timeout:15000});
+ const output=host===local?execFileSync('python3',['-'],{input:audit,encoding:'utf8',maxBuffer:4*1024*1024}):execFileSync('ssh',['-o','BatchMode=yes','-o','ConnectTimeout=10',peers[host],'python3','-'],{input:audit,encoding:'utf8',maxBuffer:4*1024*1024,timeout:30000});
  const receipt=JSON.parse(output);writeFileSync(join(destination,`native-${host}.json`),JSON.stringify({capturedAt:new Date().toISOString(),host,...receipt},null,2));
 }
 console.log('PASS native Mac/RTX binary, settings, exact model launcher and source receipts; read-only, credentials excluded');
