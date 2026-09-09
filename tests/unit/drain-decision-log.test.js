@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getProviderConnectionById: vi.fn(),
   readDrainDoc: vi.fn(),
   writeDrainDoc: vi.fn(),
+  swapDrainDoc: vi.fn(),
   requireAdmin: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ vi.mock('@/lib/db/repos/connectionsRepo.js', () => ({
 vi.mock('@/lib/admin/state.js', () => ({
   readDrainDoc: mocks.readDrainDoc,
   writeDrainDoc: mocks.writeDrainDoc,
+  swapDrainDoc: mocks.swapDrainDoc,
   toDrainState: (connectionId, doc) => ({ connectionId, ...doc }),
   versionOf: (doc) => doc?.version ?? 0,
 }));
@@ -50,6 +52,7 @@ beforeEach(() => {
   mocks.getProviderConnectionById.mockResolvedValue({ id: 'conn-abc' });
   mocks.readDrainDoc.mockResolvedValue(null);
   mocks.writeDrainDoc.mockResolvedValue(undefined);
+  mocks.swapDrainDoc.mockImplementation(async (_id, _expected, next) => ({ written: true, current: next }));
 });
 
 afterEach(() => {

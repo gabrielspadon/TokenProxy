@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { makeKv } from "@/lib/db/helpers/kvStore.js";
+import { getAdapter } from "@/lib/db/driver.js";
+import { parseJson, stringifyJson } from "@/lib/db/helpers/jsonCol.js";
 import { getAppVersion } from "@/lib/db/version.js";
 
 /**
@@ -54,6 +56,22 @@ export async function readAllDrainDocs() {
 
 export async function writeDrainDoc(connectionId, doc) {
   await drainKv.set(connectionId, doc);
+}
+
+// Compare-and-set for the two drain verbs. The precondition read and the write
+// used to be separate awaits, so an automated remediation applying its own
+// drain in between was silently overwritten. Re-reading and writing inside one
+// synchronous SQLite transaction closes that window: the caller either writes
+// against exactly the document it read, or gets the current one back.
+export async function swapDrainDoc(connectionId, expected, next) {
+  const db = await getAdapter();
+  return db.transaction(() => {
+    const row = db.get("SELECT value FROM kv WHERE scope = 'admin.drain' AND key = ?", [connectionId]);
+    const current = row ? parseJson(row.value, null) : null;
+    if (versionOf(current) !== versionOf(expected)) return { written: false, current };
+    db.run("INSERT INTO kv(scope, key, value) VALUES('admin.drain', ?, ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value", [connectionId, stringifyJson(next)]);
+    return { written: true, current: next };
+  });
 }
 
 /**
