@@ -1,12 +1,24 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CLOCK, VERSION, BROWSER_FAULTS } from './catalog.mjs';
+import { VERSION, BROWSER_FAULTS } from './catalog.mjs';
 import { installOperatorFixture, NOW as OPERATOR_CLOCK } from '../operator-fixture.mjs';
 
-// Call before the first navigation. The caller creates a context with
-// serviceWorkers:'block', and records/asserts the returned outboundFailures.
+// Call before the first navigation, once per context. The outbound guards install on
+// page.context(), not on the page: a page route is page-scoped, so a popup opened by
+// window.open (src/shared/oauthGrant.js:115,130,139 does exactly that with a live provider
+// OAuth URL) is a fresh Page with no routes at all, and the guard's central claim silently
+// fails on the one surface whose purpose is contacting a third party. Measured on playwright
+// 1.62.1: with the catch-all on the page a popup to example.com produced zero entries, and
+// with it on the context it produced one. Context scope also covers service-worker fetches,
+// which is why nothing here depends on the caller passing serviceWorkers:'block'. Per-fault
+// routes below stay page-scoped, which is safe because a page route takes precedence over a
+// context route for the same URL (measured, same run). What context scope still does NOT
+// cover is context.request, the Node-side HTTP client used by authenticateRedesign; it is not
+// routed at any scope and reaches the network. That is deliberate, since that client is what
+// the harness itself logs in with, and its only in-tree use is loopback.
 export async function installRedesignBrowser(page, { baseUrl, operator = false, runtimeReceipt = null, fault = null }) {
   const origin = new URL(baseUrl).origin;
+  const context = page.context();
   if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) throw new Error('A launcher loopback URL is required');
   if (runtimeReceipt && new URL(runtimeReceipt.url).origin !== origin) throw new Error('Runtime receipt belongs to another preview');
   if (fault && !BROWSER_FAULTS[fault]) throw new Error('Unknown browser fault scenario');
@@ -21,7 +33,7 @@ export async function installRedesignBrowser(page, { baseUrl, operator = false, 
   // reported by this preview rather than by the runner killing the whole child. The
   // action timeout is left alone: callers set their own before calling this, and
   // overriding it here would silently widen every subsequent locator wait.
-  if (runtimeReceipt?.mode === 'dev') page.setDefaultNavigationTimeout(120000);
+  if (runtimeReceipt?.mode === 'dev') context.setDefaultNavigationTimeout(120000);
   const outboundFailures = [];
   // A route handler is not asked about the TARGET of a redirect: Chromium follows the hop
   // itself, so a same-origin URL answering 302 with an off-origin Location reaches that
@@ -33,23 +45,23 @@ export async function installRedesignBrowser(page, { baseUrl, operator = false, 
   // pre-flight probe on every GET, which re-issues each navigation and would double a dev
   // preview's cold-compile work (measured 8-30s per start). Add it if a fixture ever needs
   // the redirect BLOCKED rather than reported.
-  page.on('request', request => {
+  context.on('request', request => {
     const from = request.redirectedFrom();
     if (!from) return;
     const target = new URL(request.url());
     if (['data:', 'blob:'].includes(target.protocol) || target.origin === origin) return;
     outboundFailures.push({ origin: target.origin, resourceType: request.resourceType(), viaRedirectFrom: from.url(), blocked: false });
   });
-  await page.route('**/*', async route => {
+  await context.route('**/*', async route => {
     const target = new URL(route.request().url());
     if (['data:', 'blob:'].includes(target.protocol) || target.origin === origin) return route.continue();
     outboundFailures.push({ origin: target.origin, resourceType: route.request().resourceType(), blocked: true });
     return route.abort('blockedbyclient');
   });
-  await page.routeWebSocket('**/*', route => {
+  await context.routeWebSocket('**/*', route => {
     const target = new URL(route.url());
     if (target.origin === origin.replace(/^http/, 'ws')) { route.connectToServer(); return; }
-    outboundFailures.push({ origin: target.origin, resourceType: 'websocket' });
+    outboundFailures.push({ origin: target.origin, resourceType: 'websocket', blocked: true });
     route.close({ code: 1008, reason: 'Synthetic preview forbids outbound connections' });
   });
   const clock = operator ? OPERATOR_CLOCK : runtimeReceipt?.clock ?? null;
@@ -57,7 +69,7 @@ export async function installRedesignBrowser(page, { baseUrl, operator = false, 
   // in-page `new Date()` a NaN timestamp instead of throwing. Fail here, where the bad
   // value is still visible, rather than in a screenshot full of "Invalid Date".
   if (clock !== null && Number.isNaN(Date.parse(clock))) throw new Error(`Fixture clock is not a parseable date: ${clock}`);
-  if (operator || runtimeReceipt && runtimeReceipt.mode !== 'dev') await page.addInitScript(({ clock }) => {
+  if (operator || runtimeReceipt && runtimeReceipt.mode !== 'dev') await context.addInitScript(({ clock }) => {
     const NativeDate = Date;
     const timestamp = NativeDate.parse(clock);
     const started = performance.now();
