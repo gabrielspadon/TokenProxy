@@ -625,6 +625,7 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
     comparisonIds,
     setComparisonIds,
     health,
+    snapshot,
   } = useWorkspace();
   const resource = useResource('/api/providers');
   const [query, setQuery] = useState('');
@@ -653,8 +654,49 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
   const inventoryKnown = Array.isArray(resource.data?.connections);
   const empty = inventoryKnown && !accounts.length && !resource.loading && !resource.error;
 
-  function refresh() {
+  // Refresh re-reads quota from every account on the board (a forced live
+  // provider read per account, three at a time, honouring the probe gate),
+  // then reads the retained evidence back. Without force the usage route
+  // serves its recent cache, which is what left the meters unchanged. An
+  // isolated snapshot has no providers to ask, so it only re-reads what is
+  // retained.
+  const [reading, setReading] = useState(null);
+  async function readQuota(id) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await call(`/api/usage/${encodeURIComponent(id)}?force=1`);
+      if (response.status !== 429) return response;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    return { ok: false, status: 429, body: { error: 'the probe gate stayed busy' } };
+  }
+  async function refresh() {
     setSortAt(now);
+    if (reading) return;
+    const targets = snapshot?.isolated ? [] : scoped;
+    if (targets.length) {
+      setReading({ done: 0, total: targets.length });
+      const outcome = { read: 0, skipped: 0, failed: [] };
+      const queue = [...targets];
+      await Promise.all(
+        Array.from({ length: 3 }, async () => {
+          while (queue.length) {
+            const account = queue.shift();
+            const id = accountControlId(account);
+            const response = await readQuota(id);
+            if (response.ok && response.body?.message && !response.body?.error) outcome.skipped += 1;
+            else if (response.ok && !response.body?.error) outcome.read += 1;
+            else
+              outcome.failed.push(
+                `${account.displayName || account.name || id}: ${response.body?.error || `HTTP ${response.status}`}`
+              );
+            setReading((state) => state && { ...state, done: state.done + 1 });
+          }
+        })
+      );
+      setReading(null);
+      const summary = `${outcome.read} of ${targets.length} accounts re-read${outcome.skipped ? `, ${outcome.skipped} without a quota source` : ''}${outcome.failed.length ? `. ${outcome.failed.length} failed: ${outcome.failed.slice(0, 3).join(' · ')}${outcome.failed.length > 3 ? ' · …' : ''}` : '.'}`;
+      toast(outcome.failed.length ? 'orange' : 'teal', summary, 'Quota re-read');
+    }
     resource.refresh();
     onChanged?.();
   }
@@ -867,8 +909,24 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
         >
           Add account
         </Button>
-        <Tooltip label="Refresh accounts">
-          <ActionIcon variant="default" aria-label="Refresh accounts" onClick={refresh}>
+        {reading ? (
+          <span className={styles.muted} role="status" aria-live="polite">
+            {reading.done} / {reading.total}
+          </span>
+        ) : null}
+        <Tooltip
+          label={
+            snapshot?.isolated
+              ? 'Re-read the retained evidence'
+              : 'Re-read quota from every account on the board, then the retained evidence'
+          }
+        >
+          <ActionIcon
+            variant="default"
+            aria-label="Refresh accounts"
+            loading={Boolean(reading)}
+            onClick={refresh}
+          >
             <Icon name="i-refresh" />
           </ActionIcon>
         </Tooltip>
