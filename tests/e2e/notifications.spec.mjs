@@ -1,132 +1,149 @@
-import { test, expect } from "playwright/test";
-import { signIn, json } from "./helpers.mjs";
+import { test, expect } from 'playwright/test';
+import { readFile, realpath } from 'node:fs/promises';
+import { authenticateRedesign, installRedesignBrowser } from './redesign-fixtures/browser.mjs';
+import { json } from './helpers.mjs';
 
-// Written against the real contract (docs/contract/06-tools-system.md section 3
-// and src/app/api/notifications/**), not run: /dashboard/notifications exists
-// on the isolated instance only after the lead rebuilds it. Every write is
-// fulfilled by page.route, so no spec can save a webhook or send a real test.
-const EVENTS = ["provider.unhealthy", "provider.recovered", "high.error.rate"];
-const RATE = { threshold: 0.5, windowSeconds: 300, minSamples: 20 };
-const SIGNING = "s3cr3t-signing-value";
+// Notifications against the launcher's representative, credentialless fixture.
+// E2E_FIXTURE_ROOT must be its owned run root and E2E_BASE its exact loopback
+// URL. Every write is fulfilled by page.route, so no spec run can save a rule,
+// clear a destination or send a real message.
+test.use({ serviceWorkers: 'block', timezoneId: 'UTC', reducedMotion: 'reduce', trace: 'off' });
 
-const feed = (config, deliveries = []) => json(200, { config, events: EVENTS, deliveries });
-const bare = { enabled: false, endpoints: [], errorRate: RATE };
-const configured = {
-  enabled: true,
-  errorRate: RATE,
-  // The GET redacts: the stored value is replaced by `hasSecret` (route.js:31-34).
-  endpoints: [{ id: "wh-1", url: "https://hooks.example.com/services/T000", events: EVENTS, hasSecret: true, active: true }],
-};
-
-test.beforeEach(async ({ page }) => { await signIn(page); });
-
-test("with nothing configured it says so and names what to do next", async ({ page }) => {
-  await page.route("**/api/notifications", (r) => r.fulfill(feed(bare)));
-  await page.goto("/dashboard/notifications");
-  await expect(page.getByRole("heading", { level: 1, name: "Notifications" })).toBeVisible();
-  await expect(page.getByText("No destination is configured. Add one below; until then nothing is sent anywhere.")).toBeVisible();
-  await expect(page.getByText("Never sent. A delivery appears here once an event fires.")).toBeVisible();
-  await expect(page.locator(".notifications-log")).toHaveCount(0);
-});
-
-test("a poll that starts failing reads stale with the last good data still visible", async ({ page }) => {
-  let served = 0;
-  await page.route("**/api/notifications", (r) =>
-    r.fulfill(served++ === 0 ? feed(configured) : json(500, { error: "db locked" })));
-  await page.goto("/dashboard/notifications");
-  await expect(page.getByText("Set", { exact: true })).toBeVisible();
-  const fresh = page.locator(".screen-head .fresh").first();
-  await expect(fresh).toHaveAttribute("data-state", "stale", { timeout: 20000 });
-  await expect(page.getByText("Set", { exact: true })).toBeVisible();
-});
-
-test("a denied read renders its own sentence, not a raw status", async ({ page }) => {
-  // dashboardGuard's tier-6 deny-by-default is the only auth failure this route
-  // produces: a plain 401 {error:"Unauthorized", source:"tokenproxy"}
-  // (src/dashboardGuard.js:348,354). The admin-ABI 403 shapes in refusal.js
-  // are unreachable here (docs/contract/06-tools-system.md section 3).
-  await page.route("**/api/notifications", (r) =>
-    r.fulfill(json(401, { error: "Unauthorized", source: "tokenproxy" })));
-  await page.goto("/dashboard/notifications");
-  await expect(page.getByText("Your session has ended.")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("HTTP 401");
-});
-
-test("clearing a destination names that nothing more is delivered there, and only fires on confirm", async ({ page }) => {
-  let writes = 0;
-  await page.route("**/api/notifications", async (r) => {
-    if (r.request().method() === "PUT") { writes += 1; return r.fulfill(json(200, { config: { ...configured, endpoints: [] } })); }
-    return r.fulfill(feed(configured));
+async function fixture({ page, context, baseURL }, { level = 'advanced', density = 'tidy' } = {}) {
+  expect(process.env.E2E_FIXTURE_ROOT, 'An owned representative fixture root is required').toBeTruthy();
+  const root = await realpath(process.env.E2E_FIXTURE_ROOT);
+  const runtime = JSON.parse(await readFile(`${root}/process.json`, 'utf8'));
+  const owner = JSON.parse(await readFile(`${root}/owner.json`, 'utf8'));
+  expect(owner).toMatchObject({ kind: 'tokenproxy-redesign-preview-v1', root, runId: runtime.runId });
+  expect(process.env.E2E_BASE).toBe(runtime.url);
+  expect(baseURL).toBe(runtime.url);
+  await authenticateRedesign(context, root);
+  await installRedesignBrowser(page, { baseUrl: runtime.url, runtimeReceipt: runtime });
+  await context.addInitScript(
+    ([mode, chosen]) => {
+      localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify(mode));
+      localStorage.setItem('tokenproxy.capacity-density', JSON.stringify(chosen));
+    },
+    [level, density]
+  );
+  // Gateway writes only. Next's dev overlay POSTs /__nextjs_* to symbolicate a
+  // warning, and counting that as a write makes the guard read false.
+  const writes = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method()))
+      writes.push({ path, method: request.method() });
   });
-  await page.goto("/dashboard/notifications");
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("The address is removed, and no further event is delivered there.");
-  await expect(dialog).toContainText("Nothing. Add the destination again to send there.");
-  expect(writes).toBe(0);
-  await dialog.getByRole("button", { name: "Clear", exact: true }).click();
-  await expect(page.getByText("Destination cleared")).toBeVisible();
-  expect(writes).toBe(1);
+  return { runtime, writes };
+}
+
+async function open(page, runtime) {
+  const response = await page.goto(`${runtime.url}/dashboard/notifications`, { waitUntil: 'domcontentloaded' });
+  expect(response.status()).toBe(200);
+  await expect(page.getByRole('heading', { level: 1, name: 'Notifications' })).toBeVisible();
+  // The header's snapshot label arrives from a client read, so it is the signal
+  // that hydration finished and a click will reach a handler.
+  await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture', { timeout: 60000 });
+}
+
+test('the rules board is one surface: chips, groups and no layer', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime } = await fixture({ page, context, baseURL });
+  await open(page, runtime);
+  const rules = page.locator('section[aria-label="Notification rules"]');
+  await expect(rules).toBeVisible();
+  await expect(rules).toHaveAttribute('data-advanced', 'true');
+  await expect(rules).toHaveAttribute('data-density', 'tidy');
+  await expect(rules.getByRole('group', { name: 'Rule summary' })).toBeVisible();
+  await expect(rules.getByRole('searchbox', { name: 'Search rules' })).toBeVisible();
+  await expect(rules.getByRole('button', { name: 'Add rule' })).toBeVisible();
+  await expect(page.locator('section[aria-label="Notification delivery"]')).toBeVisible();
+  // No layer for routine work anywhere on the page.
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
 });
 
-test("the server's own 400 string is what the dialog shows", async ({ page }) => {
-  await page.route("**/api/notifications", async (r) => {
-    if (r.request().method() === "PUT") return r.fulfill(json(400, { error: "Blocked URL: private IP" }));
-    return r.fulfill(feed(configured));
+test('Everyday groups rules as cards and Advanced as rows, from the same page', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime } = await fixture({ page, context, baseURL }, { level: 'everyday' });
+  await open(page, runtime);
+  const rules = page.locator('section[aria-label="Notification rules"]');
+  await expect(rules).toHaveAttribute('data-layout', 'cards');
+  const card = rules.locator('article[data-account-id]').first();
+  await expect(card).toBeVisible({ timeout: 60000 });
+  // A card carries the rule's evidence; a row is the Advanced shape and is absent here.
+  await expect(card).toContainText('Threshold');
+  await expect(rules.locator('article[data-rule-id]')).toHaveCount(0);
+  await expect(rules.getByLabel(/^Threshold for /)).toHaveCount(0);
+});
+
+test('an in-place threshold edit writes the whole rule with the revision it read', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime, writes } = await fixture({ page, context, baseURL });
+  let saved = null;
+  await page.route('**/api/admin/notification-rules/*', async route => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    saved = route.request().postDataJSON();
+    return route.fulfill(json(200, { id: 'sealed', revision: (saved.revision ?? 0) + 1 }));
   });
-  await page.goto("/dashboard/notifications");
-  await page.getByRole("button", { name: "Turn off", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await dialog.getByRole("button", { name: "Turn off", exact: true }).click();
-  await expect(dialog.getByText("The gateway refused the input.")).toBeVisible();
-  await expect(dialog.getByText("Blocked URL: private IP")).toBeVisible();
+  await open(page, runtime);
+  const field = page.getByLabel(/^Threshold for /).first();
+  await expect(field).toBeVisible();
+  await field.fill('42');
+  await field.press('Enter');
+  await expect.poll(() => saved, { timeout: 20000 }).not.toBeNull();
+  expect(saved.threshold).toBe(42);
+  expect(Number.isInteger(saved.revision)).toBe(true);
+  expect(saved.name).toBeTruthy();
+  expect(saved.conditionKind).toBeTruthy();
+  expect(writes.filter(write => write.method === 'PUT')).toHaveLength(1);
 });
 
-test("a stored signing value is never rendered, and a URL's user info is masked", async ({ page }) => {
-  await page.route("**/api/notifications", (r) => r.fulfill(feed({
-    ...configured,
-    // A server that leaked the stored value back must still not put it on screen.
-    endpoints: [{ id: "wh-1", url: `https://user:${SIGNING}@hooks.example.com/services/AAAAAAAAAAAAAAAAAAAAAA`, events: EVENTS, hasSecret: true, secret: SIGNING, active: true }],
-  })));
-  await page.goto("/dashboard/notifications");
-  await expect(page.getByText("Set", { exact: true })).toBeVisible();
-  await expect(page.locator("body")).not.toContainText(SIGNING);
-  await expect(page.locator("body")).toContainText("•••@hooks.example.com");
+test('deleting a rule asks in place and writes nothing until it is confirmed', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime, writes } = await fixture({ page, context, baseURL });
+  await page.route('**/api/admin/notification-rules/**', async route =>
+    route.request().method() === 'DELETE' ? route.fulfill(json(200, { deleted: true })) : route.fallback()
+  );
+  await open(page, runtime);
+  const remove = page.getByRole('button', { name: /^Delete / }).first();
+  await remove.click();
+  const confirm = page.getByRole('group', { name: /^Delete .*\?$/ });
+  await expect(confirm).toBeVisible();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  expect(writes.filter(write => write.method === 'DELETE')).toHaveLength(0);
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirm).toHaveCount(0);
+  expect(writes.filter(write => write.method === 'DELETE')).toHaveLength(0);
 });
 
-test("the signing input is a password field and is empty again after a save", async ({ page }) => {
-  await page.route("**/api/notifications", async (r) => {
-    if (r.request().method() === "PUT") return r.fulfill(json(200, { config: configured }));
-    return r.fulfill(feed(configured));
-  });
-  await page.goto("/dashboard/notifications");
-  await page.getByRole("button", { name: "Change", exact: true }).click();
-  const field = page.getByLabel("Signing value");
-  await expect(field).toHaveAttribute("type", "password");
-  await expect(field).toHaveAttribute("autocomplete", "off");
-  await field.fill(SIGNING);
-  await page.getByRole("button", { name: "Save destination", exact: true }).first().click();
-  // Cleared the moment it is submitted, while the form is still on screen.
-  await expect(field).toHaveValue("");
-  await page.locator("dialog.confirm").getByRole("button", { name: "Save destination", exact: true }).click();
-  await expect(page.getByText("Destination saved")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText(SIGNING);
-});
-
-test("a test send is confirmed as irreversible and reports the exact failure", async ({ page }) => {
-  let sends = 0;
-  await page.route("**/api/notifications", (r) => r.fulfill(feed(configured)));
-  await page.route("**/api/notifications/test", (r) => {
-    sends += 1;
-    return r.fulfill(json(200, { ok: false, status: null, attempts: 1, error: "blocked: endpoint does not resolve to a public address" }));
-  });
-  await page.goto("/dashboard/notifications");
-  await page.getByRole("button", { name: "Send test", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("Nothing. A message already sent cannot be recalled.");
-  expect(sends).toBe(0);
-  await dialog.getByRole("button", { name: "Send test", exact: true }).click();
-  await expect(page.getByText("The test did not arrive.")).toBeVisible();
-  await expect(page.getByText("blocked: endpoint does not resolve to a public address")).toBeVisible();
-  expect(sends).toBe(1);
+test('an unsaved address is tested only after an inline confirmation, and no destination is saved', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime, writes } = await fixture({ page, context, baseURL });
+  await page.route('**/api/notifications/test', route =>
+    route.fulfill(json(200, { ok: false, status: null, attempts: 1, error: 'blocked: endpoint does not resolve to a public address' }))
+  );
+  await page.route('**/api/notifications', async route =>
+    route.request().method() === 'PUT' ? route.fulfill(json(500, { error: 'a spec must never save a destination' })) : route.fallback()
+  );
+  await open(page, runtime);
+  const add = page.locator('form[aria-label="Add a destination"]');
+  await expect(add).toBeVisible();
+  await add.getByLabel('Address').fill('https://example.com/synthetic-hook');
+  await add.getByLabel('Signing value').fill('synthetic-signing-value');
+  await add.getByRole('button', { name: 'Test this address without saving' }).click();
+  // The signing value is write-only: it leaves the field the moment it is used.
+  await expect(add.getByLabel('Signing value')).toHaveValue('');
+  const ask = page.getByRole('group', { name: 'Test this address without saving' });
+  await expect(ask).toContainText('No destination is saved');
+  expect(writes).toHaveLength(0);
+  await ask.getByRole('button', { name: 'Send test' }).click();
+  await expect(page.getByText('Test delivery was not confirmed')).toBeVisible();
+  expect(writes.map(write => write.path)).toEqual(['/api/notifications/test']);
+  await expect(page.locator('body')).not.toContainText('synthetic-signing-value');
 });

@@ -1,0 +1,155 @@
+/* Access page. The board, cards, summary strip and toolbar come from
+   board.module.css, and the page frame and gutters from
+   workspace.module.css; only what this surface needs beyond both lives here. */
+.stack {
+  display: grid;
+  gap: 12px;
+}
+.pageNotice {
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: var(--type-dense);
+  line-height: 1.5;
+}
+.pageNotice[data-tone='bad'] {
+  border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule));
+}
+.pageNotice[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--ember) 45%, var(--rule));
+}
+.pageNotice[data-tone='ok'] {
+  border-color: color-mix(in srgb, var(--positive) 45%, var(--rule));
+}
+
+/* A setting has no percentage to meter, so its evidence line is label and
+   value on the shared grid, without the bar. */
+.factLine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: baseline;
+  column-gap: 8px;
+  min-height: 18px;
+  font-size: var(--type-dense);
+}
+.factLine > span:first-child {
+  color: var(--slate);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.factLine > span:last-child {
+  color: var(--ink);
+  text-align: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--slate);
+  --icon-size: 14px;
+}
+
+.aside {
+  font-size: var(--type-dense);
+  line-height: 1.5;
+  color: var(--slate);
+  margin: 4px 0;
+  max-width: 80ch;
+}
+.bullets {
+  margin: 4px 0;
+  padding-inline-start: 18px;
+  list-style: disc;
+  font-size: var(--type-dense);
+  line-height: 1.6;
+  color: var(--ink);
+}
+.why {
+  font-size: var(--type-dense);
+  color: var(--slate);
+}
+.why summary {
+  cursor: pointer;
+  width: fit-content;
+}
+.why p {
+  margin: 4px 0 0;
+  max-width: 40ch;
+}
+
+.detail {
+  padding-top: 4px;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 8px;
+  margin: 6px 0;
+}
+.fields > * {
+  min-width: 0;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.deny {
+  margin-top: 6px;
+  color: var(--refusal);
+  font-size: var(--type-dense);
+  line-height: 1.5;
+}
+.probe {
+  margin-top: 6px;
+  font-size: var(--type-dense);
+  line-height: 1.5;
+  color: var(--ink);
+  border-inline-start: 3px solid var(--rule);
+  padding-inline-start: 8px;
+}
+.probe[data-tone='ok'] {
+  border-color: var(--positive);
+}
+.probe[data-tone='warn'] {
+  border-color: var(--ember);
+}
+.probe[data-tone='bad'] {
+  border-color: var(--refusal);
+}
+
+/* The frozen request an operator reads before it is sent. */
+.review {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 4px 16px;
+  margin: 4px 0 8px;
+  font-size: var(--type-dense);
+}
+.review dt {
+  color: var(--slate);
+}
+.review dd {
+  margin: 0;
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.reviewEntry {
+  min-width: 0;
+}

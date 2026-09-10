@@ -1,0 +1,183 @@
+/* System page. The board, cards, summary strip and toolbar come from
+   board.module.css, and the page frame and gutters from
+   workspace.module.css; only what this surface needs beyond both lives here. */
+.stack {
+  display: grid;
+  gap: 12px;
+}
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pageNotice {
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: var(--type-dense);
+  line-height: 1.5;
+}
+.pageNotice[data-tone='bad'] {
+  border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule));
+}
+.pageNotice[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--ember) 45%, var(--rule));
+}
+.pageNotice[data-tone='ok'] {
+  border-color: color-mix(in srgb, var(--positive) 45%, var(--rule));
+}
+
+/* One setting: label, its control, then the word or evidence that says what
+   the gateway now holds. */
+.settings {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+.setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 108px minmax(0, 110px);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 26px;
+  font-size: var(--type-dense);
+}
+.settingLabel {
+  color: var(--slate);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settingControl {
+  min-width: 0;
+}
+.settingState {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settingHint {
+  grid-column: 1 / -1;
+  color: var(--slate);
+}
+.number {
+  width: 100%;
+}
+.number :global(.mantine-Input-input) {
+  min-height: 24px;
+  height: 24px;
+  padding-inline: 5px;
+  text-align: end;
+  font-size: var(--type-dense);
+}
+.select :global(.mantine-Input-input) {
+  min-height: 24px;
+  height: 24px;
+  font-size: var(--type-dense);
+}
+
+.factLine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: baseline;
+  column-gap: 8px;
+  min-height: 18px;
+  font-size: var(--type-dense);
+}
+.factLine > span:first-child {
+  color: var(--slate);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.factLine > span:last-child {
+  color: var(--ink);
+  text-align: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--slate);
+  --icon-size: 14px;
+}
+.name {
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.aside {
+  font-size: var(--type-dense);
+  line-height: 1.5;
+  color: var(--slate);
+  margin: 4px 0;
+  max-width: 80ch;
+}
+.bullets {
+  margin: 4px 0;
+  padding-inline-start: 18px;
+  list-style: disc;
+  font-size: var(--type-dense);
+  line-height: 1.55;
+  color: var(--ink);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.notesToggle {
+  font-size: var(--type-dense);
+  margin: 4px 0;
+}
+.notesToggle summary {
+  cursor: pointer;
+}
+.notesToggle summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
+}
+.password {
+  max-width: 260px;
+  margin: 4px 0;
+}
+
+.deny {
+  margin-top: 6px;
+  color: var(--refusal);
+  font-size: var(--type-dense);
+  line-height: 1.5;
+}
+
+@container board (max-width: 560px) {
+  .setting {
+    grid-template-columns: minmax(0, 1fr) 96px;
+  }
+  .settingState {
+    grid-column: 1 / -1;
+    text-align: end;
+  }
+}
