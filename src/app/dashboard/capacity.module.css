@@ -1,15 +1,3 @@
-.page {
-  min-width: 0;
-  padding-bottom: 40px;
-}
-.boardWrap {
-  padding: 10px 24px 0;
-}
-@media (max-width: 768px) {
-  .boardWrap {
-    padding: 8px 12px 0;
-  }
-}
 .views { max-width: 100%; }
 @media (max-width: 760px) {
   .views { width: 100%; }

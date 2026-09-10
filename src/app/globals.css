@@ -98,11 +98,6 @@
   .nav-list a:hover .icon, .nav-list a[aria-current="page"] .icon { color: var(--signal-deep); }
   [dir="rtl"] .icon[data-mirror] { transform: scaleX(-1); }
 
-  .confirm { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--raised); color: var(--ink); padding: 20px 24px; width: min(92vw, 560px); }
-  .confirm::backdrop { background: rgb(23 32 42 / 0.45); }
-  .confirm h2 { font-size: var(--t-19); margin-block-end: 12px; }
-  .confirm .facts { margin-block-end: 12px; }
-  .confirm .notice { margin-block-start: 12px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-block-start: 16px; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-block-end: 12px; }
   .toolbar .field { margin: 0; }
@@ -222,9 +217,6 @@
   /* Stat tiles (DIRECTION-2 change 2): the measures block, big numerals, 2-up at 390. */
   .measure .value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   @media (max-width: 480px) { .measures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-
-  dialog.confirm[open] { animation: dialog-in 120ms ease-out; }
-  @keyframes dialog-in { from { opacity: 0; transform: translateY(4px); } }
 
   .login { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
   .login-card { width: min(100%, 400px); display: flex; flex-direction: column; gap: 16px; }

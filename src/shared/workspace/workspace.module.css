@@ -193,6 +193,13 @@
   padding: 24px;
   min-width: 0;
 }
+/* The page shell every lens shares: the heading and the scope bar carry
+   their own gutters; the body below them takes the board gutter. */
+.lensPage { min-width: 0; padding-bottom: 40px; }
+.lensBody { padding: 10px 24px 0; min-width: 0; }
+@media (max-width: 768px) {
+  .lensBody { padding: 8px 12px 0; }
+}
 .lensHeading {
   display: flex;
   flex-wrap: wrap;
@@ -519,8 +526,7 @@
 .inspectorGroup { min-width: 0; width: 100%; }
 .dockViewport { min-width: 0; width: 100%; height: 100%; }
 .inventoryRegion { min-width: 0; overflow: auto; height: 100%; }
-.detailDrawer :global(.mantine-Drawer-body) { padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
-.detailDrawer :global(.mantine-Drawer-header) { padding: 12px 16px; border-block-end: 1px solid var(--rule); }
+.selectionDock[data-stacked] { margin-top: 8px; border-top: 1px solid var(--rule); border-radius: 0; }
 .searchSection { font-size: var(--type-dense); color: var(--slate); font-weight: 500; margin: 12px 10px 4px; }
 .searchEmpty { padding: 20px 10px; color: var(--slate); }
 @media (max-width: 62em) {

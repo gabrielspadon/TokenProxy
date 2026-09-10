@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider, Tooltip } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { CommitNumber, NameField } from '@/app/dashboard/AccountBoard';
+import { CommitNumber, NameField } from '@/shared/workspace/CommitFields';
 
 let root, container;
 beforeEach(() => {

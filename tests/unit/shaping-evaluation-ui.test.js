@@ -8,7 +8,6 @@ import { Handoffs } from '../../src/app/dashboard/shaping/Handoffs.js';
 import { HandoffEvidence } from '../../src/shared/components/context-workspace/ContextInspector.js';
 import { call } from '../../src/shared/api.js';
 vi.mock('../../src/shared/api.js', () => ({ call: vi.fn() }));
-vi.mock('../../src/shared/components/Confirm', () => ({ Confirm: () => null }));
 vi.mock('../../src/shared/components/Notice', () => ({ Notice: ({ title, children }) => <aside>{title}{children}</aside> }));
 const builtin = [{ id: 'built-in', name: 'Built-in cases', revision: 1, count: 4, synthetic: true }];
 let container, root;
