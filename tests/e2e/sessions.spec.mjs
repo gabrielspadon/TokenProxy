@@ -57,13 +57,19 @@ test.beforeEach(async ({ page }) => {
   });
   await page.route("**/api/admin/health/detail", (r) => r.fulfill(json(200, CONNS)));
 });
+// Summary is the default update behaviour and keeps the usage stream closed,
+// so every case that reads stream frames switches the workspace to Live first.
+async function openSessions(page) {
+  await page.goto("/dashboard/sessions");
+  await page.getByRole("radiogroup", { name: "Update behavior", exact: true }).getByText("Live", { exact: true }).click();
+}
 const openReceipt = (page, id) => page.getByLabel(`Inspect receipt ${id}`, { exact: true }).click();
 
 test("the usage stream goes stale and the last frame stays on screen", async ({ page }) => {
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.abort());
-  await page.goto("/dashboard/sessions");
-  const status = page.locator(".screen-head .fresh").first();
+  await openSessions(page);
+  const status = page.locator(".sessions-heading-actions .fresh").first();
   await expect(status).toHaveAttribute("data-state", /connecting|reconnecting/);
   await expect(status).toHaveAttribute("data-state", "stale", { timeout: 15000 });
   await expect(page.getByText("The usage stream stopped.")).toBeVisible();
@@ -72,7 +78,7 @@ test("the usage stream goes stale and the last frame stays on screen", async ({ 
 test("an empty switch log says what writes the first receipt", async ({ page }) => {
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await expect(page.getByText("No switch has been recorded yet. The first time a session is pinned to an account is itself written here.")).toBeVisible();
   await expect(page.getByText("No session is in flight right now. One appears here while a request it owns is open.")).toBeVisible();
 });
@@ -80,7 +86,7 @@ test("an empty switch log says what writes the first receipt", async ({ page }) 
 test("a forbidden_class refusal is its own sentence", async ({ page }) => {
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(403, { error: "An operator credential is required. An inference API key does not satisfy this endpoint.", code: "forbidden_class", source: "tokenproxy-admin" })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await expect(page.getByText("An inference API key does not satisfy this endpoint.")).toBeVisible();
   await expect(page.getByText("Sign in as the operator.")).toBeVisible();
 });
@@ -88,7 +94,7 @@ test("a forbidden_class refusal is its own sentence", async ({ page }) => {
 test("a switch names both connections and links the one it landed on", async ({ page }) => {
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [RECEIPT], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await expect(page.getByText("Quota exhausted").first()).toBeVisible();
   await openReceipt(page, RECEIPT.receiptId);
   await expect(page.getByRole("link", { name: "claude-a" })).toHaveAttribute("href", "/dashboard/connections/conn-old");
@@ -100,7 +106,7 @@ test("a switch names both connections and links the one it landed on", async ({ 
 test("a first pin says there was no earlier account rather than showing a blank", async ({ page }) => {
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [FIRST_PIN], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await openReceipt(page, FIRST_PIN.receiptId);
   await expect(page.getByText("Nothing. This was the first pin of that session.")).toBeVisible();
 });
@@ -112,7 +118,7 @@ test("a rejected cursor is reported where the operator paged", async ({ page }) 
     return route.fulfill(json(200, { receipts: [RECEIPT], nextCursor: "b3Bh" }));
   });
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await page.getByRole("button", { name: "Show older" }).click();
   await expect(page.getByText("The gateway refused the input.")).toBeVisible();
 });
@@ -121,7 +127,7 @@ test("a receipt id that no longer resolves reads as never happened", async ({ pa
   await page.route("**/api/admin/receipts/*", (r) => r.fulfill(json(404, { error: "No receipt with id aged-out.", code: "not_found", source: "tokenproxy-admin" })));
   await page.route("**/api/admin/receipts?**", (r) => r.fulfill(json(200, { receipts: [], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await page.getByRole("button", { name: "Find one receipt", exact: true }).click();
   await page.getByLabel("Receipt id").fill("aged-out");
   await page.getByRole("button", { name: "Find", exact: true }).click();
@@ -133,7 +139,7 @@ test("no session identity is rendered, from the stream or from a receipt", async
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({
     activeSessions: [{ requestId: "req-SECRET-1", clientId: "cli-SECRET-2", sessionId: "sess-SECRET-3", model: "claude-sonnet-4", provider: "anthropic", account: "claude-a", startedAt: new Date().toISOString(), promptTokens: 10, completionTokens: 2, status: "active" }],
   })));
-  await page.goto("/dashboard/sessions");
+  await openSessions(page);
   await expect(page.getByText("Running").first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("SECRET");
   await expect(page.locator("body")).not.toContainText("SESSIONHASH");

@@ -74,9 +74,11 @@ test("a failing pool poll keeps the last good list and says it is stale", async 
     return r.fulfill(json(500, { error: "Failed to fetch proxy pools" }));
   });
   await page.goto("/dashboard/network");
+  // Summary reads once; only Live polls, and only a poll can fail and go stale.
+  await page.getByRole("radiogroup", { name: "Update behavior", exact: true }).getByText("Live", { exact: true }).click();
   await task(page, "Pools");
   await expect(page.getByText("us relay").first()).toBeVisible();
-  const status = page.locator(".screen-head .fresh").first();
+  const status = page.locator(".network-heading-actions .fresh").first();
   await expect(status).toHaveAttribute("data-state", "stale", { timeout: 25000 });
   await expect(page.getByText("us relay").first()).toBeVisible();
 });
