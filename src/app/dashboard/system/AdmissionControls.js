@@ -1,35 +1,46 @@
 'use client';
 import { useState } from 'react';
-import { Button, Select } from '@mantine/core';
+import { Select } from '@mantine/core';
 import { usePoll } from '@/shared/hooks/usePoll';
-import { Card, StateWord } from '@/shared/workspace/Board';
-import { Icon } from '@/shared/components/Icon';
-import board from '@/shared/workspace/board.module.css';
+import { StateWord } from '@/shared/workspace/Board';
 import { CommitNumber } from '@/shared/workspace/CommitFields';
-import { FactLine, SettingRow } from './SettingRow';
+import { Row } from './Row';
 import styles from './system.module.css';
 
-const STREAM_LABELS = {
-  minStreams: 'Minimum streams',
-  maxStreams: 'Maximum streams',
-  clientStreams: 'Streams per client',
+const STREAMS = {
+  minStreams: ['Minimum streams', 'The floor adaptive capacity never goes under'],
+  maxStreams: ['Maximum streams', 'The ceiling for every mode, 1 through 65536'],
+  clientStreams: ['Streams per client', 'One client never holds more than this'],
 };
-const LIMIT_LABELS = {
-  maxHandlers: 'Maximum handlers',
-  clientHandlers: 'Handlers per client',
-  providerStreams: 'Streams per provider',
-  queueDepth: 'Queue capacity',
-  clientQueueDepth: 'Queue per client',
-  maxWaitMs: 'Maximum wait (ms)',
-  memoryBudgetMb: 'Memory budget (MiB)',
-  eventLoopBudgetMs: 'Event loop budget (ms)',
-  minSamples: 'Minimum samples',
-  cooldownMs: 'Adjustment cooldown (ms)',
+const LIMITS = {
+  maxHandlers: ['Maximum handlers', 'Requests in any phase, streaming or not'],
+  clientHandlers: ['Handlers per client', 'One client never holds more than this'],
+  providerStreams: ['Streams per provider', 'Concurrent streams against one upstream'],
+  queueDepth: ['Queue capacity', 'Requests held when every stream is busy'],
+  clientQueueDepth: ['Queue per client', 'One client never queues more than this'],
+  maxWaitMs: ['Maximum wait', 'Milliseconds queued before a request is refused'],
+  memoryBudgetMb: ['Memory budget', 'Mebibytes of heap adaptive capacity protects'],
+  eventLoopBudgetMs: ['Event loop budget', 'Milliseconds of lag adaptive capacity tolerates'],
+  minSamples: ['Minimum samples', 'Readings before adaptive capacity adjusts'],
+  cooldownMs: ['Adjustment cooldown', 'Milliseconds between adaptive adjustments'],
 };
+const UNITS = {
+  maxWaitMs: ' ms',
+  memoryBudgetMb: ' MiB',
+  eventLoopBudgetMs: ' ms',
+  cooldownMs: ' ms',
+};
+const MODES = [
+  { value: 'adaptive', label: 'Adaptive' },
+  { value: 'fixed', label: 'Fixed maximum' },
+  { value: 'override', label: 'Temporary override' },
+];
 
-// Request capacity is a settings card: every control saves the whole policy on
-// change, and the receipt says which revision the gateway read back.
-export default function AdmissionControls({ advanced, expanded, onToggle }) {
+// Request capacity is one group of rows on the control panel. Every control
+// saves the whole policy on change, and the receipt says the gateway read it
+// back. Everyday shows the mode and the stream counts; Advanced adds the
+// handler, provider and pressure limits.
+export default function AdmissionControls({ advanced }) {
   const read = usePoll('/api/system/admission', 5000);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
@@ -64,165 +75,147 @@ export default function AdmissionControls({ advanced, expanded, onToggle }) {
       : policy.adaptive
         ? 'adaptive'
         : 'fixed';
-  const numbers = advanced ? { ...STREAM_LABELS, ...LIMIT_LABELS } : STREAM_LABELS;
+  const numbers = advanced ? { ...STREAMS, ...LIMITS } : STREAMS;
+  const override = policy?.overrideStreams !== null && policy?.overrideStreams !== undefined;
+  const count = 2 + Object.keys(numbers).length + (override ? 1 : 0);
+  const live = data
+    ? [
+        `${data.activeStreams} / ${data.effectiveStreams} streams`,
+        `${data.activeHandlers} / ${data.policy.maxHandlers} handlers`,
+        data.queued
+          ? `${data.queued} waiting, oldest ${Math.round(data.oldestQueueMs)} ms`
+          : 'none waiting',
+      ].join(', ')
+    : read.error
+      ? 'Capacity could not be read.'
+      : 'Reading…';
 
   return (
-    <Card
-      id="admission"
-      label="Request capacity"
-      expanded={expanded}
-      head={
-        <>
-          <span className={styles.mark} aria-hidden="true">
-            <Icon name="i-request" />
-          </span>
-          <div className={board.identityText}>
-            <strong>Request capacity</strong>
-            <small>
-              Limits apply to this process; existing streams finish when a limit decreases
-            </small>
-          </div>
-          <button
-            type="button"
-            className={board.caret}
-            aria-expanded={expanded}
-            aria-label={`${expanded ? 'Collapse' : 'Expand'} request capacity`}
-            onClick={onToggle}
-          >
-            <Icon name={expanded ? 'i-chevron-up' : 'i-chevron-down'} />
-          </button>
-        </>
-      }
-      state={
-        data ? (
-          <>
-            <StateWord tone={data.queued > 0 ? 'ember' : 'positive'}>
-              {data.decision.replaceAll('-', ' ')}
-            </StateWord>
-            <span className={board.spacer} />
-            <span className={board.cardAttempts}>
-              {data.activeStreams} / {data.effectiveStreams} streams
+    <section
+      className={styles.group}
+      aria-label="Request capacity settings"
+      data-tone={data ? (data.queued > 0 ? 'ember' : 'positive') : undefined}
+    >
+      <h3 className={styles.groupTitle}>
+        <i />
+        Request capacity
+        <span>{count}</span>
+      </h3>
+      <div className={styles.rows}>
+        <Row
+          id="admission"
+          label="Live"
+          hint="Limits apply to this process; existing streams finish when a limit decreases"
+          control={
+            <span className={styles.reading}>
+              {live}
+              {read.error ? (
+                <>
+                  {' '}
+                  <button type="button" className={styles.linkButton} onClick={read.refresh}>
+                    Read again
+                  </button>
+                </>
+              ) : null}
             </span>
-          </>
-        ) : null
-      }
-      detail={
-        expanded && policy ? (
-          <div className={styles.settings}>
-            <SettingRow
-              label="Capacity mode"
-              control={
-                <Select
-                  size="xs"
-                  aria-label="Capacity mode"
-                  allowDeselect={false}
-                  className={styles.select}
-                  data={[
-                    { value: 'adaptive', label: 'Adaptive' },
-                    { value: 'fixed', label: 'Fixed maximum' },
-                    { value: 'override', label: 'Temporary override' },
-                  ]}
-                  value={mode}
-                  disabled={busy}
-                  onChange={(next) =>
-                    next &&
-                    save({
-                      adaptive: next !== 'fixed',
-                      overrideStreams: next === 'override' ? policy.minStreams : null,
-                    })
-                  }
-                />
+          }
+          state={
+            data ? (
+              <StateWord tone={data.queued > 0 ? 'ember' : 'positive'}>
+                {data.decision.replaceAll('-', ' ')}
+              </StateWord>
+            ) : null
+          }
+        />
+        <Row
+          id="admission-mode"
+          label="Capacity mode"
+          hint="Adaptive follows pressure, fixed holds the maximum, override pins a count for now"
+          control={
+            <Select
+              size="xs"
+              aria-label="Capacity mode"
+              allowDeselect={false}
+              className={styles.select}
+              data={MODES}
+              value={mode}
+              disabled={busy || !policy}
+              onChange={(next) =>
+                next &&
+                save({
+                  adaptive: next !== 'fixed',
+                  overrideStreams: next === 'override' ? policy.minStreams : null,
+                })
               }
-              state={
-                mode === 'override'
+            />
+          }
+          state={
+            mode ? (
+              <StateWord tone={mode === 'override' ? 'ember' : null}>
+                {mode === 'override'
                   ? 'Override in force'
                   : mode === 'adaptive'
                     ? 'Adaptive'
-                    : 'Fixed'
-              }
-            />
-            {Object.entries(numbers).map(([key, label]) => (
-              <SettingRow
-                key={key}
-                label={label}
-                control={
-                  <CommitNumber
-                    className={styles.number}
-                    aria-label={label}
-                    value={policy[key]}
-                    min={1}
-                    max={key.endsWith('Streams') || key === 'maxStreams' ? 65536 : undefined}
-                    disabled={busy}
-                    onCommit={(value) => save({ [key]: value })}
-                  />
-                }
+                    : 'Fixed'}
+              </StateWord>
+            ) : null
+          }
+        />
+        {override ? (
+          <Row
+            id="admission-override"
+            label="Override streams"
+            hint={`Pinned between ${policy.minStreams} and ${policy.maxStreams} until the mode changes`}
+            control={
+              <CommitNumber
+                className={styles.number}
+                aria-label="Override streams"
+                value={policy.overrideStreams}
+                min={policy.minStreams}
+                max={policy.maxStreams}
+                disabled={busy}
+                onCommit={(value) => save({ overrideStreams: value })}
               />
-            ))}
-            {policy.overrideStreams !== null ? (
-              <SettingRow
-                label="Override streams"
-                control={
-                  <CommitNumber
-                    className={styles.number}
-                    aria-label="Override streams"
-                    value={policy.overrideStreams}
-                    min={policy.minStreams}
-                    max={policy.maxStreams}
-                    disabled={busy}
-                    onCommit={(value) => save({ overrideStreams: value })}
-                  />
-                }
+            }
+            state={null}
+          />
+        ) : null}
+        {Object.entries(numbers).map(([key, [label, hint]]) => (
+          <Row
+            key={key}
+            id={`admission-${key}`}
+            label={label}
+            hint={hint}
+            control={
+              <CommitNumber
+                className={styles.number}
+                aria-label={label}
+                value={policy?.[key] ?? 0}
+                min={1}
+                max={key.endsWith('Streams') ? 65536 : undefined}
+                suffix={UNITS[key]}
+                disabled={busy || !policy}
+                onCommit={(value) => save({ [key]: value })}
               />
-            ) : null}
-            <p className={styles.aside}>
-              Each client can use at most half the effective stream capacity so another client can
-              enter. Account capacity and quota eligibility still apply. Connection pool pressure is
-              unavailable.
-              {advanced ? '' : ' Advanced adds the handler, provider and pressure limits.'}
-            </p>
-          </div>
-        ) : null
-      }
-    >
-      {read.error ? (
-        <p className={styles.deny} role="alert">
-          Capacity could not be refreshed.{' '}
-          <button type="button" className={board.linkButton} onClick={read.refresh}>
-            Retry capacity
-          </button>
-        </p>
-      ) : null}
-      {data ? (
-        <>
-          <FactLine
-            label="Active streams"
-            value={`${data.activeStreams} / ${data.effectiveStreams}`}
+            }
+            state={null}
           />
-          <FactLine
-            label="Handlers"
-            value={`${data.activeHandlers} / ${data.policy.maxHandlers}`}
-          />
-          <FactLine label="Waiting" value={data.queued} />
-          <FactLine label="Oldest wait" value={`${Math.round(data.oldestQueueMs)} ms`} />
-        </>
-      ) : (
-        <p className={styles.aside}>Reading request capacity…</p>
-      )}
+        ))}
+      </div>
+      <p className={styles.aside}>
+        Each client can use at most half the effective stream capacity so another client can enter.
+        Account capacity and quota eligibility still apply. Connection pool pressure is unavailable.
+        {advanced ? '' : ' Advanced adds the handler, provider and pressure limits.'}
+      </p>
       {message ? (
         <p
-          className={message.ok ? styles.aside : styles.deny}
+          className={styles.outcome}
+          data-tone={message.ok ? 'ok' : 'bad'}
           role={message.ok ? 'status' : 'alert'}
         >
           {message.text}
         </p>
       ) : null}
-      {!expanded ? (
-        <span className={styles.actions}>
-          <Button size="compact-xs" variant="default" onClick={onToggle}>
-            Change limits
-          </Button>
-        </span>
-      ) : null}
-    </Card>
+    </section>
   );
 }

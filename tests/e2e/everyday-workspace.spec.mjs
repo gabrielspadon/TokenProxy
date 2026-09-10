@@ -111,15 +111,15 @@ for (const width of [1440, 1920, 390]) {
       await navigate('/dashboard/system');
       await expect(page.locator('section[aria-label="System"]')).toBeVisible();
       await expect(page.getByRole('navigation', { name: 'System tasks' })).toHaveCount(0);
-      await expect(page.locator('article[data-account-id="process"]')).toBeVisible();
+      await expect(page.locator('[data-row="process"]')).toBeVisible();
       await capture('system-status');
-      // Every scope is on the one board: import carries its file field and
-      // shutdown its own card, with no tab hiding either.
+      // Every scope is on the one panel: restore carries its file field and
+      // shutdown its own row, with no tab hiding either.
       await expect(page.getByLabel('Backup file', { exact: true })).toBeVisible();
       await capture('system-configuration');
-      await expect(page.locator('article[data-account-id="shutdown"]')).toBeVisible();
+      await expect(page.locator('[data-row="shutdown"]')).toBeVisible();
       await capture('system-maintenance');
-      report.checks.push('System carries runtime, configuration and maintenance on one board with no task tabs');
+      report.checks.push('System carries runtime, configuration and maintenance on one control panel with no task tabs');
 
       await navigate('/dashboard/notifications');
       await expect(page.locator('section[aria-label="Notification rules"]')).toBeVisible();

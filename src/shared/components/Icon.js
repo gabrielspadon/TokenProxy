@@ -42,6 +42,8 @@ const GLYPHS = {
   'i-warning': 'warning',
   'i-hide': 'visibility_off',
   'i-show': 'visibility',
+  'i-export': 'download',
+  'i-power': 'power_settings_new',
 };
 export function Icon({ name, mirror }) {
   if (GLYPHS[name])

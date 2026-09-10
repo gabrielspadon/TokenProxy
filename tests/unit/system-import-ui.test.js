@@ -62,9 +62,9 @@ afterEach(() => {
 });
 
 const importCalls = () => fetchMock.mock.calls.filter(([url, options]) => url === endpoint && options?.method === 'POST');
-// Import is one card on the system board; its confirmation opens inside that
-// card rather than in a dialog over the page.
-const databaseSection = () => container.querySelector('[data-account-id="import"]');
+// Import is one row of the System control panel; its confirmation opens under
+// that row rather than in a dialog over the page.
+const databaseSection = () => container.querySelector('[data-setting="import"]');
 const asking = () => databaseSection().querySelector('form[aria-label="Import configuration"]');
 const receipt = () =>
   [...databaseSection().querySelectorAll('.notice')].find(node =>
@@ -103,7 +103,7 @@ it.each([true, false])('keeps a committed import with failed process refresh as 
   expect(notice.textContent).toContain('Do not automatically repeat the import.');
   expect(notice.textContent).not.toContain('returned successfully');
   expect(asking()).toBeNull();
-  expect(fixture.refresh.mock.calls).toEqual([['/api/admin/health/detail'], ['/api/settings/require-login']]);
+  expect(fixture.refresh.mock.calls).toEqual([['/api/admin/health/detail'], ['/api/settings']]);
   expect(importCalls()).toHaveLength(1);
   expect(JSON.parse(importCalls()[0][1].body)).toEqual({ ...backup, password: 'synthetic-password' });
   expect([...container.querySelectorAll('input[type="password"]')].every(input => input.value === '')).toBe(true);

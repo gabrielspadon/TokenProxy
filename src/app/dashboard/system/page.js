@@ -1,55 +1,43 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ActionIcon, Button, FileInput, Loader, PasswordInput, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  FileInput,
+  PasswordInput,
+  Select,
+  Switch,
+  Tooltip,
+} from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import AdmissionControls from './AdmissionControls';
+import { Row } from './Row';
 import { usePoll } from '@/shared/hooks/usePoll';
 import { InlineConfirm } from '@/shared/workspace/InlineConfirm';
-import { Freshness } from '@/shared/components/Freshness';
+import { CommitNumber } from '@/shared/workspace/CommitFields';
 import { Icon } from '@/shared/components/Icon';
+import { Notice } from '@/shared/components/Notice';
 import { refusal } from '@/shared/refusal';
 import { fmtDuration, fmtTime, fmtUnit } from '@/shared/format';
 import { TONE, WORDS } from '@/shared/status';
 import {
   Board,
-  BoardGroup,
   BoardSummary,
   BoardToolbar,
-  Card,
   DensitySwitch,
   StateWord,
   useDensity,
   useLevel,
 } from '@/shared/workspace/Board';
-import board from '@/shared/workspace/board.module.css';
 import shared from '@/shared/workspace/workspace.module.css';
-import { FactLine } from './SettingRow';
 import styles from './system.module.css';
-import './styles.css';
 
 const STATE_TONE = { ok: 'positive', warn: 'ember', bad: 'refusal' };
 const BACKUP_HOLDS =
   'Writes a configuration file with readable connection credentials and client keys. Retained usage, operations, investigations, rules, compatibility and routing-version history are excluded. The gateway is unchanged.';
-
-function pollFresh(p) {
-  if (p.loading) return 'connecting';
-  if (p.error && p.goodAt) return 'stale';
-  if (p.error) return 'reconnecting';
-  return 'live';
-}
-
-// The null contract outside .measures: never a zero, always the reason.
-function Unreported({ why }) {
-  return (
-    <>
-      <span className="unreported">Not reported</span>
-      <details className="why">
-        <summary>Why</summary>
-        <p>{why}</p>
-      </details>
-    </>
-  );
-}
+const toast = (color, message, title) =>
+  notifications.show({ color, message, title, autoClose: color === 'teal' ? 4000 : 9000 });
 
 // The password routes answer 401 with "Invalid password", which is a different
 // sentence from a session that ended. `message` is what the version routes
@@ -66,11 +54,12 @@ function systemRefusal(status, body, password = false) {
   return body?.message && !body.error ? { ...r, detail: body.message } : r;
 }
 
-function Notice({ tone, title, next, detail, action }) {
+// A reading no route reports: never a zero, and the reason on hover.
+function Unreported({ why }) {
   return (
-    <p className={`${styles.pageNotice} notice`} data-tone={tone} role={tone === 'bad' ? 'alert' : 'status'}>
-      <strong>{title}</strong> {next} {detail} {action}
-    </p>
+    <Tooltip label={why} multiline w={320}>
+      <span className={`${styles.unreported} unreported`}>Not reported</span>
+    </Tooltip>
   );
 }
 
@@ -80,29 +69,25 @@ export default function SystemPage() {
   const health = usePoll('/api/admin/health', 15000);
   const detail = usePoll('/api/admin/health/detail', 15000);
   const version = usePoll('/api/version', 0);
-  const policy = usePoll('/api/settings/require-login', 0);
+  const settings = usePoll('/api/settings', 0);
   const [notes, setNotes] = useState({ state: 'loading', text: '' });
+  const [showNotes, setShowNotes] = useState(false);
   const [ask, setAsk] = useState(null);
-  const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState(false);
   const [refuse, setRefuse] = useState(null);
   const [done, setDone] = useState(null);
   const [password, setPassword] = useState('');
   const [file, setFile] = useState(null);
   const [query, setQuery] = useState('');
-  const [bucket, setBucket] = useState(null);
+  const [saving, setSaving] = useState(null);
   const importFileInput = useRef(null);
 
   useEffect(() => {
     let alive = true;
     fetch('/api/changelog', { cache: 'no-store' })
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then((t) => {
-        if (alive) setNotes({ state: t.trim() ? 'ready' : 'empty', text: t });
-      })
-      .catch(() => {
-        if (alive) setNotes({ state: 'unavailable', text: '' });
-      });
+      .then((t) => alive && setNotes({ state: t.trim() ? 'ready' : 'empty', text: t }))
+      .catch(() => alive && setNotes({ state: 'unavailable', text: '' }));
     return () => {
       alive = false;
     };
@@ -111,8 +96,19 @@ export default function SystemPage() {
   const v = version.data;
   const db = detail.data?.checks?.database;
   const conns = detail.data?.checks?.connections || [];
-  const rollup = detail.data?.status;
-  const updateState = !v ? null : v.hasUpdate ? 'available' : v.latestVersion ? 'current' : 'unknown';
+  const counts = conns.reduce((into, c) => {
+    const tone = TONE[c.status] || 'warn';
+    into[tone] = (into[tone] || 0) + 1;
+    return into;
+  }, {});
+  const current = settings.data || {};
+  const updateState = !v
+    ? null
+    : v.hasUpdate
+      ? 'available'
+      : v.latestVersion
+        ? 'current'
+        : 'unknown';
 
   const cancel = () => {
     setAsk(null);
@@ -120,9 +116,6 @@ export default function SystemPage() {
     setBusy(false);
     setPassword('');
   };
-  // `ask` is only the key of the act being confirmed. Its sentence, its body
-  // and the call it makes are read from ACTS on the current render, so a
-  // password typed inside the confirmation is the one that gets sent.
   const askFor = (key) => {
     setRefuse(null);
     setDone(null);
@@ -212,7 +205,7 @@ export default function SystemPage() {
             'Read the restored configuration and resolve the reported runtime refresh failure. Do not automatically repeat the import.',
         });
         detail.refresh();
-        policy.refresh();
+        settings.refresh();
         return;
       }
       finish(
@@ -220,6 +213,7 @@ export default function SystemPage() {
         'The database import returned successfully.',
         'Read the restored connections, keys and settings before another mutation. This response does not independently verify every imported record.'
       );
+      settings.refresh();
     } catch (e) {
       setRefuse(systemRefusal(0, { error: e.message, code: 'network' }));
     } finally {
@@ -246,6 +240,30 @@ export default function SystemPage() {
     }
   };
 
+  // A setting saves from its own control: write the one key, read the
+  // settings back, and say what the gateway now holds.
+  const save = async (key, value, label) => {
+    setSaving(key);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(refusal(res.status, body).title);
+      const back = await (await fetch('/api/settings', { cache: 'no-store' })).json();
+      if (JSON.stringify(back?.[key]) !== JSON.stringify(value))
+        throw new Error('The save returned, but the stored value did not read back.');
+      toast('teal', `${label} saved and read back.`);
+      settings.refresh();
+    } catch (error) {
+      toast('orange', error.message, label);
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const passwordField = (
     <PasswordInput
       size="xs"
@@ -258,12 +276,14 @@ export default function SystemPage() {
       onChange={(e) => setPassword(e.currentTarget.value)}
     />
   );
-
+  // `ask` is only the key of the act being confirmed. Its sentence, body and
+  // call are read from ACTS on the current render, so a password typed inside
+  // the confirmation is the one that gets sent.
   const ACTS = {
     export: {
       title: 'Export configuration',
       verb: 'Export configuration',
-      requires: 'The dashboard password.',
+      requires: 'the dashboard password.',
       changes: BACKUP_HOLDS,
       undo: 'Delete the file. The gateway itself is unchanged either way.',
       body: passwordField,
@@ -273,7 +293,7 @@ export default function SystemPage() {
       title: 'Import configuration',
       verb: 'Import configuration',
       irreversible: true,
-      requires: 'The dashboard password, and a backup file written by an export.',
+      requires: 'the dashboard password, and a backup file written by an export.',
       changes:
         'Replaces settings, provider connections and nodes, proxy pools, client keys, routing plans, aliases, custom models and pricing with the file contents. Usage, operation, investigation, notification-rule and compatibility history are outside this import scope.',
       undo: 'Export the current configuration first if you may need to restore it. Retained history is outside this export.',
@@ -291,23 +311,9 @@ export default function SystemPage() {
       title: 'Update now',
       verb: 'Update now',
       irreversible: true,
-      requires: 'An operator credential. This holds even when sign-in is turned off.',
-      changes: 'Installs the published version and stops this process. Every request in flight is cut.',
+      requires: 'an operator credential. This holds even when sign-in is turned off.',
+      changes: `Installs ${v?.latestVersion ? `version ${v.latestVersion}` : 'the published version'} over ${v?.currentVersion || 'the running one'} and stops this process. Every request in flight is cut.`,
       undo: 'Install the earlier version by hand to go back.',
-      body: (
-        <dl className="system-facts">
-          <dt>Running</dt>
-          <dd className="id">{v?.currentVersion || '?'}</dd>
-          <dt>Published</dt>
-          <dd>
-            {v?.latestVersion ? (
-              <span className="id">{v.latestVersion}</span>
-            ) : (
-              <span className="unreported">Not reported</span>
-            )}
-          </dd>
-        </dl>
-      ),
       run: () =>
         post(
           '/api/version/update',
@@ -320,7 +326,7 @@ export default function SystemPage() {
       title: 'Shut down',
       verb: 'Shut down',
       irreversible: true,
-      requires: 'An operator credential. This holds even when sign-in is turned off.',
+      requires: 'an operator credential. This holds even when sign-in is turned off.',
       changes: 'Stops the process. Every request in flight is cut, and every client is refused.',
       undo: 'Start TokenProxy again by hand on the machine that runs it.',
       run: () =>
@@ -332,176 +338,587 @@ export default function SystemPage() {
         ),
     },
   };
-  const askStrip = (key) =>
+  const strip = (key) =>
     ask === key ? (
-      <InlineConfirm
-        {...ACTS[key]}
-        submit
-        busy={busy}
-        refusal={refuse}
-        onConfirm={ACTS[key].run}
-        onCancel={cancel}
-      />
+      <div className={styles.confirm}>
+        <InlineConfirm
+          {...ACTS[key]}
+          submit
+          busy={busy}
+          refusal={refuse}
+          onConfirm={ACTS[key].run}
+          onCancel={cancel}
+        />
+      </div>
+    ) : null;
+  const outcome = (key) =>
+    done?.at === key ? (
+      <div className={styles.outcome}>
+        <Notice tone={done.tone} title={done.title} next={done.next} />
+      </div>
     ) : null;
 
-  const checks = [
-    ...(detail.data
-      ? [
-          {
-            id: 'database',
-            name: 'Database',
-            sub: db?.driver || 'Driver not reported',
-            status: db?.status,
-            lines: [
-              db && db.latencyMs !== null && db.latencyMs !== undefined
-                ? ['Latency', fmtUnit(db.latencyMs, 'millisecond')]
-                : null,
-              db?.error ? ['Error', db.error] : null,
-            ].filter(Boolean),
-          },
-        ]
-      : []),
-    ...conns.map((c) => ({
-      id: c.connectionId,
-      name: c.displayName || c.provider,
-      sub: c.provider,
-      href: `/dashboard/connections/${c.connectionId}`,
-      status: c.status,
-      lines: [c.lastError ? ['Last error', c.lastError] : null, c.isDraining ? ['Draining', 'Yes'] : null].filter(
-        Boolean
-      ),
-    })),
-  ];
-  const counts = checks.reduce((into, check) => {
-    const tone = TONE[check.status] || 'warn';
-    into[tone] = (into[tone] || 0) + 1;
-    return into;
-  }, {});
+  // A read that failed says so above the rows, with its own retry, and never
+  // hides behind a group. A stale read keeps its last good body on the rows.
+  const lost = (poll) => poll.status === 0 || poll.error?.code === 'network';
+  const readNotices = [
+    health.error && {
+      key: 'health',
+      retry: 'Retry process health read',
+      poll: health,
+      ...(health.data && lost(health)
+        ? {
+            tone: 'warn',
+            title: 'Process health could not be refreshed.',
+            next: 'Showing the last successful observation. Current liveness is unknown until the next successful read.',
+          }
+        : refusal(health.status, health.error)),
+    },
+    detail.error && {
+      key: 'detail',
+      retry: 'Retry readiness read',
+      poll: detail,
+      ...(lost(detail)
+        ? {
+            tone: 'warn',
+            title: 'Readiness checks could not be refreshed.',
+            next: detail.data
+              ? 'Showing the last successful checks. Current database and connection readiness remain unverified.'
+              : 'Retry these checks. Process liveness is reported separately.',
+          }
+        : refusal(detail.status, detail.error)),
+    },
+    version.error && {
+      key: 'version',
+      retry: 'Retry version read',
+      poll: version,
+      ...(lost(version)
+        ? {
+            tone: 'bad',
+            title: 'Version information could not be read.',
+            next: 'Retry this read. Process health is reported separately below.',
+          }
+        : systemRefusal(version.status, version.error)),
+    },
+  ].filter(Boolean);
+
   const chips = [
-    { id: null, label: 'checks', count: checks.length },
-    { id: 'ok', tone: 'positive', label: 'healthy', count: counts.ok || 0 },
-    { id: 'warn', tone: 'ember', label: 'degraded', count: counts.warn || 0 },
-    { id: 'bad', tone: 'refusal', label: 'failing', count: counts.bad || 0 },
+    {
+      id: 'process',
+      tone: health.data ? 'positive' : health.loading ? null : 'refusal',
+      count: health.data ? fmtDuration(health.data.uptimeSeconds * 1000) : '—',
+      label: health.data ? 'up' : health.loading ? 'reading' : 'not answering',
+    },
+    {
+      id: 'version',
+      tone: updateState === 'available' ? 'ember' : updateState === 'current' ? 'positive' : null,
+      count: v?.currentVersion || '—',
+      label:
+        updateState === 'available'
+          ? `running, ${v.latestVersion} published`
+          : updateState === 'current'
+            ? 'running, current'
+            : 'running',
+    },
+    {
+      id: 'database',
+      tone: db ? STATE_TONE[db.status] || 'ember' : null,
+      count: db?.latencyMs != null ? fmtUnit(db.latencyMs, 'millisecond') : '—',
+      label: db ? `database ${(WORDS[db.status] || db.status || '').toLowerCase()}` : 'database',
+    },
+    {
+      id: 'accounts',
+      tone: counts.bad ? 'refusal' : counts.warn ? 'ember' : 'positive',
+      count: conns.length,
+      label: `accounts, ${counts.ok || 0} healthy, ${counts.warn || 0} degraded, ${counts.bad || 0} failing`,
+    },
   ];
-  const matches = (text) =>
-    !query.trim() || String(text).toLowerCase().includes(query.trim().toLowerCase());
-  const visibleChecks = checks.filter(
-    (check) => (!bucket || (TONE[check.status] || 'warn') === bucket) && matches(`${check.name} ${check.sub}`)
+
+  const numberField = (key, label, extra = {}) => (
+    <CommitNumber
+      size="xs"
+      aria-label={label}
+      className={styles.number}
+      value={current[key] ?? extra.fallback ?? 0}
+      disabled={saving === key || !settings.data}
+      onCommit={(next) => save(key, next, label)}
+      min={extra.min}
+      max={extra.max}
+      step={extra.step}
+      suffix={extra.suffix}
+    />
   );
+  const toggle = (key, label) => (
+    <Switch
+      size="xs"
+      aria-label={label}
+      checked={current[key] === true}
+      disabled={saving === key || !settings.data}
+      onChange={(event) => save(key, event.currentTarget.checked, label)}
+    />
+  );
+  const onOff = (key) => (
+    <StateWord tone={current[key] ? 'positive' : null}>{current[key] ? 'On' : 'Off'}</StateWord>
+  );
+  const link = (href, text) => (
+    <Button size="compact-xs" variant="subtle" component={Link} href={href}>
+      {text}
+    </Button>
+  );
+
+  // Every row the panel can show, in its group; the search narrows them.
+  const rows = [];
+  const add = (group, row) => rows.push({ group, ...row });
+  add('Runtime', {
+    id: 'process',
+    label: 'Process',
+    hint: 'This gateway, as it runs now',
+    control: (
+      <span className={styles.reading}>
+        {health.data
+          ? `Up ${fmtDuration(health.data.uptimeSeconds * 1000)}${health.data.generatedAt ? `, read ${fmtTime(health.data.generatedAt)}` : ''}`
+          : health.loading
+            ? 'Reading…'
+            : 'The health route did not answer.'}
+      </span>
+    ),
+    state: (
+      <StateWord tone={health.data ? 'positive' : health.loading ? null : 'refusal'}>
+        {health.data ? 'Up' : health.loading ? 'Reading' : 'Not answering'}
+      </StateWord>
+    ),
+  });
+  add('Runtime', {
+    id: 'version',
+    label: 'Version',
+    hint: 'Installed here',
+    control: (
+      <span className={styles.reading}>
+        {v?.currentVersion ? (
+          <>
+            <code>{v.currentVersion}</code>
+            {v.buildSha ? (
+              <>
+                {' '}
+                build <code>{v.buildSha}</code>
+              </>
+            ) : null}
+          </>
+        ) : version.loading ? (
+          'Reading…'
+        ) : (
+          <Unreported why="The version route did not answer, so the running version is not claimed." />
+        )}
+      </span>
+    ),
+    state: v?.isTrayMode ? <StateWord>Tray mode</StateWord> : null,
+  });
+  add('Runtime', {
+    id: 'update',
+    label: 'Update',
+    hint:
+      updateState === 'available'
+        ? `Version ${v.latestVersion} is published`
+        : updateState === 'current'
+          ? 'This is the published version'
+          : 'A failed lookup is not the same as being current, so this panel claims neither',
+    control:
+      updateState === 'available' ? (
+        <Button
+          size="xs"
+          color="orange"
+          leftSection={<Icon name="i-refresh" />}
+          onClick={() => askFor('update')}
+          disabled={ask === 'update'}
+        >
+          Update now
+        </Button>
+      ) : (
+        <Button
+          size="xs"
+          variant="default"
+          leftSection={<Icon name="i-refresh" />}
+          loading={version.loading}
+          onClick={() => version.refresh()}
+        >
+          Check again
+        </Button>
+      ),
+    state:
+      updateState === 'available' ? (
+        <StateWord tone="ember">Newer version</StateWord>
+      ) : updateState === 'current' ? (
+        <StateWord tone="positive">Up to date</StateWord>
+      ) : (
+        <Unreported why="A failed lookup is not the same as being current, so this panel claims neither." />
+      ),
+  });
+  add('Runtime', {
+    id: 'notes',
+    label: 'Release notes',
+    hint:
+      notes.state === 'ready'
+        ? 'What changed in this and earlier versions'
+        : notes.state === 'empty'
+          ? 'No notes are shipped with this build'
+          : notes.state === 'unavailable'
+            ? 'The notes could not be read'
+            : 'Reading…',
+    control:
+      notes.state === 'ready' ? (
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          onClick={() => setShowNotes((value) => !value)}
+          aria-expanded={showNotes}
+        >
+          {showNotes ? 'Hide notes' : 'Show notes'}
+        </Button>
+      ) : null,
+    state: null,
+  });
+  add('Backup', {
+    id: 'export',
+    label: 'Backup file',
+    hint: 'Every credential in readable form; keep it where you would keep a password',
+    control: (
+      <Button
+        size="xs"
+        leftSection={<Icon name="i-export" />}
+        onClick={() => askFor('export')}
+        disabled={ask === 'export'}
+      >
+        Export configuration
+      </Button>
+    ),
+    state: null,
+  });
+  add('Backup', {
+    id: 'import',
+    label: 'Restore',
+    hint: 'Replaces the stored configuration with a backup file',
+    control: (
+      <span className={styles.inline}>
+        <FileInput
+          size="xs"
+          aria-label="Backup file"
+          placeholder="Choose a JSON backup"
+          accept="application/json,.json"
+          value={file}
+          onChange={setFile}
+          ref={importFileInput}
+          className={styles.file}
+          clearable
+        />
+        <Button
+          size="xs"
+          variant="default"
+          disabled={!file || ask === 'import'}
+          onClick={() => askFor('import')}
+        >
+          Import configuration
+        </Button>
+      </span>
+    ),
+    state: null,
+  });
+  if (advanced) {
+    add('Reads', {
+      id: 'restart',
+      label: 'Restart after replacement',
+      hint: 'Whether a supervisor brings a replaced process back',
+      control: (
+        <Unreported why="No route reports whether a supervisor is running, so whether a replacement restarts on its own or waits for a hand cannot be read from here." />
+      ),
+      state: null,
+    });
+    add('Reads', {
+      id: 'datadir',
+      label: 'Data directory',
+      hint: 'Where the database and stored credentials live',
+      control: (
+        <Unreported why="The gateway resolves this path internally and serves it on no route." />
+      ),
+      state: null,
+    });
+    add('Reads', {
+      id: 'dbfile',
+      label: 'Database file',
+      hint: 'The SQLite file behind the driver',
+      control: (
+        <Unreported why="The gateway resolves this path from its data directory and serves it on no route." />
+      ),
+      state: null,
+    });
+    add('Reads', {
+      id: 'timers',
+      label: 'Timers and background jobs',
+      hint: 'Token refresh, checkpoints, catalogue sync',
+      control: (
+        <Unreported why="Token refresh and the checkpoint timers run in process and report on no route. The model catalogue sync reports its own schedule under Models." />
+      ),
+      state: null,
+    });
+    add('Retention', {
+      id: 'statsRetentionMode',
+      label: 'Statistics retention',
+      hint: 'Preserve keeps every record; window drops what is older than the retention days',
+      control: (
+        <Select
+          size="xs"
+          aria-label="Statistics retention"
+          data={[
+            { value: 'preserve', label: 'Preserve' },
+            { value: 'window', label: 'Window' },
+          ]}
+          value={current.statsRetentionMode || 'preserve'}
+          onChange={(value) => value && save('statsRetentionMode', value, 'Statistics retention')}
+          allowDeselect={false}
+          className={styles.select}
+          disabled={saving === 'statsRetentionMode' || !settings.data}
+        />
+      ),
+      state: null,
+    });
+    add('Retention', {
+      id: 'statsRetentionDays',
+      label: 'Retention days',
+      hint: 'Applies when retention is windowed, 1 through 365',
+      control: numberField('statsRetentionDays', 'Retention days', {
+        min: 1,
+        max: 365,
+        fallback: 45,
+      }),
+      state:
+        current.statsRetentionMode === 'window' ? (
+          <StateWord tone="positive">Applied</StateWord>
+        ) : (
+          <StateWord>Held, retention preserves</StateWord>
+        ),
+    });
+    add('Network defaults', {
+      id: 'connectTimeoutMs',
+      label: 'Connect timeout',
+      hint: 'Milliseconds to reach an upstream before giving up, 1000 through 120000',
+      control: numberField('connectTimeoutMs', 'Connect timeout', {
+        min: 1000,
+        max: 120000,
+        step: 500,
+        suffix: ' ms',
+        fallback: 10000,
+      }),
+      state: null,
+    });
+    add('Network defaults', {
+      id: 'proxy',
+      label: 'Outbound proxy',
+      hint: current.outboundProxyEnabled
+        ? current.outboundProxyUrl || 'Enabled'
+        : 'Direct, no proxy',
+      control: link('/dashboard/network', 'Configure on Network'),
+      state: onOff('outboundProxyEnabled'),
+    });
+    add('Observability', {
+      id: 'enableObservability',
+      label: 'Request observability',
+      hint: 'Keeps a bounded record of each request for the workbenches',
+      control: toggle('enableObservability', 'Request observability'),
+      state: onOff('enableObservability'),
+    });
+    add('Observability', {
+      id: 'observabilityMaxRecords',
+      label: 'Records kept',
+      hint: 'Oldest records go first past this count',
+      control: numberField('observabilityMaxRecords', 'Records kept', { min: 1, fallback: 1000 }),
+      state: null,
+    });
+    add('Observability', {
+      id: 'observabilityBatchSize',
+      label: 'Batch size',
+      hint: 'Records written per flush',
+      control: numberField('observabilityBatchSize', 'Batch size', { min: 1, fallback: 20 }),
+      state: null,
+    });
+    add('Observability', {
+      id: 'observabilityFlushIntervalMs',
+      label: 'Flush interval',
+      hint: 'Milliseconds between writes',
+      control: numberField('observabilityFlushIntervalMs', 'Flush interval', {
+        min: 100,
+        step: 100,
+        suffix: ' ms',
+        fallback: 5000,
+      }),
+      state: null,
+    });
+    add('Observability', {
+      id: 'observabilityMaxJsonSize',
+      label: 'Largest body kept',
+      hint: 'Megabytes of JSON kept per record',
+      control: numberField('observabilityMaxJsonSize', 'Largest body kept', {
+        min: 1,
+        suffix: ' MB',
+        fallback: 5,
+      }),
+      state: null,
+    });
+    add('Sharing', {
+      id: 'analyticsEnabled',
+      label: 'Anonymous analytics',
+      hint: 'Usage counts sent to the project; never prompts or keys',
+      control: toggle('analyticsEnabled', 'Anonymous analytics'),
+      state: onOff('analyticsEnabled'),
+    });
+    add('Sharing', {
+      id: 'cloudEnabled',
+      label: 'Cloud sync',
+      hint: 'Mirrors configuration to the cloud service',
+      control: toggle('cloudEnabled', 'Cloud sync'),
+      state: onOff('cloudEnabled'),
+    });
+    add('Configuration workflows', {
+      id: 'versions',
+      label: 'Configuration versions',
+      hint: 'Routing plans, aliases and plan strategies, with rollback',
+      control: link('/dashboard/models', 'Open on Models'),
+      state: null,
+    });
+    add('Configuration workflows', {
+      id: 'release',
+      label: 'Release activation',
+      hint: 'Its own record and expected version; a draft is not a release',
+      control: link('/dashboard/connections', 'Open on Connections'),
+      state: null,
+    });
+    add('Configuration workflows', {
+      id: 'compat',
+      label: 'Compatibility evidence',
+      hint: 'A fixture revision and a run receipt, changing no routing state',
+      control: link('/dashboard/compatibility', 'Open on Compatibility'),
+      state: null,
+    });
+    for (const c of conns)
+      add('Health checks', {
+        id: c.connectionId,
+        label: c.displayName || c.provider,
+        hint: c.provider,
+        control: (
+          <span className={styles.reading}>
+            {c.lastError ? c.lastError : c.isDraining ? 'Draining' : ''}
+          </span>
+        ),
+        state: (
+          <StateWord tone={STATE_TONE[TONE[c.status]] || 'ember'}>
+            {WORDS[c.status] || c.status}
+          </StateWord>
+        ),
+      });
+  }
+  add('Health checks', {
+    id: 'database',
+    label: 'Database',
+    hint: db?.driver || 'Driver not reported',
+    control: (
+      <span className={styles.reading}>
+        {db?.latencyMs != null ? `Latency ${fmtUnit(db.latencyMs, 'millisecond')}` : ''}
+        {db?.error ? ` ${db.error}` : ''}
+      </span>
+    ),
+    state: db ? (
+      <StateWord tone={STATE_TONE[db.status]}>{WORDS[db.status] || db.status}</StateWord>
+    ) : null,
+  });
+  if (!advanced) {
+    add('Health checks', {
+      id: 'accounts',
+      label: 'Accounts',
+      hint: `${counts.ok || 0} healthy, ${counts.warn || 0} degraded, ${counts.bad || 0} failing`,
+      control: link('/dashboard', 'Open Capacity'),
+      state: (
+        <StateWord tone={counts.bad ? 'refusal' : counts.warn ? 'ember' : 'positive'}>
+          {counts.bad ? 'Failing' : counts.warn ? 'Degraded' : 'Healthy'}
+        </StateWord>
+      ),
+    });
+  }
+  add('Stop', {
+    id: 'shutdown',
+    label: 'Shut down',
+    hint: 'Stops the gateway; every client is refused until it is started again by hand',
+    control: (
+      <Button
+        size="xs"
+        color="red"
+        variant="light"
+        leftSection={<Icon name="i-power" />}
+        onClick={() => askFor('shutdown')}
+        disabled={ask === 'shutdown'}
+      >
+        Shut down
+      </Button>
+    ),
+    state: null,
+  });
+
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? rows.filter((row) =>
+        `${row.label} ${row.hint || ''} ${row.group}`.toLowerCase().includes(needle)
+      )
+    : rows;
+  const groups = [...new Set(shown.map((row) => row.group))];
+  const groupTone = {
+    Stop: 'refusal',
+    'Health checks': counts.bad ? 'refusal' : counts.warn ? 'ember' : 'positive',
+  };
 
   return (
     <div className={shared.lensPage} data-density={density}>
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>System</h1>
-          <p>{advanced ? 'Advanced' : 'Everyday'} · what this process is running, and what may replace it</p>
+          <p>
+            {advanced ? 'Advanced' : 'Everyday'} · the gateway process, its version, backups and the
+            switches that shape it
+          </p>
         </div>
-        <div className={styles.headActions}>
-          <Button component={Link} href="/dashboard/operations" size="xs" variant="default">
-            Operation history
-          </Button>
-          <Freshness status={pollFresh(health)} lastDataAt={health.goodAt} />
-        </div>
+        <Button
+          size="xs"
+          variant="default"
+          component={Link}
+          href="/dashboard/operations"
+          leftSection={<Icon name="i-sessions" />}
+        >
+          Operation history
+        </Button>
       </div>
-
-      <div className={`${shared.lensBody} ${styles.stack}`}>
-        {health.error ? (
-          <Notice
-            {...(health.data && (health.status === 0 || health.error.code === 'network')
-              ? {
-                  tone: 'warn',
-                  title: 'Process health could not be refreshed.',
-                  next: 'Showing the last successful observation. Current liveness is unknown until the next successful read.',
-                }
-              : refusal(health.status, health.error))}
-            action={
-              <button type="button" className={board.linkButton} onClick={health.refresh} disabled={health.loading}>
-                Retry process health read
-              </button>
-            }
-          />
-        ) : null}
-        {version.error ? (
-          <Notice
-            {...(version.status === 0 || version.error.code === 'network'
-              ? {
-                  tone: 'bad',
-                  title: 'Version information could not be read.',
-                  next: 'Retry this read. Process health is reported separately below.',
-                }
-              : systemRefusal(version.status, version.error))}
-            action={
-              <button type="button" className={board.linkButton} onClick={version.refresh} disabled={version.loading}>
-                Retry version read
-              </button>
-            }
-          />
-        ) : null}
-        {detail.error ? (
-          <Notice
-            {...(detail.status === 0 || detail.error.code === 'network'
-              ? {
-                  tone: 'warn',
-                  title: 'Readiness checks could not be refreshed.',
-                  next: detail.data
-                    ? 'Showing the last successful checks. Current database and connection readiness remain unverified.'
-                    : 'Retry these checks. Process liveness is reported separately.',
-                }
-              : refusal(detail.status, detail.error))}
-            action={
-              <button type="button" className={board.linkButton} onClick={detail.refresh} disabled={detail.loading}>
-                Retry readiness read
-              </button>
-            }
-          />
-        ) : null}
-        {detail.data?.scanFailed ? (
-          <Notice
-            tone="warn"
-            title="The connection scan did not finish."
-            next="The list below may be short. It runs again on the next read."
-          />
-        ) : null}
-        {done ? <Notice tone={done.tone} title={done.title} next={done.next} /> : null}
-
-        <Board label="System" advanced={advanced} density={density}>
+      <div className={shared.lensBody}>
+        <Board label="System" advanced={advanced} density={density} layout="rows" compare="none">
           <BoardSummary
             label="System summary"
             chips={chips}
-            active={bucket}
-            onPick={(id) => setBucket(id === bucket ? null : id)}
             note={
-              health.data
-                ? `Up ${fmtDuration(health.data.uptimeSeconds * 1000)}${rollup ? ` · ${WORDS[rollup] || rollup}` : ''}${
-                    db && db.latencyMs !== null && db.latencyMs !== undefined
-                      ? ` · database ${fmtUnit(db.latencyMs, 'millisecond')}`
-                      : ''
-                  }`
-                : 'Reading process health…'
+              advanced
+                ? 'Every reading and switch'
+                : 'Advanced adds retention, observability, sharing and every reading'
             }
           />
           <BoardToolbar
             search={query}
             onSearch={setQuery}
-            searchLabel="Search checks"
+            searchLabel="Search settings"
             actions={
               <>
-                <Button
-                  size="xs"
-                  leftSection={<Icon name="i-copy" />}
-                  onClick={() => askFor('export')}
-                >
-                  Export configuration
-                </Button>
-                <Tooltip label="Re-read process health, readiness and version">
+                <DensitySwitch value={density} onChange={setDensity} />
+                <Tooltip label="Re-read process health, readiness, version and settings">
                   <ActionIcon
                     variant="default"
                     aria-label="Refresh system reads"
-                    loading={health.loading || detail.loading}
                     onClick={() => {
                       health.refresh();
                       detail.refresh();
                       version.refresh();
+                      settings.refresh();
                     }}
                   >
                     <Icon name="i-refresh" />
@@ -509,483 +926,60 @@ export default function SystemPage() {
                 </Tooltip>
               </>
             }
-          >
-            <Tooltip label="How much room each card takes">
-              <DensitySwitch value={density} onChange={setDensity} />
-            </Tooltip>
-          </BoardToolbar>
-          {ask === 'export' ? <div className={board.notice}>{askStrip('export')}</div> : null}
-
-          <BoardGroup label="Runtime" count={3}>
-            <Card
-              id="process"
-              label="Process"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-system" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Process</strong>
-                    <small>This gateway, as it is running now</small>
-                  </div>
-                </>
-              }
-              state={
-                <>
-                  <StateWord tone={health.data ? 'positive' : health.loading ? null : 'refusal'}>
-                    {health.data ? 'Up' : health.loading ? 'Reading' : 'Not answering'}
-                  </StateWord>
-                  <span className={board.spacer} />
-                  <span className={board.cardAttempts}>
-                    {health.data ? fmtDuration(health.data.uptimeSeconds * 1000) : ''}
-                  </span>
-                </>
-              }
+          />
+          {readNotices.map((notice) => (
+            <Notice
+              key={notice.key}
+              tone={notice.tone}
+              title={notice.title}
+              next={notice.next}
+              detail={notice.detail}
             >
-              <dl className="system-facts">
-                <dt>Reading taken</dt>
-                <dd>
-                  {health.data?.generatedAt ? (
-                    <span>{fmtTime(health.data.generatedAt)}</span>
-                  ) : (
-                    <span className="unreported">Not reported</span>
-                  )}
-                </dd>
-                <dt>Tray mode</dt>
-                <dd>
-                  {v ? (
-                    v.isTrayMode ? (
-                      'On'
-                    ) : (
-                      'Off'
-                    )
-                  ) : version.loading ? (
-                    <span className="skeleton">Reading</span>
-                  ) : (
-                    <span className="unreported">Not reported</span>
-                  )}
-                </dd>
-              </dl>
-            </Card>
-
-            <Card
-              id="version"
-              bucket={updateState === 'available' ? 'low' : undefined}
-              label="Version"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-compatibility" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Version</strong>
-                    <small>What is installed, and what is published</small>
-                  </div>
-                </>
-              }
-              state={
-                <>
-                  <StateWord
-                    tone={updateState === 'available' ? 'ember' : updateState === 'current' ? 'positive' : null}
-                  >
-                    {updateState === 'available'
-                      ? 'Update available'
-                      : updateState === 'current'
-                        ? 'Up to date'
-                        : version.loading
-                          ? 'Reading'
-                          : 'Publication not reported'}
-                  </StateWord>
-                  <span className={board.spacer} />
-                  <span className={board.cardAttempts}>{v?.currentVersion || ''}</span>
-                </>
-              }
-            >
-              <dl className="system-facts">
-                <dt>Running version</dt>
-                <dd>
-                  {v?.currentVersion ? (
-                    <>
-                      <span className="id">{v.currentVersion}</span>
-                      {v.buildSha ? (
-                        <>
-                          {' '}
-                          <span className="id">{v.buildSha}</span>
-                        </>
-                      ) : null}
-                    </>
-                  ) : version.loading ? (
-                    <span className="skeleton">Reading</span>
-                  ) : (
-                    <span className="unreported">Not reported</span>
-                  )}
-                </dd>
-                <dt>Published version</dt>
-                <dd>
-                  {v?.latestVersion ? (
-                    <span className="id">{v.latestVersion}</span>
-                  ) : v ? (
-                    <Unreported why="The gateway reports no published version. The lookup either failed or updates are switched off for this install, and it reports both the same way." />
-                  ) : version.loading ? (
-                    <span className="skeleton">Reading</span>
-                  ) : (
-                    <span className="unreported">Not reported</span>
-                  )}
-                </dd>
-                <dt>Update</dt>
-                <dd>
-                  {updateState === 'available' ? (
-                    <span className="status" data-tone="warn">
-                      Update available
-                    </span>
-                  ) : updateState === 'current' ? (
-                    <span className="status" data-tone="ok">
-                      Up to date
-                    </span>
-                  ) : updateState === 'unknown' ? (
-                    <Unreported why="A failed lookup is not the same as being current, so this screen will not claim either." />
-                  ) : version.loading ? (
-                    <span className="skeleton">Reading</span>
-                  ) : (
-                    <span className="unreported">Not reported</span>
-                  )}
-                </dd>
-              </dl>
-            </Card>
-
-            <Card
-              id="unreported"
-              label="Not reported by any route"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-warning" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Not reported by any route</strong>
-                    <small>Named rather than guessed</small>
-                  </div>
-                </>
-              }
-            >
-              <dl className="system-facts">
-                <dt>Restart after replacement</dt>
-                <dd>
-                  <Unreported why="No route reports whether a supervisor is running, so whether a replacement restarts on its own or waits for a hand cannot be read from here." />
-                </dd>
-                <dt>Data directory</dt>
-                <dd>
-                  <Unreported why="The gateway resolves this path internally and serves it on no route." />
-                </dd>
-                <dt>Database file</dt>
-                <dd>
-                  <Unreported why="The gateway resolves this path internally and serves it on no route." />
-                </dd>
-                <dt>Timers and background jobs</dt>
-                <dd>
-                  <Unreported why="Token refresh and the checkpoint timers run in process and report on no route. The model catalogue sync reports its own schedule under Models." />
-                </dd>
-              </dl>
-            </Card>
-          </BoardGroup>
-
-          {visibleChecks.length ? (
-            <BoardGroup
-              label="Health checks"
-              tone={counts.bad ? 'refusal' : counts.warn ? 'ember' : 'positive'}
-              count={visibleChecks.length}
-            >
-              {visibleChecks.map((check) => (
-                <Card
-                  key={check.id}
-                  id={check.id}
-                  bucket={
-                    (TONE[check.status] || 'warn') === 'bad'
-                      ? 'attention'
-                      : (TONE[check.status] || 'warn') === 'warn'
-                        ? 'low'
-                        : undefined
-                  }
-                  label={check.name}
-                  head={
-                    <>
-                      <span className={styles.mark} aria-hidden="true">
-                        <Icon name={check.href ? 'i-connections' : 'i-now'} />
-                      </span>
-                      <div className={board.identityText}>
-                        {check.href ? (
-                          <Link className={styles.name} href={check.href} prefetch={false}>
-                            {check.name}
-                          </Link>
-                        ) : (
-                          <strong>{check.name}</strong>
-                        )}
-                        <small>{check.sub}</small>
+              <Button
+                size="compact-xs"
+                variant="default"
+                onClick={notice.poll.refresh}
+                disabled={notice.poll.loading}
+              >
+                {notice.retry}
+              </Button>
+            </Notice>
+          ))}
+          {groups.map((group) => (
+            <Fragment key={group}>
+              <section
+                className={styles.group}
+                aria-label={`${group} settings`}
+                data-tone={groupTone[group]}
+              >
+                <h3 className={styles.groupTitle}>
+                  <i />
+                  {group}
+                  <span>{shown.filter((row) => row.group === group).length}</span>
+                </h3>
+                <div className={styles.rows}>
+                  {shown
+                    .filter((row) => row.group === group)
+                    .map((row) => (
+                      <div key={row.id} data-setting={row.id}>
+                        <Row {...row} />
+                        {row.id === 'notes' && showNotes && notes.state === 'ready' ? (
+                          <pre className={styles.notes}>{notes.text}</pre>
+                        ) : null}
+                        {strip(row.id)}
+                        {outcome(row.id)}
                       </div>
-                    </>
-                  }
-                  state={
-                    <StateWord tone={STATE_TONE[TONE[check.status]] || null}>
-                      {WORDS[check.status] || check.status || 'Not reported'}
-                    </StateWord>
-                  }
-                >
-                  {check.lines.map(([label, value]) => (
-                    <FactLine key={label} label={label} value={value} />
-                  ))}
-                </Card>
-              ))}
-            </BoardGroup>
+                    ))}
+                </div>
+              </section>
+              {group === 'Backup' && !needle ? <AdmissionControls advanced={advanced} /> : null}
+            </Fragment>
+          ))}
+          {!shown.length ? (
+            <div className={styles.empty}>
+              No setting matches. Clear the search to see every row.
+            </div>
           ) : null}
-
-          <BoardGroup label="Capacity and eligibility" count={2}>
-            <AdmissionControls
-              advanced={advanced}
-              expanded={open === 'admission'}
-              onToggle={() => setOpen((current) => (current === 'admission' ? null : 'admission'))}
-            />
-            <Card
-              id="eligibility"
-              label="Routing eligibility"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-warning" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Routing eligibility</strong>
-                    <small>Separate from provider health</small>
-                  </div>
-                </>
-              }
-            >
-              <p className={styles.aside}>
-                An account can read healthy while a model cooldown or quota threshold still prevents new
-                work. Eligibility is evaluated now; a retained routing decision records what was known then.
-              </p>
-              <span className={styles.actions}>
-                <Button component={Link} href="/dashboard" size="compact-xs" variant="default">
-                  Inspect Capacity
-                </Button>
-              </span>
-            </Card>
-          </BoardGroup>
-
-          <BoardGroup label="Configuration" count={3}>
-            <Card
-              id="export"
-              label="Export configuration"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-copy" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Export configuration</strong>
-                    <small>Settings, connections, proxies, keys, plans, aliases, models and pricing</small>
-                  </div>
-                </>
-              }
-            >
-              <p className={styles.aside}>
-                Credentials are readable in this file. Retained history of every kind is excluded.
-              </p>
-              <span className={styles.actions}>
-                <Button size="compact-xs" onClick={() => askFor('export')}>
-                  Export configuration
-                </Button>
-              </span>
-            </Card>
-
-            <Card
-              id="import"
-              bucket="attention"
-              label="Import configuration"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-open" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Import configuration</strong>
-                    <small>Replaces the configuration tables an export covers</small>
-                  </div>
-                </>
-              }
-            >
-              <p className={styles.aside}>
-                Retained usage, receipts, investigations, rule history and compatibility evidence stay as
-                they are.
-                {policy.data?.requireLogin === false
-                  ? ' Sign-in is off, and this still needs an operator credential plus the password.'
-                  : ''}
-              </p>
-              <FileInput
-                size="xs"
-                ref={importFileInput}
-                label="Backup file"
-                placeholder="Choose a JSON backup"
-                accept="application/json,.json"
-                disabled={busy || ask === 'import'}
-                value={file}
-                onChange={setFile}
-              />
-              <span className={styles.actions}>
-                <Button
-                  size="compact-xs"
-                  color="red"
-                  disabled={!file || busy}
-                  onClick={() => askFor('import')}
-                >
-                  Import configuration
-                </Button>
-              </span>
-              {askStrip('import')}
-              {done?.at === 'import' ? (
-                <Notice tone={done.tone} title={done.title} next={done.next} />
-              ) : null}
-            </Card>
-
-            <Card
-              id="workflows"
-              label="Configuration and evidence workflows"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-tune" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Configuration workflows</strong>
-                    <small>Each retains or changes a different scope</small>
-                  </div>
-                </>
-              }
-            >
-              <ul className={styles.bullets}>
-                <li>
-                  <Link href="/dashboard/models">Configuration versions</Link>: routing plans, aliases and
-                  plan strategies, with rollback.
-                </li>
-                <li>
-                  <Link href="/dashboard/connections">Release activation</Link>: its own record and expected
-                  version. A draft is not a release.
-                </li>
-                <li>
-                  <Link href="/dashboard/compatibility">Compatibility evidence</Link>: a fixture revision and
-                  a run receipt, changing no routing state.
-                </li>
-              </ul>
-            </Card>
-          </BoardGroup>
-
-          <BoardGroup label="Maintenance" tone="refusal" count={2}>
-            <Card
-              id="update"
-              bucket="attention"
-              label="Update"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-refresh" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Update</strong>
-                    <small>Stops the gateway, so every tool routed through it stops too</small>
-                  </div>
-                </>
-              }
-              state={
-                <StateWord tone={updateState === 'available' ? 'ember' : null}>
-                  {updateState === 'available' ? `${v.latestVersion} published` : 'No newer version reported'}
-                </StateWord>
-              }
-            >
-              {notes.state === 'ready' ? (
-                <details className={styles.notesToggle}>
-                  <summary>Release notes</summary>
-                  <pre className="system-notes">{notes.text}</pre>
-                </details>
-              ) : notes.state === 'empty' ? (
-                <p className={styles.aside}>The release notes are empty.</p>
-              ) : notes.state === 'unavailable' ? (
-                <p className={styles.aside}>The release notes could not be read.</p>
-              ) : (
-                <p className={styles.aside}>Reading release notes…</p>
-              )}
-              <span className={styles.actions}>
-                <Button
-                  size="compact-xs"
-                  color="red"
-                  onClick={() => askFor('update')}
-                >
-                  Update now
-                </Button>
-              </span>
-              {askStrip('update')}
-              {done?.at === 'update' ? <Notice tone={done.tone} title={done.title} next={done.next} /> : null}
-            </Card>
-
-            <Card
-              id="shutdown"
-              bucket="attention"
-              label="Shutdown"
-              head={
-                <>
-                  <span className={styles.mark} aria-hidden="true">
-                    <Icon name="i-pause" />
-                  </span>
-                  <div className={board.identityText}>
-                    <strong>Shutdown</strong>
-                    <small>Also releases the files a manual reinstall needs</small>
-                  </div>
-                </>
-              }
-            >
-              <p className={styles.aside}>
-                This is the way to stop the gateway before replacing it by hand.
-              </p>
-              <span className={styles.actions}>
-                <Button
-                  size="compact-xs"
-                  color="red"
-                  onClick={() => askFor('shutdown')}
-                >
-                  Shut down
-                </Button>
-              </span>
-              {askStrip('shutdown')}
-              {done?.at === 'shutdown' ? (
-                <Notice tone={done.tone} title={done.title} next={done.next} />
-              ) : null}
-            </Card>
-          </BoardGroup>
-
-          <div className={board.messages}>
-            {detail.loading && !detail.data ? (
-              <div className={board.empty}>
-                <Loader size="xs" /> Reading readiness checks…
-              </div>
-            ) : null}
-            {detail.data && !conns.length ? (
-              <div className={board.empty}>No connection is configured. Add one under Connections.</div>
-            ) : null}
-            {checks.length && !visibleChecks.length ? (
-              <div className={board.empty}>
-                No check matches.{' '}
-                <button
-                  type="button"
-                  className={board.linkButton}
-                  onClick={() => {
-                    setQuery('');
-                    setBucket(null);
-                  }}
-                >
-                  Clear filters
-                </button>
-              </div>
-            ) : null}
-          </div>
         </Board>
       </div>
     </div>
