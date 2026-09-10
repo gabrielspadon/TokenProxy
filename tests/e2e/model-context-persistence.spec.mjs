@@ -9,8 +9,11 @@ const PREVIEW_HEADER = 'x-tokenproxy-preview-kind';
 const PREVIEW_KIND = 'synthetic-fixture';
 const WINDOW = 900000;
 const identity = model => `${model.provider}/${model.model}`;
-const inspector = page => page.locator('#model-context-inspector');
-const dialog = page => page.locator('dialog[open]');
+const entryFor = (page, key) => page.locator('article[data-account-id]').filter({ hasText: key });
+const tokensIn = locator => locator.locator('[data-context-token-input]');
+const detail = page => page.locator('[id^="context-detail-"]');
+const toast = page => page.locator('[class*="Notification-root"]');
+const fact = (page, label) => detail(page).locator('.model-context-facts > div').filter({ hasText: label }).locator('dd');
 
 function assertSynthetic(response) {
   expect(response, 'The isolated preview must return a response').not.toBeNull();
@@ -24,17 +27,19 @@ async function readJson(page, resource) {
   return response.json();
 }
 
+// The board is the surface: search narrows to the entry, the entry carries its
+// own window field, and expanding it shows the precedence evidence in place.
 async function selectModel(page, key, { reload = false } = {}) {
   const response = reload ? await page.reload() : await page.goto('/dashboard/model-context');
   assertSynthetic(response);
-  await expect(page.getByRole('heading', { name: 'Context windows', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Context limits', exact: true })).toBeVisible();
   await page.getByLabel('Find a model or saved key', { exact: true }).fill(key);
-  const row = page.locator('.model-context-inventory tbody tr').filter({ has: page.getByText(key, { exact: true }) });
-  await expect(row).toHaveCount(1);
-  await row.getByRole('button').click();
-  await expect(inspector(page)).toBeVisible();
-  await inspector(page).getByLabel('Override scope and saved key', { exact: true }).selectOption(key);
-  return inspector(page);
+  const entry = entryFor(page, key);
+  await expect(entry).toHaveCount(1);
+  if (await detail(page).count() === 0) await entry.locator('button[aria-label^="Expand "]').first().click();
+  await expect(detail(page)).toBeVisible();
+  await detail(page).getByLabel('Override scope and saved key', { exact: true }).selectOption(key);
+  return entry;
 }
 
 async function mutateThroughUi(page, method, key, action) {
@@ -118,46 +123,43 @@ test('synthetic UI persists an exact model window and removes it back to the ori
   let deleteAttempted = false;
 
   async function removeThroughUi() {
-    await inspector(page).getByRole('button', { name: 'Remove this override', exact: true }).click();
-    await expect(dialog(page)).toContainText('Remove context override');
-    await expect(dialog(page)).toContainText(key);
+    const entry = entryFor(page, key);
+    await entry.locator('[aria-label^="Remove the override for "]').first().click();
+    const pair = entry.getByRole('group', { name: /^Confirm: Remove the override for / });
+    await expect(pair).toBeVisible();
     deleteAttempted = true;
-    evidence.delete = await mutateThroughUi(page, 'DELETE', key, () => dialog(page).getByRole('button', { name: 'Remove override', exact: true }).click());
+    evidence.delete = await mutateThroughUi(page, 'DELETE', key, () => pair.getByRole('button', { name: 'Remove', exact: true }).click());
     expect(evidence.delete).toEqual({ status: 200, success: true, overrides: originalOverrides });
-    await expect(inspector(page)).toContainText('Override removed and verified after refresh.');
+    await expect(toast(page)).toContainText(`Override removed and verified after refresh: ${key}.`);
     evidence.restored = modelReadback(await readJson(page, ENDPOINT), key);
     expect(evidence.restored).toEqual(evidence.initial);
     expect(Object.entries(evidence.restored.overrides), 'Preserve wildcard precedence in the original map order').toEqual(Object.entries(originalOverrides));
   }
 
   try {
-    const editor = await selectModel(page, key);
-    await editor.getByLabel('Context window in tokens', { exact: true }).fill(String(WINDOW));
-    await editor.getByRole('button', { name: 'Review override', exact: true }).click();
-    await expect(dialog(page)).toContainText('Save context override');
-    await expect(dialog(page)).toContainText(key);
-    await expect(dialog(page)).toContainText('900,000');
-    expect(writes, 'Reviewing the change must not write configuration').toEqual([]);
+    const entry = await selectModel(page, key);
+    await tokensIn(entry).fill(String(WINDOW));
+    expect(writes, 'Typing a window must not write configuration').toEqual([]);
     expect((await readJson(page, ENDPOINT)).overrides).toEqual(originalOverrides);
 
-    evidence.put = await mutateThroughUi(page, 'PUT', key, () => dialog(page).getByRole('button', { name: 'Save override', exact: true }).click());
+    evidence.put = await mutateThroughUi(page, 'PUT', key, () => tokensIn(entry).press('Enter'));
     saveConfirmed = evidence.put.status === 200 && evidence.put.success === true && evidence.put.overrides?.[key] === WINDOW;
     expect(evidence.put).toEqual({ status: 200, success: true, overrides: expectedOverrides });
-    await expect(editor).toContainText('Override saved and verified after refresh.');
+    await expect(toast(page)).toContainText(`Override saved and verified after refresh: ${key}.`);
     evidence.readback = modelReadback(await readJson(page, ENDPOINT), key);
     expect(evidence.readback).toEqual({ overrides: expectedOverrides, staticContextWindow: chosen.staticContextWindow, contextWindow: WINDOW });
-    await expect(editor.locator('.model-context-facts dl').filter({ has: page.getByText('Effective window', { exact: true }) }).locator('dd')).toHaveText('900,000 tokens');
+    await expect(fact(page, 'Effective window')).toHaveText('900,000 tokens');
 
     await selectModel(page, key, { reload: true });
-    await expect(inspector(page).getByLabel('Override scope and saved key', { exact: true })).toHaveValue(key);
-    await expect(inspector(page).getByLabel('Context window in tokens', { exact: true })).toHaveValue(String(WINDOW));
-    await expect(inspector(page).locator('.model-context-facts dl').filter({ has: page.getByText('Winning override key', { exact: true }) }).locator('dd')).toHaveText(key);
+    await expect(detail(page).getByLabel('Override scope and saved key', { exact: true })).toHaveValue(key);
+    await expect(tokensIn(entryFor(page, key))).toHaveValue(String(WINDOW));
+    await expect(fact(page, 'Winning override key')).toHaveText(key);
     evidence.afterReload = modelReadback(await readJson(page, ENDPOINT), key);
     expect(evidence.afterReload).toEqual(evidence.readback);
 
     await removeThroughUi();
     await selectModel(page, key, { reload: true });
-    await expect(inspector(page).getByRole('button', { name: 'Remove this override', exact: true })).toBeDisabled();
+    await expect(entryFor(page, key).locator('[aria-label^="Remove the override for "]')).toHaveCount(0);
     expect(modelReadback(await readJson(page, ENDPOINT), key)).toEqual(evidence.initial);
     expect(writes).toEqual([
       { method: 'PUT', key: null, body: { key, contextWindow: WINDOW } },

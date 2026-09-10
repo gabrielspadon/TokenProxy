@@ -16,20 +16,25 @@ export function ContextProjectFilter({ scope, clientTool, value, onChange, onSna
   query.set('view','projects'); query.set('projectSearch',debounced);
   if (value) query.set('projectLabel',value);
   const resource = useResource(`/api/context?${query}`,{onSnapshot,interval:0});
-  const labels = (resource.data?.projects || []).map(item=>item.projectLabel);
+  // An unlabeled cohort carries a null label, which is not a filter predicate
+  // the API accepts and which a Select cannot parse as an option.
+  const labels = (resource.data?.projects || []).map(item=>item.projectLabel).filter(Boolean);
   // A saved selection remains usable even when search, paging or retention
   // puts it outside the returned option page.
   const options = value && !labels.includes(value) ? [value,...labels] : labels;
   const pagination = resource.data?.pagination;
-  return <div>
-    <Group gap={4} wrap="nowrap">
-      <Select aria-label="Project label filter" placeholder="All project labels" value={value} onChange={onChange}
+  const pages = Math.max(1, pagination?.totalPages || 1);
+  return <>
+    <Group gap={2} wrap="nowrap">
+      <Select size="xs" aria-label="Project label filter" placeholder="All project labels" value={value} onChange={onChange}
         searchValue={search} onSearchChange={setSearch} filter={({options:items})=>items}
-        data={options} searchable clearable clearButtonProps={{'aria-label':'Clear project label filter'}} loading={resource.loading} nothingFoundMessage="No matching project labels" w={180} />
-      <Button size="compact-sm" variant="subtle" aria-label="Previous project labels" disabled={resource.loading || !pagination?.hasPrev} onClick={()=>setPaging({search:debounced,page:page-1})}>‹</Button>
-      <Button size="compact-sm" variant="subtle" aria-label="Next project labels" disabled={resource.loading || !pagination?.hasNext} onClick={()=>setPaging({search:debounced,page:page+1})}>›</Button>
+        data={options} searchable clearable clearButtonProps={{'aria-label':'Clear project label filter'}} loading={resource.loading} nothingFoundMessage="No matching project labels" w={162} />
+      {pages > 1 && <>
+        <Button size="compact-xs" variant="subtle" aria-label="Previous project labels" disabled={resource.loading || !pagination?.hasPrev} onClick={()=>setPaging({search:debounced,page:page-1})}>‹</Button>
+        <Button size="compact-xs" variant="subtle" aria-label="Next project labels" disabled={resource.loading || !pagination?.hasNext} onClick={()=>setPaging({search:debounced,page:page+1})}>›</Button>
+      </>}
+      {pagination && <Text size="xs" c="dimmed" role="status">{pagination.totalItems} labels{pages > 1 ? ` · page ${page} of ${pages}` : ''}</Text>}
     </Group>
-    {pagination && <Text size="xs" c="dimmed" role="status">{pagination.totalItems} labels · page {page} of {Math.max(1,pagination.totalPages)}</Text>}
-    {resource.error && <Alert color="orange" title="Project labels unavailable">{resource.error}<Button size="compact-sm" variant="subtle" onClick={resource.refresh}>Retry labels</Button></Alert>}
-  </div>;
+    {resource.error && <Alert color="orange" title="Project labels unavailable">{resource.error}<Button size="compact-xs" variant="subtle" onClick={resource.refresh}>Retry labels</Button></Alert>}
+  </>;
 }

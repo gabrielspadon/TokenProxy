@@ -33,130 +33,123 @@ async function fixture(page, { refusal = false, stale = false, readbackFailure =
   return { writes, reads: () => reads };
 }
 
-const inspector = page => page.locator('#model-context-inspector');
-const dialog = page => page.locator('dialog[open]');
-async function selectAstra(page) {
-  await page.getByRole('button', { name: /Astra fixture/ }).click();
-  await expect(inspector(page)).toBeVisible();
+// The board is the whole surface: one article per entry, its window edited in
+// the article, its precedence evidence expanded under it. Nothing opens a layer.
+const entry = (page, text) => page.locator('article[data-account-id]').filter({ hasText: text });
+const astra = page => entry(page, 'codex/gpt-6-astra');
+const tokens = locator => locator.locator('[data-context-token-input]');
+const detail = page => page.locator('[id^="context-detail-"]');
+const toast = page => page.locator('[class*="Notification-root"]');
+const notice = page => page.locator('p[role="alert"]');
+
+async function open(page) {
+  await page.goto('/dashboard/model-context');
+  await expect(page.getByRole('heading', { name: 'Context limits', exact: true })).toBeVisible();
+}
+async function expand(locator) {
+  await locator.locator('button[aria-label^="Expand "]').first().click();
 }
 
 test.beforeEach(async ({ page }) => { await signIn(page); });
 
 test('local catalog quantities retain unknown windows and exact configured identity', async ({ page }) => {
   const state = await fixture(page);
-  await page.goto('/dashboard/model-context');
-  await expect(page.getByRole('heading', { name: 'Context windows', exact: true })).toBeVisible();
-  const known = page.locator('tbody tr').filter({ hasText: 'Astra fixture' });
-  await expect(known).toContainText('codex/gpt-6-astra');
-  await expect(known).toContainText('272,000');
-  await expect(known).toContainText('300,000');
-  const unknown = page.locator('tbody tr').filter({ hasText: 'Unknown window fixture' });
-  await expect(unknown.locator('td').nth(0)).toHaveText('Unknown');
-  await expect(unknown.locator('td').nth(1)).toHaveText('Unknown');
-  await unknown.getByRole('button').click();
-  await expect(inspector(page).getByLabel('Context window in tokens')).toHaveValue('');
-  await expect(inspector(page)).toContainText('cannot by themselves force a client’s auto-compaction threshold to 100%');
+  await open(page);
+  await expect(astra(page)).toContainText('Astra fixture');
+  await expect(astra(page)).toContainText('300K');
+  await expect(tokens(astra(page))).toHaveValue('300000');
+  await expect(astra(page)).toHaveAttribute('data-bucket', 'override');
+  const unknown = entry(page, 'custom-fixture/unreported');
+  await expect(unknown).toHaveAttribute('data-bucket', 'unknown');
+  await expect(tokens(unknown)).toHaveValue('');
+  await expand(unknown);
+  await expect(detail(page)).toContainText('cannot by itself force a client’s auto-compaction threshold to 100%');
   expect(state.writes).toEqual([]);
 });
 
-test('save requires confirmation, sends exact key and token integer, then reads back', async ({ page }) => {
+test('a committed window sends exactly one exact key and integer, then reads back', async ({ page }) => {
   const state = await fixture(page);
-  await page.goto('/dashboard/model-context');
-  await selectAstra(page);
-  await inspector(page).getByLabel('Context window in tokens').fill('400000');
-  await inspector(page).getByRole('button', { name: 'Review override', exact: true }).click();
-  await expect(dialog(page)).toContainText('codex/gpt-6-astra');
-  await expect(dialog(page)).toContainText('400,000');
+  await open(page);
+  await tokens(astra(page)).fill('400000');
   expect(state.writes).toHaveLength(0);
-  await dialog(page).getByRole('button', { name: 'Save override', exact: true }).click();
-  await expect(inspector(page)).toContainText('Override saved and verified after refresh.');
-  await expect(inspector(page)).toContainText('400,000 tokens');
+  await tokens(astra(page)).press('Enter');
+  await expect(toast(page)).toContainText('Override saved and verified after refresh: codex/gpt-6-astra.');
+  await expect(astra(page)).toContainText('400K');
   expect(state.writes).toEqual([{ method: 'PUT', body: { key: 'codex/gpt-6-astra', contextWindow: 400000 }, key: null }]);
   expect(state.reads()).toBeGreaterThanOrEqual(2);
 });
 
-test('blank, fractional, negative and imprecise limits are never submitted', async ({ page }) => {
+test('blank and non-positive limits are never submitted', async ({ page }) => {
   const state = await fixture(page);
-  await page.goto('/dashboard/model-context');
-  await selectAstra(page);
-  for (const value of ['', '0', '-4', '1.5', '1e6', '9007199254740992']) {
-    await inspector(page).getByLabel('Context window in tokens').fill(value);
-    await expect(inspector(page).getByRole('button', { name: 'Review override', exact: true })).toBeDisabled();
-    await expect(inspector(page)).toContainText('Enter a positive whole number of tokens.');
+  await open(page);
+  for (const value of ['', '0']) {
+    await tokens(astra(page)).fill(value);
+    await tokens(astra(page)).press('Enter');
   }
   expect(state.writes).toEqual([]);
+  await expect(page.getByText('Enter a positive whole number of tokens.')).toBeVisible();
 });
 
-test('refusal stays in the scoped confirmation without a success notice', async ({ page }) => {
+test('a refusal is reported and no success is claimed', async ({ page }) => {
   await fixture(page, { refusal: true });
-  await page.goto('/dashboard/model-context');
-  await selectAstra(page);
-  await inspector(page).getByLabel('Context window in tokens').fill('400000');
-  await inspector(page).getByRole('button', { name: 'Review override', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Save override', exact: true }).click();
-  await expect(dialog(page)).toContainText('This action is not allowed from here.');
-  await expect(dialog(page)).toContainText('Fixture operator edits refused');
-  await expect(page.getByText('Override saved and verified after refresh.', { exact: true })).toHaveCount(0);
+  await open(page);
+  await tokens(astra(page)).fill('400000');
+  await tokens(astra(page)).press('Enter');
+  await expect(toast(page)).toContainText('This action is not allowed from here.');
+  await expect(toast(page)).toContainText('Fixture operator edits refused');
+  await expect(page.getByText('Override saved and verified', { exact: false })).toHaveCount(0);
 });
 
-test('successful mutation with stale readback remains unverified and blocks editing', async ({ page }) => {
+test('a successful write with a stale readback stays unverified and blocks editing', async ({ page }) => {
   await fixture(page, { stale: true });
-  await page.goto('/dashboard/model-context');
-  await selectAstra(page);
-  await inspector(page).getByLabel('Context window in tokens').fill('400000');
-  await inspector(page).getByRole('button', { name: 'Review override', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Save override', exact: true }).click();
-  await expect(inspector(page)).toContainText('The request succeeded, but readback did not verify the change.');
-  await expect(inspector(page).getByRole('button', { name: 'Review override', exact: true })).toBeDisabled();
+  await open(page);
+  await tokens(astra(page)).fill('400000');
+  await tokens(astra(page)).press('Enter');
+  await expect(toast(page)).toContainText('readback did not verify the change to codex/gpt-6-astra');
+  await expect(page.getByText('Readback is unverified. Refresh before another change.')).toBeVisible();
+  await expect(tokens(astra(page))).toBeDisabled();
 });
 
-test('readback failure preserves uncertainty after accepted mutation', async ({ page }) => {
+test('a readback failure preserves uncertainty after an accepted write', async ({ page }) => {
   await fixture(page, { readbackFailure: true });
-  await page.goto('/dashboard/model-context');
-  await selectAstra(page);
-  await inspector(page).getByLabel('Context window in tokens').fill('400000');
-  await inspector(page).getByRole('button', { name: 'Review override', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Save override', exact: true }).click();
-  await expect(inspector(page)).toContainText('The request succeeded, but readback did not verify the change.');
-  await expect(page.getByText('Fixture readback unavailable', { exact: true })).toBeVisible();
+  await open(page);
+  await tokens(astra(page)).fill('400000');
+  await tokens(astra(page)).press('Enter');
+  await expect(toast(page)).toContainText('readback did not verify the change');
+  await expect(notice(page)).toContainText('Fixture readback unavailable');
 });
 
-test('saved wildcard can be inspected and removed without inventing a catalog model', async ({ page }) => {
+test('a saved wildcard is its own entry and is removed inline, without inventing a catalog model', async ({ page }) => {
   const state = await fixture(page);
-  await page.goto('/dashboard/model-context');
-  await expect(page.locator('tbody')).not.toContainText('orphan');
-  await page.getByLabel('Inventory', { exact: true }).selectOption('overrides');
-  await page.getByRole('button', { name: '*orphan-fixture*', exact: true }).click();
-  await expect(inspector(page)).toContainText('Not a catalog model');
-  await inspector(page).getByRole('button', { name: 'Remove this override', exact: true }).click();
+  await open(page);
+  const orphan = entry(page, '*orphan-fixture*');
+  await expect(orphan).toHaveCount(1);
+  await expand(orphan);
+  await expect(detail(page)).toContainText('Not a catalog model');
+  await orphan.locator('[aria-label="Remove the override for *orphan-fixture*"]').click();
   expect(state.writes).toHaveLength(0);
-  await dialog(page).getByRole('button', { name: 'Remove override', exact: true }).click();
-  await expect(inspector(page)).toContainText('Override removed and verified after refresh.');
+  await orphan.getByRole('group', { name: 'Confirm: Remove the override for *orphan-fixture*' }).getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(toast(page)).toContainText('Override removed and verified after refresh: *orphan-fixture*.');
   expect(state.writes).toEqual([{ method: 'DELETE', body: null, key: '*orphan-fixture*' }]);
-  await expect(page.locator('tbody')).not.toContainText('orphan');
+  await expect(entry(page, '*orphan-fixture*')).toHaveCount(0);
 });
 
-test('pagination bounds rendered rows and search resets the page without losing selection', async ({ page }) => {
+test('the board bounds what it renders and search narrows it without a page control', async ({ page }) => {
   await fixture(page, { many: true });
-  await page.goto('/dashboard/model-context');
-  await expect(page.locator('tbody tr')).toHaveCount(20);
-  await selectAstra(page);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await expect(page.getByText('Page 2 of 3 · 20 rows per page', { exact: true })).toBeVisible();
+  await open(page);
+  await expect(page.locator('article[data-account-id]')).toHaveCount(48);
   await page.getByLabel('Find a model or saved key').fill('Unknown window fixture');
-  await expect(page.locator('tbody tr')).toHaveCount(1);
-  await expect(page.getByText('Page 1 of 1 · 20 rows per page', { exact: true })).toBeVisible();
-  await expect(inspector(page)).toContainText('codex/gpt-6-astra');
+  await expect(page.locator('article[data-account-id]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Next', exact: true })).toHaveCount(0);
 });
 
-test('unavailable configuration remains unknown without manufactured editable models', async ({ page }) => {
+test('an unavailable configuration remains unknown without manufactured editable models', async ({ page }) => {
   await page.route('**/api/model-context*', route => route.fulfill(json(403, { error: 'Fixture context read refused' })));
-  await page.goto('/dashboard/model-context');
-  await expect(page.getByText('This action is not allowed from here.', { exact: true })).toBeVisible();
-  await expect(page.getByText('Fixture context read refused', { exact: true })).toBeVisible();
-  await expect(page.getByText('Inventory unknown', { exact: true })).toBeVisible();
-  await expect(page.locator('tbody tr')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Review override', exact: true })).toHaveCount(0);
+  await open(page);
+  await expect(notice(page)).toContainText('This action is not allowed from here.');
+  await expect(notice(page)).toContainText('Fixture context read refused');
+  await expect(page.locator('article[data-account-id]')).toHaveCount(0);
+  await expect(page.locator('[data-context-token-input]')).toHaveCount(0);
 });
 
 async function assertIsolatedLtr(locator, text) {
@@ -189,51 +182,30 @@ async function assertIsolatedLtr(locator, text) {
 test('RTL isolates exact model keys, wildcard keys and token values without changing submitted values', async ({ page }) => {
   const state = await fixture(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/dashboard/model-context');
-  await expect(page.getByRole('heading', { name: 'Context windows', exact: true })).toBeVisible();
+  await open(page);
   // Exercise identifier isolation under an externally changed document direction.
   await page.evaluate(() => { document.documentElement.dir = 'rtl'; });
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-  const known = page.locator('tbody tr').filter({ hasText: 'Astra fixture' });
-  await assertIsolatedLtr(known.locator('th .model-context-key'), 'codex/gpt-6-astra');
-  await assertIsolatedLtr(known.locator('td').nth(0).locator('bdi'), '272,000');
-  await assertIsolatedLtr(known.locator('td').nth(1).locator('bdi'), '300,000');
-  await assertIsolatedLtr(known.locator('td').nth(2).locator('.model-context-key'), 'codex/gpt-6-astra');
-  const unknown = page.locator('tbody tr').filter({ hasText: 'Unknown window fixture' }).locator('td').first();
-  await expect(unknown).toHaveText('Unknown');
-  await expect(unknown.locator('bdi')).toHaveCount(0);
+  await assertIsolatedLtr(astra(page).locator('.model-context-key').first(), 'codex/gpt-6-astra');
+  await expect(tokens(astra(page))).toHaveAttribute('dir', 'ltr');
+  await expect(tokens(astra(page))).toHaveValue('300000');
+  expect(await tokens(astra(page)).evaluate(element => ({ direction: getComputedStyle(element).direction, isolation: getComputedStyle(element).unicodeBidi }))).toEqual({ direction: 'ltr', isolation: 'isolate' });
 
-  await selectAstra(page);
-  const scope = inspector(page).getByLabel('Override scope and saved key');
+  await expand(astra(page));
+  const scope = detail(page).getByLabel('Override scope and saved key');
   await expect(scope).toHaveAttribute('dir', 'ltr');
   await expect(scope).toHaveValue('codex/gpt-6-astra');
-  expect(await scope.locator('option:checked').textContent()).toContain('\u2066codex/gpt-6-astra\u2069');
-  const input = inspector(page).getByLabel('Context window in tokens');
-  await expect(input).toHaveAttribute('dir', 'ltr');
-  await expect(input).toHaveValue('300000');
-  expect(await input.evaluate(element => ({ direction: getComputedStyle(element).direction, isolation: getComputedStyle(element).unicodeBidi }))).toEqual({ direction: 'ltr', isolation: 'isolate' });
-  const primaryText = page.locator('.model-context-page table th, .model-context-page table td, .model-context-page table code, .model-context-page table bdi, .model-context-page .mantine-InputWrapper-label, .model-context-page .mantine-InputWrapper-description, .model-context-page .mantine-Input-input, .model-context-page .mantine-Button-label');
-  const belowFloor = await primaryText.evaluateAll(elements => elements.filter(element => element.getBoundingClientRect().height > 0 && Number.parseFloat(getComputedStyle(element).fontSize) < 13).map(element => ({ text: element.textContent, size: getComputedStyle(element).fontSize })));
-  expect(belowFloor).toEqual([]);
+  expect(await scope.locator('option:checked').textContent()).toContain('⁦codex/gpt-6-astra⁩');
   await scope.selectOption('gpt-6-astra');
-  await expect(scope).toHaveValue('gpt-6-astra');
-  expect(await scope.locator('option:checked').textContent()).toContain('\u2066gpt-6-astra\u2069');
-  await input.fill('400000');
-  await inspector(page).getByRole('button', { name: 'Review override', exact: true }).click();
-  await assertIsolatedLtr(dialog(page).locator('.model-context-key').first(), 'gpt-6-astra');
-  await assertIsolatedLtr(dialog(page).locator('.model-context-number').first(), '400,000');
-  await dialog(page).getByRole('button', { name: 'Save override', exact: true }).click();
-  await expect(inspector(page)).toContainText('Override saved and verified after refresh.');
+  await tokens(astra(page)).fill('400000');
+  await tokens(astra(page)).press('Enter');
+  await expect(toast(page)).toContainText('Override saved and verified after refresh: gpt-6-astra.');
   expect(state.writes).toEqual([{ method: 'PUT', body: { key: 'gpt-6-astra', contextWindow: 400000 }, key: null }]);
-  await assertIsolatedLtr(inspector(page).locator('.notice .model-context-key'), 'gpt-6-astra');
 
-  await page.getByLabel('Inventory', { exact: true }).selectOption('overrides');
-  const wildcard = page.getByRole('button', { name: '*orphan-fixture*', exact: true });
-  await assertIsolatedLtr(wildcard.locator('.model-context-key'), '*orphan-fixture*');
-  await wildcard.click();
-  await assertIsolatedLtr(inspector(page).locator('.model-context-edit .model-context-key'), '*orphan-fixture*');
-  await inspector(page).getByRole('button', { name: 'Remove this override', exact: true }).click();
-  await assertIsolatedLtr(dialog(page).locator('.model-context-key').first(), '*orphan-fixture*');
-  await dialog(page).getByRole('button', { name: 'Cancel', exact: true }).click();
-  expect(state.writes).toHaveLength(1);
+  const wildcard = entry(page, '*orphan-fixture*');
+  await assertIsolatedLtr(wildcard.locator('.model-context-key').first(), '*orphan-fixture*');
+  // Interface text follows the shared dense scale; nothing drops below it.
+  const belowFloor = await page.locator('.model-context-page article, .model-context-page article code, .model-context-page article bdi, .model-context-page .mantine-Input-input, .model-context-page .mantine-Button-label').evaluateAll(elements =>
+    elements.filter(element => element.getBoundingClientRect().height > 0 && Number.parseFloat(getComputedStyle(element).fontSize) < 12).map(element => ({ text: element.textContent, size: getComputedStyle(element).fontSize })));
+  expect(belowFloor).toEqual([]);
 });

@@ -89,11 +89,13 @@ const data = {
 
 let container;
 let root;
+// The dense cohort table and the record ledger are the Advanced level; the
+// Everyday level renders the same population as compact cards.
 function mount(props = {}) {
   act(() =>
     root.render(
       <MantineProvider env="test">
-        <EconomicsLens data={data} {...props} />
+        <EconomicsLens data={data} advanced {...props} />
       </MantineProvider>
     )
   );
@@ -327,6 +329,38 @@ describe('Economics ledger interactions', () => {
       )
     );
     expect(onGroupSelect).not.toHaveBeenCalled();
+  });
+
+  it('groups cohorts into compact pricing cards at the Everyday level and filters by a state chip', () => {
+    const onInspect = vi.fn();
+    act(() =>
+      root.render(
+        <MantineProvider env="test">
+          <EconomicsLens data={data} advanced={false} onInspect={onInspect} />
+        </MantineProvider>
+      )
+    );
+    // Everyday shows cards, never the dense cohort table or the record ledger.
+    expect(tableBody('Economics by cohort')).toBeNull();
+    expect(tableBody('Recorded requests')).toBeNull();
+    const cards = [...container.querySelectorAll('article')];
+    expect(cards).toHaveLength(2);
+    expect(cards[0].textContent).toContain('Partly priced');
+    expect(cards[0].textContent).toContain('$9.00');
+    expect(container.querySelector('[aria-label="Density"]')).not.toBeNull();
+    click(container.querySelector('button[aria-label="Inspect anthropic on anthropic"]'));
+    expect(onInspect).toHaveBeenCalledWith({
+      kind: 'economics-group',
+      group: providerB,
+      groupBy: 'provider',
+    });
+    // Every cohort here is partly priced, so the priced chip is absent and the
+    // partly-priced chip keeps both.
+    const chips = [...container.querySelectorAll('[aria-label="Cohort summary"] button')];
+    expect(chips.map((chip) => chip.textContent)).toEqual(['2 cohorts', '2 partly priced']);
+    click(chips[1]);
+    expect(chips[1].getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelectorAll('article')).toHaveLength(2);
   });
 
   it('renders load, error and empty states without stale economics', () => {

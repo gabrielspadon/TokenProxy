@@ -17,11 +17,11 @@ export default function EconomicsFilters({ value = {}, onChange }) {
   }}>
     <div className={styles.toolHeading}><h2>Exact attribution</h2><p>Filter the summary, cohort, completion ledger and export using retained identities. An absent reference does not identify a client or project.</p></div>
     <div className={styles.fields}>
-      {ECONOMICS_IDENTITY_FIELDS.map(key => <TextInput key={key} size="sm" label={labels[key]} value={fields[key] ?? ''} onChange={event => field(key, event.currentTarget.value)} description={key.endsWith('Ref') ? 'Exact ctx1_ reference from a recorded completion' : undefined} />)}
-      <Select size="sm" label="Request linkage" clearable value={fields.requestLink || null} onChange={value => field('requestLink',value)} data={['linked','unattributed','unavailable','conflict'].map(value=>({value,label:value}))} />
-      <Select size="sm" label="Missing recorded identity" clearable value={fields.missing || null} onChange={value => field('missing',value)} data={ECONOMICS_MISSING_FIELDS.map(value=>({value,label:labels[value]}))} />
+      {ECONOMICS_IDENTITY_FIELDS.map(key => <TextInput key={key} size="xs" label={labels[key]} value={fields[key] ?? ''} onChange={event => field(key, event.currentTarget.value)} description={key.endsWith('Ref') ? 'Exact ctx1_ reference from a recorded completion' : undefined} />)}
+      <Select size="xs" label="Request linkage" clearable value={fields.requestLink || null} onChange={value => field('requestLink',value)} data={['linked','unattributed','unavailable','conflict'].map(value=>({value,label:value}))} />
+      <Select size="xs" label="Missing recorded identity" clearable value={fields.missing || null} onChange={value => field('missing',value)} data={ECONOMICS_MISSING_FIELDS.map(value=>({value,label:labels[value]}))} />
     </div>
     {error && <Alert color="red" role="alert">{error}</Alert>}{notice && <p role="status">{notice}</p>}
-    <Group className={styles.formActions}><Button type="submit" size="sm">Apply filters</Button>{draft && <Button variant="default" size="sm" onClick={() => { setDraft(null); setError(null); setNotice(null); form.current?.querySelector('input')?.focus(); }}>Discard filter draft</Button>}<Button variant="default" size="sm" onClick={() => { onChange({}); setDraft(null); setError(null); setNotice('Identity filters cleared. Shared scope is unchanged.'); }}>Clear identity filters</Button></Group>
+    <Group className={styles.formActions}><Button type="submit" size="xs">Apply filters</Button>{draft && <Button variant="default" size="xs" onClick={() => { setDraft(null); setError(null); setNotice(null); form.current?.querySelector('input')?.focus(); }}>Discard filter draft</Button>}<Button variant="default" size="xs" onClick={() => { onChange({}); setDraft(null); setError(null); setNotice('Identity filters cleared. Shared scope is unchanged.'); }}>Clear identity filters</Button></Group>
   </form>;
 }

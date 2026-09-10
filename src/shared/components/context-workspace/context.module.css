@@ -1,7 +1,11 @@
 .workspace { --context-muted: var(--slate); display: flex; flex-direction: column; min-width: 0; margin: 0 24px 16px; color: var(--ink); font-size: 13px; }
 .viewport > .workspace { min-height: 0; }
 .workspace > * { flex-shrink: 0; }
-.workspace > .sessionViewport,.workspace > .reportsViewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
+/* The board is the page: it grows and the document scrolls, the way the
+   Capacity board does. A nested scroller would hide an expanded card. */
+.viewport { height: auto; min-height: calc(100dvh - 44px); padding-bottom: 40px; }
+.workspace > .sessionViewport { min-width: 0; }
+.workspace > .reportsViewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; }
 .workspace :global(.mantine-Button-root) { font-size: 13px; }
 .coverage { position: relative; display: grid; grid-template-columns: minmax(180px,1.3fr) repeat(4,minmax(105px,1fr)); background: transparent; border-bottom: 1px solid var(--rule); padding: 9px 0 12px; gap: 12px; }
 .coverageIntro h2 { font-size: 14px; font-weight: 500; margin: 0 0 5px; }
@@ -195,7 +199,7 @@
 .tasks :global(.mantine-Tabs-tab) { min-height: var(--op-control-min-height,36px); font-size: 13px; }
 .tracePanel,.trace { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .trace > .workspace { flex: 1; min-height: 0; }
-.traceActions { padding: 10px 24px; }
+.trace > :global(section[aria-label='Retained request activity']) { margin: 4px 24px 0; }
 .historyPanel { min-width: 0; overflow: auto; padding: 18px 24px; }
 .intervalComparison { min-width: 0; }
 .intervalFields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
@@ -216,3 +220,44 @@
 @media (max-width: 900px) { .retentionFields { grid-template-columns: repeat(2,minmax(0,1fr)); } .retentionActions { grid-column: 1 / -1; } }
 @media (max-width: 768px) { .tasks,.tracePanel,.trace { flex: none; } .tasks > :global(.mantine-Tabs-list),.traceActions { padding-inline: 16px; } .historyPanel { padding: 16px; } }
 @media (max-width: 480px) { .retentionFields { grid-template-columns: 1fr; } }
+
+
+/* The session board's own additions on top of the shared board kit. */
+.sessionId { color: var(--context-muted); font-size: var(--type-dense); font-variant-numeric: tabular-nums; }
+.sortPick { width: 148px; }
+.sortPick :global(.mantine-Input-input) { font-size: var(--type-dense); }
+.clientFilter { display: flex; gap: 4px; align-items: center; }
+.sessionRows { min-width: 0; overflow: auto; }
+.sessionRows:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+.sessionTable { border-collapse: collapse; width: 100%; font-size: var(--type-dense); }
+.sessionTable th, .sessionTable td { padding: 4px 10px; text-align: start; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.sessionTable thead th { position: sticky; top: 0; z-index: 1; background: var(--paper); color: var(--slate); font-weight: 500; }
+.sessionTable [data-numeric] { text-align: end; font-variant-numeric: tabular-nums; }
+.sessionTable tbody th { font-weight: 500; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.sessionTable tbody tr:hover td { background: var(--paper); }
+.sessionTable tr[data-selected] > * { background: var(--signal-wash); }
+.detailRow > td { padding: 0; white-space: normal; }
+.boardFoot { border-top: 1px solid var(--rule); }
+.boardFoot > .pager { border-top: 0; }
+.boardFoot > .identityFoot { border-top: 0; max-width: none; padding-top: 0; }
+.trace .sessionDetail { background: var(--raised); }
+
+.plainNote { color: var(--slate); }
+.rejection { margin-inline: 24px; }
+
+.offPage { border-top: 1px solid var(--rule); background: var(--raised); box-shadow: inset 3px 0 var(--signal); }
+.offPageHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--rule); background: var(--signal-wash); font-size: var(--type-dense); }
+.offPageHead > span { color: var(--slate); }
+.attemptInspector { border-top: 1px solid var(--rule); margin-top: 12px; }
+.inspectorHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 0 6px; }
+.inspectorHead h3 { margin: 0; font-size: var(--type-ui); font-weight: 600; }
+.inspectorHead p { margin: 2px 0 0; color: var(--slate); font-size: var(--type-dense); max-width: none; }
+
+/* At the board's full width a fact list lays out as columns instead of one
+   long stack, and the session measures read as small chips rather than a panel
+   of large numbers. */
+@container (min-width: 720px) { .facts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); column-gap: 28px; } }
+.sessionMeasures { grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); }
+.sessionMeasures strong { font-size: var(--type-ui); font-weight: 600; }
+.sessionMeasures strong > small { font-size: var(--type-dense); }
+.attemptInspector .inspector { padding: 0; }
