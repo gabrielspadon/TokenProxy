@@ -1,3 +1,10 @@
+/* The board language every working surface shares: the panel, the summary
+   strip, the toolbar, state groups, cards, evidence lines with meters, the
+   hidden-window affordances and the density variants. Capacity's account
+   board is the reference composition; the row grid, comparison, add-account
+   row and account controls further down are its own and stay here so one
+   stylesheet owns the look. Other surfaces compose the shared classes through
+   src/shared/workspace/Board.js. */
 .board {
   container: board / inline-size;
   min-width: 0;

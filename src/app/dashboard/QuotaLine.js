@@ -5,7 +5,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { Icon } from '@/shared/components/Icon';
 import { accountWindowStale, accountWindowTime } from './accountControlPanelModel';
 import { resetShort, windowHiddenId, windowLevel } from './accountBoardModel';
-import styles from './accountBoard.module.css';
+import styles from '@/shared/workspace/board.module.css';
 
 const number = (value) =>
   Number.isFinite(value)
