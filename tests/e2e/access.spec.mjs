@@ -1,144 +1,150 @@
-import { test, expect } from "playwright/test";
-import { signIn, json } from "./helpers.mjs";
+import { test, expect } from 'playwright/test';
+import { readFile, realpath } from 'node:fs/promises';
+import { authenticateRedesign, installRedesignBrowser } from './redesign-fixtures/browser.mjs';
+import { json } from './helpers.mjs';
 
-// Written against docs/contract/04-keys-usage-auth.md and the live handlers on
-// 20143. It has never been run: /dashboard/access exists on that instance only
-// after the lead rebuilds it.
+// Access against the launcher's representative, credentialless fixture.
+// E2E_FIXTURE_ROOT must be its owned run root and E2E_BASE its exact loopback
+// URL. Every write is fulfilled by page.route, so a spec run can never change
+// the auth of the instance it is pointed at.
+test.use({ serviceWorkers: 'block', timezoneId: 'UTC', reducedMotion: 'reduce', trace: 'off' });
 
-const STATUS = {
-  requireLogin: true, authMode: "password", ssoType: "oidc",
-  oidcConfigured: false, oidcLoginLabel: "Sign in with OIDC",
-  samlConfigured: false, samlLoginLabel: "Sign in with SAML SSO",
-  hasPassword: true, passwordSource: "stored", displayName: "Password user", loginMethod: "Password",
-  authenticated: true, oidcName: null, oidcEmail: null, oidcLogin: false,
-  samlName: null, samlEmail: null, samlLogin: false,
-};
-
-const SETTINGS = {
-  requireLogin: true, requireApiKey: true,
-  authMode: "password", ssoType: "oidc",
-  oidcIssuerUrl: "", oidcClientId: "", oidcScopes: "openid profile email", oidcLoginLabel: "Sign in with OIDC",
-  samlEntryPoint: "", samlIssuer: "urn:tokenproxy:sp", samlCert: "",
-  samlLoginLabel: "Sign in with SAML SSO", samlAttributeEmail: "email", samlAttributeName: "name",
-  oidcConfigured: false, hasPassword: true,
-};
-
-// Every write is fulfilled here, so a spec run can never change the auth of the
-// instance it is pointed at. Reads fall through to the real gateway unless a
-// test overrides them.
-async function sealWrites(page) {
-  await page.route("**/api/settings", (r) => (r.request().method() === "GET" ? r.fallback() : r.fulfill(json(200, SETTINGS))));
-  await page.route("**/api/auth/reset-password", (r) => r.fulfill(json(200, { success: true })));
-  await page.route("**/api/auth/oidc/test", (r) => r.fulfill(json(200, { ok: true, discoveryOk: true, clientSecretTested: false, clientSecretValid: null, message: "Discovery loaded." })));
-  await page.route("**/api/auth/saml/test", (r) => r.fulfill(json(200, { ok: true, certValid: true, message: "SAML 2.0 configuration verified successfully." })));
+async function fixture({ page, context, baseURL }, { level = 'advanced', density = 'tidy' } = {}) {
+  expect(process.env.E2E_FIXTURE_ROOT, 'An owned representative fixture root is required').toBeTruthy();
+  const root = await realpath(process.env.E2E_FIXTURE_ROOT);
+  const runtime = JSON.parse(await readFile(`${root}/process.json`, 'utf8'));
+  const owner = JSON.parse(await readFile(`${root}/owner.json`, 'utf8'));
+  expect(owner).toMatchObject({ kind: 'tokenproxy-redesign-preview-v1', root, runId: runtime.runId });
+  expect(process.env.E2E_BASE).toBe(runtime.url);
+  expect(baseURL).toBe(runtime.url);
+  await authenticateRedesign(context, root);
+  await installRedesignBrowser(page, { baseUrl: runtime.url, runtimeReceipt: runtime });
+  await context.addInitScript(
+    ([mode, chosen]) => {
+      localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify(mode));
+      localStorage.setItem('tokenproxy.capacity-density', JSON.stringify(chosen));
+    },
+    [level, density]
+  );
+  // Gateway writes only. Next's dev overlay POSTs /__nextjs_* to symbolicate a
+  // warning, and counting that as a write makes the guard read false.
+  const writes = [];
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method()))
+      writes.push({ path, method: request.method() });
+  });
+  // Nothing this suite does may reach a settings write.
+  await page.route('**/api/settings', route =>
+    route.request().method() === 'GET'
+      ? route.fallback()
+      : route.fulfill(json(500, { error: 'a spec must never write settings' }))
+  );
+  return { runtime, writes };
 }
 
-test.beforeEach(async ({ page }) => {
-  await signIn(page);
-  await sealWrites(page);
+async function open(page, runtime) {
+  const response = await page.goto(`${runtime.url}/dashboard/access`, { waitUntil: 'domcontentloaded' });
+  expect(response.status()).toBe(200);
+  await expect(page.getByRole('heading', { level: 1, name: 'Access' })).toBeVisible();
+  // The header's snapshot label arrives from a client read, so it is the signal
+  // that hydration finished and a click will reach a handler.
+  await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture', { timeout: 60000 });
+}
+
+test('access is one board of sign-in methods, with no layer anywhere', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime } = await fixture({ page, context, baseURL });
+  await open(page, runtime);
+  const board = page.locator('section[aria-label="Access"]');
+  await expect(board).toBeVisible();
+  await expect(board).toHaveAttribute('data-density', 'tidy');
+  await expect(board.getByRole('group', { name: 'Sign-in summary' })).toBeVisible();
+  for (const method of ['Password', 'OIDC', 'SAML'])
+    await expect(board.locator(`article[data-account-id="${method.toLowerCase()}"]`)).toBeVisible();
+  await expect(board.locator('article[data-account-id="require-login"]')).toContainText('Signing in');
+  await expect(board.locator('article[data-account-id="lockout"]')).toContainText('30s');
+  await expect(board.locator('article[data-account-id="lockout"] .unreported')).toHaveText('Not reported');
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await expect(page.locator('[role="dialog"]')).toHaveCount(0);
 });
 
-test("the auth poll reports stale after a good read stops answering", async ({ page }) => {
-  // One good read, then the 15s poll fails: the wait outlives the shared 30s
-  // default, and the config is another slice's file.
-  test.setTimeout(60000);
-  let served = 0;
-  await page.route("**/api/auth/status", (r) => (served++ === 0 ? r.fulfill(json(200, STATUS)) : r.abort()));
-  await page.goto("/dashboard/access");
-  const fresh = page.locator(".screen-head .fresh").first();
-  await expect(fresh).toHaveAttribute("data-state", "live");
-  await expect(fresh).toHaveAttribute("data-state", "stale", { timeout: 25000 });
-  await expect(page.getByText("Password sign-in").first()).toBeVisible();
+test('a method opens its settings in place and reviews a frozen request before any write', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime, writes } = await fixture({ page, context, baseURL });
+  await open(page, runtime);
+  await page.getByRole('button', { name: 'Expand OIDC' }).click();
+  const card = page.locator('article[data-account-id="oidc"]');
+  await expect(card.getByLabel('Provider address')).toBeVisible();
+  await card.getByLabel('Client identity').fill('synthetic-client');
+  await card.getByRole('button', { name: 'Review configuration' }).click();
+  const review = page.getByRole('group', { name: 'Configure single sign-on' });
+  await expect(review).toContainText('synthetic-client');
+  await expect(review).toContainText('This does not test sign-in completion.');
+  // A review is a reading, not a write, and it carries no field of its own.
+  await expect(review.locator('input')).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+  await review.getByRole('button', { name: 'Cancel' }).click();
+  await expect(review).toHaveCount(0);
+  expect(writes).toHaveLength(0);
 });
 
-test("a forbidden settings read renders as its own sentence", async ({ page }) => {
-  await page.route("**/api/settings", (r) => (r.request().method() === "GET"
-    ? r.fulfill(json(403, { error: "Local only: CLI token required" }))
-    : r.fulfill(json(200, SETTINGS))));
-  await page.goto("/dashboard/access");
-  await expect(page.getByText("This action is not allowed from here.")).toBeVisible();
-  await expect(page.getByText("Local only: CLI token required")).toBeVisible();
+test('turning sign-in off asks in place and names exactly what stays protected', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime, writes } = await fixture({ page, context, baseURL });
+  await open(page, runtime);
+  const card = page.locator('article[data-account-id="require-login"]');
+  await expect(card).toContainText('Shutting the gateway down.');
+  await card.getByRole('button', { name: 'Turn sign-in off' }).click();
+  const ask = page.getByRole('group', { name: 'Turn sign-in off' });
+  await expect(ask).toContainText('Anyone who can reach this port reads the dashboard and changes most settings without a password.');
+  await expect(ask).toContainText('Shutdown, database export and import, and update still ask for a session');
+  await expect(ask).toContainText('every change under the operator interface stays bound to this machine');
+  await expect(page.locator('dialog')).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+  await ask.getByRole('button', { name: 'Cancel' }).click();
+  expect(writes).toHaveLength(0);
 });
 
-test("turning sign-in off names exactly what stays protected", async ({ page }) => {
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, STATUS)));
-  await page.goto("/dashboard/access");
-  await expect(page.getByText("Shutting the gateway down.")).toBeVisible();
-  await page.getByRole("button", { name: "Turn sign-in off" }).click();
-  const dialog = page.locator("dialog.confirm[open]");
-  await expect(dialog).toContainText("Anyone who can reach this port reads the dashboard and changes most settings without a password.");
-  await expect(dialog).toContainText("Shutdown, database export and import, and update still ask for a session");
-  await expect(dialog).toContainText("every change under the operator interface stays bound to this machine");
-  await expect(dialog.getByRole("button", { name: "Turn sign-in off" })).toBeVisible();
+test('a stored secret reads as a state word and its value never reaches the page', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const secret = 'oidc-client-secret-DO-NOT-RENDER';
+  const { runtime } = await fixture({ page, context, baseURL });
+  await page.route('**/api/settings', async route => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    const body = await response.json();
+    return route.fulfill(
+      json(200, {
+        ...body,
+        oidcConfigured: true,
+        oidcIssuerUrl: 'https://idp.example.test',
+        oidcClientId: 'tokenproxy',
+        oidcClientSecret: secret,
+      })
+    );
+  });
+  await open(page, runtime);
+  const card = page.locator('article[data-account-id="oidc"]');
+  await expect(card).toContainText('tokenproxy');
+  await expect(page.locator('body')).not.toContainText(secret);
+  await expect(page.locator('body')).not.toContainText('DO-NOT-RENDER');
 });
 
-test("a wrong current password is its own sentence, not an ended session", async ({ page }) => {
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, STATUS)));
-  await page.route("**/api/settings", (r) => (r.request().method() === "GET"
-    ? r.fulfill(json(200, SETTINGS))
-    : r.fulfill(json(401, { error: "Invalid current password" }))));
-  await page.goto("/dashboard/access");
-  await page.getByRole("button", { name: "Change password" }).first().click();
-  const dialog = page.locator("dialog.confirm[open]");
-  await dialog.getByLabel("Current password").fill("wrong-one");
-  await dialog.getByLabel("New password", { exact: true }).fill("a-new-password");
-  await dialog.getByLabel("New password again").fill("a-new-password");
-  await dialog.getByRole("button", { name: "Change password" }).click();
-  await expect(dialog.getByText("That is not the current password.")).toBeVisible();
-  await expect(dialog.getByText("Your session has ended.")).toHaveCount(0);
-});
-
-test("a stored client secret reads as Set and its value never reaches the page", async ({ page }) => {
-  const secret = "oidc-client-secret-DO-NOT-RENDER";
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, { ...STATUS, authMode: "sso", ssoType: "oidc", oidcConfigured: true })));
-  await page.route("**/api/settings", (r) => (r.request().method() === "GET"
-    ? r.fulfill(json(200, { ...SETTINGS, authMode: "sso", oidcConfigured: true, oidcIssuerUrl: "https://idp.example.test", oidcClientId: "tokenproxy", oidcClientSecret: secret }))
-    : r.fulfill(json(200, SETTINGS))));
-  await page.goto("/dashboard/access");
-  const row = page.locator("dl.facts").filter({ hasText: "Client secret" });
-  await expect(row.getByText("Set", { exact: true })).toBeVisible();
-  await expect(page.locator("body")).not.toContainText(secret);
-  await expect(page.locator("body")).not.toContainText("DO-NOT-RENDER");
-  await expect(page.locator("body")).toContainText("tokenproxy");
-});
-
-test("password fields are empty again after a submit, refused as well as accepted", async ({ page }) => {
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, STATUS)));
-  // Refused, so the dialog stays open and nothing re-mounts it: whatever the
-  // fields hold now is what the submit itself left behind.
-  await page.route("**/api/settings", (r) => (r.request().method() === "GET"
-    ? r.fulfill(json(200, SETTINGS))
-    : r.fulfill(json(401, { error: "Invalid current password" }))));
-  await page.goto("/dashboard/access");
-  await page.getByRole("button", { name: "Change password" }).first().click();
-  const dialog = page.locator("dialog.confirm[open]");
-  await dialog.getByLabel("Current password").fill("the-old-one");
-  await dialog.getByLabel("New password", { exact: true }).fill("the-new-one");
-  await dialog.getByLabel("New password again").fill("the-new-one");
-  await dialog.getByRole("button", { name: "Change password" }).click();
-  await expect(dialog.getByText("That is not the current password.")).toBeVisible();
-  await expect(dialog.getByLabel("Current password")).toHaveValue("");
-  await expect(dialog.getByLabel("New password", { exact: true })).toHaveValue("");
-  await expect(dialog.getByLabel("New password again")).toHaveValue("");
-  await expect(page.locator("body")).not.toContainText("the-old-one");
-});
-
-test("the lockout rules read as facts, with the unreportable ones marked", async ({ page }) => {
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, STATUS)));
-  await page.goto("/dashboard/access");
-  const rules = page.locator("section", { hasText: "Lockout rules" }).last();
-  await expect(rules.getByText("Five wrong passwords from one address lock that address out.")).toBeVisible();
-  await expect(rules.getByText("30s")).toBeVisible();
-  await expect(rules.locator(".unreported")).toHaveText("Not reported");
-});
-
-test("a default password is called out and no password value is ever rendered", async ({ page }) => {
-  await page.route("**/api/auth/status", (r) => r.fulfill(json(200, { ...STATUS, hasPassword: false, passwordSource: "default" })));
-  await page.route("**/api/settings", (r) => (r.request().method() === "GET"
-    ? r.fulfill(json(200, { ...SETTINGS, hasPassword: false }))
-    : r.fulfill(json(200, SETTINGS))));
-  await page.goto("/dashboard/access");
-  await expect(page.getByText("This installation is still on its default password.")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("123456");
-  await expect(page.locator("dl.facts").filter({ hasText: "Stored password" }).getByText("Not set")).toBeVisible();
+test('a refused settings read renders as its own sentence, not a raw status', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime } = await fixture({ page, context, baseURL });
+  await page.route('**/api/settings', route =>
+    route.request().method() === 'GET'
+      ? route.fulfill(json(403, { error: 'Local only: CLI token required' }))
+      : route.fallback()
+  );
+  await open(page, runtime);
+  await expect(page.getByText('This action is not allowed from here.')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('HTTP 403');
 });

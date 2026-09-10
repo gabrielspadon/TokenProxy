@@ -81,6 +81,9 @@ const clickLabel = async (label) => {
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  // The dense row board is the surface these assertions describe; Everyday
+  // renders the same rows as cards grouped by outcome.
+  window.localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced'));
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -149,8 +152,8 @@ describe('probe history rendering', () => {
     expect(text).not.toContain('Failed');
     expect(text).not.toContain('Succeeded');
     // Marked structurally as well as by colour, so greyscale still separates it.
-    expect(container.querySelector('tr[data-kind="unresolved"]')).toBeTruthy();
-    expect(container.querySelector('tr[data-kind="terminal"]')).toBeNull();
+    expect(container.querySelector('[data-operation-id][data-kind="unresolved"]')).toBeTruthy();
+    expect(container.querySelector('[data-operation-id][data-kind="terminal"]')).toBeNull();
   });
 
   it('a cancelled probe is not a failure and reports activation untouched', async () => {
@@ -245,7 +248,7 @@ describe('probe history paging', () => {
     await render();
     expect(container.textContent).toContain('op-100');
 
-    await clickLabel('Probe history page 2');
+    await clickLabel('Operation history page 2');
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     const second = urls.find((url) => url.includes('page=2'));
     expect(second, `no page=2 request in ${urls.join(', ')}`).toBeTruthy();

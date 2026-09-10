@@ -84,12 +84,12 @@ test("a stale drain version renders the 412 with the current version", async ({ 
     code: "version_conflict", currentVersion: "v-9", source: "tokenproxy-admin",
   })));
   await page.goto("/dashboard/connections/c-1");
-  await page.getByRole("button", { name: "Drain", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("Streams already open run to their end.");
-  await dialog.getByRole("button", { name: "Drain", exact: true }).click();
-  await expect(dialog).toContainText("The record changed since you read it.");
-  await expect(dialog).toContainText("v-9");
+  const participation = page.getByLabel("Account participation");
+  await expect(participation).toContainText("Streams already open run to their end.");
+  await participation.getByRole("button", { name: "Drain", exact: true }).click();
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(page.getByText("The record changed since you read it.")).toBeVisible();
+  await expect(page.getByText("v-9")).toBeVisible();
 });
 
 test("a recheck while draining renders the 409 sentence", async ({ page }) => {
@@ -99,10 +99,13 @@ test("a recheck while draining renders the 409 sentence", async ({ page }) => {
     code: "recheck_in_progress", source: "tokenproxy-admin",
   })));
   await page.goto("/dashboard/connections/c-1");
-  await page.getByRole("button", { name: "Recheck", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await dialog.getByRole("button", { name: "Recheck", exact: true }).click();
-  await expect(dialog).toContainText("This connection is draining, so a probe is refused.");
+  await page.getByLabel("Account tasks").getByText("Diagnostics", { exact: true }).click();
+  const validation = page.getByLabel("Last validation");
+  await validation.getByRole("button", { name: "Recheck", exact: true }).click();
+  await expect(validation).toContainText("This may contact the provider");
+  await validation.getByRole("button", { name: "Confirm recheck", exact: true }).click();
+  await expect(page.getByText("This connection is draining, so a probe is refused.")).toBeVisible();
+  await expect(page.locator("dialog")).toHaveCount(0);
 });
 
 test("delete asks first and names what is destroyed", async ({ page }) => {
@@ -113,11 +116,12 @@ test("delete asks first and names what is destroyed", async ({ page }) => {
     return r.fulfill(json(200, { connection: conn() }));
   });
   await page.goto("/dashboard/connections/c-1");
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("The stored credential, the connection's configuration, and its place in the fallback order are destroyed.");
-  await expect(dialog).toContainText("Nothing else cascades.");
-  await expect(dialog.getByRole("button", { name: "Delete", exact: true })).toHaveClass(/danger/);
+  const participation = page.getByLabel("Account participation");
+  await participation.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(participation).toContainText("The stored credential, the connection's configuration, and its place in the fallback order are destroyed.");
+  await expect(participation).toContainText("Nothing else cascades.");
+  await expect(participation.getByRole("button", { name: "Confirm delete", exact: true })).toBeVisible();
+  await expect(page.locator("dialog")).toHaveCount(0);
   expect(deleted).toBe(false);
 });
 
@@ -128,16 +132,18 @@ test("a rollback with nothing to roll back to renders the 409", async ({ page })
   await page.route("**/api/system/state**", (r) => r.fulfill(json(200, { measures: {}, providerHealth: { status: "ok", degradedProviders: [] } })));
   await page.route("**/api/admin/activation", (r) => r.fulfill(json(200, {
     active: { releaseId: "build-2", version: "0.0.2", status: "active", activatedAt: "2026-01-01T00:00:00.000Z", previousReleaseId: "build-1", concurrencyVersion: "cv-1" },
-    history: [],
+    // A roll-back target has to be on file for the control to exist at all.
+    history: [{ releaseId: "build-1", version: "0.0.1", status: "rolled_back" }],
   })));
   await page.route("**/api/admin/rollback", (r) => r.fulfill(json(409, {
     error: "No prior release to roll back to.", code: "no_prior_release", source: "tokenproxy-admin",
   })));
   await page.goto("/dashboard/connections");
-  await page.getByRole("button", { name: "Roll back", exact: true }).click();
-  const dialog = page.locator("dialog.confirm[open]");
-  await dialog.getByRole("button", { name: "Roll back", exact: true }).click();
-  await expect(dialog).toContainText("There is no earlier release to roll back to.");
+  const records = page.getByLabel("Release records");
+  await records.getByRole("button", { name: "Roll back", exact: true }).click();
+  await records.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(records).toContainText("There is no earlier release to roll back to.");
+  await expect(page.locator("dialog")).toHaveCount(0);
 });
 
 test("routing constraints link to the current eligibility evidence", async ({ page }) => {
@@ -147,13 +153,14 @@ test("routing constraints link to the current eligibility evidence", async ({ pa
   await page.route("**/api/system/state**", (r) => r.fulfill(json(200, { measures: {}, providerHealth: { status: "ok", degradedProviders: [] } })));
   await page.route("**/api/admin/activation", (r) => r.fulfill(json(200, { active: null, history: [] })));
   await page.goto("/dashboard/connections");
-  await expect(page.getByRole("heading", { name: "Routing constraints" })).toBeVisible();
-  await expect(page.getByText("Reported provider health is separate from routing eligibility.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Routing constraints", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("Provider health is separate from routing eligibility.", { exact: false })).toBeVisible();
 });
 
 test("a passing provider check is not presented as a generated answer", async ({ page }) => {
   await mockDetail(page);
   await page.goto("/dashboard/connections/c-1");
+  await page.getByLabel("Account tasks").getByText("Diagnostics", { exact: true }).click();
   await expect(page.getByText("Check passed", { exact: true })).toBeVisible();
   await expect(page.getByText("Not verified by this check", { exact: true })).toBeVisible();
   await expect(page.getByText("Answered", { exact: true })).toHaveCount(0);

@@ -115,7 +115,8 @@ function WorkspaceShell({ children }) {
   const accountResults = normalizedQuery ? (accounts || []).filter((account) =>
     `${account.displayName || account.name || ''} ${account.provider || ''} ${account.connectionId || ''}`.toLowerCase().includes(normalizedQuery)
   ).slice(0, 12) : [];
-  const isCapacity = ['/dashboard', '/dashboard/context', '/dashboard/usage'].includes(pathname);
+  // Every dashboard page now composes the lens heading and the board itself.
+  const isCapacity = pathname.startsWith('/dashboard');
   return (
     <AppShell
       padding={0}

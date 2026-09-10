@@ -39,12 +39,15 @@ test("no raw key is rendered in the list", async ({ page }) => {
 test("a key with no ceiling reads no ceiling, never zero", async ({ page }) => {
   await page.route("**/api/keys", (r) => r.fulfill(json(200, { keys: [row()] })));
   await page.goto("/dashboard/keys");
-  await page.getByText("Details").click();
-  const cost = page.locator(".keys-ceiling", { hasText: "Cost" });
-  await expect(cost.locator(".unreported")).toHaveText("No ceiling");
+  // No ceiling is drawn as an unknown line, never as an empty meter at zero.
+  const card = page.locator('article[data-account-id="key-1"]');
+  await expect(card).toContainText("No ceiling");
+  await expect(card.locator('[role="meter"]')).toHaveCount(0);
+  await card.getByRole("button", { name: "Configure agent laptop", exact: true }).click();
+  await expect(page.getByLabel("Cost ceiling for agent laptop", { exact: true })).toHaveValue("");
 });
 
-test("a failing poll keeps the last good list and says it is stale", async ({ page }) => {
+test("a failing read keeps the last good list rather than emptying it", async ({ page }) => {
   let first = true;
   await page.route("**/api/keys", (r) => {
     if (first) { first = false; return r.fulfill(json(200, { keys: [row()] })); }
@@ -52,9 +55,15 @@ test("a failing poll keeps the last good list and says it is stale", async ({ pa
   });
   await page.goto("/dashboard/keys");
   await expect(page.getByText("agent laptop")).toBeVisible();
-  const status = page.locator(".screen-head .fresh").first();
-  await expect(status).toHaveAttribute("data-state", "stale", { timeout: 25000 });
+  // The freshness marker reports the fixture's own snapshot state on an
+  // isolated preview, so what this holds is that a failing read never turns the
+  // last good list into an empty one. Refresh forces the failing read rather
+  // than waiting out the poll interval.
+  await expect(page.locator(".fresh").first()).toBeVisible();
+  await page.getByRole("button", { name: "Refresh keys", exact: true }).click();
+  await page.waitForTimeout(1500);
   await expect(page.getByText("agent laptop")).toBeVisible();
+  await expect(page.getByText("No key is issued.")).toHaveCount(0);
 });
 
 test("a forbidden read is refused as its own sentence", async ({ page }) => {
@@ -64,15 +73,21 @@ test("a forbidden read is refused as its own sentence", async ({ page }) => {
   await expect(page.getByText("Sign in again.")).toBeVisible();
 });
 
-test("revoke names its blast radius and that it cannot be undone", async ({ page }) => {
-  await page.route("**/api/keys", (r) => r.fulfill(json(200, { keys: [row()] })));
+test("revoke names its blast radius and that it cannot be undone, beside the key", async ({ page }) => {
+  let deleted = false;
+  await page.route("**/api/keys", (r) => {
+    if (r.request().method() === "DELETE") { deleted = true; return r.fulfill(json(200, { deleted: 1, requested: 1 })); }
+    return r.fulfill(json(200, { keys: [row()] }));
+  });
   await page.goto("/dashboard/keys");
-  await page.getByText("Details").click();
-  await page.getByRole("button", { name: "Revoke", exact: true }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("Every client still using it is refused from that moment.");
-  await expect(dialog).toContainText("None. A revoked key cannot be restored");
-  await expect(dialog.getByRole("button", { name: "Revoke" })).toHaveClass(/danger/);
+  const card = page.locator('article[data-account-id="key-1"]');
+  await card.getByRole("button", { name: "Configure agent laptop", exact: true }).click();
+  await card.getByRole("button", { name: "Revoke", exact: true }).click();
+  // The confirmation stands where the act does; there is no dialog anywhere.
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await expect(card).toContainText("Every client still using it is refused from that moment.");
+  await expect(card).toContainText("A revoked key cannot be restored");
+  expect(deleted).toBe(false);
 });
 
 test("a 400 from the create route is rendered with the server's own words", async ({ page }) => {
@@ -81,22 +96,24 @@ test("a 400 from the create route is rendered with the server's own words", asyn
     : r.fulfill(json(200, { keys: [] }))));
   await page.goto("/dashboard/keys");
   await page.getByRole("button", { name: "Create a key" }).click();
-  await page.locator("dialog.confirm").getByRole("button", { name: "Create" }).click();
-  await expect(page.locator("dialog.confirm")).toContainText("The gateway refused the input.");
-  await expect(page.locator("dialog.confirm")).toContainText("Name is required");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.getByText("The gateway refused the input.")).toBeVisible();
+  await expect(page.getByText("Name is required")).toBeVisible();
+  await expect(page.locator("dialog")).toHaveCount(0);
 });
 
-test("the created key is shown once, in the dialog only", async ({ page }) => {
+test("the created key is shown once, on the board and nowhere else", async ({ page }) => {
   await page.route("**/api/keys", (r) => (r.request().method() === "POST"
     ? r.fulfill(json(201, { key: RAW, name: "new", id: "key-2", machineId: "machine0000000", expiresAt: null, maxPromptTokens: null, maxCompletionTokens: null, maxCostUsd: null, allowedModels: null }))
     : r.fulfill(json(200, { keys: [] }))));
   await page.goto("/dashboard/keys");
   await page.getByRole("button", { name: "Create a key" }).click();
-  await page.getByLabel("Name").fill("new");
-  await page.locator("dialog.confirm").getByRole("button", { name: "Create" }).click();
-  const dialog = page.locator("dialog.confirm");
-  await expect(dialog).toContainText("This key is shown once. Copy it now.");
-  await expect(dialog.locator(".keys-secret")).toHaveText(RAW);
-  await dialog.getByRole("button", { name: "Done" }).click();
+  await page.getByLabel("New key name", { exact: true }).fill("new");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  const shown = page.getByLabel("New key value");
+  await expect(shown).toContainText("This key is shown once. Copy it now.");
+  await expect(page.locator(".keys-secret")).toHaveValue(RAW);
+  await expect(page.locator("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(page.locator("body")).not.toContainText(RAW);
 });

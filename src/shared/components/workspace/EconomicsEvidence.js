@@ -43,10 +43,10 @@ export function EconomicsEvidence({row,onDrilldown,onContext}) {
     <div className={styles.models}><strong>Requested · {row.requestedModel || 'Unavailable'}</strong><span>{modelLabel} · {row.provider || 'Unknown'} / {row.model || 'Unknown'}</span></div>
     {!completed && <p>The recorded attempt does not establish successful service of this model.</p>}
     <Group gap="xs" wrap="wrap" className={styles.actions}>
-      {row.logicalRequestId && <Button size="compact-sm" variant="light" onClick={()=>onDrilldown?.('logical-request',{logicalRequestId:row.logicalRequestId})}>Scoped logical attempts</Button>}
-      {row.contextSessionId && <Button size="compact-sm" variant="light" onClick={()=>onDrilldown?.('session',{contextSessionId:row.contextSessionId})}>Scoped session costs</Button>}
-      {row.projectRef && <Button size="compact-sm" variant="light" onClick={()=>onDrilldown?.('client-project',{projectRef:row.projectRef})}>Scoped project reference</Button>}
-      {row.requestLink==='linked' && row.contextSessionId && onContext && <Button size="compact-sm" variant="default" onClick={()=>onContext(row)}>Open exact Context attempt</Button>}
+      {row.logicalRequestId && <Button size="compact-xs" variant="light" onClick={()=>onDrilldown?.('logical-request',{logicalRequestId:row.logicalRequestId})}>Scoped logical attempts</Button>}
+      {row.contextSessionId && <Button size="compact-xs" variant="light" onClick={()=>onDrilldown?.('session',{contextSessionId:row.contextSessionId})}>Scoped session costs</Button>}
+      {row.projectRef && <Button size="compact-xs" variant="light" onClick={()=>onDrilldown?.('client-project',{projectRef:row.projectRef})}>Scoped project reference</Button>}
+      {row.requestLink==='linked' && row.contextSessionId && onContext && <Button size="compact-xs" variant="default" onClick={()=>onContext(row)}>Open exact Context attempt</Button>}
     </Group>
     <Tabs defaultValue="cost" keepMounted={false}>
       <Tabs.List aria-label="Economics evidence"><Tabs.Tab value="cost">Cost basis</Tabs.Tab><Tabs.Tab value="rates">Rate calculation</Tabs.Tab><Tabs.Tab value="counterfactual">Modeled difference</Tabs.Tab><Tabs.Tab value="identity">Exact links</Tabs.Tab></Tabs.List>

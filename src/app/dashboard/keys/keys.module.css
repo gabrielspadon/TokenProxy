@@ -1,0 +1,158 @@
+/* Keys composes the shared board kit (src/shared/workspace/board.module.css)
+   inside the shared lens layout (workspace.module.css). Only what is Keys's
+   own lives here: the inline create row, the one-time secret and the detail
+   sections. */
+.views {
+  max-width: 100%;
+}
+/* One vertical rhythm for everything the lens body carries. */
+.stack {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+.panel {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.panel h2 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+.panel h3 {
+  font-size: var(--type-dense);
+  font-weight: 600;
+  color: var(--ink);
+}
+.panel p,
+.panel li {
+  font-size: var(--type-dense);
+  line-height: 1.45;
+  color: var(--slate);
+}
+.panel ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-inline-start: 16px;
+}
+.panel a {
+  color: var(--signal-deep);
+}
+.facts {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+}
+.fact {
+  display: grid;
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 10px;
+  min-height: 18px;
+  font-size: var(--type-dense);
+}
+.fact dt {
+  color: var(--slate);
+  min-width: 0;
+}
+.fact dd {
+  margin: 0;
+  color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* The inline create row, on the same band as the board's Add row. */
+.createRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--signal-wash);
+}
+.createName {
+  width: 200px;
+}
+.createNumber {
+  width: 116px;
+}
+.createModels {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+.grow {
+  flex: 1;
+}
+/* The one-time secret: a read-only field beside its copy control, on the
+   board, never in a dialog. */
+.secret {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--signal-wash);
+}
+.secretRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.secretValue {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.secretValue :global(.mantine-Input-input) {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--type-dense);
+}
+/* The detail under a card or a row: one section per task, no tabs above a
+   dialog. */
+.detailTasks {
+  margin-bottom: 8px;
+}
+.detailForm {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+.detailWide {
+  grid-column: 1 / -1;
+}
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.keyMeta {
+  color: var(--slate);
+  font-size: var(--type-dense);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+}

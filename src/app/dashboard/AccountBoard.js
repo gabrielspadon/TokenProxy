@@ -1,13 +1,12 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActionIcon,
   Badge,
   Button,
   Checkbox,
   Loader,
-  NumberInput,
   SegmentedControl,
   Select,
   Table,
@@ -17,6 +16,7 @@ import {
 } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { Icon } from '@/shared/components/Icon';
+import { CommitNumber, NameField } from '@/shared/workspace/CommitFields';
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
 import { call } from '@/shared/api';
 import { useResource } from '@/shared/workspace/useResource';
@@ -94,122 +94,6 @@ function useEligibility(model, providers) {
   return key && verdicts.key === key ? verdicts.byAccount : {};
 }
 
-// Commits on Enter or blur, reverts on Escape. The draft is React state, so a
-// re-render that lands while a value is being typed cannot wipe it; a revert
-// remounts the input so the formatted saved value is what shows. A Tooltip
-// parent injects its own onBlur/onKeyDown through cloneElement, so those are
-// chained rather than spread over.
-export function CommitNumber({ value, onCommit, onBlur, onKeyDown, ...props }) {
-  const [draft, setDraft] = useState(value ?? '');
-  const [seen, setSeen] = useState(value);
-  const [revision, setRevision] = useState(0);
-  const sent = useRef(null);
-  if (seen !== value) {
-    setSeen(value);
-    setDraft(value ?? '');
-  }
-  useEffect(() => {
-    sent.current = null;
-  }, [value]);
-  const revert = () => {
-    setDraft(value ?? '');
-    setRevision((previous) => previous + 1);
-  };
-  const commit = () => {
-    const next = Number(draft);
-    if (draft === '' || !Number.isFinite(next) || next === (value ?? NaN)) {
-      revert();
-      return;
-    }
-    if (sent.current === next) return;
-    sent.current = next;
-    onCommit(next);
-  };
-  return (
-    <NumberInput
-      key={`${value ?? ''}:${revision}`}
-      size="xs"
-      hideControls
-      allowDecimal={false}
-      value={draft}
-      onChange={setDraft}
-      {...props}
-      onBlur={(event) => {
-        onBlur?.(event);
-        commit();
-      }}
-      onKeyDown={(event) => {
-        onKeyDown?.(event);
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          commit();
-        }
-        if (event.key === 'Escape') revert();
-      }}
-    />
-  );
-}
-
-export function NameField({ name, disabled, onCommit, onOpen, expanded }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(name);
-  const [cancelled, setCancelled] = useState(false);
-  if (!editing)
-    return (
-      <span className={styles.nameLine}>
-        <button
-          type="button"
-          className={styles.nameButton}
-          aria-expanded={expanded}
-          onClick={onOpen}
-        >
-          {name}
-        </button>
-        <Tooltip label="Rename">
-          <button
-            type="button"
-            className={styles.iconButton}
-            aria-label={`Rename ${name}`}
-            disabled={disabled}
-            onClick={() => {
-              setDraft(name);
-              setCancelled(false);
-              setEditing(true);
-            }}
-          >
-            <Icon name="i-edit" />
-          </button>
-        </Tooltip>
-      </span>
-    );
-  const finish = () => {
-    setEditing(false);
-    const next = draft.trim();
-    if (!cancelled && next && next !== name) onCommit(next);
-  };
-  return (
-    <TextInput
-      size="xs"
-      autoFocus
-      aria-label={`Account name for ${name}`}
-      value={draft}
-      maxLength={120}
-      className={styles.nameInput}
-      onChange={(event) => setDraft(event.currentTarget.value)}
-      onBlur={finish}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          finish();
-        }
-        if (event.key === 'Escape') {
-          setCancelled(true);
-          setEditing(false);
-        }
-      }}
-    />
-  );
-}
 
 function AccountRow({
   account,
@@ -661,6 +545,13 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
   // isolated snapshot has no providers to ask, so it only re-reads what is
   // retained.
   const [reading, setReading] = useState(null);
+  // After one account changed, read the retained evidence back; the live
+  // provider read of every account belongs to the Refresh button alone.
+  function reread() {
+    setSortAt(now);
+    resource.refresh();
+    onChanged?.();
+  }
   async function readQuota(id) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const response = await call(`/api/usage/${encodeURIComponent(id)}?force=1`);
@@ -715,19 +606,22 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
       });
     }
   }
+  // `patch` may be a function of the freshly read baseline, so a write that
+  // merges into a map (a window's threshold) merges into what is stored now
+  // rather than into what this row rendered a moment ago.
   function savePolicy(account, kind, patch, label) {
     const id = accountControlId(account);
     return mutate(id, kind, async () => {
       const current = await readAccountControls(id);
       if (!accountControlBaseline(current, id))
         throw new Error('Current settings are incomplete, so this account cannot be edited yet.');
-      const result = await saveAccountControls(current, patch);
+      const result = await saveAccountControls(current, typeof patch === 'function' ? patch(current) : patch);
       toast(
         result.confirmed ? 'teal' : 'orange',
         result.confirmed ? `${label} saved and read back.` : result.message,
         account.displayName || account.name || id
       );
-      refresh();
+      reread();
     });
   }
   function rename(account, name) {
@@ -742,7 +636,7 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
       if (saved.name !== name)
         throw new Error('The rename returned, but the saved name did not read back.');
       toast('teal', `Renamed to ${name}.`);
-      refresh();
+      reread();
     });
   }
   function drain(targets, isDraining) {
@@ -761,7 +655,7 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
           outcome.message,
           prepared.find((item) => item.connectionId === outcome.connectionId)?.name
         );
-      refresh();
+      reread();
     });
   }
   const rowBusy = (id) =>
@@ -936,7 +830,7 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
           onClose={() => setAdding(false)}
           onAdded={(connection) => {
             if (connection) toast('teal', `${connection.name || connection.id} added.`);
-            refresh();
+            reread();
           }}
         />
       ) : null}
@@ -1110,12 +1004,12 @@ export function AccountBoard({ rows, drains, anchor, now, advanced, density, onD
                 savePolicy(
                   account,
                   'save',
-                  {
+                  (current) => ({
                     quotaPauseThresholds: {
-                      ...(account.quotaPauseThresholds || {}),
+                      ...(current.quotaPauseThresholds || {}),
                       [key]: threshold,
                     },
-                  },
+                  }),
                   `Auto-pause for ${key}`
                 )
               }

@@ -177,7 +177,7 @@ it('expands into a paged timeline and collapses back without losing the pin sele
   await click('Hide full timeline');
   expect(list()).toBeNull();
   // The comparison table and its selected row are untouched by the expansion.
-  expect(container.querySelector('tr[data-selected]').textContent).toContain('claude-fable-5');
+  expect(container.querySelector('[data-pin-id][data-expanded]').textContent).toContain('claude-fable-5');
   expect(container.querySelector('[role="dialog"]')).toBeNull();
   const heading = container.querySelector('[aria-label="Selected pin controls"]');
   expect(heading.textContent).toContain('account-a');

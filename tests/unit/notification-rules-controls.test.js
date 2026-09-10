@@ -43,6 +43,23 @@ const click = (text) =>
   act(async () =>
     [...container.querySelectorAll('button')].find((button) => button.textContent === text)?.click()
   );
+// Every control on this board carries an aria-label that names its rule, so
+// the tests address the same label an operator's screen reader would read.
+const byLabel = (label, scope = container) => scope.querySelector(`[aria-label="${label}"]`);
+const named = (text) =>
+  [...container.querySelectorAll('button')].find((button) => button.textContent === text);
+const change = (node, value) =>
+  act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(node, value);
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+const press = (node, key) =>
+  act(async () => node.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true })));
+// A field that saves from itself: type, then commit with Enter.
+const commit = async (node, value) => {
+  await change(node, value);
+  await press(node, 'Enter');
+};
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   state.error = null;
@@ -75,73 +92,94 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
-const render = () =>
+const render = (props) =>
   act(async () =>
     root.render(
       <MantineProvider env="test">
-        <NotificationRules />
+        <NotificationRules {...props} />
       </MantineProvider>
     )
   );
 
-it('edits a selected rule directly beside its inventory and closes selection on cancel', async () => {
+it('edits a rule in place inside its own card and writes nothing when the edit is abandoned', async () => {
+  const fetcher = vi.fn(() => {
+    throw new Error('Unexpected request');
+  });
+  vi.stubGlobal('fetch', fetcher);
   await render();
   await click(rule.name);
-  const editor = container.querySelector('form[aria-label="Notification rule editor"]');
-  expect(editor.closest('aside[aria-label="Selected rule settings"]')).not.toBeNull();
-  expect(editor.closest('details, dialog, [role="dialog"]')).toBeNull();
-  expect(document.activeElement).toBe(editor.querySelector('input'));
-  expect([...document.querySelectorAll('button')].some(button => button.textContent === 'Edit rule')).toBe(false);
+  const detail = container.querySelector(`[role="region"][aria-label="Evidence for ${rule.name}"]`);
+  expect(detail.closest(`article[data-account-id="${rule.id}"]`)).not.toBeNull();
+  expect(detail.closest('details, dialog, [role="dialog"]')).toBeNull();
+  expect(named(rule.name).getAttribute('aria-expanded')).toBe('true');
+  expect([...document.querySelectorAll('button')].some((button) => button.textContent === 'Edit rule')).toBe(false);
   expect(document.querySelector('[role="dialog"][aria-modal="true"]')).toBeNull();
-  expect(container.querySelector('button[aria-pressed="true"]').textContent).toBe(rule.name);
-  await click('Cancel');
-  expect(container.querySelector('form[aria-label="Notification rule editor"]')).toBeNull();
-  expect(container.querySelector('button[aria-pressed="true"]')).toBeNull();
-  expect(document.activeElement.textContent).toBe(rule.name);
+
+  await act(async () => byLabel(`Rename ${rule.name}`).click());
+  const name = byLabel(`Rule name for ${rule.name}`);
+  expect(name.closest('details, dialog, [role="dialog"]')).toBeNull();
+  expect(document.activeElement).toBe(name);
+  await change(name, 'Abandoned draft');
+  await press(name, 'Escape');
+  expect(byLabel(`Rule name for ${rule.name}`)).toBeNull();
+  expect(named(rule.name).textContent).toBe(rule.name);
+
+  await click(rule.name);
+  expect(container.querySelector(`[role="region"][aria-label="Evidence for ${rule.name}"]`)).toBeNull();
+  expect(named(rule.name).getAttribute('aria-expanded')).toBe('false');
+  expect(fetcher).not.toHaveBeenCalled();
 });
 
-it('retains the selected local draft through refreshes and temporary read errors', async () => {
-  await render(); await click(rule.name);
-  const editor = container.querySelector('form[aria-label="Notification rule editor"]');
-  const name = editor.querySelector('input');
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(name, 'Local draft');
-    name.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+it('retains the local rename draft through refreshes and temporary read errors', async () => {
+  await render();
+  await act(async () => byLabel(`Rename ${rule.name}`).click());
+  const name = byLabel(`Rule name for ${rule.name}`);
+  await change(name, 'Local draft');
   state.data = { ...state.data, rules: [{ ...rule, revision: 2, name: 'Concurrent stored rule' }] };
   state.error = 'Synthetic refresh failure';
   await render();
-  expect(container.querySelector('form')).toBe(editor);
+  expect(byLabel('Rule name for Concurrent stored rule')).toBe(name);
   expect(name.value).toBe('Local draft');
-  expect(editor.textContent).toContain('Editing revision 1');
+  // The inventory absorbs the concurrent write while the draft survives it.
+  expect(container.querySelector(`article[data-account-id="${rule.id}"]`).getAttribute('aria-label')).toBe(
+    'Concurrent stored rule'
+  );
   expect(container.textContent).toContain('Synthetic refresh failure');
-  state.error = null; await render();
-  expect(container.querySelector('form')).toBe(editor);
+  state.error = null;
+  await render();
+  expect(byLabel('Rule name for Concurrent stored rule')).toBe(name);
   expect(name.value).toBe('Local draft');
 });
 
-it('keeps the editor mounted after readback and uses the saved revision for its next write', async () => {
+it('keeps the threshold control mounted after readback and writes the revision it last read', async () => {
   let saved = { ...rule };
   const revisions = [];
-  vi.stubGlobal('fetch', vi.fn(async (url, options) => {
-    expect(url).toBe('/api/admin/notification-rules/rule-1');
-    if (options.method === 'PUT') {
-      const body = JSON.parse(options.body);
-      revisions.push(body.revision);
-      saved = { ...saved, ...body, revision: body.revision + 1 };
-      return Response.json(saved);
-    }
-    return Response.json({ rule: saved });
-  }));
-  await render(); await click(rule.name);
-  const editor = container.querySelector('form');
-  for (const revision of [2, 3]) {
-    await act(async () => editor.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-    expect(container.querySelector('form')).toBe(editor);
-    expect(editor.textContent).toContain(`Editing revision ${revision}`);
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url, options = {}) => {
+      expect(url).toBe(`/api/admin/notification-rules/${rule.id}`);
+      if (options.method === 'PUT') {
+        const body = JSON.parse(options.body);
+        revisions.push(body.revision);
+        saved = { ...saved, ...body, id: rule.id, revision: body.revision + 1 };
+        return Response.json(saved);
+      }
+      return Response.json({ rule: saved });
+    })
+  );
+  await render({ advanced: true });
+  const row = container.querySelector(`article[data-rule-id="${rule.id}"]`);
+  const threshold = byLabel(`Threshold for ${rule.name}`);
+  for (const [next, revision] of [
+    [11, 2],
+    [12, 3],
+  ]) {
+    await commit(threshold, String(next));
+    expect(container.querySelector(`article[data-rule-id="${rule.id}"]`)).toBe(row);
+    expect(byLabel(`Threshold for ${rule.name}`)).toBe(threshold);
+    expect(container.textContent).toContain(`Threshold saved at revision ${revision}.`);
   }
   expect(revisions).toEqual([1, 2]);
-  expect(container.textContent).toContain('Rule revision 3 saved and read back');
 });
 
 it('keeps threshold units distinct for quota, age and counted events', async () => {
@@ -151,58 +189,55 @@ it('keeps threshold units distinct for quota, age and counted events', async () 
     conditionKind: condition.kind,
   }));
   await render();
-  const thresholds = [...container.querySelectorAll('tbody tr')].map(
-    (row) => row.children[3].textContent
+  const thresholds = [...container.querySelectorAll('article[data-account-id]')].map(
+    (card) =>
+      [...card.querySelectorAll('span')].find((span) => span.textContent === 'Threshold')
+        ?.nextElementSibling.textContent
   );
   expect(thresholds).toEqual([
-    '10regressed checks',
-    '10failed transformation stages',
-    '10percent remaining',
-    '10switches',
-    '10minutes since last observation',
-    '10failed operations',
+    '10 regressed checks',
+    '10 failed transformation stages',
+    '10 percent remaining',
+    '10 switches',
+    '10 minutes since last observation',
+    '10 failed operations',
   ]);
 });
 
-it('uses the explicitly loaded conflict revision, then reads back the saved rule', async () => {
-  let submitted = 0;
-  const fetcher = vi.fn(async (url, options) => {
+it('absorbs a concurrent revision bump by writing the revision it just read, then reads back', async () => {
+  let stored = { ...rule, revision: 2, threshold: 8 };
+  let racing = false;
+  const seen = [];
+  const fetcher = vi.fn(async (url, options = {}) => {
     if (options.method === 'PUT') {
       const body = JSON.parse(options.body);
-      submitted++;
-      if (submitted === 1)
+      seen.push(body.revision);
+      if (body.revision !== stored.revision)
         return Response.json(
-          {
-            error: 'Conflict',
-            expectedRevision: 1,
-            current: { ...rule, revision: 2, threshold: 8 },
-          },
+          { error: 'Conflict', expectedRevision: stored.revision },
           { status: 409 }
         );
-      expect(body.revision).toBe(2);
-      return Response.json({ ...rule, revision: 3 });
+      stored = { ...stored, ...body, id: rule.id, revision: body.revision + 1 };
+      return Response.json(stored);
     }
-    return Response.json({ rule: { ...rule, revision: 3 } });
+    const snapshot = stored;
+    // A competing writer that lands between this read and the write below.
+    if (racing) stored = { ...stored, revision: stored.revision + 1 };
+    return Response.json({ rule: snapshot });
   });
   vi.stubGlobal('fetch', fetcher);
-  await render();
-  await click(rule.name);
-  await act(async () =>
-    container
-      .querySelector('form')
-      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  );
-  expect(container.textContent).toContain('This rule was changed by someone else');
-  expect(submitted).toBe(1);
-  await click('Load the stored rule and start again');
-  await act(async () =>
-    container
-      .querySelector('form')
-      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  );
-  expect(submitted).toBe(2);
-  expect(container.textContent).toContain('Rule revision 3 saved and read back');
-  expect(fetcher.mock.calls.some(([, options]) => options.method === 'GET')).toBe(true);
+  // The rendered inventory still shows revision 1; the write reads first, so
+  // the stored revision 2 is what it carries.
+  await render({ advanced: true });
+  await commit(byLabel(`Threshold for ${rule.name}`), '9');
+  expect(seen).toEqual([2]);
+  expect(container.textContent).toContain('Threshold saved at revision 3.');
+  expect(fetcher.mock.calls.filter(([, options]) => (options.method || 'GET') === 'GET')).toHaveLength(2);
+
+  racing = true;
+  await commit(byLabel(`Threshold for ${rule.name}`), '7');
+  expect(seen).toEqual([2, 3]);
+  expect(container.textContent).toContain('No automatic retry was sent.');
 });
 
 it('retains an explicit acknowledgement error without retrying or declaring success', async () => {
@@ -233,7 +268,8 @@ it('checks retained snooze state after the action and does not call a provider',
   });
   vi.stubGlobal('fetch', fetcher);
   await render();
-  await click('Snooze 24h');
+  expect(byLabel(`Snooze alert on ${event.scopeKey} for 24 hours`)).not.toBeNull();
+  await click('Snooze');
   expect(stored.outcome).toBe('firing');
   expect(container.textContent).toContain('Snooze retained until');
   expect(fetcher).toHaveBeenCalledTimes(2);

@@ -14,12 +14,11 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 async function render(key = 'cavemanEnabled', stageMap = {}) { await act(async () => root.render(<MantineProvider env="test"><ControlEvidence control={CONTROLS.find(control => control.key === key)} settings={{ cavemanEnabled: false, memoryHandoffEnabled: true, headroomLossless: true }} stageMap={stageMap} onInvestigate={investigate} /></MantineProvider>)); }
-it('keeps evidence in one optional layer without a second editor or inspector', async () => {
+it('renders evidence inline under its row, with no second layer or editor', async () => {
   await render('cavemanEnabled', { inject: { requests: 2, applied: 1, measuredRequests: 1, bytesSaved: 64 } });
-  expect(container.querySelectorAll('details')).toHaveLength(1);
-  expect(container.querySelector('details details')).toBeNull();
+  expect(container.querySelectorAll('details')).toHaveLength(0);
   expect(container.querySelector('input, select, textarea')).toBeNull();
-  expect(container.querySelector('summary').getAttribute('aria-label')).toBe('Evidence and requirements for Compact response instructions');
+  expect(container.querySelector('[role="region"]').getAttribute('aria-label')).toBe('Evidence and requirements for Compact response instructions');
   expect(container.textContent).toContain('Off globally');
   expect(container.textContent).toContain('1 applied stage records');
   expect(container.textContent).toContain('+64 B');

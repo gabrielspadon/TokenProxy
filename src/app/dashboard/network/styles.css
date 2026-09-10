@@ -1,56 +1,75 @@
+/* Network. The inventories are the shared board
+   (src/shared/workspace/board.module.css); this file carries the task switch,
+   the summary strip, the subject marks and the inline edit rows. */
 @layer components {
-  .network-summary { display: flex; flex-wrap: wrap; gap: 8px 24px; border-block: 1px solid var(--rule); padding-block: 10px; margin: 0; }
-  .network-summary > div { display: flex; align-items: baseline; gap: 9px; font-size: 13px; }
+  .network-heading-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .network-tasks { min-width: 0; }
+  /* Each board on the lens carries a compact name, never a paragraph. */
+  .network-lens { font-size: var(--t-15); font-weight: 600; margin-block: 14px 6px; }
+  .network-lens-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .network-lens-row .network-lens { margin-block-end: 6px; }
+  .network-summary { display: flex; flex-wrap: wrap; gap: 6px 24px; border-block-end: 1px solid var(--rule); padding-block: 0 8px; margin: 0 0 4px; }
+  .network-summary > div { display: flex; align-items: baseline; gap: 8px; font-size: var(--t-13); }
   .network-summary dt { color: var(--slate); }
-  .network-summary dd { margin: 0; font-family: var(--mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+  .network-summary dd { margin: 0; font-family: var(--mono); font-size: var(--t-15); font-variant-numeric: tabular-nums; }
   @media (max-width: 767px) { .network-summary > div { flex: 1 1 42%; justify-content: space-between; } }
-  .network-path-list { max-height: 420px; overflow: auto; }
-  .network-path-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(130px, .6fr); align-items: center; gap: 8px 16px; width: 100%; padding: 12px; text-align: start; border: 0; border-block-end: 1px solid var(--rule); border-inline-start: 3px solid transparent; background: var(--raised); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
-  .network-path-row[aria-pressed='true'] { background: var(--signal-wash); border-inline-start-color: var(--signal); }
-  .network-path-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
-  .network-path-row .connection-name { display: flex; align-items: center; gap: 8px; }
-  .network-path-inspector { padding: 14px; min-width: 0; overflow-wrap: anywhere; }
-  .network-path-inspector .facts { margin-block: 12px; }
-  @media (max-width: 767px) { .network-path-row { grid-template-columns: minmax(0, 1fr); } .network-path-inspector .facts { grid-template-columns: minmax(0, 1fr); } }
-  .network-node-row { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .network-pool-row { grid-template-columns: minmax(0, 1fr) auto auto auto; }
 
-  .network-form { display: flex; flex-direction: column; gap: 12px; margin-block: 14px; }
-  .network-task-form > form > fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
-  .network-task-form .network-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px 20px; }
-  .network-task-form .network-form > .field { min-width: 0; }
-  .network-task-form .network-form > :is(.caption, .network-check) { grid-column: 1 / -1; max-width: 90ch; }
-  .network-task-form .field :is(.input, .select) { width: 100%; max-width: 100%; }
-  /* Strategy form (pass-2 defect 17): constrained fields inside the panel, not full-width. */
-  .network-form-strategy { flex-direction: row; flex-wrap: wrap; align-items: end; }
-  .network-form-strategy .field { flex: 0 1 260px; }
-  /* The verb sits beside its fields, not right-aligned on its own line the way
-     the shared .actions class would place it. */
-  .network-form-strategy .verb-row { margin-block-start: 0; }
-  /* The On/Off tile carries a word, not a numeral. Localized words (de
-     "Ausgeschaltet") outrun --t-30 mono on narrow screens, so drop to the
-     default measure size and let it wrap inside the tile. */
-  .network-onoff .value { font-size: var(--t-19); font-family: var(--sans); overflow-wrap: anywhere; }
-  .network-check { display: flex; gap: 8px; align-items: flex-start; }
-  .network-check input { accent-color: var(--signal); margin-top: 3px; }
+  /* A pool or a node carries an icon where an account board carries a provider
+     mark, so the two identity columns read on the same grid. */
+  .network-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--slate);
+  }
+  .network-mark .icon { font-size: 15px; width: 15px; height: 15px; }
+
+  /* Inline edit and inline add: one wrapping row of xs controls, never a
+     dialog and never a modal form. */
+  .network-edit {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 8px 10px;
+    margin-block-end: 10px;
+  }
+  .network-edit > label,
+  .network-edit > .mantine-Checkbox-root { min-width: 0; }
+  .network-edit .mantine-InputWrapper-label { font-size: var(--t-12); color: var(--slate); }
+
+  .network-path-inspector { min-width: 0; overflow-wrap: anywhere; font-size: var(--t-13); }
+  .network-path-inspector .facts { margin-block: 0 10px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .network-binding { margin-block: 8px; }
+  .network-binding h3 { font-size: var(--t-13); font-weight: 600; margin-block-end: 6px; }
+  .network-strategies { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 18px; font-size: var(--t-13); margin: 0; }
+  .network-strategies > div { display: grid; gap: 2px; }
+  .network-strategies dt { color: var(--slate); font-family: var(--mono); }
+  .network-strategies dd { margin: 0; }
 
   /* The probe's consequence, stated beside the control rather than in a
      tooltip. Left rule and paper wash, no card and no gradient. */
   .network-consequence {
-    margin-block: 12px 16px;
-    padding: 12px 14px;
+    margin-block: 10px 12px;
+    padding: 10px 12px;
     border-inline-start: 3px solid var(--ember);
     background: var(--paper);
     border-radius: var(--radius);
     max-width: 90ch;
+    font-size: var(--t-13);
   }
-  .network-consequence-title { font-weight: 500; margin-block-end: 8px; }
+  .network-consequence-title { font-weight: 500; margin-block-end: 6px; }
   /* minmax(0, …) on both tracks: a bare 1fr resolves to min-content and pushes
      the long scope sentence past the viewport at 390px. */
   .network-consequence .facts {
     display: grid;
     grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
-    gap: 7px 16px;
+    gap: 6px 16px;
     margin: 0;
     max-width: none;
   }
@@ -60,13 +79,8 @@
 
 @layer states {
   @media (max-width: 767px) {
-    .network-node-row { grid-template-columns: minmax(0, 1fr) auto; }
-    /* The pool row stacks rather than keeping an `auto` action track beside
-       the name. Its four verbs do not shrink, so that track claimed most of a
-       390px viewport and left the pool name wrapping one word per line. */
-    .network-pool-row { grid-template-columns: minmax(0, 1fr); }
-    .network-pool-row .actions { justify-content: flex-start; margin-block-start: 8px; }
     .network-consequence .facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
     .network-consequence dd { margin-block-end: 8px; }
+    .network-edit > * { flex: 1 1 100%; }
   }
 }

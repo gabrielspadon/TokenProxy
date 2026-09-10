@@ -32,7 +32,7 @@ const GLYPHS = {
   'i-tune': 'tune',
   'i-chart': 'show_chart',
   'i-clock': 'schedule',
-  'i-table': 'table_rows',
+  'i-table': 'grid_view',
   'i-chevron-up': 'expand_less',
   'i-edit': 'edit',
   'i-open': 'open_in_new',

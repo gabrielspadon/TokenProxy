@@ -71,11 +71,16 @@ beforeEach(async () => {
   HTMLDialogElement.prototype.close = function () {
     this.removeAttribute('open');
   };
+  window.localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced'));
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
   await act(async () => root.render(<MantineProvider env="test"><NetworkPage /></MantineProvider>));
-  await act(async () => button('Pools').click());
+  // The task switch is the shared tab strip, so the Pools task is chosen by
+  // its tab rather than by a button.
+  await act(async () =>
+    [...container.querySelectorAll('[role="tab"]')].find((t) => t.textContent === 'Pools').click()
+  );
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -100,7 +105,7 @@ describe('network page probe disclosure', () => {
   });
 
   it('points the Test control at that disclosure so it is announced with the button', () => {
-    const test = button('Test');
+    const test = container.querySelector('[aria-label="Test Home relay"]');
     expect(test).toBeTruthy();
     expect(test.getAttribute('aria-describedby')).toBe('probe-consequence');
     expect(container.querySelector('#probe-consequence')).toBeTruthy();
@@ -108,8 +113,8 @@ describe('network page probe disclosure', () => {
 
   it('does not present the mutable pool status as a history', () => {
     // The column holds the pool's own current field, which every probe
-    // overwrites. Said once for the table rather than per row, because the
-    // repeated sentence inflated the row's auto track at 390px.
+    // overwrites. Said once on the board's summary note rather than as a
+    // paragraph between boards or a sentence repeated per row.
     const text = container.textContent;
     expect(text).toContain("pool's own current state, overwritten by each probe");
     expect(text).toContain('never finished leaves no mark there');
@@ -118,13 +123,14 @@ describe('network page probe disclosure', () => {
 
   it('mounts the retained history for one pool on demand, keyed to that pool', async () => {
     expect(container.querySelector('[data-testid="inspector"]')).toBeNull();
-    const open = button('Probe history');
+    const open = container.querySelector('[aria-label="Expand Home relay"]');
     expect(open.getAttribute('aria-expanded')).toBe('false');
     await act(async () => open.click());
     const inspector = container.querySelector('[data-testid="inspector"]');
     expect(inspector.textContent).toBe('history pool-1 Home relay');
-    expect(button('Hide probe history').getAttribute('aria-expanded')).toBe('true');
-    await act(async () => button('Hide probe history').click());
+    const close = container.querySelector('[aria-label="Collapse Home relay"]');
+    expect(close.getAttribute('aria-expanded')).toBe('true');
+    await act(async () => close.click());
     expect(container.querySelector('[data-testid="inspector"]')).toBeNull();
     // Opening history is a read of retained evidence. It runs no probe.
     expect(fixture.calls).toEqual([]);

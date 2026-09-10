@@ -17,6 +17,8 @@ const errors=[];page.on('pageerror',error=>errors.push(error.message));
 try {
   await authenticateRedesign(context,root);
   await page.goto(receipt.url+'/dashboard/compatibility');
+  // The fixture editor is an inline add row on the board, opened from the toolbar.
+  await page.getByRole('button',{name:'New fixture',exact:true}).click();
   await page.getByRole('button',{name:'Insert synthetic tool round trip',exact:true}).waitFor();
   await page.getByRole('button',{name:'Insert synthetic tool round trip',exact:true}).click();
   await page.getByLabel('Execution scope',{exact:true}).selectOption('controlled-gateway-routing');
@@ -30,7 +32,7 @@ try {
   const fixture=fixtures.fixtures.find(item=>item.name==='Controlled gateway tool ordering');assert.ok(fixture);
   await page.getByRole('button',{name:'Run revision 1',exact:true}).first().click();
   await page.getByText('Local checks passed',{exact:true}).waitFor({timeout:20000});
-  assert.equal(await page.getByRole('tab',{name:'Runs',exact:true}).getAttribute('aria-selected'),'true');
+  assert.ok(await page.getByRole('radio',{name:'Runs',exact:true}).isChecked(),'Submitting a run lands on the Runs task');
   const runList=await (await context.request.get(receipt.url+'/api/admin/compatibility/runs')).json();
   let run=runList.items.find(item=>item.fixtureId===fixture.id);assert.equal(run.status,'succeeded');assert.equal(run.scope,'controlled-gateway-routing');
   assert.ok(run.result.checks.every(check=>check.outcome==='passed'));
@@ -63,7 +65,7 @@ try {
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'No horizontal document overflow');
   }
   await page.getByRole('button',{name:'Close selection details',exact:true}).click();
-  await page.getByRole('tab',{name:'Evidence matrix',exact:true}).click();
+  await page.getByRole('radiogroup',{name:'Compatibility task'}).getByText('Evidence',{exact:true}).click();
   await page.getByRole('button',{name:'Refresh retained evidence',exact:true}).count();
   await page.screenshot({path:join(artifacts,'matrix-390.png'),fullPage:true});
   await page.goto(`${receipt.url}/dashboard/compatibility?runId=${run.id}&compareRunId=${baseline.id}&checkId=tool-ordering`);

@@ -93,7 +93,7 @@ export default function CapacityPage() {
     setView('accounts');
   };
   return (
-    <div className={styles.page} data-density={density}>
+    <div className={shared.lensPage} data-density={density}>
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>Capacity</h1>
@@ -110,7 +110,7 @@ export default function CapacityPage() {
       </div>
       <ScopeBar showRefresh={view !== 'accounts'} />
       {view !== 'support' && <CapacityActivity />}
-      <div className={styles.boardWrap}>
+      <div className={shared.lensBody}>
         {view === 'accounts' ? (
           <AccountBoard
             rows={rows}

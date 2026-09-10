@@ -1,0 +1,37 @@
+.pair {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+/* A reviewed act states what it changes where it was pressed, so the strip
+   carries the same border every board uses for a question in place. */
+.ask {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--ember) 45%, var(--rule));
+  border-radius: 6px;
+  background: var(--paper);
+  font-size: var(--type-dense);
+  line-height: 1.5;
+}
+.ask p {
+  margin: 0 0 4px;
+  max-width: 80ch;
+}
+.aside {
+  color: var(--slate);
+}
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.deny {
+  margin-top: 6px;
+  color: var(--refusal);
+}
+/* The note sits beside the armed pair in the caller's own row of controls and
+   takes the rest of it. */
+.note {
+  flex: 1;
+}

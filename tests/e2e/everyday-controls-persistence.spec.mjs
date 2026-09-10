@@ -55,31 +55,37 @@ test('Everyday savings and disabled-key limits persist and restore through real 
   }
   async function reload() { synthetic(await page.reload()); }
   const savingsSwitch = page.locator('[data-savings-control="rtkEnabled"]').getByRole('switch');
+  // Turning a saver on grants a new content-changing transformation, so it is
+  // reviewed in place with consent. Turning one off grants nothing and saves
+  // from the switch itself.
+  const reviewStrip = page.locator('[role="group"][aria-label^="Turn on"]');
   async function saveSavings(on, checkConsent = false) {
     await expect(savingsSwitch).toBeEnabled();
     await expect(savingsSwitch).toBeChecked({ checked: !on });
     await savingsSwitch.focus();
     await expect(savingsSwitch).toBeFocused();
-    await savingsSwitch.press('Space');
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toBeVisible();
-    const submit = dialog.getByRole('button', { name: on ? 'Turn on' : 'Turn off', exact: true });
-    if (checkConsent) {
-      const writes = report.writes.length;
-      await submit.click();
-      await expect(dialog).toContainText('Review and consent to the enabled content-changing controls before saving.');
-      expect(report.writes).toHaveLength(writes);
-      expect((await read('/api/admin/shaping')).settings.rtkEnabled).toBe(!on);
-      report.checks.push('Savings refuses an unconsented change without a write');
-    }
-    await dialog.getByRole('checkbox').check();
     const responsePromise = page.waitForResponse(response => new URL(response.url()).pathname === '/api/admin/shaping/controls' && response.request().method() === 'POST');
-    await submit.click();
+    await savingsSwitch.press('Space');
+    if (on) {
+      await expect(reviewStrip).toBeVisible();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      const submit = reviewStrip.getByRole('button', { name: 'Turn on', exact: true });
+      if (checkConsent) {
+        const writes = report.writes.length;
+        await submit.click();
+        await expect(reviewStrip).toContainText('Review and consent to the enabled content-changing controls before saving.');
+        expect(report.writes).toHaveLength(writes);
+        expect((await read('/api/admin/shaping')).settings.rtkEnabled).toBe(!on);
+        report.checks.push('Savings refuses an unconsented change without a write');
+      }
+      await reviewStrip.getByRole('checkbox').check();
+      await submit.click();
+    }
     const response = await responsePromise;
     synthetic(response);
     const saved = await response.json();
     expect(saved).toMatchObject({ outcome: 'applied', persistence: 'confirmed', settings: { rtkEnabled: on } });
-    await expect(dialog).not.toBeVisible();
+    await expect(reviewStrip).toHaveCount(0);
     await expect(savingsSwitch).toBeChecked({ checked: on });
     expect((await read('/api/admin/shaping')).currentHash).toBe(saved.afterHash);
   }

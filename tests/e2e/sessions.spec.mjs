@@ -47,10 +47,17 @@ const streamFrame = (payload) => ({
   body: `data: ${JSON.stringify({ totalCost: 0, activeRequests: [], recentRequests: [], errorProvider: null, ...payload })}\n\n`,
 });
 
+// The switch ledger is a board: a receipt's accounts and its quota evidence
+// live in the row's expanded detail, so a test that reads them opens the row
+// first. Advanced is the dense row layout the assertions below describe.
 test.beforeEach(async ({ page }) => {
   await signIn(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("tokenproxy.navigation-mode", JSON.stringify("advanced"));
+  });
   await page.route("**/api/admin/health/detail", (r) => r.fulfill(json(200, CONNS)));
 });
+const openReceipt = (page, id) => page.getByLabel(`Inspect receipt ${id}`, { exact: true }).click();
 
 test("the usage stream goes stale and the last frame stays on screen", async ({ page }) => {
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [], nextCursor: null })));
@@ -82,7 +89,8 @@ test("a switch names both connections and links the one it landed on", async ({ 
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [RECEIPT], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
   await page.goto("/dashboard/sessions");
-  await expect(page.getByText("Quota exhausted")).toBeVisible();
+  await expect(page.getByText("Quota exhausted").first()).toBeVisible();
+  await openReceipt(page, RECEIPT.receiptId);
   await expect(page.getByRole("link", { name: "claude-a" })).toHaveAttribute("href", "/dashboard/connections/conn-old");
   await expect(page.getByRole("link", { name: "openai-1" })).toHaveAttribute("href", "/dashboard/connections/conn-new");
   await page.getByText("Quota evidence at the switch").click();
@@ -93,6 +101,7 @@ test("a first pin says there was no earlier account rather than showing a blank"
   await page.route("**/api/admin/receipts*", (r) => r.fulfill(json(200, { receipts: [FIRST_PIN], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
   await page.goto("/dashboard/sessions");
+  await openReceipt(page, FIRST_PIN.receiptId);
   await expect(page.getByText("Nothing. This was the first pin of that session.")).toBeVisible();
 });
 
@@ -113,6 +122,7 @@ test("a receipt id that no longer resolves reads as never happened", async ({ pa
   await page.route("**/api/admin/receipts?**", (r) => r.fulfill(json(200, { receipts: [], nextCursor: null })));
   await page.route("**/api/usage/stream*", (r) => r.fulfill(streamFrame({ activeSessions: [] })));
   await page.goto("/dashboard/sessions");
+  await page.getByRole("button", { name: "Find one receipt", exact: true }).click();
   await page.getByLabel("Receipt id").fill("aged-out");
   await page.getByRole("button", { name: "Find", exact: true }).click();
   await expect(page.getByText("Nothing exists at this id.")).toBeVisible();
@@ -124,7 +134,7 @@ test("no session identity is rendered, from the stream or from a receipt", async
     activeSessions: [{ requestId: "req-SECRET-1", clientId: "cli-SECRET-2", sessionId: "sess-SECRET-3", model: "claude-sonnet-4", provider: "anthropic", account: "claude-a", startedAt: new Date().toISOString(), promptTokens: 10, completionTokens: 2, status: "active" }],
   })));
   await page.goto("/dashboard/sessions");
-  await expect(page.getByText("Running")).toBeVisible();
+  await expect(page.getByText("Running").first()).toBeVisible();
   await expect(page.locator("body")).not.toContainText("SECRET");
   await expect(page.locator("body")).not.toContainText("SESSIONHASH");
   await expect(page.locator("body")).toContainText("anthropic");

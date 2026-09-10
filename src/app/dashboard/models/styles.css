@@ -1,52 +1,131 @@
+/* Models composes the shared board kit; only the model identifier, the plan row
+   and the two inline settings sections need anything of their own. */
 @layer components {
-  .models-search { min-width: 220px; margin-inline-start: auto; }
-  /* Pass-2 defect 8: the filter stays reachable while the ~100-row catalog
-     scrolls. Only from 1024px up, because below that the rail is itself sticky
-     at 0 and a second sticky offset by --strap-h lands on top of it. */
-  @media (min-width: 1024px) {
-    .models-catalog-head {
-      position: sticky;
-      inset-block-start: var(--strap-h);
-      z-index: 1;
-      background: var(--paper);
-      padding-block: 8px;
-      margin-block-end: 8px;
-      border-block-end: 1px solid var(--rule);
+  .models-name {
+    color: var(--ink);
+    font-size: var(--type-ui);
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .models-id {
+    font-family: var(--mono);
+    font-size: var(--type-dense);
+    color: var(--slate);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .models-alias {
+    min-width: 0;
+  }
+  .models-alias input {
+    min-height: 24px;
+    height: 24px;
+    padding-inline: 6px;
+    font-size: var(--type-dense);
+    font-family: var(--mono);
+  }
+
+  .models-plan {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.7fr) minmax(0, 2fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 10px;
+    min-height: 40px;
+  }
+  .models-plan-members {
+    min-width: 0;
+  }
+  @media (max-width: 760px) {
+    .models-plan {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .models-plan-members {
+      grid-column: 1 / -1;
+      grid-row: 2;
     }
   }
-  .models-row { grid-template-columns: minmax(0, 1fr); }
-  /* Defect 8 named the catalog text as too small already, so the row keeps the
-     body size and only tightens its vertical rhythm. */
-  .models-row.row { padding: 6px 0; }
-  .models-row .who .name { font-family: var(--mono); font-weight: 400; }
-  .models-form {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 12px 24px;
-    padding-block: 12px;
-    border-block: 1px solid var(--rule);
-  }
-  .models-inline-editor {
-    margin-block: 12px;
-    padding: 14px;
+
+  .models-section {
     border: 1px solid var(--rule);
     background: var(--raised);
-  }
-  .models-inline-editor fieldset {
-    border: 0;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-  }
-  .models-review-values > div {
+    padding: 10px 12px 12px;
     display: grid;
-    grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
-    gap: 12px;
-    padding-block: 6px;
+    gap: 8px;
+    min-width: 0;
   }
-  .models-review-values dd { margin: 0; overflow-wrap: anywhere; }
+  .models-section-head {
+    display: flex;
+    align-items: center;
+    gap: 6px 12px;
+    flex-wrap: wrap;
+  }
+  .models-section-head h2 {
+    font-size: var(--type-ui);
+    font-weight: 600;
+    margin: 0;
+  }
+  .models-section-head > span {
+    color: var(--slate);
+    font-size: var(--type-dense);
+  }
+  .models-note {
+    color: var(--slate);
+    font-size: var(--type-dense);
+    line-height: 1.5;
+    margin: 0;
+  }
+  .models-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .models-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    background: var(--paper);
+    color: var(--slate);
+    font-size: var(--type-dense);
+    white-space: nowrap;
+  }
+  .models-chip .provider-mark {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+  }
+  .models-chip .provider-mark img {
+    width: 14px;
+    height: 14px;
+  }
 
-  @media (min-width: 768px) {
-    .models-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 10rem) auto; }
+  .models-capabilities {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+    gap: 10px;
+  }
+  .models-capability {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    padding: 8px 10px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    min-width: 0;
+  }
+  .models-capability strong {
+    font-size: var(--type-dense);
+  }
+  .models-defaults {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+    gap: 10px;
+    align-items: end;
   }
 }

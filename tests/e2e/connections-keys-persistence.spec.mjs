@@ -29,12 +29,23 @@ async function guard(page) {
   expect(providers.connections.every(connection => !connection.apiKey && !connection.accessToken && !connection.refreshToken)).toBe(true);
 }
 async function submit(page, path, method, verb, status = 200) {
+  return submitIn(page, dialog(page), path, method, verb, status);
+}
+// Network writes have no dialog: the control sits in an inline add row, an
+// expanded row, or an inline Confirm/Cancel pair, so the caller names the scope.
+async function submitIn(page, scope, path, method, verb, status = 200) {
   const pending = page.waitForResponse(response => new URL(response.url()).pathname === path && response.request().method() === method);
-  await dialog(page).getByRole('button', { name: verb, exact: true }).click();
+  await scope.getByRole('button', { name: verb, exact: true }).click();
   const response = await pending;
   assertPreview(response);
   expect(response.status()).toBe(status);
   return response.json();
+}
+// The pools and nodes inventories sit behind the page's task switch, and the
+// destructive controls are Advanced-only.
+async function networkTask(page, name) {
+  await page.evaluate(() => localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced')));
+  if (name) await page.getByRole('tab', { name, exact: true }).click();
 }
 async function workspaceTask(page, name) {
   await page.getByRole('navigation', { name: 'Keys workspace' }).getByRole('button', { name, exact: true }).click();
@@ -186,10 +197,14 @@ test('synthetic account exclusions and pool bindings persist and restore through
     expect((await read(page, exclusionsPath)).ids).toEqual([]);
 
     await page.goto('/dashboard/network');
+    await networkTask(page, null);
+    await page.reload();
+    await networkTask(page, 'Pools');
     await page.getByRole('button', { name: 'Add a pool', exact: true }).click();
-    await dialog(page).getByLabel('Name', { exact: true }).fill(poolName);
-    await dialog(page).getByLabel('Proxy URL', { exact: true }).fill('http://127.0.0.1:9');
-    const created = await submit(page, '/api/proxy-pools', 'POST', 'Create', 201);
+    const addPool = page.getByRole('group', { name: 'Add a proxy pool' });
+    await addPool.getByLabel('Name', { exact: true }).fill(poolName);
+    await addPool.getByLabel('Proxy URL', { exact: true }).fill('http://127.0.0.1:9');
+    const created = await submitIn(page, addPool, '/api/proxy-pools', 'POST', 'Create', 201);
     poolId = created.proxyPool?.id || created.pool?.id || created.id;
     expect(poolId).toBeTruthy();
     await page.goto(`/dashboard/connections/${id}`);
@@ -207,27 +222,28 @@ test('synthetic account exclusions and pool bindings persist and restore through
     const direct = (await read(page, connectionPath)).connection.providerSpecificData;
     expect(direct.connectionProxyMode === 'direct' || direct.proxyPoolId === '__none__').toBe(true);
     await page.goto('/dashboard/network');
+    await networkTask(page, null);
     const strategy = page.locator('section[aria-labelledby="h-strategy"]');
     await strategy.getByRole('combobox', { name: 'Provider id', exact: true }).selectOption('edge-tts');
     await strategy.getByRole('combobox', { name: 'Proxy pool', exact: true }).selectOption(poolId);
     for (const mode of ['none', 'round-robin', 'random']) {
       await strategy.getByRole('combobox', { name: 'Pool selection mode', exact: true }).selectOption(mode);
       await strategy.getByRole('button', { name: 'Save strategy', exact: true }).click();
-      await submit(page, '/api/settings', 'PATCH', 'Apply proxy strategy');
+      await submitIn(page, strategy.getByRole('alertdialog'), '/api/settings', 'PATCH', 'Apply proxy strategy');
       await expect(page.getByText('Virtual-account proxy strategy saved and verified.', { exact: true })).toBeVisible();
       expect((await read(page, '/api/settings')).providerStrategies['edge-tts']).toMatchObject({ proxyPoolId: poolId, rotateStrategy: mode });
     }
     await strategy.getByRole('combobox', { name: 'Pool selection mode', exact: true }).selectOption('none');
     await strategy.getByRole('combobox', { name: 'Proxy pool', exact: true }).selectOption('');
     await strategy.getByRole('button', { name: 'Save strategy', exact: true }).click();
-    await submit(page, '/api/settings', 'PATCH', 'Apply proxy strategy');
+    await submitIn(page, strategy.getByRole('alertdialog'), '/api/settings', 'PATCH', 'Apply proxy strategy');
     await expect(page.getByText('Virtual-account proxy strategy saved and verified.', { exact: true })).toBeVisible();
     expect((await read(page, '/api/settings')).providerStrategies['edge-tts'].proxyPoolId).toBeUndefined();
-    const poolRow = page.locator('section[aria-labelledby="h-pools"] .network-pool-row')
-      .filter({ has: page.locator('.name').and(page.getByText(poolName, { exact: true })) });
+    await networkTask(page, 'Pools');
+    const poolRow = page.locator(`[data-pool-id="${poolId}"]`);
     await expect(poolRow).toHaveCount(1);
-    await poolRow.getByRole('button', { name: 'Delete pool', exact: true }).click();
-    await submit(page, `/api/proxy-pools/${poolId}`, 'DELETE', 'Delete');
+    await poolRow.getByRole('button', { name: `Delete pool ${poolName}`, exact: true }).click();
+    await submitIn(page, poolRow.getByRole('alertdialog'), `/api/proxy-pools/${poolId}`, 'DELETE', 'Delete pool');
     expect((await read(page, '/api/proxy-pools')).proxyPools.some(pool => pool.id === poolId)).toBe(false);
     poolId = null;
     await testInfo.attach('connections-network-persistence', { body: JSON.stringify({ fixture: 'connections-keys-v1', connectionId: id, localExclusionRestored: true, poolDeleted: true, providerContact: false }), contentType: 'application/json' });
@@ -249,29 +265,38 @@ test('multi-compatible node endpoints survive create, edit, reload and delete lo
   let nodeId;
   try {
     assertPreview(await page.goto('/dashboard/network'));
+    await networkTask(page, null);
+    await page.reload();
+    await networkTask(page, 'Nodes');
     await page.getByRole('button', { name: 'Add a node', exact: true }).click();
-    await dialog(page).getByLabel('Name', { exact: true }).fill(name);
-    await dialog(page).getByLabel('Prefix', { exact: true }).fill('fixture-dual');
-    await dialog(page).getByRole('combobox', { name: 'Type', exact: true }).selectOption('multi-compatible');
-    await dialog(page).getByLabel('OpenAI endpoint URL', { exact: true }).fill('http://127.0.0.1:9/v1');
-    await dialog(page).getByLabel('Anthropic endpoint URL', { exact: true }).fill('http://127.0.0.1:9/v1');
-    await dialog(page).getByLabel('Register the OpenAI Responses transport', { exact: true }).check();
-    const created = await submit(page, '/api/provider-nodes', 'POST', 'Create', 201);
+    const addNode = page.getByRole('group', { name: 'Add a provider node' });
+    await addNode.getByLabel('Name', { exact: true }).fill(name);
+    await addNode.getByLabel('Prefix', { exact: true }).fill('fixture-dual');
+    await addNode.getByRole('combobox', { name: 'Type', exact: true }).selectOption('multi-compatible');
+    await addNode.getByLabel('OpenAI endpoint URL', { exact: true }).fill('http://127.0.0.1:9/v1');
+    await addNode.getByLabel('Anthropic endpoint URL', { exact: true }).fill('http://127.0.0.1:9/v1');
+    await addNode.getByLabel('Register the OpenAI Responses transport', { exact: true }).check();
+    const created = await submitIn(page, addNode, '/api/provider-nodes', 'POST', 'Create', 201);
     nodeId = created.node.id;
-    await expect(page.getByText('Configuration saved and verified.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Node saved and verified.', { exact: true })).toBeVisible();
     const stored = (await read(page, '/api/provider-nodes')).nodes.find(node => node.id === nodeId);
     expect(stored.transports.map(transport => transport.format)).toEqual(['openai', 'claude', 'openai-responses']);
     expect(stored.transports[0].baseUrl).toBe('http://127.0.0.1:9/v1/chat/completions');
-    const row = page.locator('.network-node-row').filter({ hasText: name });
-    await row.getByRole('button', { name: 'Edit', exact: true }).click();
-    await expect(dialog(page).getByLabel('Anthropic endpoint URL', { exact: true })).toHaveValue('http://127.0.0.1:9/v1/messages');
-    await dialog(page).getByLabel('Name', { exact: true }).fill(`${name} edited`);
-    await submit(page, `/api/provider-nodes/${nodeId}`, 'PUT', 'Save');
-    await expect(page.getByText('Configuration saved and verified.', { exact: true })).toBeVisible();
+    const row = page.locator(`[data-node-id="${nodeId}"]`);
+    await row.getByRole('button', { name: `Expand ${name}`, exact: true }).click();
+    const settings = row.getByRole('region', { name: 'Node settings' });
+    await expect(settings.getByLabel('Anthropic endpoint URL', { exact: true })).toHaveValue('http://127.0.0.1:9/v1/messages');
+    // Inline edit: the field itself commits on Enter, with no Save button.
+    const saved = page.waitForResponse(response => new URL(response.url()).pathname === `/api/provider-nodes/${nodeId}` && response.request().method() === 'PUT');
+    await settings.getByLabel('Name', { exact: true }).fill(`${name} edited`);
+    await settings.getByLabel('Name', { exact: true }).press('Enter');
+    assertPreview(await saved);
+    await expect(page.getByText('Node saved and verified.', { exact: true })).toBeVisible();
     await page.reload();
-    await expect(page.locator('.network-node-row').filter({ hasText: `${name} edited` })).toBeVisible();
-    await page.locator('.network-node-row').filter({ hasText: `${name} edited` }).getByRole('button', { name: 'Delete node', exact: true }).click();
-    await submit(page, `/api/provider-nodes/${nodeId}`, 'DELETE', 'Delete');
+    await networkTask(page, 'Nodes');
+    await expect(page.locator(`[data-node-id="${nodeId}"]`)).toContainText(`${name} edited`);
+    await page.locator(`[data-node-id="${nodeId}"]`).getByRole('button', { name: `Delete node ${name} edited`, exact: true }).click();
+    await submitIn(page, page.locator(`[data-node-id="${nodeId}"]`).getByRole('alertdialog'), `/api/provider-nodes/${nodeId}`, 'DELETE', 'Delete node');
     expect((await read(page, '/api/provider-nodes')).nodes.some(node => node.id === nodeId)).toBe(false);
     await testInfo.attach('multi-compatible-node-persistence', { body: JSON.stringify({ fixture: 'connections-keys-v1', nodeId, transports: ['openai', 'claude', 'openai-responses'], deleted: true, upstreamCalls: 0 }), contentType: 'application/json' });
     nodeId = null;

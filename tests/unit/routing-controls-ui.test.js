@@ -15,11 +15,12 @@ let container, root;
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   state.calls = []; state.resource = { rules: { simple: null, coding: null, reasoning: null }, currentHash: 'a'.repeat(64), receipts: [] };
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
-const button = name => [...document.querySelectorAll('button')].find(node => node.textContent === name);
+const button = name => [...document.querySelectorAll('button')].find(node => node.textContent === name || node.getAttribute('aria-label') === name);
 async function click(name) { await act(async () => button(name).click()); }
 async function input(label, value) {
   const item = [...document.querySelectorAll('label')].find(node => node.textContent === label);
@@ -54,7 +55,7 @@ it('rebases a retained automatic draft after conflict and requires renewed revie
   expect(button('Save automatic rules')).toBeUndefined();
   expect(button('Review automatic rules').disabled).toBe(true);
   state.read = { ...state.resource, currentHash: 'b'.repeat(64), rules: { simple: 'openai/concurrent', coding: null, reasoning: null } };
-  await click('Refresh rules');
+  await click('Refresh automatic routing rules');
   expect(container.querySelector('input').value).toBe('openai/intended');
   expect(button('Save automatic rules')).toBeUndefined();
   expect(state.calls.filter(row => row.method === 'POST')).toHaveLength(1);
@@ -73,9 +74,9 @@ it('guards a mixed bulk set/remove using reviewed keys and accepts unrelated rea
   state.response = { ok: true, status: 200, body: { success: true, persistence: 'confirmed' } };
   state.read = { overrides: { 'openai/fixture': 128000, sibling: 45000 } };
   await render(<BulkOverrides overrides={{ old: 10000 }} onReadback={receive} />);
-  await click('Edit several overrides'); await input('Overrides to set', 'openai/fixture = 128000'); await input('Override keys to remove', 'old'); await click('Review exact keys');
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(container.querySelector('#model-context-bulk-editor')).not.toBeNull();
+  await input('Overrides to set', 'openai/fixture = 128000'); await input('Override keys to remove', 'old'); await click('Review exact keys');
+  expect(document.querySelector('[role="dialog"], dialog')).toBeNull();
+  expect(container.querySelector('section[aria-label="Edit several context-window overrides"]')).not.toBeNull();
   expect(state.calls).toHaveLength(0);
   await click('Save reviewed overrides');
   expect(state.calls[0].body).toEqual({ set: [{ key: 'openai/fixture', contextWindow: 128000 }], deleteKeys: ['old'], expectedOverrides: { 'openai/fixture': null, old: 10000 } });
@@ -86,7 +87,7 @@ it('reports post-commit persistence uncertainty even when the current process re
   state.response = { ok: true, status: 207, body: { success: true, persistence: 'unconfirmed' } };
   state.read = { overrides: { exact: 20000 } };
   await render(<BulkOverrides overrides={{ exact: 10000 }} onReadback={vi.fn()} />);
-  await click('Edit several overrides'); await input('Overrides to set', 'exact = 20000'); await click('Review exact keys'); await click('Save reviewed overrides');
+  await input('Overrides to set', 'exact = 20000'); await click('Review exact keys'); await click('Save reviewed overrides');
   expect(document.body.textContent).toContain('persisted readback is incomplete');
   expect(button('Save reviewed overrides').disabled).toBe(true);
   expect(document.querySelector('textarea').value).toBe('exact = 20000');
@@ -94,7 +95,7 @@ it('reports post-commit persistence uncertainty even when the current process re
 
 it('invalidates an inline bulk review when its visible values change', async () => {
   await render(<BulkOverrides overrides={{ exact: 10000 }} onReadback={vi.fn()} />);
-  await click('Edit several overrides'); await input('Overrides to set', 'exact = 20000'); await click('Review exact keys');
+  await input('Overrides to set', 'exact = 20000'); await click('Review exact keys');
   expect(button('Save reviewed overrides')).toBeDefined();
   await input('Overrides to set', 'exact = 30000');
   expect(button('Save reviewed overrides')).toBeUndefined();

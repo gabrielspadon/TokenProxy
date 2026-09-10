@@ -115,6 +115,47 @@ board is the reference composition; every other working surface composes
 the same classes through the kit, so one stylesheet owns the look and one
 density choice applies to the whole application.
 
+## Every surface follows the board
+
+The same decisions now hold on every dashboard page, through the kit:
+
+- **Context** and **Economics** open with the lens heading, the shared
+  scope bar and a chart block whose totals are chips; the session cohort
+  and the cost cohorts are boards (cards by identity source or provider in
+  Everyday, the dense table in Advanced), with session detail, attempt
+  inspection and the ledger expanding inline. The selection dock stacks its
+  detail under the inventory below the comparison width instead of opening
+  a drawer.
+- **Connections**, **Keys** and **Tools** are boards: state chips, the
+  toolbar with search, provider chips, sort in Advanced, density, the
+  primary action and refresh; cards or rows with the same quota and usage
+  lines as Capacity; the inline add-account row; per-connection tasks as a
+  segmented control whose fields save on their own; secrets shown once on
+  the board; extensions as cards with copyable endpoints.
+- **Models** keeps five tasks instead of nine; plans, aliases, the catalog,
+  cascade pairs and plans in effect are boards with inline add rows and
+  in-place edits; every model picker offers only models of configured
+  providers. **Context limits** buckets models by overridden, registered and
+  unknown with the limit as a status meter on absolute bands.
+- **Token savings** shows control groups as cards with an on or off state
+  word and measured savings as composition bars; thresholds and processing
+  levels are in-place fields in Advanced. **Compatibility** and the
+  **Request workbench** lose their dialogs; checks, presets and history are
+  cards or rows with inline evidence.
+- **Sessions** shows the pin inventory as rows with the bound account, the
+  pin's age and remaining life as meters, and the binding controls beside
+  it. **Network** shows pools and nodes as cards or rows with inline add and
+  inline confirms. **Operation history** lists operations as rows or cards
+  grouped by outcome with inline evidence.
+- **Notifications** rules, **Access** methods and **System** settings are
+  boards with state groups, in-place edits and inline confirmations; a
+  destructive act asks in place, never in a dialog.
+
+Two shared pieces carry the direct-control contract everywhere: the commit
+fields (a draft that saves on Enter or blur and reverts on Escape) and the
+inline confirmation (a Confirm and Cancel pair with its consequence
+sentence). The shell gives every dashboard route the lens layout.
+
 ## Only what matters
 
 The model filter in the scope bar and the model picker in Model support list

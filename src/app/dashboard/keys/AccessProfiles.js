@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Confirm } from '@/shared/components/Confirm';
+import { InlineConfirm } from '@/shared/workspace/InlineConfirm';
 import { Notice } from '@/shared/components/Notice';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
@@ -123,16 +123,16 @@ export function AccessProfiles({ poll, onKeysChanged }) {
             <button type="submit" className="button">Review profile</button>
           </fieldset></form> : <p className="caption">Select a profile or create one to configure its limits.</p>}
           {selected ? <button type="button" className="button danger" disabled={busy || uncertain || !!poll.error} onClick={() => begin('delete', selected)}>Delete access profile</button> : null}
+          {action && reviewing ? <InlineConfirm busy={busy} refusal={error} title={action.kind === 'delete' ? 'Delete access profile' : action.kind === 'edit' ? 'Edit access profile' : 'Create access profile'} verb={action.kind === 'delete' ? 'Delete profile' : 'Save profile'}
+            requires="a local operator session and the profile version shown when editing or deleting."
+            changes={action.kind === 'delete' ? `Deletes this profile and releases its ${action.profile.keyCount} adopting keys. Their copied limits and expiry remain unchanged.` : 'Stores a versioned policy. Existing keys keep their adopted settings until you deliberately adopt a newer version.'}
+            undo={action.kind === 'delete' ? 'The profile history cannot be restored. Create a new profile if needed.' : 'Edit the profile again. Existing keys have not been changed.'}
+            irreversible={action.kind === 'delete'} onConfirm={save} onCancel={close}>
+            <p>{action.kind === 'delete' ? action.profile.name : form.name}</p>
+            {action.kind !== 'delete' ? <dl className="facts">{FIELDS.map(([field, label, unit]) => <div key={field}><dt>{label}</dt><dd>{form[field] === '' ? 'No requirement' : `${form[field]} ${unit}`}</dd></div>)}<dt>Models</dt><dd>{form.allowedModels || 'Every model'}</dd><dt>Budget protection</dt><dd>{form.budgetPolicy === 'strict' ? 'Verified bounds' : 'Reserve remaining allowance'}</dd></dl> : null}
+          </InlineConfirm> : null}
         </aside>
       </div>
-      <Confirm open={!!action && reviewing} busy={busy} refusal={error} title={action?.kind === 'delete' ? 'Delete access profile' : action?.kind === 'edit' ? 'Edit access profile' : 'Create access profile'} verb={action?.kind === 'delete' ? 'Delete profile' : 'Save profile'}
-        requires="A local operator session and the profile version shown when editing or deleting."
-        changes={action?.kind === 'delete' ? `Deletes this profile and releases its ${action.profile.keyCount} adopting keys. Their copied limits and expiry remain unchanged.` : 'Stores a versioned policy. Existing keys keep their adopted settings until you deliberately adopt a newer version.'}
-        undo={action?.kind === 'delete' ? 'The profile history cannot be restored. Create a new profile if needed.' : 'Edit the profile again. Existing keys have not been changed.'}
-        irreversible={action?.kind === 'delete'} onConfirm={save} onClose={close}>
-        <p>{action?.kind === 'delete' ? action.profile.name : form.name}</p>
-        {action?.kind !== 'delete' ? <dl className="facts">{FIELDS.map(([field, label, unit]) => <div key={field}><dt>{label}</dt><dd>{form[field] === '' ? 'No requirement' : `${form[field]} ${unit}`}</dd></div>)}<dt>Models</dt><dd>{form.allowedModels || 'Every model'}</dd><dt>Budget protection</dt><dd>{form.budgetPolicy === 'strict' ? 'Verified bounds' : 'Reserve remaining allowance'}</dd></dl> : null}
-      </Confirm>
     </section>
   );
 }

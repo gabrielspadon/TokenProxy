@@ -40,27 +40,28 @@ it('keeps closed comparison content-sized in a labelled local scroll region', as
   expect(document.querySelector('[role="dialog"]')).toBeNull();
 });
 
-it('opens a bounded detail overlay with an explicit return to the selected comparison', async () => {
+it('stacks the detail under the comparison below the wide width, never in a dialog', async () => {
   await act(async () => root.render(<MantineProvider env="test"><Inventory /></MantineProvider>));
   const trigger = container.querySelector('button');
   trigger.focus();
   await act(async () => trigger.click());
   expect(trigger.isConnected).toBe(true);
-  expect(document.querySelector('[role="dialog"]').textContent).toContain('attempt-101');
-  expect(document.querySelector('[aria-label="Selection details"]').textContent).toContain('Evidence attempt-101');
-  expect(document.querySelector('.mantine-Drawer-root').style.getPropertyValue('--drawer-size')).toBe('min(560px, 100vw)');
-  expect(document.querySelector('[aria-label="Resize detail panel"]')).toBeNull();
-  const back = [...document.querySelectorAll('button')].find(button => button.textContent === 'Return to comparison');
-  await act(async () => back.click());
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  const stacked = container.querySelector('[aria-label="Selection details"][data-stacked]');
+  expect(stacked.textContent).toContain('Evidence attempt-101');
+  expect(container.querySelector('[aria-label="Resize detail panel"]')).toBeNull();
+  await act(async () => stacked.querySelector('[aria-label="Close selection details"]').click());
+  expect(container.querySelector('[data-stacked]')).toBeNull();
   expect(container.querySelector('[aria-pressed="false"]')).not.toBeNull();
+  expect(document.activeElement).toBe(trigger);
 });
 
-it('reserves a full-width detail flow for narrow screens', async () => {
+it('keeps the same stacked flow on narrow screens', async () => {
   phone = true;
   await act(async () => root.render(<MantineProvider env="test"><Inventory /></MantineProvider>));
   await act(async () => container.querySelector('button').click());
-  expect(document.querySelector('.mantine-Drawer-root').style.getPropertyValue('--drawer-size')).toBe('100%');
-  expect(document.querySelector('[aria-label="Selection details"]').textContent).toContain('Evidence attempt-101');
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Selection details"][data-stacked]').textContent).toContain('Evidence attempt-101');
 });
 
 it('keeps wide comparison and detail mounted across selections and returns focus on close', async () => {
@@ -93,7 +94,9 @@ it('uses available container space even when the viewport is wide', async () => 
     await new Promise(resolve => requestAnimationFrame(resolve));
   });
   await act(async () => container.querySelector('button').click());
-  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  // A wide viewport in a narrow container still stacks, never a dialog.
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(container.querySelector('[data-stacked]')).not.toBeNull();
   expect(container.querySelector('[aria-label="Resize detail panel"]')).toBeNull();
 });
 
@@ -124,18 +127,14 @@ it('retains comparison state, unsaved details and the focused caret across both 
       observer.callback([{ contentRect: { width, height: 620 } }]);
       await new Promise(resolve => requestAnimationFrame(resolve));
     });
-    // The Drawer schedules initial focus after its portal host has mounted.
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
     expect(document.querySelector('[aria-label="Policy draft"]')).toBe(draft);
     expect(draft.value).toBe('Unsaved operator policy');
     expect(comparison.isConnected).toBe(true);
     expect(comparison.getAttribute('aria-pressed')).toBe('true');
     expect(document.activeElement).toBe(draft);
     expect([draft.selectionStart, draft.selectionEnd]).toEqual([3, 9]);
-    if (width === 900) expect(draft.hasAttribute('data-autofocus')).toBe(true);
-    else {
-      expect(draft.hasAttribute('data-autofocus')).toBe(false);
-      expect([...document.querySelectorAll('button')].find(button => button.textContent === 'Edit draft').getAttribute('data-autofocus')).toBe('original');
-    }
+    // No dialog means no focus trap, so the autofocus marks stay the author's.
+    expect(draft.hasAttribute('data-autofocus')).toBe(false);
+    expect([...document.querySelectorAll('button')].find(button => button.textContent === 'Edit draft').getAttribute('data-autofocus')).toBe('original');
   }
 });

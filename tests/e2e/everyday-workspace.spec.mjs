@@ -51,11 +51,6 @@ for (const width of [1440, 1920, 390]) {
       expect(response.headers()['x-tokenproxy-preview-kind']).toBe('synthetic-fixture');
       await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture');
     }
-    async function chooseTask(group, label) {
-      const button = page.getByRole('navigation', { name: group, exact: true }).getByRole('button', { name: label, exact: true });
-      await button.click();
-      await expect(button).toHaveAttribute('aria-pressed', 'true');
-    }
     async function capture(label) {
       await page.evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${label} page overflow`).toBe(true);
@@ -89,56 +84,53 @@ for (const width of [1440, 1920, 390]) {
       await closeNavigation();
       report.checks.push('Everyday and Advanced survive reload; advanced deep links remain available; retired links absent');
 
+      // The three Operations pages are boards: one panel per page, groups of
+      // cards rather than task tabs, and a card that opens in place.
       await navigate('/dashboard/access');
-      await expect(page.locator('#h-password')).toBeVisible();
-      await expect(page.locator('#h-sso')).toBeHidden();
-      await chooseTask('Access tasks', 'Single sign-on');
-      await page.getByRole('radio', { name: 'OIDC', exact: true }).check();
+      const access = page.locator('section[aria-label="Access"]');
+      await expect(access).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Access tasks' })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Expand OIDC', exact: true }).click();
       const issuer = page.getByLabel('Provider address', { exact: true });
       const identity = page.getByLabel('Client identity', { exact: true });
       await expect(issuer).toBeEditable();
       await expect(page.getByRole('button', { name: 'Review configuration', exact: true })).toBeEnabled();
       await issuer.fill('https://identity.example.invalid');
       await identity.fill(`synthetic-unsaved-${width}`);
-      await chooseTask('Access tasks', 'Advanced');
-      await expect(issuer).toBeHidden();
       await capture('access-advanced');
-      await chooseTask('Access tasks', 'Sign-in');
-      await expect(page.locator('#h-password')).toBeVisible();
-      await chooseTask('Access tasks', 'Single sign-on');
+      // Collapsing a card and opening it again keeps the unsaved draft: the
+      // draft outlives the card, and nothing was submitted.
+      await page.getByRole('button', { name: 'Collapse OIDC', exact: true }).click();
+      await expect(issuer).toHaveCount(0);
+      await page.getByRole('button', { name: 'Expand OIDC', exact: true }).click();
       await expect(issuer).toHaveValue('https://identity.example.invalid');
       await expect(identity).toHaveValue(`synthetic-unsaved-${width}`);
       await capture('access-unsaved-sso-draft');
-      report.checks.push('Access tasks preserve an unsaved OIDC draft without submit or provider discovery');
+      report.checks.push('Access keeps an unsaved OIDC draft across a card collapse, without submit or provider discovery');
 
       await navigate('/dashboard/system');
-      await expect(page.getByRole('navigation', { name: 'System tasks' }).getByRole('button', { name: 'Status', exact: true })).toHaveAttribute('aria-pressed', 'true');
-      await expect(page.getByLabel('Backup file', { exact: true })).toBeHidden();
-      await expect(page.locator('#h-shutdown')).toBeHidden();
+      await expect(page.locator('section[aria-label="System"]')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'System tasks' })).toHaveCount(0);
+      await expect(page.locator('article[data-account-id="process"]')).toBeVisible();
       await capture('system-status');
-      await chooseTask('System tasks', 'Configuration');
+      // Every scope is on the one board: import carries its file field and
+      // shutdown its own card, with no tab hiding either.
       await expect(page.getByLabel('Backup file', { exact: true })).toBeVisible();
-      await expect(page.locator('#h-shutdown')).toBeHidden();
       await capture('system-configuration');
-      await chooseTask('System tasks', 'Maintenance');
-      await expect(page.locator('#h-shutdown')).toBeVisible();
-      await expect(page.getByLabel('Backup file', { exact: true })).toBeHidden();
+      await expect(page.locator('article[data-account-id="shutdown"]')).toBeVisible();
       await capture('system-maintenance');
-      report.checks.push('System starts with status, scopes import controls to configuration and shutdown to maintenance');
+      report.checks.push('System carries runtime, configuration and maintenance on one board with no task tabs');
 
       await navigate('/dashboard/notifications');
-      await expect(page.locator('#h-sending')).toBeVisible();
-      await expect(page.locator('#h-where')).toBeHidden();
+      await expect(page.locator('section[aria-label="Notification rules"]')).toBeVisible();
+      await expect(page.getByRole('navigation', { name: 'Notifications tasks' })).toHaveCount(0);
       await capture('notifications-overview');
-      await chooseTask('Notifications tasks', 'Destinations');
-      await expect(page.locator('#h-where')).toBeVisible();
-      await expect(page.locator('#h-sending')).toBeHidden();
+      await expect(page.locator('section[aria-label="Notification delivery"]')).toBeVisible();
+      await expect(page.locator('form[aria-label="Add a destination"]')).toBeVisible();
       await capture('notifications-destinations');
-      await chooseTask('Notifications tasks', 'Rules');
-      await expect(page.locator('#h-rules')).toBeVisible();
-      await expect(page.locator('#h-where')).toBeHidden();
+      await expect(page.getByRole('group', { name: 'Rule summary' })).toBeVisible();
       await capture('notifications-rules');
-      report.checks.push('Notifications scopes overview, destinations and rules without a send');
+      report.checks.push('Notifications carries rules, destinations and deliveries on one page without a send');
       expect(report.pageErrors).toEqual([]);
       expect(report.blockedMutations).toEqual([]);
       expect(safety.outboundFailures).toEqual([]);

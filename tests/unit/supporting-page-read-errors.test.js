@@ -19,6 +19,8 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
   vi.stubGlobal('fetch', vi.fn(async () => new Response('')));
+  // The board toolbar carries a SegmentedControl, which measures itself.
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -39,12 +41,12 @@ it('scopes a failed version read while retaining successful process health', asy
   expect(container.textContent).toContain('Version information could not be read.');
   expect(container.textContent).toContain('Healthy');
   expect(container.textContent).not.toContain('The gateway did not answer.');
-  await act(async () => [...container.querySelector('[aria-label="System tasks"]').querySelectorAll('button')].find(button => button.textContent.endsWith('Configuration')).click());
-  const notice = [...container.querySelectorAll('[role="status"]')].find(element => element.textContent.includes('Some system observations could not be refreshed.'));
+  // The board carries one notice per failed read, above the panel and never
+  // behind a tab, so a failed version read cannot hide while the rest reads.
+  const notice = [...container.querySelectorAll('.notice')].find(element => element.textContent.includes('Version information could not be read.'));
   expect(notice).toBeTruthy();
   expect(notice.closest('[hidden]')).toBeNull();
-  await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Review system status').click());
-  expect(container.querySelector('[aria-labelledby="h-runtime"]').hidden).toBe(false);
+  expect(container.querySelector('[aria-label="System"]')).toBeTruthy();
   await act(async () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Retry version read').click());
   expect(fixture.refresh).toHaveBeenCalledWith('/api/version');
 });

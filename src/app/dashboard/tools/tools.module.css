@@ -1,52 +1,84 @@
-.summary {
+/* Tools composes the shared board kit (src/shared/workspace/board.module.css)
+   inside the shared lens layout (workspace.module.css). Only what is Tools's
+   own lives here: the two connect panels and their copyable values. */
+/* One vertical rhythm for everything the lens body carries. */
+.stack {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.panel {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.panel h2 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+.panel p {
+  font-size: var(--type-dense);
+  line-height: 1.45;
+  color: var(--slate);
+}
+.panel code {
+  font-size: var(--type-dense);
+  color: var(--ink);
+}
+.copy {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--type-dense);
+  color: var(--slate);
+}
+.copy :global(.mantine-Input-input) {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--type-dense);
+}
+.links {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 32px;
-  padding-block: 14px;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: var(--type-dense);
+}
+.links a {
+  color: var(--signal-deep);
+}
+.toolNames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
   margin: 0;
-  border-block: 1px solid var(--rule);
+  padding: 0;
+  list-style: none;
 }
-.summary > div { display: flex; align-items: baseline; gap: 12px; }
-.summary dt { color: var(--slate); font-size: 13px; }
-.summary dd { margin: 0; color: var(--ink); font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.scroll {
-  max-width: 100%;
-  overflow: auto;
-  background: var(--raised);
-}
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.table th,
-.table td {
-  text-align: start;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--rule);
-  white-space: nowrap;
-}
-.table th {
+.toolNames li {
+  padding: 1px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font-size: var(--type-dense);
   color: var(--slate);
-  background: var(--paper);
-  font-weight: 500;
 }
-.table td:nth-child(n + 4),
-.table th:nth-child(n + 4) {
-  text-align: end;
-  font-variant-numeric: tabular-nums;
-}
-.table tr[data-selected] {
-  background: var(--signal-wash);
-  box-shadow: inset 3px 0 var(--signal);
-}
-.table button {
-  font-size: 13px;
-  white-space: normal;
-  text-align: start;
-}
-.scroll:focus-visible,
-.table button:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
+@media (max-width: 560px) {
+  .copy {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .copy > span:first-child {
+    grid-column: 1 / -1;
+  }
 }

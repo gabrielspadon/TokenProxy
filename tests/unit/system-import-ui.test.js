@@ -36,6 +36,8 @@ beforeEach(async () => {
   });
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  // The board toolbar carries a SegmentedControl, which measures itself.
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
   dialogDescriptors = Object.fromEntries(['showModal', 'close'].map(method => [method, Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, method)]));
   Object.defineProperties(HTMLDialogElement.prototype, {
@@ -60,7 +62,14 @@ afterEach(() => {
 });
 
 const importCalls = () => fetchMock.mock.calls.filter(([url, options]) => url === endpoint && options?.method === 'POST');
-const databaseSection = () => container.querySelector('section[aria-labelledby="h-import"]');
+// Import is one card on the system board; its confirmation opens inside that
+// card rather than in a dialog over the page.
+const databaseSection = () => container.querySelector('[data-account-id="import"]');
+const asking = () => databaseSection().querySelector('form[aria-label="Import configuration"]');
+const receipt = () =>
+  [...databaseSection().querySelectorAll('.notice')].find(node =>
+    /Database imported|returned successfully/.test(node.textContent)
+  );
 
 async function submitBackup() {
   const file = new File([JSON.stringify(backup)], 'synthetic-backup.json', { type: 'application/json' });
@@ -69,17 +78,17 @@ async function submitBackup() {
   Object.defineProperty(upload, 'files', { configurable: true, value: [file] });
   await act(async () => upload.dispatchEvent(new Event('change', { bubbles: true })));
   expect(importCalls()).toHaveLength(0);
-  await act(async () => databaseSection().querySelector('button').click());
-  const dialog = container.querySelector('dialog[open]');
-  expect(dialog.querySelector('input[type="file"]')).toBeNull();
-  expect(dialog.textContent).toContain('synthetic-backup.json');
+  await act(async () => [...databaseSection().querySelectorAll('button')].find(node => node.textContent.trim() === 'Import configuration').click());
+  const ask = asking();
+  expect(ask.querySelector('input[type="file"]')).toBeNull();
+  expect(ask.textContent).toContain('synthetic-backup.json');
   await act(async () => {
-    const password = dialog.querySelector('input[type="password"]');
+    const password = ask.querySelector('input[type="password"]');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(password, 'synthetic-password');
     password.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await act(async () => dialog.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
-  return dialog;
+  await act(async () => ask.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  return ask;
 }
 
 it.each([true, false])('keeps a committed import with failed process refresh as a warning, with route message %s', async withMessage => {
@@ -88,12 +97,12 @@ it.each([true, false])('keeps a committed import with failed process refresh as 
   importResponse = async () => Response.json(body, { status: 207 });
   await submitBackup();
 
-  const notice = databaseSection().querySelector('.notice');
+  const notice = receipt();
   expect(notice.dataset.tone).toBe('warn');
   expect(notice.textContent).toContain('Database imported; runtime refresh incomplete.');
   expect(notice.textContent).toContain('Do not automatically repeat the import.');
   expect(notice.textContent).not.toContain('returned successfully');
-  expect(container.querySelector('dialog[open]')).toBeNull();
+  expect(asking()).toBeNull();
   expect(fixture.refresh.mock.calls).toEqual([['/api/admin/health/detail'], ['/api/settings/require-login']]);
   expect(importCalls()).toHaveLength(1);
   expect(JSON.parse(importCalls()[0][1].body)).toEqual({ ...backup, password: 'synthetic-password' });
@@ -101,19 +110,19 @@ it.each([true, false])('keeps a committed import with failed process refresh as 
 
   await act(async () => root.render(<MantineProvider env="test"><SystemPage /></MantineProvider>));
   expect(importCalls()).toHaveLength(1);
-  expect(databaseSection().querySelector('.notice').dataset.tone).toBe('warn');
+  expect(receipt().dataset.tone).toBe('warn');
   expect(container.textContent).toContain('Synthetic observation unavailable');
   expect(container.textContent).not.toContain('Up to date');
 });
 
 it('keeps a lost import response uncertain without claiming commit or automatically resubmitting', async () => {
   importResponse = async () => { throw new TypeError('Synthetic response lost'); };
-  const dialog = await submitBackup();
-  const notice = dialog.querySelector('.notice');
-  expect(dialog.hasAttribute('open')).toBe(true);
+  const ask = await submitBackup();
+  const notice = ask.querySelector('.notice');
+  expect(asking()).not.toBeNull();
   expect(notice.textContent).toContain('The gateway did not answer.');
   expect(notice.textContent).not.toContain('Nothing was changed');
-  expect(databaseSection().querySelector('.notice')).toBeNull();
+  expect(receipt()).toBeUndefined();
   expect(fixture.refresh).not.toHaveBeenCalled();
   await act(async () => root.render(<MantineProvider env="test"><SystemPage /></MantineProvider>));
   expect(importCalls()).toHaveLength(1);
@@ -123,12 +132,12 @@ it('keeps a lost import response uncertain without claiming commit or automatica
 
 it('keeps password refusal distinct from a committed partial import', async () => {
   importResponse = async () => Response.json({ error: 'Invalid password' }, { status: 401 });
-  const dialog = await submitBackup();
-  const notice = dialog.querySelector('.notice');
+  const ask = await submitBackup();
+  const notice = ask.querySelector('.notice');
   expect(notice.dataset.tone).toBe('warn');
   expect(notice.textContent).toContain('That password is not right.');
   expect(notice.textContent).toContain('Nothing was changed.');
-  expect(databaseSection().querySelector('.notice')).toBeNull();
+  expect(receipt()).toBeUndefined();
   expect(fixture.refresh).not.toHaveBeenCalled();
   expect(importCalls()).toHaveLength(1);
 });

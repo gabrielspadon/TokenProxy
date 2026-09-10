@@ -108,6 +108,10 @@
 .notice { padding: 6px 10px; border-bottom: 1px solid var(--rule); }
 
 /* One grid template shared by the header line and every row. */
+/* Surfaces that never compare drop the checkbox column from the row grid. */
+.board[data-advanced][data-compare='none'] .head,
+.board[data-advanced][data-compare='none'] .main { grid-template-columns: 24px minmax(180px, 1fr) 100px minmax(300px, 1.8fr) minmax(170px, 0.9fr) 142px; }
+.fleetChip[data-static] { cursor: default; }
 .head,
 .main {
   display: grid;
@@ -185,6 +189,7 @@
 .state { display: grid; gap: 2px; justify-items: start; }
 .stateWord { display: inline-flex; align-items: center; gap: 6px; font-size: var(--type-dense); color: var(--ink); white-space: nowrap; }
 .stateWord i { width: 7px; height: 7px; border-radius: 50%; background: var(--slate); flex: none; }
+.stateWord[data-wrap] { white-space: normal; }
 .stateWord[data-tone='positive'] { color: var(--positive); }
 .stateWord[data-tone='positive'] i { background: var(--positive); }
 .stateWord[data-tone='ember'] { color: var(--ember); }
@@ -196,13 +201,13 @@
 .line {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto;
+  grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) minmax(44px, auto) auto;
   align-items: center;
   column-gap: 8px;
   min-height: 18px;
   font-size: var(--type-dense);
 }
-.board[data-advanced] .line { grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) 44px auto 54px; }
+.board[data-advanced] .line { grid-template-columns: minmax(0, 1.1fr) minmax(70px, 1fr) minmax(44px, auto) auto 54px; }
 .lineLabel {
   min-width: 0;
   padding: 1px 3px;
@@ -232,7 +237,7 @@
 .lineValue[data-usage] { color: var(--ink); }
 /* In a row the column header already says Activity, so the usage line drops
    its label: bar, total, cached share. */
-.line[data-usage][data-compact] { grid-template-columns: minmax(48px, 1fr) 44px auto; margin-top: 2px; }
+.line[data-usage][data-compact] { grid-template-columns: minmax(48px, 1fr) minmax(44px, auto) auto; margin-top: 2px; }
 .line[data-usage][data-compact] .lineReset { min-width: 0; }
 .line[data-usage] .lineReset { color: var(--metric-cache); }
 .meter {
@@ -254,6 +259,14 @@
   background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--meter-low) 45%, transparent) 0 2px, transparent 2px 5px);
   box-shadow: inset 0 0 0 1px var(--meter-low);
 }
+/* A line with no proportion to draw: label, value, note. */
+.line[data-meter='none'] { grid-template-columns: minmax(0, 1.6fr) minmax(44px, auto) auto; }
+.board[data-advanced] .line[data-meter='none'] { grid-template-columns: minmax(0, 1.6fr) minmax(44px, auto) auto 54px; }
+.cardWindows .line[data-meter='none'] { grid-template-columns: minmax(0, 1.6fr) minmax(40px, auto) minmax(0, auto); }
+/* A neutral proportion, for a share of something that is neither good nor
+   bad (a cost share, a count against a total). */
+.line[data-level='neutral'] .fill { background: var(--metric-input); }
+.line[data-level='neutral'] .lineValue { color: var(--ink); }
 .line[data-stale] .fill { background: var(--control-edge); }
 .line[data-stale] .meter { box-shadow: inset 0 0 0 1px var(--rule); background: var(--paper); }
 .threshold { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--ink); transform: translateX(-1px); border-radius: 1px; }
@@ -365,21 +378,22 @@
 .linkButton { padding: 1px 3px; margin-inline: -3px; border: 0; border-radius: 3px; background: none; color: var(--signal-deep); font: inherit; text-decoration: underline; cursor: pointer; }
 
 @container board (max-width: 900px) {
-  .head { display: none; }
-  .main,
-  .board[data-advanced] .main {
+  /* The stacked row layout belongs to the rows presentation only, so a card
+     surface reusing these class names at narrow widths is unaffected. */
+  .board[data-layout='rows'] .head { display: none; }
+  .board[data-layout='rows'] .main {
     grid-template-columns: 24px minmax(0, 1fr) auto;
     grid-template-areas: 'caret identity actions' 'compare state state' 'quota quota quota' 'activity activity activity';
     row-gap: 4px;
     padding-block: 8px;
   }
-  .caret { grid-area: caret; }
-  .compare { grid-area: compare; }
-  .identity { grid-area: identity; }
-  .state { grid-area: state; grid-auto-flow: column; align-items: center; }
-  .quota { grid-area: quota; padding-inline-start: 34px; }
-  .activity { grid-area: activity; padding-inline-start: 34px; grid-auto-flow: column; justify-content: start; gap: 8px; }
-  .actions { grid-area: actions; }
+  .board[data-layout='rows'] .caret { grid-area: caret; }
+  .board[data-layout='rows'] .compare { grid-area: compare; }
+  .board[data-layout='rows'] .identity { grid-area: identity; }
+  .board[data-layout='rows'] .state { grid-area: state; grid-auto-flow: column; align-items: center; }
+  .board[data-layout='rows'] .quota { grid-area: quota; padding-inline-start: 34px; }
+  .board[data-layout='rows'] .activity { grid-area: activity; padding-inline-start: 34px; grid-auto-flow: column; justify-content: start; gap: 8px; }
+  .board[data-layout='rows'] .actions { grid-area: actions; }
   .iconButton { opacity: 1; }
   .detail { padding-inline-start: 10px; }
   .search { flex: 1 1 140px; }
@@ -443,7 +457,7 @@
 .cardState { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .cardAttempts { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
 .cardWindows { display: grid; gap: 4px; margin-top: 6px; }
-.cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) 40px minmax(0, auto); }
+.cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) minmax(40px, auto) minmax(0, auto); }
 .cardWindows .lineReset { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cardWindows .meter { height: 7px; border-radius: 4px; }
 .cardWindows .fill { border-radius: 4px; }

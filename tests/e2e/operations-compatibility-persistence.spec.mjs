@@ -30,7 +30,7 @@ const responseTo = (page, path, method) =>
       new URL(response.url()).pathname === path && response.request().method() === method
   );
 
-test('rules persist scope, conflict recovery, historical dry run and retained alert dispositions', async ({
+test('rules persist scope, absorb a competing write, replay history and retain alert dispositions', async ({
   page,
 }, testInfo) => {
   test.setTimeout(60000);
@@ -43,11 +43,18 @@ test('rules persist scope, conflict recovery, historical dry run and retained al
   ).toBe('firing');
   const name = `Synthetic persistence ${Date.now()}`;
   const receipts = {};
+  // The per-field controls this scenario drives (threshold, duration, cooldown)
+  // are the Advanced half of the board, so the level is set before the first load.
+  await page.addInitScript(() =>
+    localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced'))
+  );
   const response = await page.goto('/dashboard/notifications');
   assertSynthetic(response);
-  await page.getByRole('button', { name: 'New rule', exact: true }).click();
-  const editor = page.getByRole('form', { name: 'Notification rule editor' });
-  await editor.getByRole('textbox', { name: 'Name', exact: true }).fill(name);
+  // Rules are the board: the add row is inline, an edit commits from the field
+  // itself, and a rule's evidence opens under its own row.
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click();
+  const editor = page.getByRole('form', { name: 'Add a rule' });
+  await editor.getByRole('textbox', { name: 'Rule name', exact: true }).fill(name);
   await editor.getByLabel('Enabled', { exact: true }).uncheck();
   const create = responseTo(page, rulesPath, 'POST');
   await editor.getByRole('button', { name: 'Create rule', exact: true }).click();
@@ -56,9 +63,7 @@ test('rules persist scope, conflict recovery, historical dry run and retained al
   expect(createdResponse.status()).toBe(201);
   const created = await createdResponse.json();
   receipts.created = created;
-  await expect(
-    page.getByText('Rule revision 1 saved and read back from local storage.')
-  ).toBeVisible();
+  await expect(page.getByText('Rule revision 1 saved and read back.')).toBeVisible();
   expect((await read(page, `${rulesPath}/${created.id}`)).rule).toMatchObject({
     name,
     enabled: false,
@@ -68,38 +73,40 @@ test('rules persist scope, conflict recovery, historical dry run and retained al
     cooldownSeconds: 3600,
     revision: 1,
   });
-  await page.getByRole('button', { name: 'Edit rule', exact: true }).click();
+  const row = page.locator(`article[data-rule-id="${created.id}"]`);
+  await expect(row).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  // A competing operator write is absorbed rather than refused: the field save
+  // reads the stored rule first and writes with THAT revision as its baseline,
+  // so the concurrent threshold survives and the revision advances past it.
   const concurrent = await page.request.put(`${rulesPath}/${created.id}`, {
     data: { ...created, threshold: 8, revision: 1 },
   });
   assertSynthetic(concurrent);
   expect(concurrent.status()).toBe(200);
-  const refused = responseTo(page, `${rulesPath}/${created.id}`, 'PUT');
-  await editor.getByRole('button', { name: 'Save rule', exact: true }).click();
-  expect((await refused).status()).toBe(409);
-  await expect(page.getByText('This rule was changed by someone else')).toBeVisible();
-  await page.getByRole('button', { name: 'Load the stored rule and start again' }).click();
-  const retried = responseTo(page, `${rulesPath}/${created.id}`, 'PUT');
-  await editor.getByRole('button', { name: 'Save rule', exact: true }).click();
-  expect((await retried).status()).toBe(200);
-  await expect(
-    page.getByText('Rule revision 3 saved and read back from local storage.')
-  ).toBeVisible();
+  const absorbed = responseTo(page, `${rulesPath}/${created.id}`, 'PUT');
+  const cooldown = row.getByLabel(`Cooldown in seconds for ${name}`, { exact: true });
+  await cooldown.fill('7200');
+  await cooldown.press('Enter');
+  expect((await absorbed).status()).toBe(200);
+  await expect(page.getByText('Cooldown saved at revision 3.')).toBeVisible();
   receipts.rule = await read(page, `${rulesPath}/${created.id}`);
-  expect(receipts.rule.rule).toMatchObject({ revision: 3, threshold: 8, enabled: false });
+  expect(receipts.rule.rule).toMatchObject({ revision: 3, threshold: 8, cooldownSeconds: 7200, enabled: false });
   expect(receipts.rule.versions.map((version) => version.revision)).toEqual([3, 2, 1]);
   const dryRun = responseTo(page, `${rulesPath}/dry-run`, 'POST');
+  // Creating a rule leaves its evidence open, so only open it if it is closed.
+  const expand = row.getByRole('button', { name: `Expand ${name}`, exact: true });
+  if (await expand.count()) await expand.click();
+  await expect(row.getByRole('button', { name: `Collapse ${name}`, exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Run against history' }).click();
   const dryResponse = await dryRun;
   expect(dryResponse.status()).toBe(200);
   receipts.dryRun = await dryResponse.json();
   expect(receipts.dryRun).toHaveProperty('timeRange');
   expect((await read(page, `${rulesPath}/${created.id}`)).versions).toHaveLength(3);
-  const returnToComparison = page.getByRole('button', { name: 'Return to comparison', exact: true });
-  if (await returnToComparison.isVisible()) await returnToComparison.click();
-  const alerts = page.getByRole('table', { name: 'Recorded alerts' });
-  const alertRow = alerts.getByRole('row').filter({ hasText: syntheticAlert.scopeKey });
+  await row.getByRole('button', { name: `Collapse ${name}`, exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Run against history' })).toHaveCount(0);
+  const alertRow = page.locator('article').filter({ hasText: syntheticAlert.scopeKey }).last();
   await alertRow
     .getByRole('button', {
       name: `Snooze alert on ${syntheticAlert.scopeKey} for 24 hours`,
@@ -139,6 +146,8 @@ test('compatible fixtures retain exact revisions, local results and terminal can
   await preflight(page);
   const response = await page.goto('/dashboard/compatibility');
   assertSynthetic(response);
+  // The editor is an inline add row on the board, opened from the toolbar.
+  await page.getByRole('button', { name: 'New fixture', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Fixture editor', exact: true })).toBeVisible();
   await page
     .getByRole('button', { name: /Insert .*tool/i })
@@ -161,7 +170,7 @@ test('compatible fixtures retain exact revisions, local results and terminal can
   );
   const fixtureRow = page
     .getByRole('region', { name: 'Fixture book', exact: true })
-    .locator('[class*="fixtureRow"]')
+    .locator('article')
     .filter({ has: page.getByText(name, { exact: true }) });
   const submitted = responseTo(page, `${compatibilityPath}/runs`, 'POST');
   await fixtureRow.getByRole('button', { name: 'Run revision 1', exact: true }).click();

@@ -5,7 +5,6 @@ import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import AccessPage from '../../src/app/dashboard/access/page.js';
 import SystemPage from '../../src/app/dashboard/system/page.js';
-import { Confirm } from '../../src/shared/components/Confirm.js';
 
 let container, root, auth, probe, version, requests;
 const settings = { authMode: 'oidc', oidcIssuerUrl: 'https://identity.example', oidcClientId: 'test-client', oidcScopes: 'openid', requireLogin: true };
@@ -16,6 +15,13 @@ async function click(text) {
   const button = [...container.querySelectorAll('button')].find(e => e.textContent.trim() === text);
   expect(button, `Missing button ${text}`).toBeDefined();
   await act(async () => button.click());
+}
+// Access is a board: a method's controls live in its own card, which opens in
+// place rather than in a layer.
+async function expand(name) {
+  const caret = [...container.querySelectorAll('button')].find(e => e.getAttribute('aria-label') === `Expand ${name}`);
+  expect(caret, `Missing caret for ${name}`).toBeDefined();
+  await act(async () => caret.click());
 }
 function fact(label) { return [...container.querySelectorAll('.system-facts dt')].find(e => e.textContent === label)?.nextElementSibling.textContent; }
 function probeNotice() { return [...container.querySelectorAll('.notice')].at(-1); }
@@ -47,7 +53,7 @@ afterEach(() => { act(() => root.unmount());container.remove();vi.unstubAllGloba
 describe('Access uses the configuration check verdict and states its scope', () => {
   it('renders HTTP 200 with ok=false as a rejection and preserves the provider reason', async () => {
     probe = { ok: false, discoveryOk: true, clientSecretTested: true, clientSecretValid: false, error: 'Discovery loaded, but the client secret is not valid.' };
-    await mount(<AccessPage />);await click('Test without saving');
+    await mount(<AccessPage />);await expand('OIDC');await click('Test without saving');
     expect(probeNotice().dataset.tone).toBe('bad');
     expect(probeNotice().textContent).toContain(probe.error);
     expect(probeNotice().textContent).not.toContain('accepted this configuration');
@@ -55,24 +61,24 @@ describe('Access uses the configuration check verdict and states its scope', () 
   });
   it.each([false, true])('does not infer acceptance when client-secret validity is unknown (tested=%s)', async tested => {
     probe = { ok: true, discoveryOk: true, clientSecretTested: tested, clientSecretValid: null, message: 'Client secret validity was not established.' };
-    await mount(<AccessPage />);await click('Test without saving');
+    await mount(<AccessPage />);await expand('OIDC');await click('Test without saving');
     expect(probeNotice().dataset.tone).toBe('warn');
     expect(probeNotice().textContent).toMatch(/not verified/i);
   });
   it('limits a positive OIDC result to discovery and the credential check, without claiming sign-in', async () => {
-    await mount(<AccessPage />);await click('Test without saving');
+    await mount(<AccessPage />);await expand('OIDC');await click('Test without saving');
     expect(probeNotice().dataset.tone).toBe('ok');
     expect(probeNotice().textContent).toMatch(/discovery/i);
     expect(probeNotice().textContent).toMatch(/sign-in.*not tested/i);
   });
   it.each([null, {}, { ok: true }, { ok: 'true', discoveryOk: true }])('does not show success for incomplete or malformed application evidence %j', async body => {
-    probe = body;await mount(<AccessPage />);await click('Test without saving');
+    probe = body;await mount(<AccessPage />);await expand('OIDC');await click('Test without saving');
     expect(probeNotice().dataset.tone).not.toBe('ok');
   });
   it('identifies SAML success as a local format check without claiming provider acceptance', async () => {
     auth = { ...auth, authMode: 'saml', ssoType: 'saml', samlConfigured: true };
     probe = { ok: true, certValid: true, message: 'SAML 2.0 configuration verified successfully.' };
-    await mount(<AccessPage />);await click('Test without saving');
+    await mount(<AccessPage />);await expand('SAML');await click('Test without saving');
     expect(probeNotice().dataset.tone).toBe('ok');
     expect(probeNotice().textContent).toMatch(/local.*format/i);
     expect(probeNotice().textContent).toMatch(/provider.*not contacted/i);
@@ -103,15 +109,5 @@ describe('System version read failures', () => {
     expect(container.textContent).toContain('Version information could not be read.');
     expect(container.textContent).toContain('Process health is reported separately below.');
     expect([...container.querySelectorAll('button')].some(e => e.textContent === 'Retry version read')).toBe(true);
-  });
-});
-
-describe('Confirmation dialog identity', () => {
-  it('labels each confirmation with its own stable visible heading', async () => {
-    const render = busy => <><Confirm open={false} title="Disable account A" verb="Disable" busy={busy} /><Confirm open={false} title="Delete key B" verb="Delete" /></>;
-    await mount(render(false));const dialogs = [...container.querySelectorAll('dialog')];const labels = dialogs.map(d => d.getAttribute('aria-labelledby'));
-    expect(labels.every(Boolean)).toBe(true);expect(new Set(labels).size).toBe(2);
-    expect(labels.map(id => document.getElementById(id)?.textContent)).toEqual(['Disable account A', 'Delete key B']);
-    await mount(render(true));expect([...container.querySelectorAll('dialog')].map(d => d.getAttribute('aria-labelledby'))).toEqual(labels);
   });
 });

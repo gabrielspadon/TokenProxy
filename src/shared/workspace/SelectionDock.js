@@ -1,8 +1,8 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { ActionIcon, Button, Drawer } from '@mantine/core';
-import { useElementSize, useMediaQuery, useMounted, useReducedMotion } from '@mantine/hooks';
+import { ActionIcon } from '@mantine/core';
+import { useElementSize, useMediaQuery, useMounted } from '@mantine/hooks';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import { Icon } from '@/shared/components/Icon';
 import styles from './workspace.module.css';
@@ -20,10 +20,8 @@ export function SelectionDock({
   minimumComparisonWidth = 760,
 }) {
   const desktop = useMediaQuery('(min-width: 90em)');
-  const phone = useMediaQuery('(max-width: 48em)');
   const { ref: containerRef, width } = useElementSize();
   const wide = width > 0 ? width >= minimumComparisonWidth + 388 : desktop;
-  const reduceMotion = useReducedMotion();
   const mounted = useMounted();
   const detailTarget = useMemo(() => mounted ? document.createElement('div') : null, [mounted]);
   const detailFocus = useRef(null);
@@ -32,19 +30,7 @@ export function SelectionDock({
     if (!host || !detailTarget) return;
     host.appendChild(detailTarget);
     const retained = detailFocus.current;
-    let restoreAutofocus;
     if (retained?.element.isConnected) {
-      if (!wide) {
-        // Mantine's delayed focus trap must choose the retained field too.
-        const marks = [...detailTarget.querySelectorAll('[data-autofocus]')];
-        const values = marks.map(element => element.getAttribute('data-autofocus'));
-        marks.forEach(element => element.removeAttribute('data-autofocus'));
-        retained.element.setAttribute('data-autofocus', '');
-        restoreAutofocus = () => {
-          retained.element.removeAttribute('data-autofocus');
-          marks.forEach((element, index) => element.setAttribute('data-autofocus', values[index]));
-        };
-      }
       retained.element.focus({ preventScroll: true });
       if (typeof retained.start === 'number') retained.element.setSelectionRange(retained.start, retained.end);
     }
@@ -53,9 +39,11 @@ export function SelectionDock({
       if (detailTarget.contains(element)) {
         detailFocus.current = { element, start: element.selectionStart, end: element.selectionEnd };
       }
-      restoreAutofocus?.();
     };
-  }, [detailTarget, wide]);
+  }, [detailTarget]);
+  const scrollIntoView = useCallback((node) => {
+    node?.scrollIntoView?.({ block: 'nearest' });
+  }, []);
   const origin = useRef(null);
   const previousOpen = useRef(false);
   useEffect(() => {
@@ -95,13 +83,20 @@ export function SelectionDock({
         </>
       )}
     </Group>
-    {!wide && <Drawer opened={open} onClose={onClose} title={heading} size={phone ? '100%' : 'min(560px, 100vw)'} position="right" returnFocus={false}
-      className={styles.detailDrawer} closeButtonProps={{ 'aria-label': 'Close selection details' }}
-      removeScrollProps={{ shards: detailTarget ? [detailTarget] : [] }}
-      transitionProps={{ duration: reduceMotion ? 0 : 200 }}>
-      <Button variant="default" mb="md" onClick={onClose}>Return to comparison</Button>
-      <section aria-label="Selection details" ref={attachDetail} />
-    </Drawer>}
+    {!wide && open && (
+      // Below the comparison width the detail stacks under the inventory as
+      // a full-width section, never a drawer: no layer, same page, scrolled
+      // into view with its own close control.
+      <aside className={styles.selectionDock} data-stacked aria-label="Selection details" ref={scrollIntoView}>
+        <div className={styles.dockHead}>
+          {heading}
+          <ActionIcon variant="subtle" color="gray" aria-label="Close selection details" onClick={onClose}>
+            <Icon name="i-close" />
+          </ActionIcon>
+        </div>
+        <div ref={attachDetail} />
+      </aside>
+    )}
     {open && detailTarget && createPortal(detail, detailTarget)}
   </div>;
 }

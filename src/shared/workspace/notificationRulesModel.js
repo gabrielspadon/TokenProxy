@@ -131,3 +131,101 @@ export const DEFAULT_RULE = Object.freeze({
   cooldownSeconds: 3600,
   enabled: true,
 });
+
+// The board's population is the rules. Every rule sits in exactly one bucket,
+// and each bucket is also the summary chip that filters to it.
+export const RULE_BUCKETS = [
+  { id: 'firing', label: 'Firing', tone: 'refusal' },
+  { id: 'enabled', label: 'Enabled', tone: 'positive' },
+  { id: 'disabled', label: 'Disabled', tone: null },
+];
+
+export const RULE_STATE_WORD = {
+  firing: 'Firing',
+  enabled: 'Watching',
+  disabled: 'Paused',
+};
+
+// A rule with an open alert reads as firing, because that is what an operator
+// acts on first. A disabled rule never reads as firing: it is not watching.
+export function ruleBucket(rule, events = []) {
+  if (!rule?.enabled) return 'disabled';
+  const open = events.some(
+    (event) => event.ruleId === rule.id && alertState(event) === 'firing'
+  );
+  return open ? 'firing' : 'enabled';
+}
+
+export function ruleStateWord(rule, events) {
+  return RULE_STATE_WORD[ruleBucket(rule, events)];
+}
+
+export function ruleSummary(rules = [], events = []) {
+  const counts = { firing: 0, enabled: 0, disabled: 0 };
+  for (const rule of rules) counts[ruleBucket(rule, events)] += 1;
+  return counts;
+}
+
+export const RULE_SORTS = [
+  { value: 'name', label: 'Name' },
+  { value: 'state', label: 'Firing first' },
+  { value: 'threshold', label: 'Highest threshold' },
+  { value: 'changed', label: 'Recently changed' },
+];
+
+export function filterRules(rules = [], { query = '', bucket = null, kind = null } = {}, { conditions = [], events = [] } = {}) {
+  const needle = query.trim().toLowerCase();
+  return rules.filter((rule) => {
+    if (bucket && ruleBucket(rule, events) !== bucket) return false;
+    if (kind && rule.conditionKind !== kind) return false;
+    if (!needle) return true;
+    const label = conditions.find((entry) => entry.kind === rule.conditionKind)?.label;
+    return [rule.name, label || rule.conditionKind, scopeLabel(rule)]
+      .filter(Boolean)
+      .some((text) => String(text).toLowerCase().includes(needle));
+  });
+}
+
+const ORDER = { firing: 0, enabled: 1, disabled: 2 };
+
+export function sortRules(rules = [], sort = 'name', events = []) {
+  const by = {
+    name: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
+    state: (a, b) =>
+      ORDER[ruleBucket(a, events)] - ORDER[ruleBucket(b, events)] ||
+      String(a.name || '').localeCompare(String(b.name || '')),
+    threshold: (a, b) => (Number(b.threshold) || 0) - (Number(a.threshold) || 0),
+    changed: (a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0),
+  };
+  return [...rules].sort(by[sort] || by.name);
+}
+
+// Alerts carry their own three states, so they group the same way rules do.
+export const ALERT_BUCKETS = [
+  { id: 'firing', label: 'Firing', tone: 'refusal' },
+  { id: 'snoozed', label: 'Snoozed', tone: 'ember' },
+  { id: 'acknowledged', label: 'Acknowledged', tone: null },
+];
+
+export function alertSummary(events = [], { now = Date.now() } = {}) {
+  const counts = { firing: 0, snoozed: 0, acknowledged: 0 };
+  for (const event of events) counts[alertState(event, { now })] += 1;
+  return counts;
+}
+
+// The body a PUT needs: the whole definition plus the revision that was read,
+// so a single edited field never drops the rest of the rule.
+export function ruleWrite(rule, patch = {}) {
+  const next = { ...rule, ...patch };
+  return {
+    name: next.name,
+    conditionKind: next.conditionKind,
+    scopeKind: next.scopeKind,
+    scopeId: next.scopeKind === 'global' ? null : next.scopeId,
+    threshold: Number(next.threshold),
+    durationSeconds: Number(next.durationSeconds),
+    cooldownSeconds: Number(next.cooldownSeconds),
+    enabled: Boolean(next.enabled),
+    revision: rule.revision,
+  };
+}

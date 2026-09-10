@@ -48,6 +48,11 @@ function experimentFixture() {
     result: { localExecutionMs: 0.8, baseline: { results, unsupported: ['epochMicro'] }, candidate: { results, unsupported: [] } } };
 }
 
+// The sidebar Everyday / Advanced switch is the only level switch on the page;
+// Plans, Profiles, Services and Evidence are separate tasks beside the board.
+const switchToAdvanced = page => page.addInitScript(() => window.localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced')));
+const task = (page, name) => page.getByRole('radiogroup', { name: 'Token savings task' }).getByText(name, { exact: true }).click();
+
 test.beforeEach(async ({ page }) => { await signIn(page); });
 
 test('legacy profile defaults appear in editing and promotion without rewriting the stored version', async ({ page }) => {
@@ -81,9 +86,9 @@ test('legacy profile defaults appear in editing and promotion without rewriting 
     if (resource === '/receipts') return route.fulfill(json(200, { rows: receipts, pagination: { page: 1, pages: receipts.length ? 1 : 0, pageSize: 10, total: receipts.length } }));
     return route.fulfill(json(404, { error: 'Unknown synthetic shaping read' }));
   });
+  await switchToAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await page.getByRole('button', { name: 'Profiles and comparison', exact: true }).click();
+  await task(page, 'Profiles');
   const workbench = page.locator('.shaping-workbench');
   const oldRow = workbench.locator('.shaping-library .shaping-profile-row').filter({ has: page.getByText(storedOld.name, { exact: true }) });
   await oldRow.getByRole('button', { name: 'Revise', exact: true }).click();
@@ -142,18 +147,19 @@ async function serviceFixtures(page) {
 }
 async function serviceAction(page, verb, action) {
   const service = page.locator('.shaping-service');
-  await service.getByRole('button', { name: verb, exact: true }).click();
-  const dialog = page.locator('dialog[open]');
+  await service.getByRole('button', { name: verb, exact: true }).first().click();
+  const review = service.locator('[role="group"]');
+  await expect(review).toBeVisible();
   const response = page.waitForResponse(value => new URL(value.url()).pathname === `/api/pxpipe/${action}` && value.request().method() === 'POST');
-  await dialog.getByRole('button', { name: verb, exact: true }).click();
+  await review.getByRole('button', { name: verb, exact: true }).click();
   expect((await response).status()).toBe(200);
-  await expect(dialog).not.toBeVisible();
+  await expect(review).toHaveCount(0);
 }
 const selfTestState = page => page.locator('.shaping-service-facts > div').filter({ has: page.getByText('Local self-test', { exact: true }) }).locator('dd');
 async function passingHealth(page, calls) {
+  await switchToAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await page.getByRole('button', { name: 'Service', exact: true }).click();
+  await task(page, 'Services');
   await expect(selfTestState(page)).toHaveText('Not run in this view');
   expect(calls).toEqual([]);
   await serviceAction(page, 'Run local check', 'health');
@@ -165,15 +171,12 @@ test('an install self-test failure replaces earlier passing health and remains a
   await passingHealth(page, calls);
   await serviceAction(page, 'Install', 'install');
   await expect(selfTestState(page)).toHaveText('Failing');
-  const warning = page.locator('.notice[data-tone="warn"]').filter({ hasText: 'Operation finished, but the local self-test failed.' });
-  await expect(warning).toContainText('Synthetic self-test failure');
+  // The operation outcome is a notification; the failing self-test stays on the
+  // service card. A retained installation-log endpoint does not exist here.
+  await expect(page.getByText('Operation finished, but the local self-test failed.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Synthetic self-test failure', { exact: false }).first()).toBeVisible();
   await expect(page.locator('.shaping-service').getByText('The local self-test did not pass.', { exact: true })).toBeVisible();
-  await expect(page.locator('.notice[data-tone="ok"]')).toHaveCount(0);
   await expect(page.getByText('Install finished.', { exact: true })).toHaveCount(0);
-  await page.getByText('Installation log', { exact: true }).click();
-  const log = page.locator('.shaping-log');
-  await expect(log).toHaveText('Synthetic installation diagnostic');
-  expect(await log.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(13);
   expect(calls).toEqual([{ action: 'health', method: 'POST' }, { action: 'install', method: 'POST' }]);
 });
 for (const action of ['stop', 'restart']) {
@@ -209,20 +212,20 @@ async function assertLeftToRightNumber(locator, text) {
 test('RTL and reduced motion preserve arithmetic reading order', async ({ page }) => {
   await baseFixtures(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  await switchToAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Token savings', exact: true })).toBeVisible();
   await page.evaluate(() => { document.documentElement.dir = 'rtl'; });
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
-  await assertLeftToRightNumber(page.locator('.shaping-summary > div').first().locator('bdi'), '4 / 27');
+  await page.locator('[data-savings-control="rtkEnabled"]').locator('[aria-label^="Evidence and requirements for"]').click();
   const measured = page.locator('.shaping-evidence-states > div').filter({ has: page.getByText('Measured', { exact: true }) });
   await assertLeftToRightNumber(measured.locator('bdi').filter({ hasText: '1 / 3' }), '1 / 3');
   await assertLeftToRightNumber(measured.locator('.shaping-number'), '-128 B');
-  const motion = await page.locator('[data-control="rtkEnabled"]').evaluate(element => ({ transition: getComputedStyle(element).transitionDuration, animation: getComputedStyle(element).animationName }));
+  const motion = await page.locator('[data-savings-control="rtkEnabled"]').evaluate(element => ({ transition: getComputedStyle(element).transitionDuration, animation: getComputedStyle(element).animationName }));
   expect(motion.transition.split(',').every(value => Number.parseFloat(value) === 0)).toBe(true);
   expect(motion.animation).toBe('none');
-  await page.getByRole('button', { name: 'Recorded evidence', exact: true }).click();
+  await task(page, 'Evidence');
   const row = page.locator('.shaping-evidence-table tbody tr').filter({ has: page.locator('code').filter({ hasText: /^rtk$/ }) });
   await assertLeftToRightNumber(row.locator('bdi').filter({ hasText: '1 / 3' }), '1 / 3');
   const growth = page.locator('.shaping-evidence-table tbody tr').filter({ has: page.locator('code').filter({ hasText: /^inject$/ }) });

@@ -1,0 +1,153 @@
+/* Connections composes the shared board kit
+   (src/shared/workspace/board.module.css) inside the shared lens layout
+   (workspace.module.css). Only what is Connections's own lives here: the add
+   form, the release rows and the sections under the board. */
+.views {
+  max-width: 100%;
+}
+/* The account page's heading cluster: the state word beside the task switch. */
+.headActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* One vertical rhythm for everything the lens body carries. */
+.stack {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
+  gap: 12px;
+  /* Stretch, not start: a short panel beside a tall one reads as a deliberate
+     pair rather than as a hole in the page. */
+  align-items: stretch;
+}
+.panel {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.panel h2 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+.panel p,
+.panel li {
+  font-size: var(--type-dense);
+  line-height: 1.45;
+  color: var(--slate);
+}
+.panel ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-inline-start: 16px;
+}
+.panel a {
+  color: var(--signal-deep);
+}
+/* Label, value, short note on one dense line: evidence where no proportion
+   exists to draw a meter for. */
+.facts {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+}
+.fact {
+  display: grid;
+  /* The value sits beside its label, never across the panel. */
+  grid-template-columns: minmax(0, 190px) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 10px;
+  min-height: 18px;
+  font-size: var(--type-dense);
+}
+.fact dt {
+  color: var(--slate);
+  min-width: 0;
+}
+.fact dd {
+  margin: 0;
+  color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.detailGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 8px 24px;
+  align-items: start;
+}
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+/* A percentage or a count needs a field the size of its value, never the
+   width of the panel. */
+.formNarrow {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 116px));
+  gap: 8px 12px;
+  align-items: end;
+}
+.formWide {
+  grid-column: 1 / -1;
+}
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.releaseRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 4px 0;
+  border-top: 1px solid var(--rule);
+  font-size: var(--type-dense);
+}
+.releaseRow strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.releaseRow span {
+  color: var(--slate);
+}
+.grow {
+  flex: 1;
+}
+.priority {
+  width: 52px;
+  margin-inline-end: 6px;
+}
+.priority :global(.mantine-Input-input) {
+  min-height: 24px;
+  height: 24px;
+  padding-inline: 4px;
+  text-align: center;
+  font-size: var(--type-dense);
+}

@@ -46,18 +46,30 @@ async function fixture(page) {
   await page.route('**/api/tool-disclosure/stats', route => route.fulfill(json(200, [])));
   return patches;
 }
+// The sidebar Everyday / Advanced switch is the only level switch on the page.
+const useAdvanced = page => page.addInitScript(() => window.localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced')));
 const controls = page => page.locator('[aria-label="Token savings control panel"]');
-const card = (page, key) => controls(page).locator(`[data-savings-control="${key}"]`);
-async function evidence(page, key) { const row = card(page, key); await row.locator('summary').click(); return row; }
-const consent = page => page.locator('dialog[open]').getByRole('checkbox').check();
+const everyday = page => page.locator('[aria-label="Everyday token savings"]');
+const card = (page, key) => page.locator(`[data-savings-control="${key}"]`);
+const review = page => page.locator('[role="group"][aria-label^="Turn on"]');
+const task = (page, name) => page.getByRole('radiogroup', { name: 'Token savings task' }).getByText(name, { exact: true }).click();
+async function evidence(page, key) {
+  const row = card(page, key);
+  await row.locator('[aria-label^="Evidence and requirements for"]').click();
+  return row;
+}
+// Narrowing the board first keeps the target row clear of the sticky header.
+const only = (page, name) => controls(page).getByRole('searchbox').fill(name);
+// The visible track is what an operator clicks; the input itself sits under it.
+const flip = (page, key) => card(page, key).locator('.mantine-Switch-track').click();
 const stageRow = (page, key) => page.locator('.shaping-evidence-table tbody tr').filter({ has: page.locator('code').filter({ hasText: new RegExp(`^${key}$`) }) });
 
 test.beforeEach(async ({ page }) => { await signIn(page); });
 
 test('inventory exposes all new controls with separate configured and historical evidence', async ({ page }) => {
   await fixture(page);
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Token savings', exact: true })).toBeVisible();
   await expect(controls(page).locator('[data-savings-control]')).toHaveCount(CONTROLS.length);
   const diet = await evidence(page, 'dietEnabled');
@@ -73,9 +85,9 @@ test('inventory exposes all new controls with separate configured and historical
 
 test('signed bytes retain growth, measured zero and partial coverage', async ({ page }) => {
   await fixture(page);
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await page.getByRole('tab', { name: 'Recorded evidence', exact: true }).click();
+  await task(page, 'Evidence');
   await expect(stageRow(page, 'rtk')).toContainText('-2,048 B');
   await expect(stageRow(page, 'rtk')).toContainText('1 / 2 records');
   await expect(stageRow(page, 'epochMicro')).toContainText('0 B');
@@ -89,52 +101,54 @@ test('signed bytes retain growth, measured zero and partial coverage', async ({ 
 test('legacy aggregates cannot manufacture measurement coverage', async ({ page }) => {
   await fixture(page);
   await page.route('**/api/token-saver/stats*', route => route.fulfill(json(200, { ...stats, windows: { all: { stages: { rtk: { bytesSaved: -2048, requests: 2, applied: 2 } } } } })));
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(await evidence(page, 'rtkEnabled')).toContainText('Byte coverage unknown');
-  await page.getByRole('tab', { name: 'Recorded evidence', exact: true }).click();
+  await expect(card(page, 'rtkEnabled')).toContainText('coverage unknown');
+  await task(page, 'Evidence');
   await expect(stageRow(page, 'rtk')).toContainText('Not reported');
   await expect(stageRow(page, 'rtk')).not.toContainText('-2,048 B');
 });
 
-test('evidence disclosure survives moving between Everyday and Advanced', async ({ page }) => {
+test('the level governs the board and an expanded row survives a level change', async ({ page }) => {
   await fixture(page);
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await evidence(page, 'epochMicroEnabled');
-  await page.getByRole('tab', { name: 'Everyday', exact: true }).click();
-  await expect(page.locator('[aria-label="Everyday token savings"] input[type="checkbox"]')).toHaveCount(4);
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await expect(card(page, 'epochMicroEnabled').locator('details')).toHaveAttribute('open', '');
-  await expect(card(page, 'epochMicroEnabled').getByRole('heading', { name: 'Boundary-aware clearing' })).toBeVisible();
+  await expect(card(page, 'epochMicroEnabled')).toContainText('Boundary-aware clearing');
+  const level = page.getByRole('radiogroup', { name: 'Navigation view' });
+  await level.getByText('Everyday', { exact: true }).click();
+  await expect(everyday(page)).toBeVisible();
+  await expect(everyday(page).locator('[data-savings-control]')).toHaveCount(4);
+  await level.getByText('Advanced', { exact: true }).click();
+  await expect(card(page, 'epochMicroEnabled')).toHaveAttribute('data-expanded', 'true');
 });
 
-test('everyday has no nested editor and Advanced is keyboard accessible', async ({ page }) => {
+test('everyday carries no editor and an Advanced switch reviews in place from the keyboard', async ({ page }) => {
   await fixture(page);
   await page.goto('/dashboard/shaping');
-  const everyday = page.locator('[aria-label="Everyday token savings"]');
-  await expect(everyday.locator('details, input[type="number"], textarea, select')).toHaveCount(0);
-  const tab = page.getByRole('tab', { name: 'Everyday', exact: true });
-  await tab.focus();
-  await tab.press('ArrowRight');
-  await expect(page.getByRole('tab', { name: 'Advanced', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(everyday(page).locator('details, input[type="number"], textarea, select')).toHaveCount(0);
+  await expect(page.locator('dialog')).toHaveCount(0);
+  const level = page.getByRole('radiogroup', { name: 'Navigation view' });
+  await level.getByText('Advanced', { exact: true }).click();
   const toggle = card(page, 'epochMicroEnabled').getByRole('switch');
   await toggle.focus();
   await expect(toggle).toBeFocused();
   await toggle.press('Space');
-  await expect(page.locator('dialog[open]')).toBeVisible();
+  await expect(review(page)).toBeVisible();
+  await expect(page.locator('dialog')).toHaveCount(0);
 });
 
-test('confirmation sends only the selected setting and displays verified readback', async ({ page }) => {
+test('the in-place review sends only the selected setting and reports the verified readback', async ({ page }) => {
   const patches = await fixture(page);
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await card(page, 'epochMicroEnabled').getByRole('switch').click();
-  const dialog = page.locator('dialog[open]');
-  await expect(dialog).toContainText('a request already in flight retains its settings');
+  await only(page, 'Boundary-aware clearing');
+  await flip(page, 'epochMicroEnabled');
+  await expect(review(page)).toContainText('a request already in flight retains its settings');
   expect(patches).toHaveLength(0);
-  await consent(page);
-  await dialog.getByRole('button', { name: 'Turn on', exact: true }).click();
+  await review(page).getByRole('checkbox').check();
+  await review(page).getByRole('button', { name: 'Turn on', exact: true }).click();
   await expect(page.getByText('Boundary-aware clearing saved and verified after refresh.', { exact: true })).toBeVisible();
   await expect(card(page, 'epochMicroEnabled').getByRole('switch')).toBeChecked();
   expect(patches).toEqual([{ epochMicroEnabled: true }]);
@@ -143,27 +157,27 @@ test('confirmation sends only the selected setting and displays verified readbac
 test('a refused save stays at the control with the gateway explanation', async ({ page }) => {
   await fixture(page);
   await page.route('**/api/admin/shaping/controls', route => route.fulfill(json(400, { error: 'epochMicroEnabled must be a boolean' })));
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await card(page, 'epochMicroEnabled').getByRole('switch').click();
-  await consent(page);
-  await page.locator('dialog[open]').getByRole('button', { name: 'Turn on', exact: true }).click();
-  await expect(page.locator('dialog[open]')).toContainText('The gateway refused the input.');
-  await expect(page.locator('dialog[open]')).toContainText('epochMicroEnabled must be a boolean');
+  await only(page, 'Boundary-aware clearing');
+  await flip(page, 'epochMicroEnabled');
+  await review(page).getByRole('checkbox').check();
+  await review(page).getByRole('button', { name: 'Turn on', exact: true }).click();
+  await expect(review(page)).toContainText('The gateway refused the input.');
+  await expect(review(page)).toContainText('epochMicroEnabled must be a boolean');
 });
 
-test('empty threshold input is not silently submitted as zero', async ({ page }) => {
+test('an empty required threshold is not silently submitted as zero', async ({ page }) => {
   const patches = await fixture(page);
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
-  await controls(page).getByLabel('Transform timeout').fill('');
-  await expect(page.getByRole('button', { name: 'Review setting changes' })).toBeDisabled();
-  await controls(page).getByLabel('Transform timeout').fill('12000');
-  await page.getByRole('button', { name: 'Review setting changes' }).click();
-  await expect(page.locator('dialog[open]')).toContainText('15,000 → 12,000 milliseconds');
-  await consent(page);
-  await page.locator('dialog[open]').getByRole('button', { name: 'Save settings', exact: true }).click();
-  await expect(page.getByText('Control settings saved and verified after refresh.', { exact: true })).toBeVisible();
+  const field = controls(page).getByLabel('Transform timeout');
+  await field.fill('');
+  await field.blur();
+  expect(patches).toEqual([]);
+  await field.fill('12000');
+  await field.blur();
+  await expect(page.getByText('Transform timeout saved and verified after refresh.', { exact: true })).toBeVisible();
   expect(patches).toEqual([{ pxpipeTimeoutMs: 12000 }]);
 });
 
@@ -174,23 +188,26 @@ test('reading controls and service status never starts a health check', async ({
   await page.route('**/api/pxpipe/health', route => { healthCalls.push(route.request().method()); return route.fulfill(json(200, { healthy: true, checks: [] })); });
   await page.route('**/api/pxpipe/status', route => route.fulfill(json(200, { installed: false, running: false, enabled: false, npmAvailable: true, autoInstall: true })));
   await page.route('**/api/pxpipe/logs*', route => route.fulfill(json(200, {})));
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Token savings', exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Services', exact: true }).click();
+  await task(page, 'Services');
   await expect(page.getByText('Not run in this view', { exact: true })).toBeVisible();
   expect(healthCalls).toEqual([]);
   await page.getByRole('button', { name: 'Run local check', exact: true }).click();
-  await expect(page.locator('dialog[open]')).toContainText('This can change the loaded state.');
+  const strip = page.locator('[role="group"][aria-label="Run the local compression check"]');
+  await expect(strip).toContainText('This can change the loaded state.');
   expect(healthCalls).toEqual([]);
-  await page.locator('dialog[open]').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await strip.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(strip).toHaveCount(0);
+  expect(healthCalls).toEqual([]);
 });
 
 test('forbidden settings stay unknown and disable mutation', async ({ page }) => {
   await fixture(page);
   await page.route('**/api/admin/shaping', route => route.fulfill(json(403, { error: 'Loopback only' })));
+  await useAdvanced(page);
   await page.goto('/dashboard/shaping');
-  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
   await expect(page.getByText('This action is not allowed from here.', { exact: true })).toBeVisible();
   await expect(page.getByText('Loopback only', { exact: true })).toBeVisible();
   await expect(await evidence(page, 'rtkEnabled')).toContainText('Unknown globally');

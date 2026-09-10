@@ -18,7 +18,8 @@ vi.mock('@/shared/workspace/WorkspaceProvider', async () => {
   }};
 });
 vi.mock('@/shared/workspace/ScopeBar', () => ({ ScopeBar: () => <div aria-label="Shared scope fixture" /> }));
-vi.mock('@/shared/workspace/ActivityBand', () => ({ ActivityBand: () => <div aria-label="Shared activity fixture" /> }));
+// The chart block carries the recording coverage as its own totals.
+vi.mock('@/shared/workspace/ActivityBand', () => ({ ActivityBand: ({ totals = [] }) => <div aria-label="Context recording coverage">{totals.map(([label, value]) => <span key={label}>{label} {value}</span>)}</div> }));
 // Canvas drawing belongs to the shared wrapper. This suite exercises data and interaction contracts.
 vi.mock('@/shared/workspace/AnalyticalChart', () => ({ METRIC_COLORS: { selected: '#455bca', input: '#647ac8', cacheRead: '#208d82', failure: '#b34e61' }, AnalyticalChart: (props) => { state.chart = props; return <div role="img" aria-label={props.label} />; } }));
 const { ContextWorkspace } = await import('../../src/shared/components/context-workspace/ContextWorkspace.js');
@@ -35,6 +36,7 @@ beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(query => ({ matches: query.includes('min-width: 90em'), addEventListener() {}, removeEventListener() {} })) });
+  localStorage.clear();
   fixture = contextFixture(); state.chart = null;
   router = { pathname: '/dashboard/context', asPath: '/dashboard/context', push: vi.fn(), replace: vi.fn(), prefetch: vi.fn().mockResolvedValue(undefined) };
   state.workspace = { scope: { ...initialScope }, setScope: vi.fn(), accounts: [{ connectionId: 'synthetic-account', displayName: 'Synthetic account' }], snapshot: null, observeSnapshot: vi.fn() };
@@ -100,7 +102,7 @@ describe('Context workspace', () => {
     state.workspace.initialSessionId=null;
     await render();
     expect(container.querySelector('[aria-label="Recorded session cohort"]')).not.toBeNull();
-    expect(container.querySelector('[aria-pressed="true"]')).toBeNull();
+    expect(container.querySelector('article [aria-pressed="true"]')).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/sessions/'))).toBe(false);
     expect(state.chart).toBeNull();
   });
@@ -137,6 +139,26 @@ describe('Context workspace', () => {
       db.close();
     }
   });
+  it('renders the cohort as compact cards grouped by identity at the Everyday level', async () => {
+    await render();
+    expect(container.querySelectorAll('[aria-label="Recorded session cohort"] article')).toHaveLength(1);
+    expect(container.querySelector('table[aria-label="Recorded sessions"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Density"]')).not.toBeNull();
+    const card = container.querySelector('[aria-label="Recorded session cohort"] article');
+    expect(card.getAttribute('data-bucket')).toBe('inferred');
+    expect(card.textContent).toContain('Inferred locality');
+    expect(card.textContent).toContain('synthetic-cli');
+  });
+  it('renders the same cohort as a dense row table at the Advanced level', async () => {
+    localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced'));
+    await render();
+    expect(container.querySelectorAll('[aria-label="Recorded session cohort"] article')).toHaveLength(0);
+    const rows = container.querySelectorAll('table[aria-label="Recorded sessions"] tbody tr');
+    expect(rows[0].textContent).toContain('Synthetic research');
+    expect(rows[0].textContent).toContain('synthetic-cli');
+    // The selected session expands inline, under its own row.
+    expect(container.querySelector('table[aria-label="Session request attempts"]')).not.toBeNull();
+  });
   it('shows historical coverage without synthesizing sessions or requesting their details', async () => {
     fixture.overview = { ...fixture.overview, recording: { totalRetainedAttempts: 77589, attributedAttempts: 0, unattributedAttempts: 77589, rejectedAttempts: 0 }, sessions: [], summary: { sessions: 0 } };
     state.workspace.snapshot = { isolated: true, capturedAt: '2026-09-06T10:03:00Z' };
@@ -163,7 +185,7 @@ describe('Context workspace', () => {
     expect(stageRows[3].textContent).toContain('-1,000 B');
     expect(stageRows[5].textContent).toContain('+40 B');
     expect(container.textContent).toContain('Synthetic account');
-    expect(container.querySelector('[aria-label="Resize detail panel"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Attempt inspector"]')).not.toBeNull();
   });
   it('keeps provider usage on failures and labels prefix changes as observations', async () => {
     await render(); await click('[aria-label="Inspect attempt 103"]');
@@ -201,7 +223,7 @@ describe('Context workspace', () => {
     fixture.detail = { ...contextFixture().detail, session: chosen };
     state.workspace = { ...state.workspace, scope: { ...initialScope } };
     await render();
-    expect(container.querySelector('[aria-label="Selection details"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Attempt inspector"]')).not.toBeNull();
     expect(container.textContent).toContain('Chosen investigation');
   });
   it('returns the cohort to page one when a shared project scope changes',async()=>{
@@ -219,14 +241,14 @@ describe('Context workspace', () => {
     state.workspace = { ...state.workspace, scope: { ...initialScope, model: 'different-model' } };
     await render();
     expect(fetchMock.mock.calls.filter(([url])=>String(url).includes('/sessions/')).at(-1)[0]).toContain('/sessions/7?page=1');
-    expect(container.querySelector('[aria-pressed="true"]').textContent).toContain('Synthetic research');
+    expect(container.querySelector('article [aria-pressed="true"]').textContent).toContain('Synthetic research');
   });
   it('paginates attempts on the server without replacing a still-returned selected identity', async () => {
     fixture.detail.pagination = { ...fixture.detail.pagination, totalItems: 26, totalPages: 2, hasNext: true };
     await render(); await click('[aria-label="Inspect attempt 101"]');
     await click('[aria-label="Next attempts page"]');
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/sessions/7?page=2'))).toBe(true);
-    expect(container.querySelector('[aria-label="Selection details"]')?.textContent).toContain('Request #101');
+    expect(container.querySelector('[aria-label="Attempt inspector"]')?.textContent).toContain('Request #101');
   });
   it('labels retained exact-attempt evidence after a failed refresh and retries only that identity', async () => {
     const detail = { ...fixture.detail, turns: fixture.detail.turns.map(turn => ({ ...turn, contextSessionId: fixture.detail.session.id })) };
@@ -243,11 +265,11 @@ describe('Context workspace', () => {
     });
     await render(); await click('[aria-label="Inspect attempt 101"]');
     await click('[aria-label="Next attempts page"]'); await flush();
-    expect(container.querySelector('[aria-label="Selection details"]')?.textContent).toContain('Request #101');
+    expect(container.querySelector('[aria-label="Attempt inspector"]')?.textContent).toContain('Request #101');
     expect(container.textContent).toContain('inspected by its exact identity outside this page or scope');
     exactFailed = true;
-    await clickText('Refresh context');
-    const dock = container.querySelector('[aria-label="Selection details"]');
+    await click('[aria-label="Refresh context"]');
+    const dock = container.querySelector('[aria-label="Attempt inspector"]');
     expect(dock.textContent).toContain('Showing the last successful read');
     expect(dock.textContent).toContain('Exact attempt reader is busy');
     expect(dock.textContent).toContain('Request #101');
@@ -320,7 +342,7 @@ describe('Context workspace', () => {
     const sharedScope = state.workspace.scope;
     await render(); await click('[aria-label="Inspect attempt 101"]');
     await click('input[value="controls"]');
-    const link = container.querySelector('[aria-label="Selection details"] a[href="/dashboard/shaping"]');
+    const link = container.querySelector('[aria-label="Attempt inspector"] a[href="/dashboard/shaping"]');
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });
     await act(async () => link.dispatchEvent(event));
     expect(event.defaultPrevented).toBe(true);
@@ -334,8 +356,8 @@ describe('Context workspace', () => {
     expect(container.querySelector('table[aria-label="Session request attempts"]').textContent).toContain('Selected provider / model');
     expect(container.querySelector('table[aria-label="Session request attempts"] tbody tr').textContent).toContain('Requested · requested-alias');
     await click('[aria-label="Inspect attempt 101"]');
-    expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('Selected provider / model');
-    expect(container.querySelector('[aria-label="Selection details"]').textContent).toContain('requested-alias');
+    expect(container.querySelector('[aria-label="Attempt inspector"]').textContent).toContain('Selected provider / model');
+    expect(container.querySelector('[aria-label="Attempt inspector"]').textContent).toContain('requested-alias');
   });
   it('keeps pagination available for an empty page of a nonempty cohort', async () => {
     fixture.overview.sessions = [];
@@ -371,7 +393,7 @@ it.each([[null,'History preserved'],[45,'45 days retained'],[undefined,'Retentio
 });
 it('exposes all attempt measurements directly without an inner disclosure',async()=>{
   await render();await click('[aria-label="Inspect attempt 101"]');
-  const dock=container.querySelector('[aria-label="Selection details"]');
+  const dock=container.querySelector('[aria-label="Attempt inspector"]');
   expect(dock.textContent).toContain('Physical request101');
   expect(dock.textContent).toContain('Recorded latency / first token');
   expect([...dock.querySelectorAll('dt')].find(node=>node.textContent==='Physical request').closest('details')).toBeNull();
@@ -380,7 +402,7 @@ it('retains the direct history-policy draft across task and shared-scope changes
   const original=fetchMock.getMockImplementation();
   fetchMock.mockImplementation((url,options)=>url==='/api/settings'?Promise.resolve(response({statsRetentionMode:'preserve',statsRetentionDays:45})):original(url,options));
   await render();await click('[aria-label="Inspect attempt 101"]');await clickText('History policy');
-  expect(container.querySelector('[aria-label="Selection details"]')).toBeNull();
+  expect(container.querySelector('[aria-label="Attempt inspector"]')).toBeNull();
   const form=container.querySelector('[aria-label="History retention settings"]');
   const select=form.querySelector('select');
   await act(async()=>{select.value='window';select.dispatchEvent(new Event('change',{bubbles:true}));});

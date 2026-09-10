@@ -579,3 +579,80 @@
 .evidenceNotes > details:first-child { flex: .8; }
 @container (max-width: 850px) { .overview { grid-template-columns: 1fr; } .scopeTotal { grid-template-columns: repeat(3,minmax(0,1fr)); border-inline-end: 0; border-bottom: 1px solid var(--rule); } .totalAmount { grid-column: 1 / -1; } }
 @container (max-width: 560px) { .scopeTotal { grid-template-columns: repeat(2,minmax(0,1fr)); } .evidenceNotes { flex-direction: column; gap: 0; } .evidenceNotes > details { width: 100%; } .ledger > .sectionHeader,.bookTools { flex-wrap: wrap; } .ledgerControls { min-width: 0; max-width: 100%; } .ledgerControls :global(.mantine-Button-root) { max-width: 100%; height: auto; min-height: 32px; } .ledgerControls :global(.mantine-Button-label) { white-space: normal; } }
+
+/* The chart block, in the shape the Capacity board's Requests & cache block
+   uses: heading with compact selectors on the right, the totals as small
+   chips, the legend under the header, the chart, then one line of foot. */
+.chartBlock {
+  min-width: 0;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+}
+.chartHead { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.chartHead h2 { margin: 0; font-size: var(--type-ui); font-weight: 600; letter-spacing: normal; }
+.chartSelectors { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.chartTotals { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 4px 0 6px; }
+.chartTotals > div { display: flex; gap: 10px; align-items: baseline; }
+.chartTotals dt { color: var(--slate); font-size: var(--type-dense); }
+.chartTotals dd { margin: 0; font-size: var(--type-ui); font-weight: 600; font-variant-numeric: tabular-nums; }
+.chartLegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--type-dense); color: var(--slate); }
+.chartLegend > span { display: inline-flex; align-items: center; gap: 6px; }
+.chartLegend i { width: 12px; height: 3px; border-radius: 1px; }
+.chartFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  font-size: var(--type-dense);
+  line-height: 1.4;
+  color: var(--slate);
+  border-top: 1px solid var(--rule);
+  padding-top: 5px;
+  margin-top: 2px;
+}
+.chartFoot > span:first-child { flex: 1 1 240px; min-width: 0; }
+.chartFootActions { display: inline-flex; gap: 2px; align-items: center; flex-wrap: wrap; }
+.chartState { display: flex; align-items: center; min-height: 60px; color: var(--slate); font-size: var(--type-ui); }
+
+/* The board's own additions: the toolbar selectors, the composition legend
+   above the cards, and the share note, which is a proportion of the scope
+   rather than a cached share and so must not take the cache hue. */
+.pick { width: 168px; }
+.pick :global(.mantine-Input-input) { font-size: var(--type-dense); }
+.shareLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 10px 0;
+  font-size: var(--type-dense);
+  color: var(--slate);
+}
+.shareLegend > span { display: inline-flex; align-items: center; gap: 5px; }
+.shareLegend i { width: 10px; height: 8px; border-radius: 2px; }
+.shareLegend i[data-share='input'] { background: var(--metric-input); }
+.shareLegend i[data-share='read'] { background: var(--metric-cache); }
+.shareLegend i[data-share='write'] { background: var(--metric-write); }
+.shareNote { color: var(--slate); }
+
+.issueMark {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  min-height: 18px;
+  border: 1px dashed color-mix(in srgb, var(--ember) 60%, var(--rule));
+  border-radius: 9px;
+  color: var(--ember);
+  font-size: var(--type-dense);
+  white-space: nowrap;
+}
+
+/* Inside an expanded card the detail has the whole board width, so it lays out
+   as columns rather than as one long stack of full-width rows. */
+.cardDetail { padding: 10px 0 4px; }
+.cardDetail .detail { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 10px 24px; }
+.cardDetail .detailIdentity h3 { font-size: var(--type-ui); margin: 6px 0 2px; }
+.cardDetail .facts > div { padding: 5px 0; }
+.cardDetail .detailNote { margin-top: 6px; }

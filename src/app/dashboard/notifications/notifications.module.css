@@ -1,0 +1,74 @@
+/* Notifications page. The board, cards, summary strip and toolbar come from
+   board.module.css, and the page frame and gutters from
+   workspace.module.css; only what this surface needs beyond both lives here. */
+.stack {
+  display: grid;
+  gap: 12px;
+}
+.pageNotice {
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
+}
+.pageNotice[data-tone='bad'] {
+  border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule));
+}
+.pageNotice[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--ember) 45%, var(--rule));
+}
+
+.note {
+  font-size: var(--type-dense);
+  line-height: 1.5;
+  color: var(--slate);
+  margin: 4px 0 0;
+  max-width: 90ch;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--slate);
+  --icon-size: 14px;
+}
+
+.name {
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--ink);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.addUrl {
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+.addSecret {
+  width: 170px;
+}
+.events {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}

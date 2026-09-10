@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { call } from '@/shared/api';
-import { Confirm } from '@/shared/components/Confirm';
+import { InlineConfirm } from '@/shared/workspace/InlineConfirm';
 import { Notice } from '@/shared/components/Notice';
 import { controlLabel } from './controlCatalog';
 import { UNAVAILABLE_CONTROLS } from '@/lib/shaping/runtimeSupport';
@@ -90,6 +90,18 @@ export function ShapingWorkbench({ onSettingsChanged }) {
   }
   function openReview(settings, rollback) { setNotice(null); setReview({ settings: normalizeProfileDefaults(settings), rollback, currentHash: current.currentHash, before: current.settings }); setReviewConsent(false); setUnsupportedConsent(false); }
   if (!current || !draft) return <section><h2>Profiles and offline experiments</h2>{notice ? <Notice {...notice} /> : <p>Reading saved profiles.</p>}</section>;
+  // The promotion or rollback question stands where it was asked, under the
+  // control that opened it, so the compared evidence stays on screen.
+  const reviewAsk = review ? <InlineConfirm title={review.rollback ? 'Restore previous Shaping settings' : 'Promote this profile'} verb={review.rollback ? 'Restore settings' : 'Promote profile'}
+    requires="a signed-in local operator; current settings must match this review." changes={current.coverage.takesEffect}
+    undo="Use the retained receipt to review a rollback. Removed request content cannot be recovered."
+    busy={busy} disabled={!reviewConsent || (!review.rollback && experiment?.result.candidate?.unsupported?.length > 0 && !unsupportedConsent)}
+    refusal={notice?.tone === 'warn' ? { tone: notice.tone, title: notice.title, next: notice.children } : null}
+    onConfirm={confirm} onCancel={() => setReview(null)}>
+    <p>Only the following global settings change.</p><div className="shaping-table-scroll"><table><thead><tr><th>Setting</th><th>Current</th><th>Proposed</th></tr></thead><tbody>{diff(review.before, review.settings).map(key => <tr key={key}><th>{label(key)}</th><td>{JSON.stringify(review.before[key])}</td><td>{JSON.stringify(review.settings[key])}</td></tr>)}</tbody></table></div>
+    <label className="shaping-consent"><input type="checkbox" checked={reviewConsent} onChange={e => setReviewConsent(e.target.checked)} />I consent to the reviewed content changes for new requests.</label>
+    {!review.rollback && experiment?.result.candidate?.unsupported?.length ? <label className="shaping-consent"><input type="checkbox" checked={unsupportedConsent} onChange={e => setUnsupportedConsent(e.target.checked)} />I understand {experiment.result.candidate.unsupported.join(', ')} were not evaluated. No task-quality or cost improvement has been established.</label> : null}
+  </InlineConfirm> : null;
   return <section className="shaping-workbench" aria-labelledby="shaping-workbench-title">
     <div className="panel-head"><h2 id="shaping-workbench-title">Profiles and offline experiments</h2><button className="button quiet" onClick={refresh} disabled={busy}>Refresh records</button></div>
     <p>Compare local transformations on explicitly selected cases before applying a named profile. Smaller requests do not establish better answers, fewer billed tokens, or lower cost.</p>
@@ -130,17 +142,16 @@ export function ShapingWorkbench({ onSettingsChanged }) {
         {experiment.result.candidate.results.filter(row => row.fixtureId === (evidenceId || experiment.result.candidate.results[0]?.fixtureId)).map(row => <section key={row.fixtureId} aria-label={`${row.fixtureId} evidence`}><h4>{row.fixtureId}</h4><div className="shaping-table-scroll"><table><thead><tr><th>Stage</th><th>Outcome</th><th>Signed bytes</th><th>Local time</th><th>Coverage</th></tr></thead><tbody>{row.stages.map(stage => <tr key={stage.stage}><th>{stage.stage}</th><td>{stage.status}</td><td>{signed(stage.deltaBytes)}</td><td>{stage.latencyMs.toFixed(2)} ms</td><td>{stage.reason || stage.error || 'Local implementation'}</td></tr>)}</tbody></table></div><p>{row.validity.schemaValidation}</p><pre className="shaping-log">{JSON.stringify({ validity: row.validity, beforeHash: row.beforeHash, afterHash: row.afterHash }, null, 2)}</pre><button className="button quiet" onClick={() => exportCase(row)}>Export selected evidence</button></section>)}
       </details>
       <button className="button" disabled={busy || !experiment.result.candidate.results.every(good)} onClick={() => openReview(candidate.settings)}>Review promotion</button>
+      {review && !review.rollback ? reviewAsk : null}
     </> : <p>Choose saved versions and a fixture set. Each comparison is retained and can be reopened below.</p>}
     {experiment?.result.status && experiment.result.status !== 'completed' ? <Notice tone="warn" title={`Comparison ${experiment.result.status}`}>{experiment.result.errorCode || 'Completion has not been recorded. Do not assume an interrupted comparison finished.'}</Notice> : null}
     <details><summary>Recent retained comparisons ({history.length})</summary>{history.map(item => <button className="button quiet" key={item.id} onClick={() => inspectExperiment(item.id)}>{item.createdAt} · {item.status || 'historical'} · {item.fixtureSetId} · records {item.baselineVersionId} / {item.candidateVersionId}</button>)}</details>
     </div>
     <Handoffs enabled={current.settings.memoryHandoffEnabled} />
     <h3>Promotion and rollback receipts</h3><p>{current.coverage.takesEffect} Service endpoints, routing policy and per-plan overrides are outside this profile.</p>
-    {receipts.length ? receipts.map(receipt => <div className="shaping-profile-row" key={receipt.id}><span>{receipt.action} · {receipt.createdAt}<span className="sub">{diff(receipt.beforeSettings, receipt.afterSettings).length} changed settings</span></span><button className="button quiet" onClick={() => openReview(receipt.beforeSettings, receipt)}>Review rollback</button></div>) : <p>No profile has been promoted. Existing live settings remain in use.</p>}
-    <Confirm open={!!review} title={review?.rollback ? 'Restore previous Shaping settings' : 'Promote this profile'} verb={review?.rollback ? 'Restore settings' : 'Promote profile'} requires="Signed-in local operator; current settings must match this review." changes={current.coverage.takesEffect} undo="Use the retained receipt to review a rollback. Removed request content cannot be recovered." busy={busy || !reviewConsent || (!review?.rollback && experiment?.result.candidate?.unsupported?.length > 0 && !unsupportedConsent)} refusal={notice?.tone === 'warn' ? notice : null} onConfirm={confirm} onClose={() => setReview(null)}>
-      <p>Only the following global settings change.</p><div className="shaping-table-scroll"><table><thead><tr><th>Setting</th><th>Current</th><th>Proposed</th></tr></thead><tbody>{diff(review?.before, review?.settings).map(key => <tr key={key}><th>{label(key)}</th><td>{JSON.stringify(review.before[key])}</td><td>{JSON.stringify(review.settings[key])}</td></tr>)}</tbody></table></div>
-      <label className="shaping-consent"><input type="checkbox" checked={reviewConsent} onChange={e => setReviewConsent(e.target.checked)} />I consent to the reviewed content changes for new requests.</label>
-      {!review?.rollback && experiment?.result.candidate?.unsupported?.length ? <label className="shaping-consent"><input type="checkbox" checked={unsupportedConsent} onChange={e => setUnsupportedConsent(e.target.checked)} />I understand {experiment.result.candidate.unsupported.join(', ')} were not evaluated. No task-quality or cost improvement has been established.</label> : null}
-    </Confirm>
+    {receipts.length ? receipts.map(receipt => <Fragment key={receipt.id}>
+      <div className="shaping-profile-row"><span>{receipt.action} · {receipt.createdAt}<span className="sub">{diff(receipt.beforeSettings, receipt.afterSettings).length} changed settings</span></span><button className="button quiet" onClick={() => openReview(receipt.beforeSettings, receipt)}>Review rollback</button></div>
+      {review?.rollback?.id === receipt.id ? reviewAsk : null}
+    </Fragment>) : <p>No profile has been promoted. Existing live settings remain in use.</p>}
   </section>;
 }

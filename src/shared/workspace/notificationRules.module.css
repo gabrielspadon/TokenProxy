@@ -1,187 +1,186 @@
-.surface {
-  color: var(--ink);
-  min-width: 0;
-  --mantine-color-dimmed: var(--slate);
-}
-.surface h3 {
-  font-size: 18px;
-  font-weight: 500;
-  margin: 0 0 5px;
-}
-.surface h4 {
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 8px;
-}
+/* The notification rules board. The panel, summary strip, toolbar, groups,
+   cards and rows come from board.module.css; only what a rule needs beyond
+   that lives here: the two row grids, the label-and-value evidence line a rule
+   uses in place of a meter, the inline add fields and the inline confirmation.
+   Every value comes from the shared tokens. */
+
 .note {
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: var(--type-dense);
+  line-height: 1.5;
   color: var(--slate);
   max-width: 80ch;
-  margin: 4px 0 10px;
-}
-.sentence {
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 9px 12px;
-  border-inline-start: 3px solid var(--rule);
-  background: var(--paper);
-  max-width: 90ch;
-  margin: 10px 0;
+  margin: 4px 0;
 }
 .empty {
   color: var(--slate);
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.6;
-  padding: 14px 0;
+  padding: 10px 0;
 }
 .mono {
   font-family: var(--mono);
 }
+.sentence {
+  font-size: var(--type-dense);
+  line-height: 1.5;
+  padding: 7px 10px;
+  border-inline-start: 3px solid var(--rule);
+  background: var(--paper);
+  max-width: 90ch;
+  margin: 0 0 10px;
+}
 
-.table {
-  font-size: 13px;
-  margin-top: 12px;
+/* A rule has no percentage to meter, so its evidence line is label and value
+   on the shared grid without the bar. */
+.factLine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 8px;
+  min-height: 18px;
+  font-size: var(--type-dense);
 }
-.table th {
-  font-size: 13px;
-  white-space: nowrap;
-  font-weight: 500;
+.factLine > span:first-child {
   color: var(--slate);
-}
-.table td {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-/* Measured values are mono and right-aligned so magnitudes line up on the
-   decimal, matching ContextEvidence.module.css. Labels stay in sans. */
-.table th.numeric,
-.table td.numeric {
-  text-align: right;
-}
-.table td.numeric {
-  font-family: var(--sans);
-}
-.thresholdUnit {
-  display: block;
-  font-family: var(--sans);
-  color: var(--mantine-color-dimmed);
-}
-.table code {
-  font-family: var(--mono);
-  font-size: 13px;
-  display: inline-block;
-  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: bottom;
+  white-space: nowrap;
 }
-.table tr[data-selected] {
-  background: var(--signal-wash);
-  box-shadow: inset 3px 0 var(--signal);
+.factLine > span:nth-child(2) {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-/* A value the evidence did not carry is dimmed, never drawn as a number. */
-.table td[data-unknown],
-.facts dd[data-unknown] {
-  color: var(--mantine-color-dimmed);
-}
-
-.action {
-  font-size: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--control-edge);
-  text-underline-offset: 3px;
-}
-.action:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
-}
-.action:disabled {
-  color: var(--mantine-color-dimmed);
-  text-decoration: none;
-}
-
-.state {
-  font-size: 13px;
-  text-transform: none;
-  letter-spacing: normal;
-}
-.state[data-state='firing'] {
-  color: var(--refusal);
-}
-.state[data-state='snoozed'] {
-  color: var(--ember);
-}
-.state[data-state='acknowledged'] {
+.factLine small {
+  grid-column: 1 / -1;
   color: var(--slate);
 }
-.table tr[data-state='firing'] {
-  box-shadow: inset 3px 0 var(--ember);
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--slate);
+  --icon-size: 14px;
 }
 
-.editor {
-  border: 1px solid var(--rule);
-  background: var(--raised);
-  padding: 16px 18px;
-  margin: 14px 0 18px;
+.cardActions {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+  margin-top: 6px;
 }
-.ruleWorkspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
-  margin-top: 14px;
-  align-items: start;
-}
-.ruleWorkspace[data-editing] {
-  grid-template-columns: minmax(0, 1fr) minmax(420px, 1fr);
-}
-.ruleInventory,
-.ruleSelection {
+
+/* A row's own cells. The shared board assigns grid areas to .identity, .state,
+   .actions and .caret inside its own narrow container query, and those areas do
+   not exist on these grids, so each cell carries a class of this module too and
+   wins on specificity. */
+.cell {
+  grid-area: auto;
   min-width: 0;
 }
-.ruleInventory :global(.mantine-ScrollArea-viewport) {
-  max-height: 520px;
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.ruleSelection .editor {
-  margin: 0;
+.state {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
 }
-.ruleSelection .editor :global(.mantine-InputWrapper-root) {
-  max-width: 100%;
+.actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
 }
-.ruleEvidence {
-  border: 1px solid var(--rule);
-  border-top: 0;
-  padding: 14px 18px;
+
+/* One grid per row kind. Both collapse to a stack once the board is narrow. */
+.ruleMain {
+  display: grid;
+  grid-template-columns: 24px minmax(180px, 1fr) 96px 84px 78px 78px 60px auto;
+  align-items: center;
+  column-gap: 10px;
+  padding-block: 4px;
+  min-height: 40px;
 }
-.ruleEvidence > summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
+.ruleMain > * {
+  min-width: 0;
 }
-.ruleEvidence > summary:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
+.alertMain {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.3fr) 100px 152px 92px minmax(0, 0.8fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  padding: 4px 0 4px 24px;
+  min-height: 36px;
 }
-@media (max-width: 1050px) {
-  .ruleWorkspace[data-editing] { grid-template-columns: minmax(0, 1fr); }
-  .ruleSelection { grid-row: 1; }
+.alertMain > * {
+  min-width: 0;
 }
+.alertMain > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alertMain code,
+.measured {
+  font-size: var(--type-dense);
+  font-variant-numeric: tabular-nums;
+}
+.measured {
+  color: var(--ink);
+  text-align: end;
+  white-space: nowrap;
+}
+.field {
+  width: 100%;
+}
+.field :global(.mantine-Input-input) {
+  min-height: 24px;
+  height: 24px;
+  padding-inline: 5px;
+  text-align: end;
+  font-size: var(--type-dense);
+}
+.snooze {
+  width: 96px;
+}
+
+.kinds {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.addName { width: 170px; }
+.addCondition { width: 190px; }
+.addScope { width: 140px; }
+.addScopeId { width: 160px; }
+.addNumber { width: 104px; }
 
 .detail {
-  margin-top: 0;
+  padding: 8px 10px 12px;
+  font-size: var(--type-dense);
 }
-
 .facts {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   column-gap: 20px;
-  row-gap: 8px;
-  font-size: 13px;
+  row-gap: 6px;
+  font-size: var(--type-dense);
   line-height: 1.4;
-  margin: 12px 0 14px;
+  margin: 6px 0 10px;
 }
 .facts dt {
   color: var(--slate);
@@ -189,19 +188,56 @@
 .facts dd {
   margin: 2px 0 0;
   font-family: var(--mono);
-  font-size: 13px;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+.facts dd[data-unknown] {
+  color: var(--slate);
+  font-family: var(--sans);
+}
 
 .dryRun {
-  margin-top: 20px;
+  margin-top: 12px;
   border-top: 1px solid var(--rule);
-  padding-top: 16px;
+  padding-top: 10px;
+}
+.dryRunHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.dryRunHead h4 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+  margin: 0;
+}
+.dryRunGroups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.dryRunGroup {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--raised);
+  min-width: 0;
+}
+.dryRunGroup code {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--type-dense);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 4px;
 }
 .firings {
-  margin-top: 12px;
-  font-size: 13px;
+  margin-top: 10px;
+  font-size: var(--type-dense);
 }
 .firings summary {
   cursor: pointer;
@@ -212,55 +248,94 @@
 }
 .firings code {
   font-family: var(--mono);
-  font-size: 13px;
 }
 
-.alerts {
-  margin-top: 24px;
-  border-top: 1px solid var(--rule);
-  padding-top: 18px;
+.audit {
+  padding-inline-start: 20px;
+  font-size: var(--type-dense);
+  line-height: 1.6;
+}
+.audit li {
+  list-style: decimal;
+  margin-block: 8px;
+}
+.audit p {
+  margin: 2px 0;
 }
 
-.unavailable {
-  margin-top: 24px;
+.automation {
+  margin-top: 12px;
   border-top: 1px solid var(--rule);
-  padding-top: 18px;
+  padding-top: 10px;
 }
-.unavailable dl {
+.automationForm {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.automationForm p {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-  max-width: 90ch;
 }
-.unavailable dt {
-  font-weight: 600;
-  margin-top: 10px;
+.automationFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 8px;
 }
-.unavailable dd {
-  margin: 3px 0 0;
-  color: var(--slate);
+.automationHistory {
+  border-top: 1px solid var(--rule);
+  margin-top: 12px;
+  padding-top: 10px;
 }
-.requires {
-  display: block;
+.automation a {
+  overflow-wrap: anywhere;
+}
+.automation summary {
+  cursor: pointer;
+  font-size: var(--type-dense);
   margin-top: 4px;
-  color: var(--mantine-color-dimmed);
+}
+.automation summary:focus-visible,
+.firings summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: -2px;
 }
 
-@media (max-width: 720px) {
-  .facts {
+/* Narrow: the row stacks under its caret rather than scrolling sideways. */
+@container board (max-width: 900px) {
+  .ruleMain {
+    grid-template-columns: 24px minmax(0, 1fr);
+    row-gap: 5px;
+    padding-block: 8px;
+  }
+  .ruleMain > .cell {
+    grid-column: 2;
+  }
+  .ruleMain > button.cell:first-child {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .field {
+    max-width: 150px;
+  }
+  .alertMain {
     grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+    padding-inline-start: 0;
+  }
+  .measured {
+    text-align: start;
+  }
+}
+@container board (max-width: 560px) {
+  .addName,
+  .addCondition,
+  .addScope,
+  .addScopeId,
+  .addNumber {
+    width: 100%;
   }
 }
 
-.audit { padding-inline-start: 20px; font-size: 13px; line-height: 1.6; }
-.audit li { list-style: decimal; margin-block: 10px; }
-.audit p { margin: 4px 0; }
-.automation { border: 1px solid var(--rule); border-top: 0; padding: 14px 18px; }
-.automationForm { display: grid; gap: 12px; min-width: 0; }
-.automationFields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.automationForm p { margin: 0; }
-.automationHistory { border-top: 1px solid var(--rule); margin-top: 16px; padding-top: 12px; }
-.automation a { overflow-wrap: anywhere; }
-.automation summary { cursor: pointer; font-size: 12px; margin-top: 6px; }
-.automation summary:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
-@media (max-width: 600px) { .automationFields { grid-template-columns: minmax(0, 1fr); } }
+/* Comfy adds room to the two row grids, matching the shared card variants. */
+[data-density='comfy'] .ruleMain { min-height: 50px; padding-block: 8px; }
+[data-density='comfy'] .alertMain { min-height: 46px; padding-block: 8px; }

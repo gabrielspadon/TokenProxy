@@ -608,8 +608,7 @@
   color: var(--ink);
   box-shadow: 0 20px 80px #17243330;
 }
-.command-dialog::backdrop,
-.confirm::backdrop {
+.command-dialog::backdrop {
   background: #102c3766;
   backdrop-filter: blur(4px);
 }

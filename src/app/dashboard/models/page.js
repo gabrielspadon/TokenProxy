@@ -1,50 +1,205 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useState } from 'react';
+import { ActionIcon, Button, Loader, MultiSelect, Select, Switch, Text, Tooltip } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import { usePoll } from '@/shared/hooks/usePoll';
-import { Freshness } from '@/shared/components/Freshness';
-import { Notice } from '@/shared/components/Notice';
-import { Confirm } from '@/shared/components/Confirm';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
 import { fmtNum, fmtRelative, fmtUnit } from '@/shared/format';
 import { Icon } from '@/shared/components/Icon';
+import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
 import { ModelsPolicy } from '@/shared/models-policy/ModelsPolicy';
-import { CatalogTools } from './CatalogTools';
 import { AutoRouting } from '@/shared/models-policy/AutoRouting';
+import {
+  Board,
+  BoardGroup,
+  BoardSummary,
+  BoardToolbar,
+  Card,
+  DensitySwitch,
+  EvidenceLine,
+  StateWord,
+  useLevel,
+} from '@/shared/workspace/Board';
+import { CommitNumber, CommitText } from '@/shared/workspace/CommitFields';
+import { InlineConfirm } from '@/shared/workspace/InlineConfirm';
+import { useConfiguredModels } from '@/shared/workspace/useConfiguredModels';
+import { widestOf, windowMeter } from '@/shared/workspace/windowMeter';
+import styles from '@/shared/workspace/board.module.css';
+import { CatalogTools } from './CatalogTools';
+import {
+  BUCKETS,
+  SORTS,
+  buildCapacityBody,
+  capabilityWords,
+  catalogBucket,
+  catalogEntries,
+  catalogSummary,
+  filterCatalog,
+  sortCatalog,
+} from './catalogBoardModel';
 import './styles.css';
 
-function pollFresh(p) {
-  if (p.loading) return 'connecting';
-  if (p.error && p.goodAt) return 'stale';
-  if (p.error) return 'reconnecting';
-  return 'live';
-}
-
-const OPERATOR = 'An operator session.';
-const CAPACITY_KINDS = [
+const CAP = 60;
+const TONE = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, bucket.tone]));
+const WORD = {
+  new: 'Unacknowledged',
+  disabled: 'Disabled',
+  aliased: 'Aliased',
+  custom: 'Registered',
+  catalog: 'Offered',
+};
+const CAPABILITY_KINDS = [
   { key: 'vision', label: 'Vision input' },
   { key: 'pdf', label: 'PDF input' },
   { key: 'audioInput', label: 'Audio input' },
   { key: 'videoInput', label: 'Video input' },
 ];
 const STRATEGIES = ['fallback', 'round-robin', 'fusion'];
-
-// Every disable/enable and combo-strategy write touches routing state a
-// request already in flight has read, so every mutation here carries the
-// same one-line consequence text.
-const REVIEW_LABELS = { alias: 'Alias', providerAlias: 'Provider', id: 'Model id', name: 'Name', kind: 'Kind', models: 'Members', vision: 'Vision', maxInputTokens: 'Context window', maxOutputTokens: 'Max output', comboStrategy: 'Default combo strategy', comboStickyRoundRobinLimit: 'Sticky round-robin limit' };
-
 const NEXT_REQUEST =
   'New requests take the change. A request already in flight keeps what it started with.';
 
-export default function ModelsPage() {
-  return <ModelsPolicy
-    automaticRouting={<AutoRouting />}
-    catalogControls={<CatalogControls />}
-    catalogTools={<CatalogTools />}
-  />;
+const toast = (color, message, title) =>
+  notifications.show({ color, message, title, autoClose: color === 'teal' ? 4000 : 9000 });
+
+function report(result, message, title) {
+  if (result.ok) {
+    toast('teal', message, title);
+    return true;
+  }
+  const failure = refusal(result.status, result.body);
+  toast('orange', [failure.title, failure.detail, failure.next].filter(Boolean).join(' '), title);
+  return false;
 }
-export function CatalogControls() {
+
+export default function ModelsPage() {
+  return (
+    <ModelsPolicy
+      automaticRouting={
+        <>
+          <AutoRouting />
+          <CapabilityRouting />
+        </>
+      }
+      catalogControls={<CatalogControls />}
+      catalogTools={<CatalogTools />}
+    />
+  );
+}
+
+const compact = (value) =>
+  Number.isFinite(value)
+    ? new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+    : '—';
+
+function CatalogEvidence({ entry, widest, widestOutput }) {
+  const context = windowMeter(entry.context, widest);
+  const output = windowMeter(entry.output, widestOutput);
+  const words = capabilityWords(entry.caps);
+  return (
+    <>
+      <EvidenceLine
+        label="Context"
+        remaining={context.remaining}
+        level={context.level}
+        unknown={context.unknown}
+        value={compact(entry.context)}
+        note={words.length > 2 ? `${words.slice(0, 2).join(' · ')} +${words.length - 2}` : words.join(' · ')}
+        title={
+          entry.context
+            ? `${fmtNum(entry.context)} input tokens${words.length ? ` · ${words.join(', ')}` : ''}`
+            : 'The catalog reports no context window for this model'
+        }
+      />
+      <EvidenceLine
+        label="Max output"
+        remaining={output.remaining}
+        level={output.level}
+        unknown={output.unknown}
+        value={compact(entry.output)}
+        note={entry.free ? 'Free tier' : entry.custom ? 'By hand' : ''}
+        title={
+          entry.output
+            ? `${fmtNum(entry.output)} completion tokens`
+            : 'The catalog reports no output limit for this model'
+        }
+      />
+    </>
+  );
+}
+
+function AliasField({ entry, disabled, onCommit }) {
+  return (
+    <Tooltip label="A short name a client can address this model by. Enter or blur saves it.">
+      <CommitText
+        className="models-alias"
+        aria-label={`Alias for ${entry.id}`}
+        placeholder="No alias"
+        value={entry.aliases?.[0] || ''}
+        disabled={disabled}
+        onCommit={onCommit}
+      />
+    </Tooltip>
+  );
+}
+
+function CatalogActions({ entry, advanced, disabled, onDisable, onEnable, onAcknowledge, onDeleteCustom }) {
+  return (
+    <>
+      {entry.unseen ? (
+        <Tooltip label="Acknowledge: mark it seen. Routing is unchanged.">
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            aria-label={`Acknowledge ${entry.id}`}
+            disabled={disabled}
+            onClick={onAcknowledge}
+          >
+            <Icon name="i-check" />
+          </ActionIcon>
+        </Tooltip>
+      ) : null}
+      {entry.disabled ? (
+        <Tooltip label={`Offer ${entry.id} for routing again. ${NEXT_REQUEST}`}>
+          <ActionIcon
+            variant="light"
+            color="teal"
+            aria-label={`Enable ${entry.id}`}
+            disabled={disabled}
+            onClick={onEnable}
+          >
+            <Icon name="i-play" />
+          </ActionIcon>
+        </Tooltip>
+      ) : (
+        <InlineConfirm
+          label={`Disable ${entry.id}`}
+          hint={`Removes ${entry.id} from routing for every connection on this provider. ${NEXT_REQUEST}`}
+          verb="Disable"
+          icon="i-pause"
+          disabled={disabled}
+          onConfirm={onDisable}
+        />
+      )}
+      {advanced && entry.custom ? (
+        <InlineConfirm
+          label={`Delete the registered model ${entry.id}`}
+          hint="Removes it from the catalog. A client addressing it directly is refused from its next request."
+          verb="Delete"
+          icon="i-close"
+          tone="red"
+          disabled={disabled}
+          onConfirm={onDeleteCustom}
+        />
+      ) : null}
+    </>
+  );
+}
+
+// `density` and `onDensity` come from the page; only the catalog board, the
+// first board on this tab, carries the page's single density switch.
+export function CatalogControls({ density, onDensity }) {
+  const advanced = useLevel();
   const models = usePoll('/api/models', 30000);
   const disabled = usePoll('/api/models/disabled', 30000);
   const custom = usePoll('/api/models/custom', 30000);
@@ -52,1108 +207,817 @@ export function CatalogControls() {
   const freeSync = usePoll('/api/models/free-sync', 30000);
   const combos = usePoll('/api/combos', 15000);
   const settings = usePoll('/api/settings', 30000);
-  const conns = usePoll('/api/admin/health/detail', 30000);
 
-  const [q, setQ] = useState('');
-  const [pending, setPending] = useState(null);
-  const [editing, setEditing] = useState(null);
-  const editorRef = useRef(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(null);
-  const [done, setDone] = useState(null);
-  const [form, setForm] = useState({});
-  const [settingsForm, setSettingsForm] = useState({});
-  const [now] = useState(() => Date.now());
+  const [query, setQuery] = useState('');
+  const [bucket, setBucket] = useState(null);
+  const [sort, setSort] = useState('name');
   const [showAll, setShowAll] = useState(false);
-  useEffect(() => {
-    editorRef.current?.querySelector('input:not(:disabled)')?.focus();
-  }, [editing]);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ providerAlias: '', id: '', name: '', context: '', output: '' });
+  const [busy, setBusy] = useState(null);
+  const [now] = useState(() => Date.now());
 
-  const rows = models.data?.models || [];
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter(
-      (m) => m.fullModel.toLowerCase().includes(s) || [m.alias,...(m.aliases || [])].some(alias=>typeof alias === 'string' && alias.toLowerCase().includes(s))
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rows is derived fresh each render from models.data, which is the real dependency
-  }, [models.data, q]);
-
-  // ponytail: plain slice cap, virtualize if the catalog ever needs to render whole
-  const CAP = 25;
-  const shown = showAll || filtered.length <= CAP ? filtered : filtered.slice(0, CAP);
-
-  const connections = conns.data?.checks?.connections || [];
-  const disabledByProvider = disabled.data?.disabled || {};
-  const customRows = custom.data?.models || [];
-  const groups = news.data?.groups || [];
+  const entries = catalogEntries({
+    models: models.data?.models,
+    disabled: disabled.data?.disabled,
+    custom: custom.data?.models,
+    groups: news.data?.groups,
+  });
+  const summary = catalogSummary(entries);
+  const widest = widestOf(entries.map((entry) => entry.context));
+  const widestOutput = widestOf(entries.map((entry) => entry.output));
+  const matching = sortCatalog(filterCatalog(entries, { query, bucket }), sort);
+  const visible = showAll || matching.length <= CAP ? matching : matching.slice(0, CAP);
   const totalUnseen = news.data?.totalUnseen || 0;
-  const comboRows = combos.data?.combos || [];
-  const s = settings.data;
+  const readFailed = models.error && !models.data ? refusal(models.status, models.error) : null;
 
-  const close = () => {
-    setPending(null);
-    setFailed(null);
-  };
+  function refresh() {
+    models.refresh();
+    disabled.refresh();
+    custom.refresh();
+    news.refresh();
+  }
 
-  const run = async () => {
-    if (!pending) return;
-    setBusy(true);
-    setFailed(null);
-    const res = await pending.request(pending.values || {});
-    setBusy(false);
-    if (!res.ok) {
-      setFailed(refusal(res.status, res.body));
-      return;
-    }
-    setDone(pending.done);
-    setPending(null);
-    if (pending.values && editing?.kind === pending.kind) {
-      setEditing(null);
-      setForm({});
-    }
-    if (pending.kind === 'comboDefaults' || pending.kind === 'capacity') setSettingsForm({});
-    pending.refresh?.forEach((p) => p.refresh());
-  };
+  async function run(id, request, message) {
+    if (busy) return;
+    setBusy(id);
+    const result = await request();
+    if (report(result, message, id)) refresh();
+    setBusy(null);
+  }
 
-  // --- Aliases ---
-  const openAlias = (m) => {
-    setFailed(null);
-    setForm({ alias: m.alias === m.model ? '' : m.alias });
-    setEditing({
-      kind: 'alias',
-      model: m.fullModel,
-      label: m.fullModel,
-      title: 'Set an alias',
-      verb: 'Save',
-      requires: OPERATOR,
-      changes: `Lets a client address ${m.fullModel} by a short name instead of its full identifier. ${NEXT_REQUEST}`,
-      undo: 'Delete the alias here. The model still routes by its full identifier.',
-      request: (form) =>
-        call('/api/models/alias', {
-          method: 'PUT',
-          body: { model: m.fullModel, alias: form.alias?.trim() },
-        }),
-      done: 'Alias saved.',
-      refresh: [models],
-    });
-  };
-  const openDeleteAlias = (m) => {
-    setFailed(null);
-    setPending({
-      kind: 'deleteAlias',
-      label: m.alias,
-      title: 'Delete this alias',
-      verb: 'Delete',
-      requires: OPERATOR,
-      changes: `A client addressing this model as "${m.alias}" is refused from its next request. The model itself is unaffected.`,
-      undo: 'Set the alias again here.',
-      irreversible: true,
-      request: () =>
-        call(`/api/models/alias?alias=${encodeURIComponent(m.alias)}`, { method: 'DELETE' }),
-      done: 'Alias deleted.',
-      refresh: [models],
-    });
-  };
-
-  // --- Disabled models (provider-wide or per-connection) ---
-  const openDisableToggle = (m, connectionId) => {
-    const alias = m.alias === m.model ? m.provider : m.provider; // providerAlias for the API is the routing alias TokenProxy already resolved server-side
-    const providerAlias = m.provider;
-    const scope = connectionId
-      ? connections.find((c) => c.connectionId === connectionId)?.displayName || connectionId
-      : 'every connection on this provider';
-    setFailed(null);
-    setPending({
-      kind: 'disable',
-      label: m.fullModel,
-      title: `Disable ${m.fullModel}`,
-      verb: 'Disable',
-      requires: OPERATOR,
-      changes: `Removes ${m.fullModel} from routing for ${scope}. ${connectionId ? 'This connection gets its own disabled list; it stops inheriting the provider-wide one.' : ''} ${NEXT_REQUEST}`,
-      undo: 'Enable it again here.',
-      request: () =>
+  const setAlias = (entry, alias) =>
+    run(
+      entry.id,
+      () => call('/api/models/alias', { method: 'PUT', body: { model: entry.id, alias } }),
+      `Alias saved. ${NEXT_REQUEST}`
+    );
+  const clearAlias = (entry, alias) =>
+    run(
+      entry.id,
+      () => call(`/api/models/alias?alias=${encodeURIComponent(alias)}`, { method: 'DELETE' }),
+      'Alias deleted. The model still routes by its full identifier.'
+    );
+  const disableModel = (entry) =>
+    run(
+      entry.id,
+      () =>
         call('/api/models/disabled', {
           method: 'POST',
-          body: { providerAlias, ids: [m.model], connectionId: connectionId || null },
+          body: { providerAlias: entry.provider, ids: [entry.model], connectionId: null },
         }),
-      done: 'Disabled.',
-      refresh: [models, disabled],
-    });
-  };
-  const openEnable = (providerAlias, id, connectionId, label) => {
-    setFailed(null);
-    setPending({
-      kind: 'enable',
-      label,
-      title: `Enable ${label}`,
-      verb: 'Enable',
-      requires: OPERATOR,
-      changes: `Offers ${label} for routing again. ${NEXT_REQUEST}`,
-      undo: 'Disable it again here.',
-      request: () =>
+      `Disabled. ${NEXT_REQUEST}`
+    );
+  const enableModel = (entry) =>
+    run(
+      entry.id,
+      () =>
         call(
-          `/api/models/disabled?providerAlias=${encodeURIComponent(providerAlias)}&id=${encodeURIComponent(id)}${connectionId ? `&connectionId=${encodeURIComponent(connectionId)}` : ''}`,
+          `/api/models/disabled?providerAlias=${encodeURIComponent(entry.provider)}&id=${encodeURIComponent(entry.model)}`,
           { method: 'DELETE' }
         ),
-      done: 'Enabled.',
-      refresh: [models, disabled],
-    });
+      `Enabled. ${NEXT_REQUEST}`
+    );
+  const acknowledge = (entry) =>
+    run(
+      entry.id,
+      () =>
+        call('/api/models/new/acknowledge', {
+          method: 'POST',
+          body: { items: [{ providerAlias: entry.provider, modelId: entry.model }] },
+        }),
+      'Acknowledged. Routing is unchanged.'
+    );
+  const acknowledgeAll = () =>
+    run(
+      'catalog',
+      () => call('/api/models/new/acknowledge', { method: 'POST' }),
+      `${fmtNum(totalUnseen)} models acknowledged. Routing is unchanged.`
+    );
+  const deleteCustom = (entry) => {
+    const row = (custom.data?.models || []).find(
+      (item) => `${item.providerAlias}/${item.id}` === entry.id
+    );
+    return run(
+      entry.id,
+      () =>
+        call(
+          `/api/models/custom?providerAlias=${encodeURIComponent(entry.provider)}&id=${encodeURIComponent(entry.model)}&type=${encodeURIComponent(row?.type || 'llm')}`,
+          { method: 'DELETE' }
+        ),
+      'Deleted from the catalog.'
+    );
   };
-
-  // --- Custom models ---
-  const openAddCustom = () => {
-    setFailed(null);
-    setForm({ providerAlias: '', id: '', name: '', vision: false });
-    setEditing({
-      kind: 'addCustom',
-      title: 'Register a custom model',
-      verb: 'Register',
-      requires: OPERATOR,
-      changes: `Adds a model id to the catalog for a provider node by hand, so it is offered for routing without being auto-discovered first. ${NEXT_REQUEST}`,
-      undo: 'Delete it here.',
-      request: (form) =>
+  async function registerCustom(event) {
+    event.preventDefault();
+    if (!draft.providerAlias.trim() || !draft.id.trim()) {
+      toast('orange', 'A provider alias and a model id are both required.', 'Register a model');
+      return;
+    }
+    await run(
+      `${draft.providerAlias}/${draft.id}`,
+      () =>
         call('/api/models/custom', {
           method: 'POST',
           body: {
-            providerAlias: form.providerAlias?.trim(),
-            id: form.id?.trim(),
-            name: form.name?.trim() || undefined,
-            vision: !!form.vision,
-            maxInputTokens: form.maxInputTokens ? Number(form.maxInputTokens) : undefined,
-            maxOutputTokens: form.maxOutputTokens ? Number(form.maxOutputTokens) : undefined,
+            providerAlias: draft.providerAlias.trim(),
+            id: draft.id.trim(),
+            name: draft.name.trim() || undefined,
+            vision: false,
+            maxInputTokens: draft.context ? Number(draft.context) : undefined,
+            maxOutputTokens: draft.output ? Number(draft.output) : undefined,
           },
         }),
-      done: 'Registered.',
-      refresh: [models, custom],
-    });
-  };
-  const openDeleteCustom = (m) => {
-    setFailed(null);
-    setPending({
-      kind: 'deleteCustom',
-      label: `${m.providerAlias}/${m.id}`,
-      title: 'Delete this custom model',
-      verb: 'Delete',
-      requires: OPERATOR,
-      changes:
-        'Removes it from the catalog. A client addressing it directly is refused from its next request.',
-      undo: 'Register it again here.',
-      irreversible: true,
-      request: () =>
-        call(
-          `/api/models/custom?providerAlias=${encodeURIComponent(m.providerAlias)}&id=${encodeURIComponent(m.id)}&type=${encodeURIComponent(m.type || 'llm')}`,
-          { method: 'DELETE' }
-        ),
-      done: 'Deleted.',
-      refresh: [models, custom],
-    });
+      `Registered. ${NEXT_REQUEST}`
+    );
+    setDraft({ providerAlias: '', id: '', name: '', context: '', output: '' });
+    setAdding(false);
+  }
+  const commitAlias = (entry, value) => {
+    const current = entry.aliases?.[0] || '';
+    if (value === current) return;
+    if (!value && current) return clearAlias(entry, current);
+    return setAlias(entry, value);
   };
 
-  // --- New / unseen models ---
-  const ackOne = async (providerAlias, modelId) => {
-    setDone(null);
-    const res = await call('/api/models/new/acknowledge', {
-      method: 'POST',
-      body: { items: [{ providerAlias, modelId }] },
-    });
-    if (!res.ok) {
-      setDone(null);
-      setFailed(refusal(res.status, res.body));
-      return;
-    }
-    news.refresh();
-  };
-  const openAckAll = () => {
-    setFailed(null);
-    setPending({
-      kind: 'ackAll',
-      title: 'Acknowledge every new model',
-      verb: 'Acknowledge',
-      requires: OPERATOR,
-      changes: `Marks all ${totalUnseen} currently-unseen model${totalUnseen === 1 ? '' : 's'} as acknowledged. It does not change routing or which models are offered.`,
-      undo: 'None. A model reappears here only if it is removed and observed again.',
-      request: () => call('/api/models/new/acknowledge', { method: 'POST' }),
-      done: 'Acknowledged.',
-      refresh: [news],
-    });
-  };
+  const chips = [
+    { id: null, label: entries.length === 1 ? 'model' : 'models', count: entries.length },
+    ...BUCKETS.filter((item) => summary[item.id] > 0 || item.id === 'catalog').map((item) => ({
+      id: item.id,
+      tone: item.tone,
+      label: item.label.toLowerCase(),
+      count: summary[item.id],
+    })),
+  ];
 
-  // --- Free-tier sync ---
-  const triggerFreeSync = async () => {
-    setDone(null);
-    setFailed(null);
-    const res = await call('/api/models/free-sync', { method: 'POST' });
-    if (!res.ok) {
-      setFailed(refusal(res.status, res.body));
-      return;
-    }
-    if (res.body?.skipped) {
-      setDone(
-        `Not run: ${res.body.reason === 'already-running' ? 'a sync is already running.' : res.body.reason}`
-      );
-    } else {
-      setDone(
-        `Synced. +${fmtNum(res.body?.added || 0)} / -${fmtNum(res.body?.removed || 0)} across ${fmtNum(Object.keys(res.body?.providers || {}).length)} providers.`
-      );
-    }
-    freeSync.refresh();
-    models.refresh();
-    custom.refresh();
-  };
-
-  // --- Combos ---
-  const openCreateCombo = () => {
-    setFailed(null);
-    setForm({ name: '', models: '', kind: '' });
-    setEditing({
-      kind: 'createCombo',
-      title: 'Create a combo',
-      verb: 'Create',
-      requires: OPERATOR,
-      changes: `Adds a named chain a client can route to as one model. ${NEXT_REQUEST}`,
-      undo: 'Delete it here.',
-      request: (form) =>
-        call('/api/combos', {
-          method: 'POST',
-          body: {
-            name: form.name?.trim(),
-            kind: form.kind?.trim() || null,
-            models: String(form.models || '')
-              .split(/[\n,]/)
-              .map((x) => x.trim())
-              .filter(Boolean),
-          },
-        }),
-      done: 'Created.',
-      refresh: [combos],
-    });
-  };
-  const openEditCombo = (c) => {
-    setFailed(null);
-    setForm({ name: c.name, models: (c.models || []).join(', '), kind: c.kind || '' });
-    setEditing({
-      kind: 'editCombo',
-      id: c.id,
-      label: c.name,
-      title: `Edit ${c.name}`,
-      verb: 'Save',
-      requires: OPERATOR,
-      changes: `Replaces this combo's member list and resets its rotation state, so the next request restarts from the first strategy step. ${NEXT_REQUEST}`,
-      undo: 'Set the previous member list again here.',
-      request: (form) =>
-        call(`/api/combos/${encodeURIComponent(c.id)}`, {
-          method: 'PUT',
-          body: {
-            name: form.name?.trim(),
-            kind: form.kind?.trim() || null,
-            models: String(form.models || '')
-              .split(/[\n,]/)
-              .map((x) => x.trim())
-              .filter(Boolean),
-          },
-        }),
-      done: 'Saved.',
-      refresh: [combos],
-    });
-  };
-  const openDeleteCombo = (c) => {
-    setFailed(null);
-    setPending({
-      kind: 'deleteCombo',
-      label: c.name,
-      title: `Delete ${c.name}`,
-      verb: 'Delete',
-      requires: OPERATOR,
-      changes: `Removes the combo. A client addressing "${c.name}" directly is refused from its next request; each of its ${(c.models || []).length} member model${(c.models || []).length === 1 ? '' : 's'} keeps routing on its own name.`,
-      undo: 'Create a combo with the same name and member list here.',
-      irreversible: true,
-      request: () => call(`/api/combos/${encodeURIComponent(c.id)}`, { method: 'DELETE' }),
-      done: 'Deleted.',
-      refresh: [combos],
-    });
-  };
-
-  // --- Combo strategy defaults + capacity adapter (settings PATCH) ---
-  const saveComboDefaults = () => {
-    setFailed(null);
-    setPending({
-      kind: 'comboDefaults',
-      values: { comboStrategy: settingsForm.comboStrategy ?? s.comboStrategy ?? 'fallback', comboStickyRoundRobinLimit: settingsForm.comboStickyRoundRobinLimit ?? s.comboStickyRoundRobinLimit ?? 1 },
-      title: 'Save the default combo strategy',
-      verb: 'Save',
-      requires: OPERATOR,
-      changes: `Every combo with no override of its own uses this strategy and stickiness from its next request.`,
-      undo: 'Set the previous values again here.',
-      request: (form) =>
-        call('/api/settings', {
-          method: 'PATCH',
-          body: {
-            comboStrategy: form.comboStrategy,
-            comboStickyRoundRobinLimit: Number(form.comboStickyRoundRobinLimit) || 1,
-          },
-        }),
-      done: 'Saved.',
-      refresh: [settings],
-    });
-  };
-  const toggleComboOnly = async () => {
-    setDone(null);
-    const res = await call('/api/settings', {
-      method: 'PATCH',
-      body: { exposeComboOnly: !s?.exposeComboOnly },
-    });
-    if (!res.ok) {
-      setFailed(refusal(res.status, res.body));
-      return;
-    }
-    settings.refresh();
-  };
-  const saveCapacity = (key) => {
-    setFailed(null);
-    setPending({
-      kind: 'capacity',
-      values: Object.fromEntries(Object.entries(buildCapacityBody(s?.capacityAdapter, key, settingsForm)[key]).map(([name, value]) => [`${key}.${name}`, Array.isArray(value) ? value.join(', ') : value])),
-      label: CAPACITY_KINDS.find((c) => c.key === key)?.label,
-      capKey: key,
-      title: `Save ${CAPACITY_KINDS.find((c) => c.key === key)?.label} auto-routing`,
-      verb: 'Save',
-      requires: OPERATOR,
-      changes: `Replaces the whole auto-routing configuration (all four kinds), because the gateway only accepts it as one object. ${NEXT_REQUEST}`,
-      undo: 'Set the previous values again here.',
-      request: (form) =>
-        call('/api/settings', {
-          method: 'PATCH',
-          body: { capacityAdapter: buildCapacityBody(s?.capacityAdapter, key, form) },
-        }),
-      done: 'Saved.',
-      refresh: [settings],
-    });
-  };
-
-  const editor = editing && <form ref={editorRef} className="models-inline-editor" aria-label={editing.title} onSubmit={event => {
-    event.preventDefault();
-    if (!busy && !pending && event.currentTarget.reportValidity()) setPending({ ...editing, values: { ...form } });
-  }}>
-    <h3>{editing.title}</h3>
-    {editing.label && <p className="name id">{editing.label}</p>}
-    <fieldset disabled={busy || Boolean(pending)}>
-        {editing?.kind === 'alias' ? (
-          <label className="field">
-            <span>Alias</span>
-            <input
-              className="input"
-              type="text"
-              value={form.alias || ''}
-              onChange={(e) => setForm((f) => ({ ...f, alias: e.target.value }))}
-            />
-          </label>
-        ) : null}
-        {editing?.kind === 'addCustom' ? (
-          <div className="models-form">
-            <label className="field">
-              <span>Provider</span>
-              <input
-                className="input"
-                type="text"
-                value={form.providerAlias || ''}
-                onChange={(e) => setForm((f) => ({ ...f, providerAlias: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Model id</span>
-              <input
-                className="input"
-                type="text"
-                value={form.id || ''}
-                onChange={(e) => setForm((f) => ({ ...f, id: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                value={form.name || ''}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Context window</span>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                value={form.maxInputTokens || ''}
-                onChange={(e) => setForm((f) => ({ ...f, maxInputTokens: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Max output</span>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                value={form.maxOutputTokens || ''}
-                onChange={(e) => setForm((f) => ({ ...f, maxOutputTokens: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>
-                <input
-                  type="checkbox"
-                  checked={!!form.vision}
-                  onChange={(e) => setForm((f) => ({ ...f, vision: e.target.checked }))}
-                />{' '}
-                Vision
-              </span>
-            </label>
-          </div>
-        ) : null}
-        {editing?.kind === 'createCombo' || editing?.kind === 'editCombo' ? (
-          <div className="models-form">
-            <label className="field">
-              <span>Name</span>
-              <input
-                className="input"
-                type="text"
-                disabled={editing.kind === 'editCombo'}
-                value={form.name || ''}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Kind</span>
-              <input
-                className="input"
-                type="text"
-                value={form.kind || ''}
-                onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
-              />
-            </label>
-            <label className="field">
-              <span>Members</span>
-              <input
-                className="input"
-                type="text"
-                value={form.models || ''}
-                onChange={(e) => setForm((f) => ({ ...f, models: e.target.value }))}
-              />
-            </label>
-            <p className="caption">One model id per entry, in order, separated by commas.</p>
-          </div>
-        ) : null}
-    </fieldset>
-    <div className="actions">
-      <button type="submit" className="button" disabled={busy || Boolean(pending)}>Review change</button>
-      <button type="button" className="button quiet" disabled={busy || Boolean(pending)} onClick={() => { setEditing(null); setForm({}); }}>Cancel edit</button>
-    </div>
-  </form>;
-
-  const s6errors = models.error && !models.data ? refusal(models.status, models.error) : null;
+  const rowProps = (entry) => ({
+    advanced,
+    disabled: Boolean(busy) || Boolean(readFailed),
+    onDisable: () => disableModel(entry),
+    onEnable: () => enableModel(entry),
+    onAcknowledge: () => acknowledge(entry),
+    onDeleteCustom: () => deleteCustom(entry),
+  });
 
   return (
     <>
-      <div className="screen-head">
-        <h2>Catalog controls</h2>
-        <Freshness status={pollFresh(models)} lastDataAt={models.goodAt} />
-      </div>
-      {done ? <Notice tone="ok" title={done} /> : null}
-
-      <div className="measures">
-        <div className="measure big">
-          <span className="label">Catalog</span>
-          <span className="value">
-            {models.data ? fmtNum(rows.length) : '—'}
-          </span>
-        </div>
-        <div className="measure big">
-          <span className="label">Combos</span>
-          <span className="value">
-            {combos.data ? fmtNum(comboRows.length) : '—'}
-          </span>
-        </div>
-        <div className="measure big">
-          <span className="label">Custom</span>
-          <span className="value">
-            {custom.data ? fmtNum(customRows.length) : '—'}
-          </span>
-        </div>
-        <div className="measure big">
-          <span className="label">Disabled aliases</span>
-          <span className="value">
-            {disabled.data ? fmtNum(Object.keys(disabledByProvider).length) : '—'}
-          </span>
-        </div>
-        <div className="measure big">
-          <span className="label">Unacknowledged</span>
-          <span className="value">
-            {news.data ? fmtNum(totalUnseen) : '—'}
-          </span>
-        </div>
-      </div>
-
-      <section aria-labelledby="h-catalog">
-        <div className="screen-head models-catalog-head">
-          <h2 id="h-catalog">Catalog</h2>
-          <label className="field models-search">
-            <span>Search</span>
-            <input
-              className="input"
-              type="search"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="model id or alias"
+      <Board label="Model catalog" advanced={advanced} density={density} compare="none">
+        <BoardSummary
+          label="Catalog summary"
+          chips={chips}
+          active={bucket}
+          onPick={(value) => {
+            setBucket(value);
+            setShowAll(false);
+          }}
+          note={
+            models.loading && !models.data
+              ? 'Reading the catalog…'
+              : advanced
+                ? 'Edits save on Enter or blur'
+                : 'Advanced adds sorting and removal of models registered by hand'
+          }
+        />
+        <BoardToolbar
+          search={query}
+          onSearch={(value) => {
+            setQuery(value);
+            setShowAll(false);
+          }}
+          searchLabel="Search the catalog by model id or alias"
+          actions={
+            <>
+              {totalUnseen > 0 ? (
+                <Button
+                  size="xs"
+                  variant="default"
+                  leftSection={<Icon name="i-check" />}
+                  disabled={Boolean(busy)}
+                  onClick={acknowledgeAll}
+                >
+                  Acknowledge {fmtNum(totalUnseen)}
+                </Button>
+              ) : null}
+              <Button
+                size="xs"
+                leftSection={<Icon name="i-add" />}
+                aria-expanded={adding}
+                onClick={() => setAdding((value) => !value)}
+              >
+                Register a model
+              </Button>
+              <Tooltip label="Re-read the catalog, its aliases and its disabled list">
+                <ActionIcon
+                  variant="default"
+                  aria-label="Refresh the catalog"
+                  loading={models.loading}
+                  onClick={refresh}
+                >
+                  <Icon name="i-refresh" />
+                </ActionIcon>
+              </Tooltip>
+            </>
+          }
+        >
+          {advanced ? (
+            <Select
+              size="xs"
+              aria-label="Sort the catalog"
+              data={SORTS}
+              value={sort}
+              onChange={(value) => value && setSort(value)}
+              leftSection={<Icon name="i-sort" />}
+              className={styles.sort}
+              allowDeselect={false}
             />
-          </label>
-        </div>
-        {editing?.kind === 'alias' && editor}
-        {s6errors ? <Notice {...s6errors} /> : null}
-        {models.loading && !models.data ? <p className="skeleton">Reading</p> : null}
-        {models.data && filtered.length === 0 ? (
-          <p className="empty">
-            {rows.length === 0
-              ? 'No model is available. A model appears once a provider is connected.'
-              : 'No model matches this search.'}
-          </p>
+          ) : null}
+          {onDensity ? <DensitySwitch value={density} onChange={onDensity} /> : null}
+        </BoardToolbar>
+        {adding ? (
+          <form className={styles.addRow} aria-label="Register a custom model" onSubmit={registerCustom}>
+            <CommitText
+              className={styles.addProvider}
+              aria-label="Provider alias"
+              placeholder="Provider alias"
+              value={draft.providerAlias}
+              onCommit={(value) => setDraft((previous) => ({ ...previous, providerAlias: value }))}
+            />
+            <CommitText
+              className={styles.addName}
+              aria-label="Model id"
+              placeholder="Model id"
+              value={draft.id}
+              onCommit={(value) => setDraft((previous) => ({ ...previous, id: value }))}
+            />
+            <CommitText
+              className={styles.addName}
+              aria-label="Display name"
+              placeholder="Display name"
+              value={draft.name}
+              onCommit={(value) => setDraft((previous) => ({ ...previous, name: value }))}
+            />
+            <CommitNumber
+              className={styles.addMode}
+              aria-label="Context window"
+              placeholder="Context"
+              min={1}
+              value={draft.context}
+              onCommit={(value) => setDraft((previous) => ({ ...previous, context: value }))}
+            />
+            <CommitNumber
+              className={styles.addMode}
+              aria-label="Max output"
+              placeholder="Max output"
+              min={1}
+              value={draft.output}
+              onCommit={(value) => setDraft((previous) => ({ ...previous, output: value }))}
+            />
+            <Button size="xs" type="submit" disabled={Boolean(busy)}>
+              Register
+            </Button>
+            <Button size="xs" variant="default" onClick={() => setAdding(false)}>
+              Close
+            </Button>
+          </form>
         ) : null}
-        {filtered.length ? (
-          <div className="rows model-catalog-list" tabIndex={0} aria-label="Model catalog">
-            <div className="row head models-row">
-              <span>Model</span>
-              <span>Capabilities</span>
-              <span>Context / output</span>
-              <span />
-            </div>
-            {shown.map((m) => (
-              <div key={m.fullModel} className="row models-row">
-                <span className="who">
-                  <span className="name id">
-                    {m.fullModel}
-                  </span>
-                  <span className="sub">
-                    {m.alias !== m.model ? (
-                      <>
-                        alias{' '}
-                        <span className="id">
-                          {(m.aliases?.length ? m.aliases : [m.alias]).join(', ')}
-                        </span>
-                      </>
-                    ) : (
-                      <span>No alias</span>
-                    )}
-                  </span>
-                </span>
-                <span>
-                  {[
-                    m.caps?.vision && 'Vision',
-                    m.caps?.search && 'Search',
-                    m.caps?.reasoning && 'Reasoning',
-                  ]
-                    .filter(Boolean)
-                    .join(', ') || '—'}
-                </span>
-                <span>
-                  {m.caps?.contextWindow ? fmtNum(m.caps.contextWindow) : '?'} /{' '}
-                  {m.caps?.maxOutput ? fmtNum(m.caps.maxOutput) : '?'}
-                </span>
-                <span className="actions">
-                  <button type="button" className="link-button" onClick={() => openAlias(m)}>
-                    Set alias
-                  </button>
-                  {m.alias !== m.model ? (
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => openDeleteAlias(m)}
-                    >
-                      Delete alias
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => openDisableToggle(m, null)}
-                  >
-                    Disable
-                  </button>
-                </span>
-              </div>
-            ))}
-            {shown.length < filtered.length ? (
-              <div className="row models-row">
-                <span className="caption">
-                  Showing <span>{fmtNum(shown.length)}</span> of{' '}
-                  <span>{fmtNum(filtered.length)}</span> models. Search narrows the
-                  list.
-                </span>
-                <span />
-                <span />
-                <button type="button" className="button" onClick={() => setShowAll(true)}>
-                  Show every model
-                </button>
-              </div>
-            ) : null}
-          </div>
+        {readFailed ? (
+          <Text size="xs" c="orange.8" role="alert" className={styles.notice}>
+            {readFailed.title} {readFailed.detail || ''} {readFailed.next || ''}
+          </Text>
         ) : null}
-      </section>
-
-      <section aria-labelledby="h-disabled">
-        <h2 id="h-disabled">Disabled models</h2>
-        <p>
-          A provider-wide list applies to every connection that has never had its own. The moment a
-          connection gets its own list, editing it never touches the provider-wide one or any other
-          connection&apos;s inherited copy.
-        </p>
-        {disabled.error && !disabled.data ? (
-          <Notice {...refusal(disabled.status, disabled.error)} />
-        ) : null}
-        {disabled.data && Object.keys(disabledByProvider).length === 0 ? (
-          <p className="empty">No provider has a disabled model.</p>
-        ) : null}
-        {Object.keys(disabledByProvider).length ? (
-          <div className="rows">
-            {Object.entries(disabledByProvider).map(([alias, ids]) => (
-              <div
-                key={alias}
-                className="row"
-                style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
-              >
-                <span className="who">
-                  <span className="name">
-                    {alias}
-                  </span>
-                  <span className="sub id">
-                    {ids.join(', ')}
-                  </span>
-                </span>
-                <span className="actions">
-                  {ids.map((id) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className="link-button"
-                      onClick={() => openEnable(alias, id, null, `${alias}/${id}`)}
-                    >
-                      Enable {id}
-                    </button>
-                  ))}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-custom" className="panel">
-        <div className="screen-head">
-          <h2 id="h-custom">Custom models</h2>
-          <button type="button" className="button" onClick={openAddCustom}>
-            <Icon name="i-add" />
-            Register a model
-          </button>
-        </div>
-        {editing?.kind === 'addCustom' && editor}
-        {custom.error && !custom.data ? <Notice {...refusal(custom.status, custom.error)} /> : null}
-        {custom.data && customRows.length === 0 ? (
-          <p className="empty">No custom model is registered.</p>
-        ) : null}
-        {customRows.length ? (
-          <div className="rows">
-            {customRows.map((m) => (
-              <div
-                key={`${m.providerAlias}/${m.id}`}
-                className="row"
-                style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
-              >
-                <span className="who">
-                  <span className="name id">
-                    {m.providerAlias}/{m.id}
-                  </span>
-                  <span className="sub">
-                    {m.name || m.id}
-                    {m.vision ? ' · vision' : ''}
-                    {m.maxInputTokens ? ` · ${fmtNum(m.maxInputTokens)} in` : ''}
-                    {m.maxOutputTokens ? ` · ${fmtNum(m.maxOutputTokens)} out` : ''}
-                  </span>
-                </span>
-                <button type="button" className="button danger" onClick={() => openDeleteCustom(m)}>
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-new">
-        <div className="screen-head">
-          <h2 id="h-new">Newly observed models</h2>
-          <Freshness status={pollFresh(news)} lastDataAt={news.goodAt} />
-        </div>
-        {news.error && !news.data ? <Notice {...refusal(news.status, news.error)} /> : null}
         {news.data?.seeded ? (
-          <Notice
-            tone="ok"
-            title="First scan seeded."
-            next="Everything already present was marked already-acknowledged, so nothing pre-existing shows here as new."
-          />
+          <Text size="xs" c="dimmed" className={styles.notice}>
+            First scan seeded. Everything already present was marked acknowledged, so nothing
+            pre-existing shows here as new.
+          </Text>
         ) : null}
-        {news.data && !news.data.seeded && groups.length === 0 ? (
-          <p className="empty">No model is unacknowledged.</p>
-        ) : null}
-        {groups.length ? (
-          <>
-            <div className="actions">
-              <button type="button" className="button quiet" onClick={openAckAll}>
-                Acknowledge all ({fmtNum(totalUnseen)})
-              </button>
-            </div>
-            <div className="rows">
-              {groups.map((g) => (
-                <div key={g.providerAlias} className="row" style={{ gridTemplateColumns: '1fr' }}>
-                  <span className="who">
-                    <span className="name">
-                      {g.providerName}
-                    </span>
-                  </span>
-                  <div className="rows">
-                    {g.models.map((m) => (
-                      <div
-                        key={m.modelId}
-                        className="row"
-                        style={{ gridTemplateColumns: 'minmax(0,1fr) auto auto' }}
-                      >
-                        <span className="id">
-                          {m.modelId}
-                        </span>
-                        <span className="status" data-tone={m.isNew ? 'warn' : undefined}>
-                          {m.isNew ? 'New' : 'Unacknowledged'}
-                          {m.isFree ? ' · free' : ''}
-                        </span>
-                        <button
-                          type="button"
-                          className="link-button"
-                          onClick={() => ackOne(g.providerAlias, m.modelId)}
-                        >
-                          Acknowledge
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-free">
-        <div className="screen-head">
-          <h2 id="h-free">Free-tier discovery</h2>
-          <Freshness status={pollFresh(freeSync)} lastDataAt={freeSync.goodAt} />
-        </div>
-        {freeSync.error && !freeSync.data ? (
-          <Notice {...refusal(freeSync.status, freeSync.error)} />
-        ) : null}
-        {freeSync.data ? (
-          <>
-            <dl className="facts">
-              <dt>Scheduler</dt>
-              <dd>
-                <span className="status" data-tone={freeSync.data.config?.enabled ? 'ok' : 'warn'}>
-                  {freeSync.data.config?.enabled ? 'On' : 'Off'}
-                </span>{' '}
-                <span>
-                  every {fmtUnit(freeSync.data.config?.intervalHours, 'hour')}
-                </span>
-              </dd>
-              <dt>Last run</dt>
-              <dd>
-                {freeSync.data.running ? (
-                  <span className="status" data-tone="ok">
-                    Running now
-                  </span>
-                ) : freeSync.data.lastRunAt ? (
-                  <span>{fmtRelative(freeSync.data.lastRunAt, now)}</span>
-                ) : (
-                  <span className="unreported">Not reported</span>
-                )}
-                {freeSync.data.lastError ? (
-                  <span className="caption">
-                    {' '}
-                    {freeSync.data.lastError}
-                  </span>
-                ) : null}
-              </dd>
-            </dl>
-            {Object.keys(freeSync.data.providers || {}).length ? (
-              <div className="rows">
-                {Object.entries(freeSync.data.providers).map(([id, p]) => (
-                  <div
-                    key={id}
-                    className="row"
-                    style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
-                  >
-                    <span className="name">
-                      {id}
-                    </span>
-                    <span>
-                      {fmtNum(p.count)} models
-                      {p.updatedAt ? <> · {fmtRelative(p.updatedAt, now)}</> : null}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="empty">No free-tier provider has synced yet.</p>
-            )}
-            <div className="actions">
-              <button type="button" className="button quiet" onClick={triggerFreeSync}>
-                Sync now
-              </button>
-            </div>
-          </>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-combos" className="panel">
-        <div className="screen-head">
-          <h2 id="h-combos">Combos</h2>
-          <button type="button" className="button" onClick={openCreateCombo}>
-            <Icon name="i-add" />
-            Create a combo
-          </button>
-        </div>
-        {(editing?.kind === 'createCombo' || editing?.kind === 'editCombo') && editor}
-        {combos.error && !combos.data ? <Notice {...refusal(combos.status, combos.error)} /> : null}
-        {combos.data && comboRows.length === 0 ? (
-          <p className="empty">
-            No combo is defined. A client may only address a bare model until one exists.
-          </p>
-        ) : null}
-        {comboRows.length ? (
-          <div className="rows">
-            {comboRows.map((c) => {
-              const override = s?.comboStrategies?.[c.name];
-              return (
-                <div
-                  key={c.id}
-                  className="row"
-                  style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
-                >
-                  <span className="who">
-                    <span className="name id">
-                      {c.name}
-                    </span>
-                    <span className="sub id">
-                      {(c.models || []).join(', ')}
-                    </span>
-                    <span className="sub">
-                      {override?.fallbackStrategy ? (
-                        <>
-                          override <span>{override.fallbackStrategy}</span>
-                        </>
-                      ) : (
-                        <>uses the default strategy</>
-                      )}
-                    </span>
-                  </span>
-                  <span className="actions">
-                    <button type="button" className="link-button" onClick={() => openEditCombo(c)}>
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="button danger"
-                      onClick={() => openDeleteCombo(c)}
-                    >
-                      Delete
-                    </button>
-                  </span>
-                </div>
-              );
-            })}
+        {advanced ? (
+          <div className={styles.head} aria-hidden="true">
+            <span />
+            <span>Model</span>
+            <span>State</span>
+            <span>Context · output</span>
+            <span>Alias</span>
+            <span>Acknowledge · disable</span>
           </div>
         ) : null}
-      </section>
-
-      <section aria-labelledby="h-decisions" className="panel">
-        <div className="screen-head">
-          <h2 id="h-decisions">Routing decisions</h2>
-          <Freshness status={pollFresh(settings)} lastDataAt={settings.goodAt} />
-        </div>
-        {settings.error && !s ? <Notice {...refusal(settings.status, settings.error)} /> : null}
-        {s ? (
-          <>
-            <div className="models-form">
-              <label className="field">
-                <span>Default combo strategy</span>
-                <select
-                  className="select"
-                  value={settingsForm.comboStrategy ?? s.comboStrategy}
-                  onChange={(e) => setSettingsForm((f) => ({ ...f, comboStrategy: e.target.value }))}
-                >
-                  {STRATEGIES.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
+        {!advanced
+          ? BUCKETS.map((item) => {
+              const members = visible.filter((entry) => catalogBucket(entry) === item.id);
+              if (!members.length) return null;
+              return (
+                <BoardGroup key={item.id} label={item.label} tone={item.tone} count={members.length}>
+                  {members.map((entry) => (
+                    <Card
+                      key={entry.id}
+                      id={entry.id}
+                      bucket={item.id}
+                      label={entry.id}
+                      head={
+                        <>
+                          <ProviderMark provider={entry.provider} size="small" />
+                          <div className={styles.identityText}>
+                            <span className="models-name">{entry.name}</span>
+                            <small className="models-id">{entry.id}</small>
+                          </div>
+                          <CatalogActions entry={entry} {...rowProps(entry)} />
+                        </>
+                      }
+                      state={
+                        <>
+                          <StateWord tone={TONE[item.id]}>{WORD[item.id]}</StateWord>
+                          <span className={styles.spacer} />
+                          <AliasField
+                            entry={entry}
+                            disabled={Boolean(busy) || Boolean(readFailed)}
+                            onCommit={(value) => commitAlias(entry, value)}
+                          />
+                        </>
+                      }
+                    >
+                      <CatalogEvidence entry={entry} widest={widest} widestOutput={widestOutput} />
+                    </Card>
                   ))}
-                </select>
-              </label>
-              <label className="field">
-                <span>Sticky round-robin limit</span>
-                <input
-                  className="input"
-                  type="number"
-                  min="1"
-                  value={settingsForm.comboStickyRoundRobinLimit ?? s.comboStickyRoundRobinLimit}
-                  onChange={(e) =>
-                    setSettingsForm((f) => ({ ...f, comboStickyRoundRobinLimit: e.target.value }))
-                  }
-                />
-              </label>
+                </BoardGroup>
+              );
+            })
+          : null}
+        <div className={styles.rows} hidden={!advanced}>
+          {advanced
+            ? visible.map((entry) => {
+                const state = catalogBucket(entry);
+                return (
+                  <article
+                    key={entry.id}
+                    className={styles.row}
+                    data-account-id={entry.id}
+                    data-bucket={state}
+                    aria-label={entry.id}
+                  >
+                    <div className={styles.main}>
+                      <span />
+                      <div className={styles.identity}>
+                        <ProviderMark provider={entry.provider} size="small" />
+                        <div className={styles.identityText}>
+                          <span className="models-name">{entry.name}</span>
+                          <small className="models-id">{entry.id}</small>
+                        </div>
+                      </div>
+                      <div className={styles.state}>
+                        <StateWord tone={TONE[state]}>{WORD[state]}</StateWord>
+                      </div>
+                      <div className={styles.quota}>
+                        <CatalogEvidence entry={entry} widest={widest} widestOutput={widestOutput} />
+                      </div>
+                      <div className={styles.activity}>
+                        <AliasField
+                          entry={entry}
+                          disabled={Boolean(busy) || Boolean(readFailed)}
+                          onCommit={(value) => commitAlias(entry, value)}
+                        />
+                      </div>
+                      <div className={styles.actions}>
+                        <CatalogActions entry={entry} {...rowProps(entry)} />
+                      </div>
+                    </div>
+                  </article>
+                );
+              })
+            : null}
+        </div>
+        <div className={styles.messages}>
+          {models.loading && !models.data ? (
+            <div className={styles.empty}>
+              <Loader size="xs" /> Reading the catalog…
             </div>
-            <div className="verb-row">
-              <button type="button" className="button" onClick={saveComboDefaults}>
-                <Icon name="i-edit" />
-                Save defaults
+          ) : null}
+          {models.data && !entries.length ? (
+            <div className={styles.empty}>
+              No model is available. A model appears once a provider is connected.
+            </div>
+          ) : null}
+          {visible.length < matching.length ? (
+            <div className={styles.empty}>
+              Showing {fmtNum(visible.length)} of {fmtNum(matching.length)} models. Search narrows
+              the list.{' '}
+              <button type="button" className={styles.linkButton} onClick={() => setShowAll(true)}>
+                Show every model
               </button>
             </div>
-            <dl className="facts">
-              <dt>Combos only</dt>
-              <dd>
-                <span className="status" data-tone={s.exposeComboOnly ? 'warn' : 'ok'}>
-                  {s.exposeComboOnly
-                    ? 'Only named combos may be requested'
-                    : 'Bare models and combos may both be requested'}
-                </span>{' '}
-                <button type="button" className="link-button" onClick={toggleComboOnly}>
-                  {s.exposeComboOnly ? 'Allow bare models' : 'Restrict to combos'}
-                </button>
-              </dd>
-            </dl>
-            <h3>Capability-based auto-routing</h3>
-            <div className="rows">
-              {CAPACITY_KINDS.map((k) => {
-                const cfg = s.capacityAdapter?.[k.key] || {};
-                return (
-                  <div
-                    key={k.key}
-                    className="row"
-                    style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}
-                  >
-                    <span className="who">
-                      <span className="name">{k.label}</span>
-                      <span className="sub">
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={settingsForm[`${k.key}.enabled`] ?? cfg.enabled ?? false}
-                            onChange={(e) =>
-                              setSettingsForm((f) => ({ ...f, [`${k.key}.enabled`]: e.target.checked }))
-                            }
-                          />{' '}
-                          Enabled
-                        </label>{' '}
-                        <label>
-                          <input
-                            type="checkbox"
-                            checked={settingsForm[`${k.key}.roundRobin`] ?? cfg.roundRobin ?? false}
-                            onChange={(e) =>
-                              setSettingsForm((f) => ({ ...f, [`${k.key}.roundRobin`]: e.target.checked }))
-                            }
-                          />{' '}
-                          Rotate among eligible models
-                        </label>
-                      </span>
-                      <input
-                        className="input"
-                        type="text"
-                        placeholder="eligible model ids, comma separated"
-                        value={settingsForm[`${k.key}.models`] ?? (cfg.models || []).join(', ')}
-                        onChange={(e) =>
-                          setSettingsForm((f) => ({ ...f, [`${k.key}.models`]: e.target.value }))
-                        }
-                      />
-                    </span>
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => saveCapacity(k.key)}
-                    >
-                      Save
-                    </button>
-                  </div>
-                );
-              })}
+          ) : null}
+          {entries.length && !visible.length ? (
+            <div className={styles.empty}>
+              No model matches.{' '}
+              <button
+                type="button"
+                className={styles.linkButton}
+                onClick={() => {
+                  setQuery('');
+                  setBucket(null);
+                }}
+              >
+                Clear filters
+              </button>
             </div>
-          </>
-        ) : null}
-      </section>
-
-      <section aria-labelledby="h-gap">
-        <h2 id="h-gap">Not reported</h2>
-        <ul className="bullets">
-          <li>
-            The connection-scoped disabled-model view above reads connections from the health detail
-            scan, which can run short if that scan did not finish; a connection missing there cannot
-            get its own disabled list from this screen until the next successful scan.
-          </li>
-          <li>
-            What the client-compatibility namespace in §13 actually advertises (rewritten names,
-            hidden models) has no route of its own and is not shown here; only the true catalog is.
-          </li>
-        </ul>
-      </section>
-
-      <Confirm
-        open={!!pending}
-        busy={busy}
-        refusal={failed}
-        title={pending?.title}
-        verb={pending?.verb}
-        requires={pending?.requires}
-        changes={pending?.changes}
-        undo={pending?.undo}
-        irreversible={!!pending?.irreversible}
-        onConfirm={run}
-        onClose={close}
-      >
-        {pending?.label ? (
-          <p className="name id">
-            {pending.label}
-          </p>
-        ) : null}
-        {pending?.values && <dl className="models-review-values">{Object.entries(pending.values).map(([key, value]) => <div key={key}><dt>{REVIEW_LABELS[key] || key}</dt><dd>{typeof value === 'boolean' ? value ? 'Enabled' : 'Disabled' : value || 'Not set'}</dd></div>)}</dl>}
-      </Confirm>
+          ) : null}
+        </div>
+      </Board>
+      <PlansBoard advanced={advanced} density={density} combos={combos} settings={settings} />
+      <FreeTierDiscovery resource={freeSync} now={now} onSynced={refresh} />
     </>
   );
 }
 
-// capacityAdapter must PATCH as the full 4-key object: settingsRepo's
-// updateSettings() merge-list excludes it, so a partial write would drop the
-// other three capabilities back to whatever the seeded defaults hold.
-function buildCapacityBody(current, key, form) {
-  const base = current || {};
-  const next = {};
-  for (const k of ['vision', 'pdf', 'audioInput', 'videoInput']) {
-    const cur = base[k] || { enabled: false, roundRobin: false, models: [] };
-    if (k === key) {
-      next[k] = {
-        enabled: form[`${k}.enabled`] ?? cur.enabled,
-        roundRobin: form[`${k}.roundRobin`] ?? cur.roundRobin,
-        models: (form[`${k}.models`] !== undefined
-          ? form[`${k}.models`]
-          : (cur.models || []).join(', ')
-        )
-          .split(',')
-          .map((x) => x.trim())
-          .filter(Boolean),
-      };
-    } else {
-      next[k] = cur;
-    }
+// Plans in effect: the live `/api/combos` path, which takes effect on the next
+// request. The Plans tab stages the same shape as a reviewed configuration
+// version instead.
+function PlansBoard({ advanced, density, combos, settings }) {
+  const [query, setQuery] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [members, setMembers] = useState('');
+  const [busy, setBusy] = useState(null);
+  const { options } = useConfiguredModels();
+  const rows = combos.data?.combos || [];
+  const needle = query.trim().toLowerCase();
+  const visible = rows.filter(
+    (row) =>
+      !needle ||
+      `${row.name} ${(row.models || []).join(' ')}`.toLowerCase().includes(needle)
+  );
+  const overrides = settings.data?.comboStrategies || {};
+  const fallback = settings.data?.comboStrategy || 'fallback';
+  const parse = (value) =>
+    String(value || '')
+      .split(/[\n,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+  async function run(id, request, message) {
+    if (busy) return;
+    setBusy(id);
+    const result = await request();
+    if (report(result, message, id)) combos.refresh();
+    setBusy(null);
   }
-  return next;
+  async function create(event) {
+    event.preventDefault();
+    const list = parse(members);
+    if (!name.trim() || !list.length) {
+      toast('orange', 'A plan needs a name and at least one member model.', 'Create a plan');
+      return;
+    }
+    await run(
+      name.trim(),
+      () =>
+        call('/api/combos', {
+          method: 'POST',
+          body: { name: name.trim(), kind: null, models: list },
+        }),
+      `Created. ${NEXT_REQUEST}`
+    );
+    setName('');
+    setMembers('');
+    setAdding(false);
+  }
+
+  return (
+    <Board label="Plans in effect" advanced={advanced} density={density}>
+      <BoardSummary
+        label="Plan summary"
+        chips={[
+          { id: null, label: rows.length === 1 ? 'plan' : 'plans', count: rows.length },
+          {
+            id: 'override',
+            tone: 'positive',
+            label: 'with a strategy override',
+            count: rows.filter((row) => overrides[row.name]?.fallbackStrategy).length,
+          },
+        ]}
+        note={`Default strategy ${fallback}. Edits here take effect on the next request; the Plans tab stages a reviewed version instead.`}
+      />
+      <BoardToolbar
+        search={query}
+        onSearch={setQuery}
+        searchLabel="Search plans"
+        actions={
+          <>
+            <Button
+              size="xs"
+              leftSection={<Icon name="i-add" />}
+              aria-expanded={adding}
+              onClick={() => setAdding((value) => !value)}
+            >
+              Create a plan
+            </Button>
+            <Tooltip label="Re-read the plans in effect">
+              <ActionIcon
+                variant="default"
+                aria-label="Refresh plans"
+                loading={combos.loading}
+                onClick={combos.refresh}
+              >
+                <Icon name="i-refresh" />
+              </ActionIcon>
+            </Tooltip>
+          </>
+        }
+      />
+      {adding ? (
+        <form className={styles.addRow} aria-label="Create a plan" onSubmit={create}>
+          <CommitText
+            className={styles.addName}
+            aria-label="Plan name"
+            placeholder="Plan name"
+            value={name}
+            onCommit={setName}
+          />
+          <MultiSelect
+            size="xs"
+            className={styles.addSecret}
+            aria-label="Member models in order"
+            placeholder="Member models, in order"
+            data={options}
+            searchable
+            value={parse(members)}
+            onChange={(value) => setMembers(value.join(', '))}
+          />
+          <Button size="xs" type="submit" disabled={Boolean(busy)}>
+            Create
+          </Button>
+          <Button size="xs" variant="default" onClick={() => setAdding(false)}>
+            Close
+          </Button>
+        </form>
+      ) : null}
+      {visible.map((plan) => {
+        const override = overrides[plan.name]?.fallbackStrategy;
+        return (
+          <article
+            key={plan.id}
+            className={styles.row}
+            data-account-id={plan.id}
+            aria-label={plan.name}
+          >
+            <div className="models-plan">
+              <div className={styles.identityText}>
+                <span className="models-id">{plan.name}</span>
+                <small>
+                  {override ? `Override ${override}` : `Uses the default strategy (${fallback})`}
+                </small>
+              </div>
+              <MultiSelect
+                size="xs"
+                className="models-plan-members"
+                aria-label={`Member models for ${plan.name}`}
+                placeholder="Member models, in order"
+                data={options}
+                searchable
+                value={plan.models || []}
+                disabled={busy === plan.id}
+                onChange={(value) =>
+                  run(
+                    plan.id,
+                    () =>
+                      call(`/api/combos/${encodeURIComponent(plan.id)}`, {
+                        method: 'PUT',
+                        body: { name: plan.name, kind: plan.kind || null, models: value },
+                      }),
+                    `Members saved. Rotation restarts from the first step. ${NEXT_REQUEST}`
+                  )
+                }
+              />
+              <InlineConfirm
+                label={`Delete the plan ${plan.name}`}
+                hint={`A client addressing "${plan.name}" is refused from its next request; each member keeps routing on its own name.`}
+                verb="Delete"
+                icon="i-close"
+                tone="red"
+                disabled={busy === plan.id}
+                onConfirm={() =>
+                  run(
+                    plan.id,
+                    () => call(`/api/combos/${encodeURIComponent(plan.id)}`, { method: 'DELETE' }),
+                    'Plan deleted.'
+                  )
+                }
+              />
+            </div>
+          </article>
+        );
+      })}
+      <div className={styles.messages}>
+        {combos.loading && !combos.data ? (
+          <div className={styles.empty}>
+            <Loader size="xs" /> Reading plans…
+          </div>
+        ) : null}
+        {combos.data && !rows.length ? (
+          <div className={styles.empty}>
+            No plan is defined. A client may only address a bare model until one exists.
+          </div>
+        ) : null}
+        {rows.length && !visible.length ? (
+          <div className={styles.empty}>No plan matches this search.</div>
+        ) : null}
+      </div>
+    </Board>
+  );
+}
+
+function FreeTierDiscovery({ resource, now, onSynced }) {
+  const [busy, setBusy] = useState(false);
+  const data = resource.data;
+  async function sync() {
+    setBusy(true);
+    const result = await call('/api/models/free-sync', { method: 'POST' });
+    if (result.ok && result.body?.skipped)
+      toast(
+        'orange',
+        `Not run: ${result.body.reason === 'already-running' ? 'a sync is already running.' : result.body.reason}`,
+        'Free-tier discovery'
+      );
+    else if (
+      report(
+        result,
+        `Synced. +${fmtNum(result.body?.added || 0)} / -${fmtNum(result.body?.removed || 0)} across ${fmtNum(Object.keys(result.body?.providers || {}).length)} providers.`,
+        'Free-tier discovery'
+      )
+    )
+      onSynced();
+    resource.refresh();
+    setBusy(false);
+  }
+  return (
+    <section className="models-section" aria-labelledby="free-tier-discovery">
+      <div className="models-section-head">
+        <h2 id="free-tier-discovery">Free-tier discovery</h2>
+        <span>
+          {data?.running
+            ? 'Running now'
+            : data?.lastRunAt
+              ? `Last run ${fmtRelative(data.lastRunAt, now)}`
+              : 'Not reported'}
+          {data?.config?.enabled
+            ? ` · every ${fmtUnit(data.config.intervalHours, 'hour')}`
+            : ' · scheduler off'}
+        </span>
+        <span className={styles.spacer} />
+        <Button size="xs" variant="default" loading={busy} onClick={sync}>
+          Sync now
+        </Button>
+      </div>
+      {data?.lastError ? (
+        <p className="models-note" role="alert">
+          {data.lastError}
+        </p>
+      ) : null}
+      <div className="models-chips">
+        {Object.entries(data?.providers || {}).map(([id, provider]) => (
+          <span key={id} className="models-chip">
+            <ProviderMark provider={id} size="small" />
+            {providerIdentity(id).name} · {fmtNum(provider.count)} models
+            {provider.updatedAt ? ` · ${fmtRelative(provider.updatedAt, now)}` : ''}
+          </span>
+        ))}
+        {data && !Object.keys(data.providers || {}).length ? (
+          <span className="models-note">No free-tier provider has synced yet.</span>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+// Capability-based auto-routing sits with the other routing decisions rather
+// than in the catalog, and its eligible-model pickers only offer models of
+// providers that have a configured account.
+export function CapabilityRouting() {
+  const settings = usePoll('/api/settings', 30000);
+  const [busy, setBusy] = useState(null);
+  const { options } = useConfiguredModels();
+  const current = settings.data;
+
+  async function save(key, patch, message) {
+    if (busy) return;
+    setBusy(key);
+    const result = await call('/api/settings', {
+      method: 'PATCH',
+      body: { capacityAdapter: buildCapacityBody(current?.capacityAdapter, key, patch) },
+    });
+    if (report(result, message, 'Capability routing')) settings.refresh();
+    setBusy(null);
+  }
+  async function saveSetting(body, message) {
+    setBusy('settings');
+    const result = await call('/api/settings', { method: 'PATCH', body });
+    if (report(result, message, 'Routing defaults')) settings.refresh();
+    setBusy(null);
+  }
+
+  return (
+    <section className="models-section" aria-labelledby="capability-routing">
+      <div className="models-section-head">
+        <h2 id="capability-routing">Capability routing and plan defaults</h2>
+        <span className={styles.spacer} />
+        <Tooltip label="Re-read the saved routing settings">
+          <ActionIcon
+            variant="default"
+            aria-label="Refresh routing settings"
+            loading={settings.loading}
+            onClick={settings.refresh}
+          >
+            <Icon name="i-refresh" />
+          </ActionIcon>
+        </Tooltip>
+      </div>
+      <p className="models-note">
+        The whole four-kind configuration is written on every save, because the gateway only accepts
+        it as one object. {NEXT_REQUEST}
+      </p>
+      <div className="models-capabilities">
+        {CAPABILITY_KINDS.map((kind) => {
+          const config = current?.capacityAdapter?.[kind.key] || {};
+          return (
+            <div key={kind.key} className="models-capability" aria-label={kind.label}>
+              <strong>{kind.label}</strong>
+              <Switch
+                size="xs"
+                label="Enabled"
+                checked={Boolean(config.enabled)}
+                disabled={!current || busy === kind.key}
+                onChange={(event) =>
+                  save(kind.key, { enabled: event.currentTarget.checked }, `${kind.label} saved.`)
+                }
+              />
+              <Switch
+                size="xs"
+                label="Rotate among eligible models"
+                checked={Boolean(config.roundRobin)}
+                disabled={!current || busy === kind.key}
+                onChange={(event) =>
+                  save(
+                    kind.key,
+                    { roundRobin: event.currentTarget.checked },
+                    `${kind.label} rotation saved.`
+                  )
+                }
+              />
+              <MultiSelect
+                size="xs"
+                aria-label={`Eligible models for ${kind.label}`}
+                placeholder="Eligible models"
+                data={options}
+                searchable
+                value={config.models || []}
+                disabled={!current || busy === kind.key}
+                onChange={(value) =>
+                  save(kind.key, { models: value }, `${kind.label} model list saved.`)
+                }
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="models-defaults">
+        <Select
+          size="xs"
+          label="Default plan strategy"
+          data={STRATEGIES}
+          value={current?.comboStrategy || 'fallback'}
+          disabled={!current || busy === 'settings'}
+          allowDeselect={false}
+          onChange={(value) =>
+            value && saveSetting({ comboStrategy: value }, `Default strategy is now ${value}.`)
+          }
+        />
+        <CommitNumber
+          label="Sticky round-robin limit"
+          aria-label="Sticky round-robin limit"
+          min={1}
+          value={current?.comboStickyRoundRobinLimit ?? 1}
+          disabled={!current || busy === 'settings'}
+          onCommit={(value) =>
+            saveSetting(
+              { comboStickyRoundRobinLimit: Number(value) || 1 },
+              'Sticky round-robin limit saved.'
+            )
+          }
+        />
+        <Switch
+          size="xs"
+          label="Only named plans may be requested"
+          checked={Boolean(current?.exposeComboOnly)}
+          disabled={!current || busy === 'settings'}
+          onChange={(event) =>
+            saveSetting(
+              { exposeComboOnly: event.currentTarget.checked },
+              event.currentTarget.checked
+                ? 'Only named plans may be requested.'
+                : 'Bare models and plans may both be requested.'
+            )
+          }
+        />
+      </div>
+    </section>
+  );
 }

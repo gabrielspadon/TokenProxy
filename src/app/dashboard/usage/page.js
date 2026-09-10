@@ -6,6 +6,7 @@ import EconomicsTools from '@/shared/components/workspace/EconomicsTools';
 import EconomicsFilters from '@/shared/components/workspace/EconomicsFilters';
 import { mergeEconomicsFilters } from '@/lib/db/analytics/investigationModel.mjs';
 import EconomicsLens, { EconomicsDetail } from '@/shared/components/workspace/EconomicsLens';
+import { useDensity, useLevel } from '@/shared/workspace/Board';
 import { groupFilters, groupKey, groupName } from '@/shared/components/workspace/economics';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { SelectionDock } from '@/shared/workspace/SelectionDock';
@@ -16,7 +17,11 @@ import styles from '@/shared/workspace/workspace.module.css';
 export default function EconomicsPage() {
   const router=useRouter(), params=useSearchParams();
   const analysisActive=!['filters','pricing','budgets'].includes(params?.get('tool'));
-  const { scope, setScope, accounts, observeSnapshot, selectedRecord, setSelectedRecord, economicsView, setEconomicsView, setContextView } = useWorkspace();
+  const workspace = useWorkspace();
+  const { scope, setScope, accounts, observeSnapshot, selectedRecord, setSelectedRecord, economicsView, setEconomicsView, setContextView } = workspace;
+  // The sidebar switch owns the level; the density is the one shared choice.
+  const advanced = useLevel();
+  const [density, setDensity] = useDensity();
   const groupBy=economicsView.groupBy;
   const setGroupBy=(value)=>setEconomicsView({groupBy:value,cohort:null});
   const selected=economicsView.cohort ? {groupBy,group:economicsView.cohort} : null;
@@ -87,11 +92,11 @@ export default function EconomicsPage() {
         ? groupName(inspected.group, inspected.groupBy, accounts)
         : 'Economics details';
   return (
-    <div className={styles.lensViewport}>
+    <div className={styles.lensViewport} data-density={density}>
       <div className={styles.lensHeading}>
         <div className={styles.lensTitle}>
           <h1>Economics</h1>
-          <p>Exact cost records, captured rates and attributed work</p>
+          <p>{advanced ? 'Advanced' : 'Everyday'} · exact cost records, captured rates and attributed work</p>
         </div>
       </div>
       <ScopeBar />
@@ -101,7 +106,7 @@ export default function EconomicsPage() {
       {selectedRecord?.kind==='economics-record' && exactRecord.data?.items?.length===0 && <Alert color="gray" mx={26}>The exact selected completion record is no longer retained. Its identity remains selected; no other record was substituted.</Alert>}
       <EconomicsTools filterCount={Object.keys(economicsView.filters || {}).length} filters={<EconomicsFilters value={economicsView.filters} onChange={filters=>setEconomicsView({filters})}/>}>
         <SelectionDock
-          open={analysisActive && Boolean(inspected)}
+          open={analysisActive && Boolean(inspected) && !(!advanced && inspected.kind === 'economics-group')}
           title={title}
           subtitle="Completion ledger · estimates and upstream USD reports"
           onClose={() => setInspection(null)}
@@ -121,14 +126,7 @@ export default function EconomicsPage() {
             </>
           }
         >
-          <div
-            style={{
-              height: '100%',
-              overflow: 'auto',
-              border: '1px solid var(--rule)',
-              borderRadius: 6,
-            }}
-          >
+          <div>
             <EconomicsLens
               data={population.data}
               loading={population.loading}
@@ -157,6 +155,14 @@ export default function EconomicsPage() {
               inspectedGroupId={selectedRecord?.kind === 'economics-group' && selectedRecord.groupBy === groupBy ? selectedRecord.id : null}
               onLedgerStatusChange={setStatus}
               onTimeRangeChange={(start, end) => setScope({ period: 'custom', start, end })}
+              onDrilldown={(nextGroupBy, group) => {
+                setEconomicsView({ groupBy: nextGroupBy, cohort: groupFilters(group, nextGroupBy) });
+                setInspection({ value: { kind: 'economics-group', group, groupBy: nextGroupBy } });
+              }}
+              advanced={advanced}
+              density={density}
+              onDensity={setDensity}
+              onRefresh={workspace.refresh}
             />
           </div>
         </SelectionDock>

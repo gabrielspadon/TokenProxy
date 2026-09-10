@@ -1,4 +1,18 @@
 @layer components {
+  /* One bordered panel, the same shape the board kit gives a card, for the
+     sections that stayed on plain markup. */
+  .connections-panel {
+    min-width: 0;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--raised);
+    padding: 10px 12px;
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+  .connections-panel h2 { font-size: var(--type-ui); font-weight: 600; color: var(--ink); }
+  .connections-panel p { font-size: var(--type-dense); line-height: 1.45; color: var(--slate); }
   .connections-summary { display: flex; flex-wrap: wrap; gap: 8px 24px; border-block: 1px solid var(--rule); padding-block: 10px; margin: 0; }
   .connections-summary > div { display: flex; align-items: baseline; gap: 9px; font-size: 13px; }
   .connections-summary dt { color: var(--slate); }
