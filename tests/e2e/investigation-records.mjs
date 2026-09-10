@@ -20,7 +20,7 @@ async function session(base,privateDirectory) {
 }
 async function savedDialog(page) {
   await page.getByRole('button',{name:'Saved investigations',exact:true}).click();
-  return page.getByRole('dialog',{name:'Saved investigations',exact:true});
+  return page.getByRole('region',{name:'Saved investigations',exact:true});
 }
 async function save(page,kind,name) {
   const dialog=await savedDialog(page);
@@ -40,7 +40,7 @@ async function restore(page,entry) {
 }
 async function exported(page) {
   await page.getByRole('button',{name:'Export evidence',exact:true}).click();
-  const dialog=page.getByRole('dialog',{name:'Export recorded evidence',exact:true});
+  const dialog=page.getByRole('region',{name:'Export recorded evidence',exact:true});
   const downloaded=page.waitForEvent('download');
   await dialog.getByRole('button',{name:'Download JSON evidence',exact:true}).click();
   const result=JSON.parse(await readFile(await (await downloaded).path(),'utf8'));

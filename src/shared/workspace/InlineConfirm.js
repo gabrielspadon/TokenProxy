@@ -29,6 +29,7 @@ export function InlineConfirm({
   hint,
   icon,
   verb = 'Confirm',
+  dismiss = 'Cancel',
   tone = 'gray',
   danger = false,
   irreversible = false,
@@ -128,7 +129,7 @@ export function InlineConfirm({
           onCancel?.();
         }}
       >
-        Cancel
+        {dismiss}
       </Button>
       {note ? (
         <Text size="xs" c="dimmed" className={styles.note}>
@@ -152,7 +153,8 @@ export function InlineConfirm({
   const statement = (
     <>
       <p>
-        {title ? <strong>{title}.</strong> : null} {changes || question}
+        {title ? <strong>{/[.?!]$/.test(title) ? title : `${title}.`}</strong> : null}{' '}
+        {changes || question}
       </p>
       <p className={styles.aside}>
         Requires {requires} {irreversible ? `Cannot be undone. ${undo || ''}` : undo || ''}

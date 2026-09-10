@@ -1,12 +1,12 @@
 'use client';
-import { useState } from 'react';
-import { ActionIcon, Button, Group, Modal, Select, Stack, Text, Tooltip } from '@mantine/core';
+import { useRef, useState } from 'react';
+import { ActionIcon, Button, Select, Text, Tooltip } from '@mantine/core';
 import { DateTimePicker } from '@mantine/dates';
 import { Icon } from '@/shared/components/Icon';
 import { providerIdentity } from '@/shared/components/ProviderMark';
 import { useWorkspace } from './WorkspaceProvider';
 import styles from './workspace.module.css';
-import { Investigations,SelectionEvidence } from './Investigations';
+import { EvidenceExport, SavedInvestigations, ScopeSection, SelectionDetails, SelectionEvidence } from './Investigations';
 import { modelsForAccounts } from './scopeOptions';
 
 const PERIODS = [
@@ -17,17 +17,41 @@ const PERIODS = [
 ];
 const unique = (values) => [...new Set(values.filter(Boolean))];
 export function ScopeBar({ analysisActions = true, showRefresh = true }) {
-  const { scope, setScope, snapshot, accounts, models, refresh } = useWorkspace();
-  const [customOpen, setCustomOpen] = useState(false);
+  const { scope, setScope, snapshot, accounts, models, refresh, selectedRecord, comparisonIds } = useWorkspace();
+  // One section at a time opens under the strip. While it writes it holds the
+  // strip: no other section opens and it cannot close.
+  const [section, setSection] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [start, setStart] = useState(null);
   const [end, setEnd] = useState(null);
   const [rangeError, setRangeError] = useState(null);
+  const strip = useRef(null);
+  // Details of a selection that no longer exists close with it.
+  const retained = analysisActions && (Boolean(selectedRecord) || comparisonIds.length > 0);
+  if (section === 'selection' && !retained) setSection(null);
+  const close = () => {
+    const from = section;
+    setSection(null);
+    // Focus returns to the control that opened the section, or to its nearest
+    // surviving neighbor when clearing removed that control.
+    requestAnimationFrame(() => {
+      const find = (name) => strip.current?.querySelector(`[data-scope-trigger="${name}"]`);
+      const target = from === 'selection' ? find('selection') || find('export') : from === 'range' ? find('range') || find('period') : find(from);
+      target?.focus({ preventScroll: true });
+    });
+  };
+  const toggle = (name) => {
+    if (busy) return;
+    if (section === name) close();
+    else setSection(name);
+  };
   const openRange = () => {
+    if (busy) return;
     const fieldValue = (value) => value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString().slice(0, 19).replace('T', ' ') : null;
     setStart(fieldValue(scope.start));
     setEnd(fieldValue(scope.end));
     setRangeError(null);
-    setCustomOpen(true);
+    setSection('range');
   };
   const providers = unique(accounts.map((account) => account.provider)).map((value) => ({
     value,
@@ -73,7 +97,7 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
       end: new Date(last).toISOString(),
     });
     setRangeError(null);
-    setCustomOpen(false);
+    close();
   };
   const populationFilters = <>
     <Select className={styles.scopeSelect}
@@ -87,9 +111,10 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
       onChange={(model) => setScope({ model })} />
   </>;
   return (
-    <><div className={styles.scope} role="group" aria-label="Shared analysis scope">
+    <><div ref={strip} className={styles.scope} role="group" aria-label="Shared analysis scope">
       <div className={styles.scopeFields}>
       <Select
+        data-scope-trigger="period"
         className={styles.periodSelect}
         aria-label="Time range"
         data={PERIODS}
@@ -97,7 +122,7 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
         onChange={changePeriod}
         allowDeselect={false}
       />
-      {scope.period === 'custom' && <Button variant="subtle" onClick={openRange}>Edit range</Button>}
+      {scope.period === 'custom' && <Button data-scope-trigger="range" variant="subtle" aria-expanded={section === 'range'} onClick={() => (section === 'range' ? close() : openRange())}>Edit range</Button>}
       <span className={styles.scopeSeparator} />{populationFilters}
       {scope.projectId && <Button variant="light" size="compact-sm" onClick={() => setScope({ projectId: null })}
         title={`Clear exact project filter ${scope.projectId}`}>Project {scope.projectId.slice(0, 8)} ×</Button>}
@@ -122,8 +147,8 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
       )}
       </div>
       <div className={styles.scopeActions}>
-      {analysisActions && <Investigations />}
-      {analysisActions && <SelectionEvidence />}
+      {analysisActions && <Button data-scope-trigger="saved" variant="default" size="compact-sm" aria-expanded={section === 'saved'} onClick={() => toggle('saved')}>Saved investigations</Button>}
+      {analysisActions && <SelectionEvidence section={section} onToggle={toggle} />}
       {showRefresh && <Tooltip label={snapshot ? 'Re-read the isolated snapshot' : 'Refresh observations'}>
         <ActionIcon
           variant="default"
@@ -135,41 +160,46 @@ export function ScopeBar({ analysisActions = true, showRefresh = true }) {
         </ActionIcon>
       </Tooltip>}
       </div>
-      <Modal
-        opened={customOpen}
-        onClose={() => setCustomOpen(false)}
-        title="Analysis time range"
-        centered
-      >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            Times use UTC. The start is inclusive and the end is exclusive.
-          </Text>
+    </div>
+    {section === 'range' && (
+      <ScopeSection label="Analysis time range" closeLabel="Close analysis time range" onClose={close}>
+        <Text size="xs" c="dimmed">
+          Times use UTC. The start is inclusive and the end is exclusive.
+        </Text>
+        <div className={styles.rangeFields}>
           <DateTimePicker
+            size="xs"
+            className={styles.rangeField}
             label="Start (UTC)"
             value={start}
             onChange={setStart}
             valueFormat="DD MMM YYYY, HH:mm"
           />
           <DateTimePicker
+            size="xs"
+            className={styles.rangeField}
             label="End (UTC)"
             value={end}
             onChange={setEnd}
             valueFormat="DD MMM YYYY, HH:mm"
           />
-          {rangeError && (
-            <Text c="red" size="sm">
-              {rangeError}
-            </Text>
-          )}
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setCustomOpen(false)}>
+          <span className={styles.rangeActions}>
+            <Button size="xs" onClick={applyRange}>Apply range</Button>
+            <Button size="xs" variant="default" onClick={close}>
               Cancel
             </Button>
-            <Button onClick={applyRange}>Apply range</Button>
-          </Group>
-        </Stack>
-      </Modal>
-    </div></>
+          </span>
+        </div>
+        {rangeError && (
+          <Text size="xs" c="var(--refusal)" role="alert">
+            {rangeError}
+          </Text>
+        )}
+      </ScopeSection>
+    )}
+    {analysisActions && section === 'saved' && <SavedInvestigations busy={busy} setBusy={setBusy} onClose={close} />}
+    {analysisActions && section === 'selection' && <SelectionDetails onClose={close} />}
+    {analysisActions && section === 'export' && <EvidenceExport busy={busy} setBusy={setBusy} onClose={close} />}
+    </>
   );
 }

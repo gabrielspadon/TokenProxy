@@ -143,21 +143,80 @@
   color: var(--nav-selected-edge);
 }
 .navBottom {
+  display: grid;
+  gap: 10px;
   border-top: 1px solid var(--nav-active);
-  padding: 12px;
+  padding: 10px 12px 12px;
 }
-.navBottom button {
+/* Rail settings apply in place: a small heading with the current state, one
+   segmented choice, and at most a short line under it. */
+.railSetting {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.railHead,
+.railAccount {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--type-dense);
+}
+.railHead {
+  color: var(--nav-muted);
+  font-weight: 500;
+}
+.railState {
   color: var(--nav-text);
-  justify-content: flex-start;
 }
-.navBottom [data-observation-control] {
-  width: 100%;
+.railAccount {
+  min-height: 26px;
   color: var(--nav-text);
-  background: var(--nav-active);
-  border-color: var(--nav-muted);
 }
-.navBottom [data-observation-control]:hover {
+.railAccount button {
+  color: var(--nav-text);
+}
+/* A disabled sign-out on the navy rail reads as muted, not as a light tile. */
+.railAccount button:disabled {
+  background: transparent;
+  color: var(--nav-muted);
+  opacity: 0.6;
+}
+.railSetting :global(.mantine-SegmentedControl-root) {
   background: var(--nav-active);
+}
+.railSetting :global(.mantine-SegmentedControl-label) {
+  color: var(--nav-text);
+}
+.railSetting :global(.mantine-SegmentedControl-label[data-active]) {
+  color: var(--ink);
+}
+.railSetting :global(.mantine-SegmentedControl-label[data-disabled]) {
+  color: var(--nav-muted);
+  opacity: 0.6;
+}
+.railSetting :global(.mantine-SegmentedControl-indicator) {
+  background: var(--raised);
+}
+.railNote,
+.railAlert {
+  margin: 0;
+  font-size: var(--type-dense);
+  line-height: 1.35;
+  color: var(--nav-muted);
+}
+.railAlert {
+  padding-inline-start: 6px;
+  border-inline-start: 2px solid var(--refusal);
+  color: var(--nav-text);
+}
+.railTip p {
+  margin: 0 0 4px;
+}
+.railTip p:last-child {
+  margin: 0;
 }
 .main {
   background: var(--canvas);
@@ -265,6 +324,20 @@
 .periodSelect {
   flex: 1.2 1 9rem;
   max-width: 11rem;
+}
+.rangeFields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px 8px;
+}
+.rangeField {
+  flex: 1 1 11rem;
+  max-width: 15rem;
+}
+.rangeActions {
+  display: inline-flex;
+  gap: 8px;
 }
 .scopeSeparator {
   height: 20px;
@@ -460,9 +533,6 @@
   }
 }
 @media (max-width: 768px) {
-  .desktopPreferences {
-    display: none;
-  }
   .workspaceLabel,
   .headerDivider,
   .isolation {

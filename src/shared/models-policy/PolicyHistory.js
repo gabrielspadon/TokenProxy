@@ -5,7 +5,7 @@ import { useResource } from '@/shared/workspace/useResource';
 import { shortHash, utcTime } from './policyModel';
 import styles from './policy.module.css';
 
-function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
+function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled, pending = [] }) {
   const [cursors, setCursors] = useState([null]);
   const before = cursors.at(-1);
   const result = useResource(
@@ -13,6 +13,15 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
     { refreshKey }
   );
   const rows = result.data?.[kind] || [];
+  // A review opened from a row reads under that row, across the whole table.
+  const pendingRow = (row) => {
+    const item = pending.find((entry) => entry.kind === kind && String(entry.id) === String(row.id));
+    return item ? (
+      <Table.Tr key={`pending:${row.id}`}>
+        <Table.Td colSpan={4}>{item.node}</Table.Td>
+      </Table.Tr>
+    ) : null;
+  };
   return (
     <div className={styles.panelBody}>
       {result.loading && <Text role="status">Reading {kind}…</Text>}
@@ -35,7 +44,7 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
-            {rows.map((row) => (
+            {rows.map((row) => [
               <Table.Tr key={row.id}>
                 <Table.Td className={styles.mono}>
                   {kind === 'drafts' ? `${row.id.slice(0, 12)} · r${row.revision}` : row.id}
@@ -99,8 +108,9 @@ function HistoryPage({ kind, refreshKey, onLoadDraft, onRollback, disabled }) {
                     </Text>
                   ) : null}
                 </Table.Td>
-              </Table.Tr>
-            ))}
+              </Table.Tr>,
+              pendingRow(row),
+            ])}
           </Table.Tbody>
         </Table>
       </Table.ScrollContainer>

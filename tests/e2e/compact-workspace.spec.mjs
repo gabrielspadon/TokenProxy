@@ -147,6 +147,44 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
         await capture(`compact-board-${width}`);
       }
     });
+    await check('Rail settings and scope-strip sections open inline, never as a dialog', async () => {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const updates = page.getByRole('radiogroup', { name: 'Update behavior', exact: true });
+      await expect(updates.getByRole('radio', { name: 'Live', exact: true })).toBeDisabled();
+      await expect(page.locator('[data-observation-control]')).toContainText('Snapshot');
+      await expect(page.getByRole('group', { name: 'Workspace preferences', exact: true }).getByRole('radiogroup', { name: 'Appearance', exact: true })).toBeVisible();
+      await capture('compact-rail-1440');
+      for (const [width, height] of [[1440, 1000], [390, 844]]) {
+        await page.setViewportSize({ width, height });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        for (const [control, name, label] of [['Saved investigations', 'Saved investigations', 'saved'], ['Export evidence', 'Export recorded evidence', 'export']]) {
+          const trigger = scope.getByRole('button', { name: control, exact: true });
+          await trigger.click();
+          const section = page.getByRole('region', { name, exact: true });
+          await expect(section).toBeVisible();
+          await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+          await expect(page.getByRole('dialog')).toHaveCount(0);
+          await layout(`${label}-section-${width}`);
+          await capture(`compact-${label}-section-${width}`);
+          await page.keyboard.press('Escape');
+          await expect(section).toHaveCount(0);
+          await expect(trigger).toBeFocused();
+        }
+        await scope.getByRole('combobox', { name: 'Time range', exact: true }).click();
+        await page.getByRole('option', { name: 'Custom UTC range', exact: true }).click();
+        const range = page.getByRole('region', { name: 'Analysis time range', exact: true });
+        await expect(range).toBeVisible();
+        await range.getByRole('button', { name: 'Apply range', exact: true }).click();
+        await expect(range.getByRole('alert')).toHaveText('Choose a start before the end.');
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        await layout(`range-section-${width}`);
+        await capture(`compact-range-section-${width}`);
+        await range.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await expect(range).toHaveCount(0);
+        await expect(scope.getByRole('combobox', { name: 'Time range', exact: true })).toHaveValue('All retained history');
+      }
+    });
     await page.setViewportSize({ width: 1920, height: 1080 });
     await row(research.id).getByRole('button', { name: /^Synthetic research account/ }).click();
     await expect(details(research.id)).toBeVisible();
@@ -165,6 +203,15 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
         expect(geometry.details.x).toBeGreaterThanOrEqual(geometry.board.x);
         expect(geometry.details.x + geometry.details.width).toBeLessThanOrEqual(geometry.board.x + geometry.board.width + 1);
         await capture(`compact-retained-${width}`);
+        await summary.click();
+        const retained = page.getByRole('region', { name: 'Retained evidence details', exact: true });
+        await expect(retained.getByText(`account · ${research.id}`, { exact: true })).toBeVisible();
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        await layout(`selection-details-${width}`);
+        await capture(`compact-selection-details-${width}`);
+        await page.keyboard.press('Escape');
+        await expect(retained).toHaveCount(0);
+        await expect(summary).toBeFocused();
       }
     });
     await page.setViewportSize({ width: 1920, height: 1080 });
@@ -173,11 +220,13 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
       await expect(summary).toContainText('Outside scope');
       await expect(row(research.id)).toHaveCount(0);
       await summary.click();
-      const popover = page.locator('.mantine-Popover-dropdown:visible');
-      await expect(popover.getByText(`account · ${research.id}`, { exact: true })).toBeVisible();
-      await expect(popover).toContainText('This record is outside the current filters. Its exact evidence stays selected.');
-      await capture('compact-excluded-popover-1920');
+      const retained = page.getByRole('region', { name: 'Retained evidence details', exact: true });
+      await expect(retained.getByText(`account · ${research.id}`, { exact: true })).toBeVisible();
+      await expect(retained).toContainText('This record is outside the current filters. Its exact evidence stays selected.');
+      await expect(page.getByRole('dialog')).toHaveCount(0);
+      await capture('compact-excluded-details-1920');
       await page.keyboard.press('Escape');
+      await expect(retained).toHaveCount(0);
       for (const lens of ['Context', 'Economics', 'Capacity']) {
         await page.getByRole('link', { name: lens, exact: true }).click();
         await expect.poll(() => new URL(page.url()).pathname, { timeout: 60000 }).toBe({ Context: '/dashboard/context', Economics: '/dashboard/usage', Capacity: '/dashboard' }[lens]);
@@ -189,7 +238,7 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
       await page.reload();
       await expect(summary).toContainText('Outside scope');
       await summary.click();
-      await page.locator('.mantine-Popover-dropdown:visible').getByRole('button', { name: 'Clear selection', exact: true }).click();
+      await page.getByRole('region', { name: 'Retained evidence details', exact: true }).getByRole('button', { name: 'Clear selection', exact: true }).click();
       await expect(summary).toHaveCount(0);
       await expect.poll(selected).toBeNull();
       await expect(scope.getByRole('button', { name: 'Export evidence', exact: true })).toBeFocused();
@@ -232,7 +281,7 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
       await expect(panel.getByRole('button', { name: 'Compare (2)', exact: true })).toBeEnabled({ timeout: 60000 });
       await expect.poll(comparisonIds).toEqual(ids);
       await summary.click();
-      await page.locator('.mantine-Popover-dropdown:visible').getByRole('button', { name: 'Clear comparison', exact: true }).click();
+      await page.getByRole('region', { name: 'Retained evidence details', exact: true }).getByRole('button', { name: 'Clear comparison', exact: true }).click();
       await expect.poll(comparisonIds).toEqual([]);
       await expect(scope.getByRole('button', { name: 'Export evidence', exact: true })).toBeFocused();
       for (const account of [research, batch]) await row(account.id).getByRole('checkbox', { name: `Compare ${account.name}`, exact: true }).check();
@@ -331,9 +380,9 @@ test.describe('compact touch and keyboard', () => {
       expect(response.headers()['x-tokenproxy-preview-version']).toBe(runtime.fixtureVersion);
       await expect(panel.locator('[data-account-id]')).toHaveCount(12, { timeout: 60000 });
       expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
-      await page.getByRole('button', { name: 'Workspace preferences', exact: true }).click();
-      await page.getByRole('dialog', { name: 'Workspace preferences', exact: true }).getByText('Dark', { exact: true }).click();
-      await page.keyboard.press('Escape');
+      // Appearance applies in place in the rail.
+      await page.getByRole('group', { name: 'Workspace preferences', exact: true }).getByRole('radiogroup', { name: 'Appearance', exact: true }).getByText('Dark', { exact: true }).click();
+      await expect(page.getByRole('dialog')).toHaveCount(0);
       await expect(page.locator('html')).toHaveAttribute('data-mantine-color-scheme', 'dark');
       const account = panel.locator('[data-account-id="capacity-fixture-a"]');
       for (const width of [390, 320]) {
@@ -351,18 +400,18 @@ test.describe('compact touch and keyboard', () => {
         await page.setViewportSize({ width, height: 844 });
         await summary.focus();
         await page.keyboard.press('Enter');
-        const popover = page.locator('.mantine-Popover-dropdown:visible');
-        await expect(popover.getByText('account · capacity-fixture-a', { exact: true })).toBeVisible();
-        const bounds = await popover.boundingBox();
+        const retained = page.getByRole('region', { name: 'Retained evidence details', exact: true });
+        await expect(retained.getByText('account · capacity-fixture-a', { exact: true })).toBeVisible();
+        const bounds = await retained.boundingBox();
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-        await capture(`compact-dark-selected-popover-${width}`);
+        await capture(`compact-dark-selected-details-${width}`);
         await page.keyboard.press('Escape');
-        await expect(popover).toBeHidden();
+        await expect(retained).toBeHidden();
         await expect(summary).toBeFocused();
       }
       await page.keyboard.press('Enter');
-      const clear = page.locator('.mantine-Popover-dropdown:visible').getByRole('button', { name: 'Clear selection', exact: true });
+      const clear = page.getByRole('region', { name: 'Retained evidence details', exact: true }).getByRole('button', { name: 'Clear selection', exact: true });
       await clear.focus();
       await page.keyboard.press('Enter');
       await expect(summary).toHaveCount(0);

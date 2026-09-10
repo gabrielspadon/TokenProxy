@@ -6,8 +6,6 @@ import {
   ActionIcon,
   AppShell,
   Burger,
-  Button,
-  Divider,
   Group,
   Modal,
   NavLink,
@@ -82,7 +80,6 @@ function WorkspaceShell({ children }) {
   const pathname = usePathname() || '/dashboard';
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [navigationMode, setNavigationMode] = useLocalStorage({ key: 'tokenproxy.navigation-mode', defaultValue: 'everyday' });
   const desktopNavigation = useMediaQuery('(min-width: 62em)');
@@ -152,32 +149,9 @@ function WorkspaceShell({ children }) {
               <Icon name="i-search" />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Workspace preferences">
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              aria-label="Workspace preferences"
-              className={styles.desktopPreferences}
-              onClick={() => setPreferencesOpen(true)}
-            >
-              <Icon name="i-access" />
-            </ActionIcon>
-          </Tooltip>
         </Group>
       </AppShell.Header>
       <AppShell.Navbar className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
-        <Button
-          hiddenFrom="md"
-          variant="subtle"
-          color="gray"
-          my="sm"
-          onClick={() => {
-            setMobileOpen(false);
-            setPreferencesOpen(true);
-          }}
-        >
-          Workspace preferences
-        </Button>
         <ScrollArea className={styles.navScroll}>
           <nav aria-label="Sections">
             <div className={styles.navigationMode}>
@@ -210,8 +184,56 @@ function WorkspaceShell({ children }) {
             ))}
           </nav>
         </ScrollArea>
+        {/* Preferences apply in place in the rail, beside the update behavior. */}
         <div className={styles.navBottom}>
           <ObservationControls />
+          <div className={styles.railSetting} role="group" aria-label="Workspace preferences">
+            <div className={styles.railHead}>
+              <span id="appearance-label">Appearance</span>
+            </div>
+            <Tooltip
+              label="Saved for this browser. System follows your device appearance."
+              multiline
+              w={240}
+              position="right-end"
+              events={{ hover: true, focus: true, touch: false }}
+            >
+              <SegmentedControl fullWidth size="xs" aria-labelledby="appearance-label" value={colorScheme} onChange={setColorScheme}
+                data={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'auto', label: 'System' }]} />
+            </Tooltip>
+            <div className={styles.railAccount}>
+              <span>
+                {auth?.authenticated
+                  ? `${auth.loginMethod || 'Password'} sign-in`
+                  : auth?.requireLogin === false
+                    ? 'Sign-in is turned off'
+                    : 'Operator account'}
+              </span>
+              {auth?.authenticated && (
+                <Tooltip label="Sign out">
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="sm"
+                    aria-label="Sign out"
+                    loading={signingOut}
+                    disabled={snapshot?.isolated}
+                    onClick={signOut}
+                  >
+                    <Icon name="i-signout" />
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </div>
+            {signOutError && <p role="alert" className={styles.railAlert}>{signOutError}</p>}
+            {snapshot && (
+              <p className={styles.railNote}>
+                {snapshot.kind === 'synthetic-fixture'
+                  ? 'Only fixture-scoped changes are available in this isolated runtime.'
+                  : 'Operational changes are disabled in this private snapshot.'}
+              </p>
+            )}
+          </div>
         </div>
       </AppShell.Navbar>
       <AppShell.Main className={styles.main}>
@@ -219,6 +241,8 @@ function WorkspaceShell({ children }) {
           {children}
         </div>
       </AppShell.Main>
+      {/* Search stays a layer: it is the one persistent entry plus its keyboard
+          shortcut that docs/design/COMPACT-WORKSPACE-20260907.md keeps. */}
       <Modal
         opened={searchOpen}
         onClose={() => setSearchOpen(false)}
@@ -258,48 +282,6 @@ function WorkspaceShell({ children }) {
           {!destinations.length && !accountResults.length && <div className={styles.searchEmpty} role="status">
             No matching destination or observed account. Try a provider name, quota, pricing, routing, or a shorter search.
           </div>}
-        </Stack>
-      </Modal>
-      <Modal
-        opened={preferencesOpen}
-        onClose={() => setPreferencesOpen(false)}
-        title="Workspace preferences"
-        centered
-      >
-        <Stack>
-          <Text>
-            {auth?.authenticated
-              ? `${auth.loginMethod || 'Password'} sign-in`
-              : auth?.requireLogin === false
-                ? 'Sign-in is turned off'
-                : 'Operator account'}
-          </Text>
-          <div>
-            <Text id="appearance-label" fw={500} mb={8}>Appearance</Text>
-            <SegmentedControl fullWidth aria-labelledby="appearance-label" value={colorScheme} onChange={setColorScheme}
-              data={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'auto', label: 'System' }]} />
-            <Text size="sm" c="dimmed" mt={8}>Saved for this browser. System follows your device appearance.</Text>
-          </div>
-          <Divider />
-          {auth?.authenticated && (
-            <Button
-              variant="light"
-              loading={signingOut}
-              disabled={snapshot?.isolated}
-              onClick={signOut}
-              leftSection={<Icon name="i-signout" />}
-            >
-              Sign out
-            </Button>
-          )}
-          {signOutError && <Text role="alert" c="red">{signOutError}</Text>}
-          {snapshot && (
-            <Text size="sm" c="dimmed">
-              {snapshot.kind === 'synthetic-fixture'
-                ? 'Only fixture-scoped changes are available in this isolated runtime.'
-                : 'Operational changes are disabled in this private snapshot.'}
-            </Text>
-          )}
         </Stack>
       </Modal>
     </AppShell>

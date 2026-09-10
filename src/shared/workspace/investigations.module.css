@@ -3,13 +3,27 @@
 .selectionTrigger:hover { border-color:currentColor; }
 .selectionTrigger :global(.mantine-Button-label) { display:flex;align-items:center;gap:6px;min-width:0; }
 .selectionLabel { display:block;min-width:0;max-width:12rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
-.selectionDetails { display:grid;gap:12px;max-width:calc(100vw - 32px);font-size:var(--type-ui); }
-.selectionIdentity { display:grid;gap:4px;min-width:0;color:var(--ink);overflow-wrap:anywhere;white-space:normal; }
-.record { font-family:var(--mono);font-size:13px;overflow-wrap:anywhere;color:var(--ink); }
-.entries { border-top:1px solid var(--rule);padding-top:12px; }
-.entries h3 { font-size:14px;font-weight:500;margin:0 0 8px; }
-.entry { display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--rule); }
-.entry strong { font-size:14px;font-weight:500;overflow-wrap:anywhere; }
-@media(max-width:768px) { .entry { align-items:flex-start;flex-wrap:wrap; } }
+
+/* A section opened from the scope strip sits in the page flow under it, on the
+   strip's own gutter. */
+.section { display:grid;gap:8px;min-width:0;margin:0 24px 10px;padding:8px 12px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--raised);color:var(--ink);font-size:var(--type-dense); }
+.sectionHead { display:flex;align-items:center;gap:8px;min-width:0; }
+.sectionHead .sectionTitle { flex:1;min-width:0;margin:0;font-size:var(--type-ui);font-weight:600;letter-spacing:0;color:var(--ink); }
+.saveForm,
+.exportRow { display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 8px;min-width:0; }
+.nameField { flex:1 1 14rem;max-width:22rem; }
+.kindField { flex:0 1 11rem; }
+.exportScope { flex:1 1 16rem;max-width:24rem; }
+.formNote { flex-basis:100%;max-width:none; }
+
+.selectionDetails { display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;min-width:0; }
+.selectionIdentity { display:grid;gap:2px;min-width:0;color:var(--ink);overflow-wrap:anywhere;white-space:normal; }
+.record { font-family:var(--mono);font-size:var(--type-dense);overflow-wrap:anywhere;color:var(--ink); }
+.entries { border-top:1px solid var(--rule);padding-top:8px; }
+.entries h3 { font-size:var(--type-ui);font-weight:500;margin:0 0 4px; }
+.entry { display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 0;border-bottom:1px solid var(--rule); }
+.entry:last-child { border-bottom:0; }
+.entry strong { font-size:var(--type-ui);font-weight:500;overflow-wrap:anywhere; }
+@media(max-width:768px) { .section { margin:0 16px 12px; } .entry { align-items:flex-start;flex-wrap:wrap; } }
 
 .notice { padding-inline-start:10px;border-inline-start:2px solid var(--positive); }

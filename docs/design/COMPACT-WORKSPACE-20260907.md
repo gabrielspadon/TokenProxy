@@ -8,7 +8,7 @@ The rendered baseline repeats scope, status and selection controls across multip
 
 ## Chosen composition
 
-One shared scope strip groups the time and population selectors, with saved investigations, retained selection and evidence actions beside them. Retained selection becomes an intrinsic summary control; its exact identity, excluded-scope explanation and clearing actions are available in a focused popover. A selection does not add an obligatory full-width row. Shared scope and selection continue to persist in the URL and across views.
+One shared scope strip groups the time and population selectors, with saved investigations, retained selection and evidence actions beside them. Retained selection becomes an intrinsic summary control; its exact identity, excluded-scope explanation and clearing actions open as a section under the strip. A selection does not add an obligatory full-width row. Shared scope and selection continue to persist in the URL and across views.
 
 One account region groups search, state facets, display preferences and refresh. Cards and Rows describe presentation. Comparison means selecting up to four accounts and opening the existing evidence-backed comparison. Direct controls keep their existing concurrency checks, persisted readback and conflict handling. Quota summaries put measured percentage, reset and age together. Further detail is an explicit disclosure rather than repeated prose around every measure. Recorded health, configured state and model-specific routing eligibility stay distinct.
 

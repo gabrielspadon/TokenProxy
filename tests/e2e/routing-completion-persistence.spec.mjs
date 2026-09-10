@@ -36,8 +36,9 @@ test('versioned routing draft, activation readback and reviewed restoration pers
   expect(stored.version.document.aliases[alias]).toBe('openai/gpt-4o');
   await mutation(page,'POST',`/api/admin/configuration/drafts/${created.id}/validate`,()=>page.getByRole('button',{name:'Validate locally',exact:true}).click());
   await page.getByRole('button',{name:'Review activation',exact:true}).click();
-  await expect(page.getByRole('dialog')).toContainText(`/aliases/${alias}`);
-  const activated=await mutation(page,'POST',`/api/admin/configuration/drafts/${created.id}/activate`,()=>page.getByRole('dialog').getByRole('button',{name:'Activate revision 2',exact:true}).click());
+  const activation=page.getByRole('group',{name:'Review draft activation',exact:true});
+  await expect(activation).toContainText(`/aliases/${alias}`);
+  const activated=await mutation(page,'POST',`/api/admin/configuration/drafts/${created.id}/activate`,()=>activation.getByRole('button',{name:'Activate revision 2',exact:true}).click());
   expect(activated.outcome).toBe('applied');
   await expect(page.getByRole('button',{name:'Review activation',exact:true})).toBeEnabled();
   expect((await read(page,'/api/admin/configuration')).currentHash).toBe(activated.currentHash);
@@ -48,7 +49,7 @@ test('versioned routing draft, activation readback and reviewed restoration pers
   const versionRow=page.getByRole('table',{name:'Configuration versions'}).locator('tbody tr').filter({has:page.locator('td').filter({hasText:new RegExp(`^${beforeVersionId}$`)})});
   await expect(versionRow).toHaveCount(1);
   await versionRow.getByRole('button',{name:'Review restoration',exact:true}).click();
-  const restored=await mutation(page,'POST',`/api/admin/configuration/versions/${beforeVersionId}/rollback`,()=>page.getByRole('dialog').getByRole('button',{name:`Restore version ${beforeVersionId}`,exact:true}).click());
+  const restored=await mutation(page,'POST',`/api/admin/configuration/versions/${beforeVersionId}/rollback`,()=>page.getByRole('group',{name:'Review configuration restoration',exact:true}).getByRole('button',{name:`Restore version ${beforeVersionId}`,exact:true}).click());
   expect(restored.outcome).toBe('applied');
   const final=await read(page,'/api/admin/configuration');expect(final.currentHash).toBe(initial.currentHash);expect(final.document).toEqual(initial.document);
   const receipts=await read(page,'/api/admin/configuration/receipts?limit=20');
