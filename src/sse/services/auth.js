@@ -65,7 +65,7 @@ import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaR
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
 import { resolveRoutingSessionIdentity } from './routingIdentity.js';
-import { accountAdmissionReason, temporaryPinWait } from './accountAdmissionPolicy.js';
+import { accountAdmissionReason, holdsCredential, temporaryPinWait } from './accountAdmissionPolicy.js';
 import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 import { getDisabledModels } from '@/lib/disabledModelsDb';
 import { isAccountModelDisabled } from '@/shared/utils/disabledModelPolicy.js';
@@ -525,6 +525,12 @@ export async function getProviderCredentials(
     const drainExcluded = [];
     const modelLocked = [];
     const availableConnections = connections.filter((c) => {
+      // A stored account with nothing to present cannot answer; it is skipped
+      // here so an upstream 401 never stands in for the pool's real state.
+      if (!holdsCredential(c)) {
+        emit('SEL', 'skipped', { conn: prefix8(c.id), why: 'no-credential' });
+        return false;
+      }
       const admissionReason = accountAdmissionReason(c, { model, preferredConnectionId,
         strictPreferredConnection, excluded: excludeSet.has(c.id), disabled: modelDisabled(c),
         draining: draining.has(c.id), ignoreLockConn });
