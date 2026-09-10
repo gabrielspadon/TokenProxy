@@ -201,6 +201,12 @@ test('the account board is one surface: glance, filter, edit in place, expand fo
       await expect(count).toHaveCount(0);
       expect(await page.evaluate(() => JSON.parse(localStorage.getItem('tokenproxy.capacity-hidden-windows') || '[]'))).toEqual([]);
     });
+    await check('Refresh re-reads the board; an isolated snapshot has no providers to ask', async () => {
+      const refresh = board.getByRole('button', { name: 'Refresh accounts', exact: true });
+      await refresh.click();
+      await expect(refresh).toBeEnabled();
+      await expect(board.locator('[data-account-id]')).toHaveCount(12);
+    });
     await check('Search and the paused chip change the actual row collection', async () => {
       const search = board.getByRole('searchbox', { name: 'Search accounts', exact: true });
       await search.fill(NAME);
