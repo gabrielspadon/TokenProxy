@@ -1,9 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { cloneElement, useState } from 'react';
 import { Alert, Badge, Button, Group, Modal, Stack, Table, Tabs, Text } from '@mantine/core';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
+import { useDensity, useLevel } from '@/shared/workspace/Board';
+import shared from '@/shared/workspace/workspace.module.css';
 import { PolicyEditor } from './PolicyEditor';
 import { PolicyHistory } from './PolicyHistory';
 import { ConfigurationDomains } from './ConfigurationDomains';
@@ -94,7 +96,12 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
     [notice, setNotice] = useState(null),
     [review, setReview] = useState(null),
     [historyKey, setHistoryKey] = useState(0);
+  const advanced = useLevel();
+  // One stored density read for the page. Every board renders at it, and only
+  // the first board of the open tab carries the switch, so the page shows one.
+  const [density, setDensity] = useDensity();
   const [section, setSection] = useState('editor');
+  const switchOn = (owner) => (section === owner ? setDensity : undefined);
   const [visitedSections, setVisitedSections] = useState(['editor']);
   const [discardTarget, setDiscardTarget] = useState(null);
   const [publicationUncertain, setPublicationUncertain] = useState(false);
@@ -275,22 +282,21 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
     });
   }
   return (
-    <div className={styles.root}>
-      <div className={styles.heading}>
-        <div>
+    <div className={`${shared.lensPage} ${styles.root}`} data-density={density}>
+      <div className={shared.lensHeading}>
+        <div className={shared.lensTitle}>
           <h1>Models</h1>
-          <p>Ordered plans, exact revisions and captured account decisions</p>
+          <p>
+            {advanced ? 'Advanced' : 'Everyday'} · the catalog, its plans and the routing they
+            resolve to
+          </p>
         </div>
         <span className={styles.mono} title={current.data?.currentHash}>
           Active {shortHash(current.data?.currentHash)}
         </span>
       </div>
       <ScopeBar analysisActions={false} />
-      <div className={styles.note}>
-        Versioned scope covers plans, direct aliases and their routing defaults. Account policy,
-        disabled models, cascade pairs, provider endpoints, network and shaping settings stay unchanged by
-        restoration.
-      </div>
+      <div className={`${shared.lensBody} ${styles.body}`}>
       {publicationUncertain && <Alert color="orange" title="Publication requires reconciliation" mt="sm">The prior publication has no verified complete readback. It will not be replayed. Inspect the current hash and operation receipts before another publication.<Button variant="subtle" disabled={busy} onClick={inspectPublication}>Inspect current policy and receipts</Button></Alert>}
       {failure && (
         <Alert
@@ -339,75 +345,100 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
           )}
         </div>
       )}
-      <Tabs value={section} onChange={value => { setSection(value); setVisitedSections(previous => previous.includes(value) ? previous : [...previous, value]); }} keepMounted={false} className={styles.pageTabs}>
+      <Tabs
+        value={section}
+        onChange={(value) => {
+          setSection(value);
+          setVisitedSections((previous) =>
+            previous.includes(value) ? previous : [...previous, value]
+          );
+        }}
+        keepMounted={false}
+        className={styles.pageTabs}
+      >
         <Tabs.List aria-label="Model configuration tasks">
           <Tabs.Tab value="editor">Plans</Tabs.Tab>
-          {automaticRouting && <Tabs.Tab value="auto-routing">Automatic routing</Tabs.Tab>}
-          {catalogControls && <Tabs.Tab value="catalog">Catalog controls</Tabs.Tab>}
-          {catalogTools && <Tabs.Tab value="catalog-tools">Catalog tools</Tabs.Tab>}
-          <Tabs.Tab value="cascade">Solo chat cascade</Tabs.Tab>
-          <Tabs.Tab value="simulator">Offline route preview</Tabs.Tab>
-          <Tabs.Tab value="history">History and receipts</Tabs.Tab>
-          <Tabs.Tab value="configuration">Configuration versions</Tabs.Tab>
-          <Tabs.Tab value="transfer">Import and export</Tabs.Tab>
+          <Tabs.Tab value="catalog">Catalog</Tabs.Tab>
+          <Tabs.Tab value="routing">Routing</Tabs.Tab>
+          <Tabs.Tab value="simulator">Route preview</Tabs.Tab>
+          <Tabs.Tab value="history">History</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="editor" keepMounted>
-      <div className={styles.toolbar}>
-        <Group gap="xs">
-          <Badge variant="light" color={dirty ? 'orange' : 'teal'} c={dirty ? 'var(--ember)' : 'var(--positive)'}>
-            {draft
-              ? draft.id
-                ? `Draft r${draft.revision}${dirty ? ' · unsaved edits' : ''}`
-                : 'Local repair · not stored'
-              : 'Effective configuration'}
-          </Badge>
-          {draft?.id && (
-            <span className={styles.mono} title={draft.id}>
-              {draft.id.slice(0, 12)}
-            </span>
-          )}
-        </Group>
-        <Group gap="xs">
-          <Button variant="subtle" disabled={busy} loading={current.loading} onClick={current.refresh}>
-            Refresh active policy
-          </Button>
-          <Button variant="default" disabled={busy || dirty || !current.data} onClick={create}>
-            New draft from active
-          </Button>
-          {draft && (
-            <>
-              <Button variant="default" disabled={busy || !dirty} onClick={save}>
-                Save draft revision
-              </Button>
-              <Button variant="light" disabled={busy || dirty} onClick={validate}>
-                Validate locally
+          <div className={styles.toolbar}>
+            <Group gap="xs">
+              <Badge
+                size="sm"
+                variant="light"
+                color={dirty ? 'orange' : 'teal'}
+                c={dirty ? 'var(--ember)' : 'var(--positive)'}
+              >
+                {draft
+                  ? draft.id
+                    ? `Draft r${draft.revision}${dirty ? ' · unsaved edits' : ''}`
+                    : 'Local repair · not stored'
+                  : 'Effective configuration'}
+              </Badge>
+              {draft?.id && (
+                <span className={styles.mono} title={draft.id}>
+                  {draft.id.slice(0, 12)}
+                </span>
+              )}
+            </Group>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                variant="subtle"
+                disabled={busy}
+                loading={current.loading}
+                onClick={current.refresh}
+              >
+                Refresh active policy
               </Button>
               <Button
-                disabled={busy || publicationUncertain || dirty || !validation?.valid}
-                onClick={() => publication('activate')}
+                size="xs"
+                variant="default"
+                disabled={busy || dirty || !current.data}
+                onClick={create}
               >
-                Review activation
+                New draft from active
               </Button>
-            </>
+              {draft && (
+                <>
+                  <Button size="xs" variant="default" disabled={busy || !dirty} onClick={save}>
+                    Save draft revision
+                  </Button>
+                  <Button size="xs" variant="light" disabled={busy || dirty} onClick={validate}>
+                    Validate locally
+                  </Button>
+                  <Button
+                    size="xs"
+                    disabled={busy || publicationUncertain || dirty || !validation?.valid}
+                    onClick={() => publication('activate')}
+                  >
+                    Review activation
+                  </Button>
+                </>
+              )}
+            </Group>
+          </div>
+          {busy && <Text role="status">Reading or recording policy state…</Text>}
+          {current.error && (
+            <Alert color="red" title="Active configuration unavailable">
+              {current.error}
+              <Button size="xs" variant="subtle" onClick={current.refresh}>
+                Retry active state
+              </Button>
+            </Alert>
           )}
-        </Group>
-      </div>
-      {busy && <Text role="status">Reading or recording policy state…</Text>}
-      {current.error && (
-        <Alert color="red" title="Active configuration unavailable">
-          {current.error}
-          <Button variant="subtle" onClick={current.refresh}>
-            Retry active state
-          </Button>
-        </Alert>
-      )}
-      {!activeDocument && current.loading && <Text role="status">Reading active policy…</Text>}
+          {!activeDocument && current.loading && <Text role="status">Reading active policy…</Text>}
           {activeDocument && (
-            <div className={styles.surface}>
+            <>
               <PolicyEditor
                 document={activeDocument}
                 disabled={!draft || busy}
                 accounts={workspace.accounts}
+                density={density}
+                onDensity={switchOn('editor')}
                 onChange={(value) => {
                   setDocument(value);
                   setValidation(null);
@@ -416,20 +447,24 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
               <div className={styles.panelBody}>
                 <Validation result={draft ? validation : current.data?.validation} />
               </div>
+            </>
+          )}
+        </Tabs.Panel>
+        <Tabs.Panel value="catalog" keepMounted>
+          {visitedSections.includes('catalog') && (
+            <div className={styles.stack}>
+              {cloneElement(catalogControls, { density, onDensity: switchOn('catalog') })}
+              {catalogTools}
             </div>
           )}
         </Tabs.Panel>
-        <Tabs.Panel value="configuration"><ConfigurationDomains /></Tabs.Panel>
-        <Tabs.Panel value="history">
-          <div className={styles.surface}>
-            <PolicyHistory
-              initialKind={historyKind}
-              refreshKey={historyKey}
-              disabled={busy || publicationUncertain}
-              onLoadDraft={load}
-              onRollback={(id) => publication('rollback', id)}
-            />
-          </div>
+        <Tabs.Panel value="routing" keepMounted>
+          {visitedSections.includes('routing') && (
+            <div className={styles.stack}>
+              {automaticRouting}
+              <CascadePolicy density={density} onDensity={switchOn('routing')} />
+            </div>
+          )}
         </Tabs.Panel>
         <Tabs.Panel value="simulator" keepMounted>
           <RoutingSimulator
@@ -445,12 +480,30 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
             }
           />
         </Tabs.Panel>
-        <Tabs.Panel value="auto-routing" keepMounted>{visitedSections.includes('auto-routing') && automaticRouting}</Tabs.Panel>
-        <Tabs.Panel value="catalog" keepMounted>{visitedSections.includes('catalog') && catalogControls}</Tabs.Panel>
-        <Tabs.Panel value="catalog-tools" keepMounted>{visitedSections.includes('catalog-tools') && catalogTools}</Tabs.Panel>
-        <Tabs.Panel value="cascade" keepMounted>{visitedSections.includes('cascade') && <CascadePolicy />}</Tabs.Panel>
-        <Tabs.Panel value="transfer" keepMounted>{visitedSections.includes('transfer') && <PlanTransfer disabled={busy || dirty} onImported={(value) => { adopt(value); refreshHistory(); setNotice({ message: `Imported draft revision ${value.revision} stored and read back. Validate and review its differences before activation.` }); }} />}</Tabs.Panel>
+        <Tabs.Panel value="history">
+          <div className={styles.stack}>
+            <PolicyHistory
+              initialKind={historyKind}
+              refreshKey={historyKey}
+              disabled={busy || publicationUncertain}
+              onLoadDraft={load}
+              onRollback={(id) => publication('rollback', id)}
+            />
+            <ConfigurationDomains />
+            <PlanTransfer
+              disabled={busy || dirty}
+              onImported={(value) => {
+                adopt(value);
+                refreshHistory();
+                setNotice({
+                  message: `Imported draft revision ${value.revision} stored and read back. Validate and review its differences before activation.`,
+                });
+              }}
+            />
+          </div>
+        </Tabs.Panel>
       </Tabs>
+      </div>
       <Modal
         opened={Boolean(review)}
         onClose={() => {

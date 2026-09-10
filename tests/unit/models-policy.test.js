@@ -11,7 +11,10 @@ import {
 } from '../../src/shared/models-policy/policyModel';
 
 const state = vi.hoisted(() => ({ workspace: null, analysisActions: null }));
-vi.mock('@/shared/workspace/WorkspaceProvider', () => ({ useWorkspace: () => state.workspace }));
+vi.mock('@/shared/workspace/WorkspaceProvider', () => ({
+  useWorkspace: () => state.workspace,
+  useOptionalWorkspace: () => state.workspace,
+}));
 vi.mock('@/shared/workspace/ScopeBar', () => ({
   ScopeBar: (props) => {
     state.analysisActions = props.analysisActions;
@@ -59,10 +62,10 @@ function button(name) {
 it('keeps a visited catalog draft mounted while operators switch model tasks', async () => {
   await render({ catalogControls: <DraftPanel /> });
   expect(document.querySelector('[aria-label="Unsaved catalog draft"]')).toBeNull();
-  await click('Catalog controls');
+  await click('Catalog');
   await input('[aria-label="Unsaved catalog draft"]', 'retain this alias');
   await click('Plans');
-  await click('Catalog controls');
+  await click('Catalog');
   expect(document.querySelector('[aria-label="Unsaved catalog draft"]').value).toBe('retain this alias');
 });
 async function click(name) {
@@ -221,8 +224,12 @@ describe('Policy workbench controls', () => {
     expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(1);
     expect(document.querySelector('[aria-label="Member 1 account"]').value).toBe('Synthetic account');
     expect(document.querySelector('[aria-label="Target for shortcut"]').value).toBe('claude/model-a');
-    expect(container.querySelector('#policy-defaults').textContent).toBe('Routing defaults');
-    expect(container.querySelector('#policy-aliases').textContent).toBe('Aliases (1)');
+    expect(container.querySelector('#policy-defaults').textContent).toBe(
+      'Routing defaults in this draft'
+    );
+    expect(
+      container.querySelector('section[aria-label="Direct aliases"]').textContent
+    ).toContain('1 alias');
     expect(calls.some((call) => call.method !== 'GET')).toBe(false);
   });
   it('stores ordered edits with the exact expected draft revision, then validates that stored revision', async () => {
@@ -324,7 +331,7 @@ describe('Policy workbench controls', () => {
           })
         : normal(url, method, body);
     await render();
-    await click('History and receipts');
+    await click('History');
     await click('Immutable versions');
     await click('Review restoration');
     expect(calls.some((call) => call.url.endsWith('/rollback'))).toBe(false);
@@ -386,7 +393,7 @@ describe('Policy workbench controls', () => {
       return normal(url, method, body);
     };
     await render();
-    await click('Offline route preview');
+    await click('Route preview');
     await click('Capture current inputs');
     await click('Simulate captured decision');
     expect(calls.find((call) => call.url.endsWith('/simulate')).body.capture).toEqual(capture);
@@ -398,8 +405,8 @@ describe('Policy workbench controls', () => {
     expect(
       document.querySelector('[aria-label="Captured route ordering"]').textContent
     ).toContain('Synthetic account');
-    await click('History and receipts');
-    await click('Offline route preview');
+    await click('History');
+    await click('Route preview');
     expect(button('Simulate captured decision').disabled).toBe(false);
     expect(calls.some((call) => call.url.includes('/v1/'))).toBe(false);
   });
@@ -413,7 +420,7 @@ describe('Policy workbench controls', () => {
           )
         : normal(url, method, body);
     await render();
-    await click('Offline route preview');
+    await click('Route preview');
     await click('Capture current inputs');
     expect(document.body.textContent).toContain('Virtual model capture is unsupported');
     expect(document.querySelector('[aria-label="Captured route ordering"]')).toBeNull();

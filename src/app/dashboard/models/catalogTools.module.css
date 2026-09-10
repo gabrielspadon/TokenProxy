@@ -1,11 +1,9 @@
-.tools { padding-block: 20px; min-width: 0; }
-.tools h2 { margin: 0 0 8px; font-size: var(--type-section); font-weight: 600; }
-.tools h3 { margin: 8px 0; font-size: var(--type-ui); font-weight: 600; }
-.sectionLinks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
-.sectionLinks a { color: var(--signal); font-size: var(--type-ui); }
-.toolSection { padding: 14px; border: 1px solid var(--rule); background: var(--raised); scroll-margin-top: 80px; min-width: 0; }
-.toolSection > h3 { margin-top: 0; margin-bottom: 14px; }
-.tools p { margin-block: 8px; overflow-wrap: anywhere; }
+.tools { min-width: 0; }
+.tools h2 { margin: 0 0 4px; font-size: var(--type-ui); font-weight: 600; }
+.tools h3 { margin: 6px 0; font-size: var(--type-ui); font-weight: 600; }
+.toolSection { padding: 10px 12px 12px; border: 1px solid var(--rule); background: var(--raised); min-width: 0; }
+.toolSection > h3 { margin-top: 0; margin-bottom: 8px; }
+.tools p { margin-block: 6px; overflow-wrap: anywhere; font-size: var(--type-dense); }
 .tools code { font-family: var(--mono); overflow-wrap: anywhere; }
 .code { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
 .code textarea { font-family: var(--mono); font-size: var(--type-ui); }
@@ -15,3 +13,16 @@
 .facts dt { color: var(--slate); }
 .facts dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 @media (max-width: 40em) { .facts { grid-template-columns: minmax(0, 1fr); gap: 4px; } .facts dd { margin-block-end: 8px; } }
+.review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--signal);
+  background: var(--signal-wash);
+  font-size: var(--type-dense);
+}
+.review > span { flex: 1 1 240px; color: var(--slate); }
+.review ul, .review ol { flex-basis: 100%; margin: 0; padding-inline-start: 18px; max-height: 160px; overflow: auto; }
+.diagnostics { font-size: var(--type-dense); }

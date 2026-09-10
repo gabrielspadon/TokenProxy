@@ -1,19 +1,20 @@
+/* Layout comes from the shared lens shell; this class only scopes the type and
+   the disabled-field contrast to the page. */
 .root {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-  gap: 14px;
+  gap: 10px;
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--type-ui);
 }
-.root h1 {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 600;
+.body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
 }
 .root h2 {
   margin: 0;
-  font-size: 19px;
+  font-size: var(--type-section);
   font-weight: 600;
 }
 .root h3 {
@@ -104,16 +105,59 @@
   border-inline-start-color: var(--signal);
 }
 .planDetail {
-  padding: 20px;
+  display: grid;
+  gap: 12px;
+  padding: 8px 10px 12px;
   min-width: 0;
+}
+.planRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) 90px minmax(0, 2fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 4px 10px;
+  min-height: 40px;
+}
+.planName :global(.mantine-Input-input) {
+  min-height: 24px;
+  height: 24px;
+  padding-inline: 6px;
+  font-size: var(--type-ui);
+  font-family: var(--mono);
+}
+.defaults {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  min-width: 0;
+}
+.defaults h2 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+}
+.subtitle {
+  color: var(--slate);
+  font-size: var(--type-dense);
+  text-align: end;
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .planRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .planRow > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
 }
 .sectionHead {
   margin-bottom: 10px;
 }
 .member {
   display: grid;
-  grid-template-columns: 30px 22px minmax(180px, 1.35fr) minmax(150px, 1fr) 28px;
-  gap: 9px;
+  grid-template-columns: 26px 18px minmax(160px, 1.35fr) minmax(140px, 1fr) 26px;
+  gap: 8px;
   align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid var(--rule);
@@ -147,9 +191,9 @@
 .aliasRow {
   display: grid;
   grid-template-columns: minmax(100px, 0.6fr) minmax(160px, 1fr) auto;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
-  padding: 8px 0;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--rule);
 }
 .diffTable {
@@ -275,6 +319,11 @@
   font-weight: 500;
   margin-bottom: 10px;
 }
+.stack {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
 .pageTabs > :first-child {
   margin-bottom: 12px;
   flex-wrap: wrap;
@@ -353,9 +402,93 @@
     transition: none !important;
   }
 }
-.cascadeFacts { display:grid; gap:12px; margin:20px 0; font-size:13px; }
+.cascadeFacts { display:grid; gap:8px; padding:8px 10px 12px; font-size:var(--type-dense); }
 .cascadeFacts > div { display:grid; grid-template-columns:minmax(130px, 1fr) minmax(0, 4fr); gap:16px; }
 .cascadeFacts dt { color:var(--slate); }
 .cascadeFacts dd { margin:0; line-height:1.5; }
 .cascadeDiff { max-height:320px; overflow:auto; font-size:13px; white-space:pre-wrap; overflow-wrap:anywhere; }
 @media (max-width:600px) { .cascadeFacts > div { grid-template-columns:1fr; gap:4px; } }
+
+.cascadeRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+.cascadeRow :global(.icon) {
+  color: var(--slate);
+}
+.cascadeReview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--signal-wash);
+  font-size: var(--type-dense);
+}
+.cascadeReview span {
+  color: var(--slate);
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.cascadeReview pre {
+  flex-basis: 100%;
+  max-height: 200px;
+  overflow: auto;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--type-dense);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .cascadeRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .cascadeRow > :nth-child(2) {
+    display: none;
+  }
+  .cascadeRow > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
+.autoRouting {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  min-width: 0;
+}
+.autoRouting h2 {
+  font-size: var(--type-ui);
+  font-weight: 600;
+}
+.autoRouting code {
+  font-family: var(--mono);
+}
+.autoGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 10px;
+}
+.cascadeReview dl {
+  flex-basis: 100%;
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+.cascadeReview dl > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 10px;
+}
+.cascadeReview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

@@ -25,10 +25,10 @@ test('versioned routing draft, activation readback and reviewed restoration pers
   await page.goto('/dashboard/models');
   const created=await mutation(page,'POST','/api/admin/configuration/drafts',()=>page.getByRole('button',{name:'New draft from active',exact:true}).click());
   const beforeVersionId=created.version.parentVersionId;
-  await page.getByRole('tab',{name:/^Aliases \(/}).click();
+  await page.getByRole('button',{name:'Add alias',exact:true}).first().click();
   await page.getByLabel('New alias',{exact:true}).fill(alias);
-  await page.getByLabel('Physical target',{exact:true}).fill('openai/gpt-4o');
-  await page.getByRole('button',{name:'Add alias',exact:true}).click();
+  await page.locator('input[aria-label="Physical target"]').fill('openai/gpt-4o');
+  await page.getByRole('button',{name:'Add alias',exact:true}).last().click();
   const saved=await mutation(page,'PATCH',`/api/admin/configuration/drafts/${created.id}`,()=>page.getByRole('button',{name:'Save draft revision',exact:true}).click());
   expect(saved.revision).toBe(2);
   expect((await read(page,'/api/admin/configuration')).currentHash).toBe(initial.currentHash);
@@ -43,7 +43,7 @@ test('versioned routing draft, activation readback and reviewed restoration pers
   expect((await read(page,'/api/admin/configuration')).currentHash).toBe(activated.currentHash);
   await page.reload();
   const reloaded=await read(page,'/api/admin/configuration');expect(reloaded.document.aliases[alias]).toBe('openai/gpt-4o');
-  await page.getByRole('tab',{name:'History and receipts',exact:true}).click();
+  await page.getByRole('tab',{name:'History',exact:true}).click();
   await page.getByRole('tab',{name:'Immutable versions',exact:true}).click();
   const versionRow=page.getByRole('table',{name:'Configuration versions'}).locator('tbody tr').filter({has:page.locator('td').filter({hasText:new RegExp(`^${beforeVersionId}$`)})});
   await expect(versionRow).toHaveCount(1);
@@ -58,21 +58,23 @@ test('versioned routing draft, activation readback and reviewed restoration pers
 
 test('cascade mapping saves with exact revision, reads back after reload and restores separately from plans',async({page},testInfo)=>{
   const initial=await read(page,'/api/routing-cascade');expect(initial.pairs).toEqual([]);
-  await page.goto('/dashboard/models');await page.getByRole('tab',{name:'Solo chat cascade',exact:true}).click();
-  await page.getByRole('button',{name:'Add cascade pair',exact:true}).click();
-  await page.getByLabel('Strong model 1',{exact:true}).fill('openai/gpt-4o');
-  await page.getByLabel('Exploration model 1',{exact:true}).fill('openai/gpt-4o-mini');
-  await page.getByRole('button',{name:'Review cascade change',exact:true}).click();
+  await page.goto('/dashboard/models');await page.getByRole('tab',{name:'Routing',exact:true}).click();
+  await page.getByRole('button',{name:'Add pair',exact:true}).click();
+  await page.locator('input[aria-label="Strong model 1"]').fill('openai/gpt-4o');
+  await page.locator('input[aria-label="Exploration model 1"]').fill('openai/gpt-4o-mini');
+  await page.getByRole('button',{name:'Review change',exact:true}).click();
   expect((await read(page,'/api/routing-cascade')).revision).toBe(initial.revision);
-  const applied=await mutation(page,'PUT','/api/routing-cascade',()=>page.getByRole('dialog').getByRole('button',{name:'Save cascade mapping',exact:true}).click());
-  await expect(page.getByText('Cascade policy read back and verified',{exact:true})).toBeVisible();
-  await page.reload();await page.getByRole('tab',{name:'Solo chat cascade',exact:true}).click();
-  await expect(page.getByLabel('Exploration model 1',{exact:true})).toHaveValue('openai/gpt-4o-mini');
+  const review=page.getByRole('region',{name:'Reviewed cascade mapping'});
+  const applied=await mutation(page,'PUT','/api/routing-cascade',()=>review.getByRole('button',{name:'Save cascade mapping',exact:true}).click());
+  await expect(page.getByText('Read back and verified',{exact:true})).toBeVisible();
+  await page.reload();await page.getByRole('tab',{name:'Routing',exact:true}).click();
+  await expect(page.locator('input[aria-label="Exploration model 1"]')).toHaveValue('openai/gpt-4o-mini');
   expect((await read(page,'/api/routing-cascade')).revision).toBe(applied.revision);
   await page.getByRole('button',{name:'Remove pair 1',exact:true}).click();
-  await page.getByRole('button',{name:'Review cascade change',exact:true}).click();
-  const restored=await mutation(page,'PUT','/api/routing-cascade',()=>page.getByRole('dialog').getByRole('button',{name:'Save cascade mapping',exact:true}).click());
-  await expect(page.getByText('No configured pairs. Cascade is off.',{exact:true})).toBeVisible();
+  await page.getByRole('group',{name:'Confirm: Remove pair 1'}).getByRole('button',{name:'Remove',exact:true}).click();
+  await page.getByRole('button',{name:'Review change',exact:true}).click();
+  const restored=await mutation(page,'PUT','/api/routing-cascade',()=>page.getByRole('region',{name:'Reviewed cascade mapping'}).getByRole('button',{name:'Save cascade mapping',exact:true}).click());
+  await expect(page.getByText('No configured pairs, so cascade is off.',{exact:false})).toBeVisible();
   const final=await read(page,'/api/routing-cascade');expect(final.revision).toBe(initial.revision);
   expect(final.receipts.slice(0,2).map(receipt=>receipt.id)).toEqual([restored.receipt.id,applied.receipt.id]);
   await testInfo.attach('cascade-persistence.json',{contentType:'application/json',body:JSON.stringify({fixture:ROUTING_FIXTURE.version,initial,applied,restored,final},null,2)});
@@ -89,7 +91,7 @@ test('exact pin attempt evidence, expiry, queued reassignment and clear retain t
   await page.getByRole('link',{name:'Inspect exact attempt and ordered stages',exact:true}).first().click();
   await expect(page.getByRole('table',{name:'Ordered shaping stages',exact:true})).toBeVisible({timeout:30000});
   await page.goto('/dashboard/sessions');await page.getByLabel(`Inspect pin ${pin.model} on ${pin.connectionId}`,{exact:true}).click();
-  const inspector=page.getByLabel('Selection details',{exact:true});
+  const inspector=page.getByLabel('Selected pin controls',{exact:true});
   const controls=inspector.locator('form');const change=controls.getByRole('combobox',{name:'Change',exact:true});
   const outcomes=[];
   await change.selectOption('expire');

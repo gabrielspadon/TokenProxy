@@ -1,46 +1,276 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, NativeSelect, TextInput } from '@mantine/core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Confirm } from '@/shared/components/Confirm';
-import { Notice } from '@/shared/components/Notice';
+import {
+  ActionIcon,
+  Button,
+  Loader,
+  NativeSelect,
+  NumberInput,
+  Select,
+  Text,
+  TextInput,
+  Tooltip,
+} from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import { Icon } from '@/shared/components/Icon';
 import { ProviderMark } from '@/shared/components/ProviderMark';
 import { call } from '@/shared/api';
 import { refusal } from '@/shared/refusal';
-import { overrideCandidates, parseWindow, resolveWindowOverride } from './contextModel';
+import {
+  Board,
+  BoardGroup,
+  BoardSummary,
+  BoardToolbar,
+  Card,
+  DensitySwitch,
+  EvidenceLine,
+  StateWord,
+  useDensity,
+  useLevel,
+} from '@/shared/workspace/Board';
+import { CommitNumber } from '@/shared/workspace/CommitFields';
+import { InlineConfirm } from '@/shared/workspace/InlineConfirm';
+import styles from '@/shared/workspace/board.module.css';
+import shared from '@/shared/workspace/workspace.module.css';
+import { overrideCandidates, parseWindow } from './contextModel';
+import {
+  BUCKETS,
+  SORTS,
+  contextBucket,
+  contextEntries,
+  contextSummary,
+  filterContext,
+  sortContext,
+  widestWindow,
+  windowMeter,
+} from './contextBoardModel';
 import { BulkOverrides } from './BulkOverrides';
 import './styles.css';
 
 const ENDPOINT = '/api/model-context';
-const PAGE_SIZE = 20;
-const tokens = value => Number.isFinite(value) && value > 0 ? value.toLocaleString('en-US') : 'Unknown';
-const identity = row => `${row.provider}/${row.model}`;
+// A catalog of a thousand-plus models is not a scrolling problem, it is a
+// rendering one: the board draws the first page and search narrows it.
+const CAP = 60;
+const TONE = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, bucket.tone]));
+const WORD = { override: 'Overridden', registered: 'Registered', unknown: 'Unknown' };
+const tokens = (value) =>
+  Number.isFinite(value) && value > 0 ? value.toLocaleString('en-US') : 'Unknown';
+const toast = (color, message, title) =>
+  notifications.show({ color, message, title, autoClose: color === 'teal' ? 4000 : 9000 });
 
 function ExactKey({ children }) {
-  return <code className="model-context-key" dir="ltr"><bdi dir="ltr">{children}</bdi></code>;
+  return (
+    <code className="model-context-key" dir="ltr">
+      <bdi dir="ltr">{children}</bdi>
+    </code>
+  );
+}
+
+// The meter line is a glance, so it carries the compact figure with the exact
+// one in its title; the editable field and the expanded facts carry the exact
+// number, which is what an operator types against.
+function CompactTokens({ value }) {
+  return Number.isFinite(value) && value > 0 ? (
+    <bdi className="model-context-number" dir="ltr" title={tokens(value)}>
+      {new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value)}
+    </bdi>
+  ) : (
+    <>Unknown</>
+  );
 }
 
 function TokenValue({ value }) {
-  return Number.isFinite(value) && value > 0 ? <bdi className="model-context-number" dir="ltr">{tokens(value)}</bdi> : <>Unknown</>;
+  return Number.isFinite(value) && value > 0 ? (
+    <bdi className="model-context-number" dir="ltr">
+      {tokens(value)}
+    </bdi>
+  ) : (
+    <>Unknown</>
+  );
+}
+
+// A destructive act confirms inline, next to the thing it removes: the shared
+// Confirm/Cancel pair, never a dialog.
+function RemoveOverride({ name, saved, disabled, onRemove }) {
+  if (!saved) return null;
+  return (
+    <InlineConfirm
+      label={`Remove the override for ${name}`}
+      hint={`Remove the saved override ${saved}`}
+      icon="i-close"
+      verb="Remove"
+      danger
+      disabled={disabled}
+      onConfirm={onRemove}
+    />
+  );
+}
+
+// The precedence evidence, expanded under the card or row rather than in a
+// layer: which keys could win, which one does, and where the next value would
+// come from once this one is removed.
+function ContextDetail({ entry, scopeKey, overrides, disabled, onScope }) {
+  const candidates = entry.provider ? overrideCandidates(entry.provider, entry.row.model) : [];
+  const options = [...new Map(candidates.map((candidate) => [candidate.key, candidate])).values()];
+  return (
+    <div className="model-context-detail" id={`context-detail-${entry.id}`}>
+      <dl className="model-context-facts">
+        <div>
+          <dt>Catalog window</dt>
+          <dd>
+            {entry.provider ? (
+              <>
+                <TokenValue value={entry.catalog} /> tokens
+              </>
+            ) : (
+              'Not a catalog model'
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Effective window</dt>
+          <dd>
+            <TokenValue value={entry.effective} /> tokens
+          </dd>
+        </div>
+        <div>
+          <dt>Winning override key</dt>
+          <dd>{entry.winner ? <ExactKey>{entry.winner.key}</ExactKey> : 'None'}</dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{entry.winner?.scope || 'Registered or capability default'}</dd>
+        </div>
+      </dl>
+      {entry.provider ? (
+        <NativeSelect
+          size="xs"
+          label="Override scope and saved key"
+          dir="ltr"
+          attributes={{ input: { dir: 'ltr' } }}
+          data-context-key-scope
+          className="model-context-scope"
+          value={scopeKey}
+          disabled={disabled}
+          onChange={(event) => onScope(event.currentTarget.value)}
+          data={options.map((option) => ({
+            value: option.key,
+            label: `${option.scope} · ⁦${option.key}⁩`,
+          }))}
+        />
+      ) : (
+        <p>
+          Exact saved key <ExactKey>{entry.key}</ExactKey>
+        </p>
+      )}
+      <p className="model-context-caution">
+        Provider-scoped keys affect that provider identity. Bare keys and wildcard rules can affect
+        several providers. An override does not establish provider entitlement or capacity, and
+        cannot by itself force a client&rsquo;s auto-compaction threshold to 100%.
+      </p>
+      <ol className="model-context-precedence">
+        {candidates.length ? (
+          candidates.map((candidate) => (
+            <li key={candidate.key}>
+              {candidate.scope} <ExactKey>{candidate.key}</ExactKey>
+              {Object.hasOwn(overrides, candidate.key) ? (
+                <>
+                  {' '}
+                  · <TokenValue value={overrides[candidate.key]} /> tokens saved
+                </>
+              ) : (
+                ' · not saved'
+              )}
+            </li>
+          ))
+        ) : (
+          <li>Provider / raw model, provider / basename, basename, then raw model exact keys.</li>
+        )}
+        <li>
+          Wildcard keys follow exact keys. The first matching saved wildcard wins,
+          case-insensitively, in saved map order.
+        </li>
+      </ol>
+      <p>
+        Saving replaces this exact key and reloads the gateway override map. Removing it exposes the
+        next matching rule or registered default. Requests already being processed may retain
+        earlier values.
+      </p>
+    </div>
+  );
+}
+
+function Evidence({ entry, widest }) {
+  const meter = windowMeter(entry.effective, widest);
+  return (
+    <>
+      <EvidenceLine
+        label="Effective"
+        remaining={meter.remaining}
+        level={meter.level}
+        unknown={meter.unknown}
+        value={<CompactTokens value={entry.effective} />}
+        note={entry.winner?.key || ''}
+        title={
+          entry.winner
+            ? `${entry.winner.scope} · ${entry.winner.key}`
+            : 'Registered or capability default'
+        }
+      />
+      {entry.provider && entry.catalog !== entry.effective ? (
+        <EvidenceLine
+          label="Catalog"
+          remaining={windowMeter(entry.catalog, widest).remaining}
+          level={windowMeter(entry.catalog, widest).level}
+          unknown={windowMeter(entry.catalog, widest).unknown}
+          value={<CompactTokens value={entry.catalog} />}
+          note="Registered default"
+          title="The window the catalog reports before any override"
+        />
+      ) : null}
+    </>
+  );
+}
+
+function TokenField({ entry, scopeKey, disabled, onCommit }) {
+  return (
+    <Tooltip label={`Saves to ${scopeKey} on Enter or blur`}>
+      <CommitNumber
+        className="model-context-tokens"
+        aria-label={`Context window in tokens for ${entry.name}`}
+        data-context-token-input
+        dir="ltr"
+        attributes={{ input: { dir: 'ltr' } }}
+        inputMode="numeric"
+        placeholder="Unknown"
+        value={entry.saved ?? entry.effective ?? ''}
+        disabled={disabled}
+        onCommit={onCommit}
+      />
+    </Tooltip>
+  );
 }
 
 export default function ModelContextPage() {
+  const advanced = useLevel();
+  const [density, setDensity] = useDensity();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [blocked, setBlocked] = useState(false);
+  const [busy, setBusy] = useState(null);
   const [query, setQuery] = useState('');
-  const [view, setView] = useState('models');
-  const [page, setPage] = useState(0);
-  const [selection, setSelection] = useState(null);
-  const [editKey, setEditKey] = useState('');
-  const [draft, setDraft] = useState('');
-  const [pending, setPending] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(null);
-  const [notice, setNotice] = useState(null);
+  const [bucket, setBucket] = useState(null);
+  const [sort, setSort] = useState('name');
+  const [expanded, setExpanded] = useState(null);
+  const [scopeKeys, setScopeKeys] = useState({});
+  const [adding, setAdding] = useState(false);
+  const [addKey, setAddKey] = useState('');
+  const [addTokens, setAddTokens] = useState('');
+  const [bulk, setBulk] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const controller = useRef(null);
-  const inspectorRef = useRef(null);
-  const selectionOrigin = useRef(null);
 
   const read = useCallback(async () => {
     controller.current?.abort();
@@ -50,132 +280,525 @@ export default function ModelContextPage() {
       const response = await fetch(ENDPOINT, { cache: 'no-store', signal: next.signal });
       const body = await response.json();
       if (!response.ok) return { error: refusal(response.status, body) };
-      if (!Array.isArray(body.models) || !body.overrides || typeof body.overrides !== 'object' || Array.isArray(body.overrides)) {
-        return { error: { tone: 'bad', title: 'Context configuration could not be read.', detail: 'The response did not contain a model list and override map.' } };
-      }
+      if (
+        !Array.isArray(body.models) ||
+        !body.overrides ||
+        typeof body.overrides !== 'object' ||
+        Array.isArray(body.overrides)
+      )
+        return {
+          error: {
+            tone: 'bad',
+            title: 'Context configuration could not be read.',
+            detail: 'The response did not contain a model list and override map.',
+          },
+        };
       return next.signal.aborted ? null : { data: body };
     } catch (cause) {
-      return next.signal.aborted ? null : { error: { tone: 'bad', title: 'Context configuration could not be read.', detail: cause.message } };
+      return next.signal.aborted
+        ? null
+        : {
+            error: {
+              tone: 'bad',
+              title: 'Context configuration could not be read.',
+              detail: cause.message,
+            },
+          };
     }
   }, []);
 
-  const receive = useCallback(result => {
+  const receive = useCallback((result) => {
     if (!result) return;
     if (result.data) setData(result.data);
     setError(result.error || null);
     setLoading(false);
+    return result;
   }, []);
 
+  // `loading` is already true on the first render, so the mount read never sets
+  // state synchronously inside the effect; the button path marks the read first.
+  const reread = useCallback(
+    () =>
+      read()
+        .then(receive)
+        .catch((cause) =>
+          receive({
+            error: {
+              tone: 'bad',
+              title: 'Context configuration could not be read.',
+              detail: cause.message,
+            },
+          })
+        ),
+    [read, receive]
+  );
+  const refresh = useCallback(() => {
+    setLoading(true);
+    return reread();
+  }, [reread]);
+
   useEffect(() => {
-    read().then(receive).catch(cause => receive({ error: { tone: 'bad', title: 'Context configuration could not be read.', detail: cause.message } }));
+    reread();
     return () => controller.current?.abort();
-  }, [read, receive]);
-  useEffect(() => {
-    if (selection) inspectorRef.current?.querySelector('[data-context-token-input]')?.focus();
-  }, [selection]);
+  }, [reread]);
 
-  const overrides = data?.overrides || {};
-  const model = selection?.kind === 'model' ? data?.models.find(row => identity(row) === selection.key) : null;
-  const source = model ? resolveWindowOverride(overrides, model.provider, model.model) : null;
-  const candidates = model ? overrideCandidates(model.provider, model.model) : [];
-  const options = [...new Map(candidates.map(candidate => [candidate.key, candidate])).values()];
-  const savedKeys = Object.keys(overrides);
-  const needle = query.trim().toLowerCase();
-  const rows = view === 'models'
-    ? (data?.models || []).filter(row => `${row.providerName} ${identity(row)} ${row.name}`.toLowerCase().includes(needle))
-    : savedKeys.filter(key => key.toLowerCase().includes(needle));
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visible = rows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
-  const value = parseWindow(draft);
-  const saved = Object.hasOwn(overrides, editKey);
-  const selectedExists = selection?.kind === 'model' ? Boolean(model) : Boolean(selection && Object.hasOwn(overrides, selection.key));
-  const canEdit = Boolean(data && !error && !loading && selectedExists && !busy);
+  const overrides = useMemo(() => data?.overrides || {}, [data]);
+  const entries = useMemo(() => contextEntries(data?.models || [], overrides), [data, overrides]);
+  const summary = contextSummary(entries);
+  const widest = widestWindow(entries);
+  const matching = sortContext(filterContext(entries, { query, bucket }), sort);
+  const visible = showAll || matching.length <= CAP ? matching : matching.slice(0, CAP);
+  const editable = Boolean(data) && !error && !loading && !blocked;
+  const scopeOf = (entry) => scopeKeys[entry.id] || entry.editKey;
 
-  function select(kind, key, row, origin) {
-    selectionOrigin.current = origin;
-    setSelection({ kind, key });
-    setEditKey(key);
-    setDraft(String(overrides[key] ?? row?.contextWindow ?? ''));
-    setNotice(null);
-  }
-
-  function review(remove = false) {
-    setFailed(null);
-    setPending({ key: editKey, remove, value, previous: overrides[editKey], existed: saved });
-  }
-
-  async function apply() {
-    if (busy || !pending) return;
-    setBusy(true);
-    setFailed(null);
-    const action = pending;
-    const result = await call(action.remove ? `${ENDPOINT}?key=${encodeURIComponent(action.key)}` : ENDPOINT, action.remove
-      ? { method: 'DELETE' }
-      : { method: 'PUT', body: { key: action.key, contextWindow: action.value } });
+  async function write(entry, action) {
+    if (busy) return;
+    setBusy(entry.id);
+    const result = await call(
+      action.remove ? `${ENDPOINT}?key=${encodeURIComponent(action.key)}` : ENDPOINT,
+      action.remove
+        ? { method: 'DELETE' }
+        : { method: 'PUT', body: { key: action.key, contextWindow: action.value } }
+    );
     if (!result.ok || result.body?.success !== true) {
-      setFailed(result.ok ? { tone: 'bad', title: 'The gateway did not confirm this change.' } : refusal(result.status, result.body));
-      setBusy(false);
+      const failure = result.ok
+        ? { title: 'The gateway did not confirm this change.', detail: null }
+        : refusal(result.status, result.body);
+      toast('orange', [failure.title, failure.detail].filter(Boolean).join(' '), entry.name);
+      setBusy(null);
       return;
     }
-    setLoading(true);
-    const readback = await read();
-    receive(readback);
+    const readback = await refresh();
     const fresh = readback?.data;
-    const verified = fresh && (action.remove ? !Object.hasOwn(fresh.overrides, action.key) : fresh.overrides[action.key] === action.value);
-    setPending(null);
-    setNotice(verified
-      ? { tone: 'info', title: `${action.remove ? 'Override removed' : 'Override saved'} and verified after refresh.`, detail: action.key }
-      : { tone: 'warn', title: 'The request succeeded, but readback did not verify the change.', next: 'Refresh configuration before making another change.', detail: action.key });
-    if (fresh && !verified) setError({ tone: 'warn', title: 'Configuration differs from the requested change. Refresh before editing.' });
-    setBusy(false);
+    const verified =
+      fresh &&
+      (action.remove
+        ? !Object.hasOwn(fresh.overrides, action.key)
+        : fresh.overrides[action.key] === action.value);
+    if (verified) {
+      toast(
+        'teal',
+        `${action.remove ? 'Override removed' : 'Override saved'} and verified after refresh: ${action.key}.`,
+        entry.name
+      );
+      setBlocked(false);
+    } else {
+      toast(
+        'orange',
+        `The request succeeded, but readback did not verify the change to ${action.key}. Refresh configuration before another change.`,
+        entry.name
+      );
+      setBlocked(true);
+    }
+    setBusy(null);
   }
 
-  const inspector = <div ref={inspectorRef} className="model-context-inspector" id="model-context-inspector">
-    {notice ? <Notice {...notice} detail={undefined}><p className="caption"><ExactKey>{notice.detail}</ExactKey></p></Notice> : null}
-    {!selectedExists ? <p>The selected record is no longer in the returned configuration.</p> : <>
-      <div className="model-context-facts">
-        <dl><dt>Catalog window</dt><dd>{model ? <><TokenValue value={model.staticContextWindow} /> tokens</> : 'Not a catalog model'}</dd></dl>
-        <dl><dt>Effective window</dt><dd>{model ? <><TokenValue value={model.contextWindow} /> tokens</> : 'Depends on matching models'}</dd></dl>
-        <dl><dt>Winning override key</dt><dd>{model ? source ? <ExactKey>{source.key}</ExactKey> : 'None' : <ExactKey>{selection.key}</ExactKey>}</dd></dl>
-        <dl><dt>Source</dt><dd>{model ? source?.scope || 'Registered or capability default' : selection.key.includes('*') ? 'Saved wildcard rule' : 'Saved exact key'}</dd></dl>
-      </div>
-      <div className="model-context-edit">
-        {model ? <NativeSelect label="Override scope and saved key" dir="ltr" attributes={{ input: { dir: 'ltr' } }} data-context-key-scope value={editKey} onChange={event => { setEditKey(event.currentTarget.value); setDraft(String(overrides[event.currentTarget.value] ?? model.contextWindow ?? '')); }} data={options.map(option => ({ value: option.key, label: `${option.scope} · \u2066${option.key}\u2069` }))} disabled={!canEdit} /> : <p>Exact saved key <ExactKey>{editKey}</ExactKey></p>}
-        <TextInput label="Context window in tokens" description="Positive whole tokens. Unknown limits stay blank." dir="ltr" attributes={{ input: { dir: 'ltr' } }} data-context-token-input inputMode="numeric" value={draft} onChange={event => setDraft(event.currentTarget.value)} error={value === null ? 'Enter a positive whole number of tokens.' : null} disabled={!canEdit} />
-        <div className="model-context-buttons"><Button disabled={!canEdit || value === null || (saved && overrides[editKey] === value)} onClick={() => review()}>Review override</Button><Button variant="light" color="red" disabled={!canEdit || !saved} onClick={() => review(true)}>Remove this override</Button></div>
-      </div>
-      <p className="model-context-caution">Provider-scoped keys affect that provider identity. Bare keys and wildcard rules can affect multiple providers. Overrides do not establish provider entitlement or capacity, and cannot by themselves force a client’s auto-compaction threshold to 100%.</p>
-      <details><summary>Matching precedence and scope</summary><ol>{candidates.length ? candidates.map((candidate, index) => <li key={`${candidate.key}-${index}`}>{candidate.scope} <ExactKey>{candidate.key}</ExactKey>{Object.hasOwn(overrides, candidate.key) ? <> · <TokenValue value={overrides[candidate.key]} /> tokens saved</> : ' · not saved'}</li>) : <li>Provider / raw model, provider / basename, basename, then raw model exact keys.</li>}<li>Wildcard keys follow exact keys. The first matching saved wildcard wins, case-insensitively, in saved map order.</li></ol><p>Saving replaces this exact key and reloads the gateway override map. Removing it exposes the next matching rule or registered default. Requests already being processed may retain earlier values.</p></details>
-    </>}
-  </div>;
+  function save(entry, value) {
+    const key = scopeOf(entry);
+    const parsed = parseWindow(String(value));
+    if (parsed === null) {
+      toast('orange', 'Enter a positive whole number of tokens.', entry.name);
+      return;
+    }
+    if (overrides[key] === parsed) return;
+    write(entry, { key, value: parsed });
+  }
 
-  return <div className="model-context-page">
-    <header className="model-context-heading"><div><Link href="/dashboard/shaping">Optimization</Link><h1>Context windows</h1><p>Inspect registered limits and the local overrides used by the gateway.</p></div><Button variant="default" disabled={busy || loading} onClick={() => { setNotice(null); setLoading(true); read().then(receive).catch(cause => receive({ error: { tone: 'bad', title: 'Context configuration could not be read.', detail: cause.message } })); }}>Refresh configuration</Button></header>
-    <p className="model-context-caution">Configuration is global to this gateway, independent of analytical time and account filters. Catalog visibility and configured connections are not evidence of model access.</p>
-    {error ? <Notice {...error} /> : null}
-    {loading ? <p role="status">Reading context configuration…</p> : null}
-    <BulkOverrides overrides={overrides} disabled={!data || loading || busy || !!error} onReadback={fresh => receive({ data: fresh })} />
-    <div className="model-context-tools"><TextInput type="search" label="Find a model or saved key" placeholder="Provider, model identity or wildcard" value={query} onChange={event => { setQuery(event.currentTarget.value); setPage(0); }} /><NativeSelect label="Inventory" value={view} onChange={event => { setView(event.currentTarget.value); setPage(0); }} data={[{ value: 'models', label: 'Registered models' }, { value: 'overrides', label: 'Saved override keys' }]} /><span>{data ? <><bdi dir="ltr">{rows.length.toLocaleString('en-US')}</bdi> {view === 'models' ? 'models' : 'saved keys'}</> : 'Inventory unknown'}</span></div>
-    <div className="model-context-dock" data-selected={Boolean(selection) || undefined}>
-      <div className="model-context-inventory">
-        <div className="model-context-table-scroll" role="region" aria-label="Context-window inventory, scroll horizontally for all columns" tabIndex={0}><table><caption>{view === 'models' ? 'Registered and effective context windows, in tokens' : 'Persisted overrides in matching order, including rules without a catalog model'}</caption><thead><tr>{view === 'models' ? <><th>Configured identity</th><th>Catalog tokens</th><th>Effective tokens</th><th>Override source</th></> : <><th>Exact saved key</th><th>Tokens</th><th>Scope</th></>}</tr></thead><tbody>{visible.map(row => {
-          if (view === 'overrides') return <tr key={row} data-selected={selection?.kind === 'override' && selection.key === row || undefined}><th><button type="button" aria-controls={selection ? "model-context-inspector" : undefined} aria-current={selection?.kind === 'override' && selection.key === row || undefined} onClick={event => select('override', row, null, event.currentTarget)}><ExactKey>{row}</ExactKey></button></th><td><TokenValue value={overrides[row]} /></td><td>{row.includes('*') ? 'Wildcard rule' : 'Exact key'}</td></tr>;
-          const key = identity(row);
-          const winner = resolveWindowOverride(overrides, row.provider, row.model);
-          return <tr key={key} data-selected={selection?.kind === 'model' && selection.key === key || undefined}><th><button type="button" aria-controls={selection ? "model-context-inspector" : undefined} aria-current={selection?.kind === 'model' && selection.key === key || undefined} onClick={event => select('model', key, row, event.currentTarget)}><ProviderMark provider={row.provider} /><span><bdi dir="auto">{row.name || row.model}</bdi><ExactKey>{key}</ExactKey><small><bdi dir="auto">{row.providerName || row.provider}</bdi> · {Number.isFinite(row.providerConnections) ? <><bdi dir="ltr">{row.providerConnections}</bdi> configured connections</> : 'Connections unknown'}</small></span></button></th><td><TokenValue value={row.staticContextWindow} /></td><td><TokenValue value={row.contextWindow} /></td><td>{winner ? <ExactKey>{winner.key}</ExactKey> : 'No context override'}</td></tr>;
-        })}</tbody></table>{data && !rows.length ? <p>No matching {view === 'models' ? 'models' : 'saved keys'}. Clear the search to inspect the full inventory.</p> : null}</div>
-        <nav className="model-context-pagination" aria-label="Context inventory pages"><Button variant="default" disabled={!currentPage} onClick={() => setPage(currentPage - 1)}>Previous</Button><span>Page <bdi dir="ltr">{currentPage + 1}</bdi> of <bdi dir="ltr">{pageCount}</bdi> · <bdi dir="ltr">{PAGE_SIZE}</bdi> rows per page</span><Button variant="default" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)}>Next</Button></nav>
+  async function addOverride() {
+    const key = addKey.trim();
+    const value = parseWindow(String(addTokens).trim());
+    if (!key || value === null) {
+      toast(
+        'orange',
+        'Give an exact key or wildcard rule and a positive whole number of tokens.',
+        'Add override'
+      );
+      return;
+    }
+    await write({ id: `override:${key}`, name: key }, { key, value });
+    setAddKey('');
+    setAddTokens('');
+    setAdding(false);
+  }
+
+  const chips = [
+    { id: null, label: entries.length === 1 ? 'entry' : 'entries', count: entries.length },
+    ...BUCKETS.map((item) => ({
+      id: item.id,
+      tone: item.tone,
+      label: item.label.toLowerCase(),
+      count: summary[item.id],
+    })),
+  ];
+
+  const cards = BUCKETS.map((item) => {
+    const members = visible.filter((entry) => contextBucket(entry) === item.id);
+    if (!members.length) return null;
+    return (
+      <BoardGroup key={item.id} label={item.label} tone={item.tone} count={members.length}>
+        {members.map((entry) => {
+          const state = contextBucket(entry);
+          const isOpen = expanded === entry.id;
+          return (
+            <Card
+              key={entry.id}
+              id={entry.id}
+              bucket={state}
+              expanded={isOpen}
+              label={entry.name}
+              head={
+                <>
+                  {entry.provider ? <ProviderMark provider={entry.provider} size="small" /> : null}
+                  <div className={styles.identityText}>
+                    <span className={styles.nameLine}>
+                      <button
+                        type="button"
+                        className={styles.nameButton}
+                        aria-expanded={isOpen}
+                        aria-controls={isOpen ? `context-detail-${entry.id}` : undefined}
+                        onClick={() => setExpanded(isOpen ? null : entry.id)}
+                      >
+                        {entry.name}
+                      </button>
+                    </span>
+                    <small>
+                      <ExactKey>{entry.key}</ExactKey>
+                    </small>
+                  </div>
+                  <Tooltip label={isOpen ? 'Collapse' : 'Matching precedence'}>
+                    <button
+                      type="button"
+                      className={styles.caret}
+                      aria-expanded={isOpen}
+                      aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${entry.name}`}
+                      onClick={() => setExpanded(isOpen ? null : entry.id)}
+                    >
+                      <Icon name={isOpen ? 'i-chevron-up' : 'i-chevron-down'} />
+                    </button>
+                  </Tooltip>
+                </>
+              }
+              state={
+                <>
+                  <StateWord tone={TONE[state]}>{WORD[state]}</StateWord>
+                  <span className={styles.spacer} />
+                  <TokenField
+                    entry={entry}
+                    scopeKey={scopeOf(entry)}
+                    disabled={!editable || busy === entry.id}
+                    onCommit={(value) => save(entry, value)}
+                  />
+                  <RemoveOverride
+                    name={entry.name}
+                    saved={entry.winner?.key}
+                    disabled={!editable || busy === entry.id}
+                    onRemove={() => write(entry, { key: entry.winner.key, remove: true })}
+                  />
+                </>
+              }
+              detail={
+                <ContextDetail
+                  entry={entry}
+                  scopeKey={scopeOf(entry)}
+                  overrides={overrides}
+                  disabled={!editable}
+                  onScope={(key) => setScopeKeys((previous) => ({ ...previous, [entry.id]: key }))}
+                />
+              }
+            >
+              <Evidence entry={entry} widest={widest} />
+            </Card>
+          );
+        })}
+      </BoardGroup>
+    );
+  });
+
+  const rows = visible.map((entry) => {
+    const state = contextBucket(entry);
+    const isOpen = expanded === entry.id;
+    return (
+      <article
+        key={entry.id}
+        className={styles.row}
+        data-account-id={entry.id}
+        data-expanded={isOpen || undefined}
+        data-bucket={state}
+        aria-label={entry.name}
+      >
+        <div className={styles.main}>
+          <Tooltip label={isOpen ? 'Collapse' : 'Matching precedence'}>
+            <button
+              type="button"
+              className={styles.caret}
+              aria-expanded={isOpen}
+              aria-controls={isOpen ? `context-detail-${entry.id}` : undefined}
+              aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${entry.name}`}
+              onClick={() => setExpanded(isOpen ? null : entry.id)}
+            >
+              <Icon name={isOpen ? 'i-chevron-up' : 'i-chevron-down'} />
+            </button>
+          </Tooltip>
+          <div className={styles.identity}>
+            {entry.provider ? <ProviderMark provider={entry.provider} size="small" /> : null}
+            <div className={styles.identityText}>
+              <span className={styles.nameLine}>
+                <button
+                  type="button"
+                  className={styles.nameButton}
+                  aria-expanded={isOpen}
+                  onClick={() => setExpanded(isOpen ? null : entry.id)}
+                >
+                  {entry.name}
+                </button>
+              </span>
+              <small>
+                <ExactKey>{entry.key}</ExactKey>
+              </small>
+            </div>
+          </div>
+          <div className={styles.state}>
+            <StateWord tone={TONE[state]}>{WORD[state]}</StateWord>
+          </div>
+          <div className={styles.quota}>
+            <Evidence entry={entry} widest={widest} />
+          </div>
+          <div className={styles.activity}>
+            <span>{entry.providerName}</span>
+            <small>
+              {Number.isFinite(entry.connections)
+                ? `${entry.connections} configured connections`
+                : entry.winner?.scope || 'Connections unknown'}
+            </small>
+          </div>
+          <div className={styles.actions}>
+            <TokenField
+              entry={entry}
+              scopeKey={scopeOf(entry)}
+              disabled={!editable || busy === entry.id}
+              onCommit={(value) => save(entry, value)}
+            />
+            <RemoveOverride
+              name={entry.name}
+              saved={entry.winner?.key}
+              disabled={!editable || busy === entry.id}
+              onRemove={() => write(entry, { key: entry.winner.key, remove: true })}
+            />
+          </div>
+        </div>
+        {isOpen ? (
+          <div className={styles.detail} role="region" aria-label="Selection details">
+            <ContextDetail
+              entry={entry}
+              scopeKey={scopeOf(entry)}
+              overrides={overrides}
+              disabled={!editable}
+              onScope={(key) => setScopeKeys((previous) => ({ ...previous, [entry.id]: key }))}
+            />
+          </div>
+        ) : null}
+      </article>
+    );
+  });
+
+  return (
+    <div className={`${shared.lensPage} model-context-page`} data-density={density}>
+      <div className={shared.lensHeading}>
+        <div className={shared.lensTitle}>
+          <h1>Context limits</h1>
+          <p>
+            {advanced ? 'Advanced' : 'Everyday'} · registered windows and the overrides the gateway
+            applies
+          </p>
+        </div>
+        <Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-xs">
+          Token savings
+        </Button>
       </div>
-      {selection && <aside className="model-context-selection" aria-label="Selection details">
-        <header className="model-context-selection-heading">
-          {model && <ProviderMark provider={model.provider} />}
-          <div><h2>{model ? <bdi dir="auto">{model.name || model.model}</bdi> : <bdi dir="ltr">{selection.key}</bdi>}</h2>{model && <ExactKey>{identity(model)}</ExactKey>}</div>
-          <Button variant="subtle" aria-label="Close selection details" onClick={() => { setSelection(null); setNotice(null); if (selectionOrigin.current?.isConnected) selectionOrigin.current.focus(); }}>Close</Button>
-        </header>
-        {inspector}
-      </aside>}
+      <div className={shared.lensBody}>
+        <Board label="Context limits" advanced={advanced} density={density} compare="none">
+          <BoardSummary
+            label="Context limit summary"
+            chips={chips}
+            active={bucket}
+            onPick={(value) => {
+              setBucket(value);
+              setShowAll(false);
+            }}
+            note={
+              loading
+                ? 'Reading context configuration…'
+                : blocked
+                  ? 'Readback is unverified. Refresh before another change.'
+                  : 'Edits save on Enter or blur. This configuration is global to the gateway.'
+            }
+          />
+          <BoardToolbar
+            search={query}
+            onSearch={(value) => {
+              setQuery(value);
+              setShowAll(false);
+            }}
+            searchLabel="Find a model or saved key"
+            actions={
+              <>
+                {advanced ? (
+                  <Tooltip label="Set or remove several exact keys together">
+                    <ActionIcon
+                      variant={bulk ? 'light' : 'default'}
+                      aria-label="Edit several overrides"
+                      aria-expanded={bulk}
+                      onClick={() => setBulk((value) => !value)}
+                    >
+                      <Icon name="i-edit" />
+                    </ActionIcon>
+                  </Tooltip>
+                ) : null}
+                <Button
+                  size="xs"
+                  leftSection={<Icon name="i-add" />}
+                  aria-expanded={adding}
+                  onClick={() => setAdding((value) => !value)}
+                >
+                  Add override
+                </Button>
+                <Tooltip label="Re-read the saved override map">
+                  <ActionIcon
+                    variant="default"
+                    aria-label="Refresh context configuration"
+                    loading={loading}
+                    onClick={refresh}
+                  >
+                    <Icon name="i-refresh" />
+                  </ActionIcon>
+                </Tooltip>
+              </>
+            }
+          >
+            {advanced ? (
+              <Select
+                size="xs"
+                aria-label="Sort context limits"
+                data={SORTS}
+                value={sort}
+                onChange={(value) => value && setSort(value)}
+                leftSection={<Icon name="i-sort" />}
+                className={styles.sort}
+                allowDeselect={false}
+              />
+            ) : null}
+            <DensitySwitch value={density} onChange={setDensity} />
+          </BoardToolbar>
+          {adding ? (
+            <form
+              className={styles.addRow}
+              aria-label="Add a context override"
+              onSubmit={(event) => {
+                event.preventDefault();
+                addOverride();
+              }}
+            >
+              <TextInput
+                size="xs"
+                className={styles.addName}
+                aria-label="Exact key or wildcard rule"
+                placeholder="provider/model or wildcard"
+                dir="ltr"
+                attributes={{ input: { dir: 'ltr' } }}
+                value={addKey}
+                onChange={(event) => setAddKey(event.currentTarget.value)}
+              />
+              <NumberInput
+                size="xs"
+                hideControls
+                allowDecimal={false}
+                className={styles.addMode}
+                aria-label="Context window in tokens for the new key"
+                placeholder="Tokens"
+                min={1}
+                value={addTokens}
+                onChange={setAddTokens}
+              />
+              <span className={styles.addNote}>
+                A wildcard rule applies after every exact key, in saved order.
+              </span>
+              <Button size="xs" type="submit" disabled={!editable || Boolean(busy)}>
+                Add
+              </Button>
+              <Button size="xs" variant="default" onClick={() => setAdding(false)}>
+                Close
+              </Button>
+            </form>
+          ) : null}
+          {advanced && bulk ? (
+            <div className="model-context-bulk-slot">
+              <BulkOverrides
+                overrides={overrides}
+                disabled={!editable}
+                onReadback={(fresh) => {
+                  receive({ data: fresh });
+                  setBlocked(false);
+                }}
+              />
+            </div>
+          ) : null}
+          {error ? (
+            <Text size="xs" c="orange.8" role="alert" className={styles.notice}>
+              {error.title} {error.detail || ''} {error.next || ''}
+            </Text>
+          ) : null}
+          {advanced ? (
+            <div className={styles.head} aria-hidden="true">
+              <span />
+              <span>Model or saved key</span>
+              <span>State</span>
+              <span>Context window</span>
+              <span>Provider</span>
+              <span>Tokens · remove</span>
+            </div>
+          ) : null}
+          {!advanced ? cards : null}
+          <div className={styles.rows} hidden={!advanced}>
+            {advanced ? rows : null}
+          </div>
+          <div className={styles.messages}>
+            {loading && !data ? (
+              <div className={styles.empty}>
+                <Loader size="xs" /> Reading context configuration…
+              </div>
+            ) : null}
+            {data && !entries.length ? (
+              <div className={styles.empty}>
+                No model reports a context window yet. A model appears once a provider is connected.
+              </div>
+            ) : null}
+            {visible.length < matching.length ? (
+              <div className={styles.empty}>
+                Showing {visible.length.toLocaleString('en-US')} of{' '}
+                {matching.length.toLocaleString('en-US')} entries. Search narrows the list.{' '}
+                <button type="button" className={styles.linkButton} onClick={() => setShowAll(true)}>
+                  Show every entry
+                </button>
+              </div>
+            ) : null}
+            {entries.length && !visible.length ? (
+              <div className={styles.empty}>
+                No model or saved key matches.{' '}
+                <button
+                  type="button"
+                  className={styles.linkButton}
+                  onClick={() => {
+                    setQuery('');
+                    setBucket(null);
+                  }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </Board>
+      </div>
     </div>
-    <Confirm open={Boolean(pending)} title={pending?.remove ? 'Remove context override' : 'Save context override'} verb={pending?.remove ? 'Remove override' : 'Save override'} requires="Permission to edit the gateway configuration." changes={<>{pending?.remove ? 'Remove' : <>Set <TokenValue value={pending?.value} /> tokens for</>} <ExactKey>{pending?.key}</ExactKey>. The gateway reloads its override map after saving. This does not change provider limits or client compaction policy.</>} undo={pending?.existed ? <>Restore the exact key <ExactKey>{pending.key}</ExactKey> to <TokenValue value={pending.previous} /> tokens.</> : 'Remove this exact override to restore the next matching rule or default.'} busy={busy} refusal={failed} onConfirm={apply} onClose={() => { if (!busy) { setPending(null); setFailed(null); } }} />
-  </div>;
+  );
 }
