@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { Select, Tooltip, useMantineColorScheme } from '@mantine/core';
 import { AnalyticalChart } from '@/shared/workspace/AnalyticalChart';
 import { chartMetricColors, chartThemeColors } from '@/shared/workspace/metricColors';
-import styles from './accountBoard.module.css';
+import styles from '@/shared/workspace/board.module.css';
 
 const number = (value) => (value == null ? '—' : new Intl.NumberFormat('en-US').format(value));
 const compact = (value) =>

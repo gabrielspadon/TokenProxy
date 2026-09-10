@@ -103,6 +103,18 @@ calendar always reads whole UTC days, spans the last year when the period is
 open, and picks its metric from a grouped list (Tokens: In, Out; Cache: Read,
 Write) so no option repeats a word. All four choices persist per browser.
 
+## The shared kit
+
+The board language now lives in `src/shared/workspace/board.module.css` and
+`src/shared/workspace/Board.js`: the panel, the summary strip of state chips,
+the toolbar (search, filter chips, sort in Advanced, the density switch, the
+primary action, refresh), state groups, cards with a head, a state row and
+evidence lines, status meters and composition bars, the hidden-window
+affordances, and the comfy or tidy density variants. Capacity's account
+board is the reference composition; every other working surface composes
+the same classes through the kit, so one stylesheet owns the look and one
+density choice applies to the whole application.
+
 ## Only what matters
 
 The model filter in the scope bar and the model picker in Model support list

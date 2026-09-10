@@ -10,7 +10,7 @@ import { AI_PROVIDERS } from '@/shared/constants/providers';
 import { accountOptionFields } from './connections/AccountOptions';
 import { credentialModes } from './accountBoardModel';
 import { providerChoiceId, providerChoices } from '@/shared/workspace/scopeOptions';
-import styles from './accountBoard.module.css';
+import styles from '@/shared/workspace/board.module.css';
 
 const MODE_WORD = { oauth: 'Sign in', apikey: 'API key', cookie: 'Cookie', none: 'No credential' };
 const PASTE_FLOWS = new Set(['browser_token', 'import_token']);

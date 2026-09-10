@@ -11,7 +11,7 @@ import { QuotaAcquisitionControls } from '@/shared/workspace/QuotaAcquisitionCon
 import { useWorkspace, analyticsUrl } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
 import shared from '@/shared/workspace/workspace.module.css';
-import styles from './accountBoard.module.css';
+import styles from '@/shared/workspace/board.module.css';
 import { AccountPolicyEvidence } from './AccountPolicyEvidence';
 import { capacityAttemptSelection } from './capacityControlsModel';
 

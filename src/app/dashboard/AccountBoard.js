@@ -49,7 +49,7 @@ import {
 } from './accountBoardModel';
 import { AccountDetail } from './AccountDetail';
 import { AddAccountRow } from './AddAccountRow';
-import styles from './accountBoard.module.css';
+import styles from '@/shared/workspace/board.module.css';
 
 const EMPTY = [];
 const TONE = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, bucket.tone]));
