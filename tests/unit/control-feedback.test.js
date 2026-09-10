@@ -23,7 +23,8 @@ async function expand(name) {
   expect(caret, `Missing caret for ${name}`).toBeDefined();
   await act(async () => caret.click());
 }
-function fact(label) { return [...container.querySelectorAll('.system-facts dt')].find(e => e.textContent === label)?.nextElementSibling.textContent; }
+// A System reading is one row of the control panel; its text is what it says.
+function row(id) { return container.querySelector(`[data-row="${id}"]`)?.textContent; }
 function probeNotice() { return [...container.querySelectorAll('.notice')].at(-1); }
 
 beforeEach(() => {
@@ -97,15 +98,16 @@ describe('Access uses the configuration check verdict and states its scope', () 
 describe('System version read failures', () => {
   it('ends all loading placeholders after HTTP 500, shows the reason, and retries only the version read', async () => {
     version = () => json({ message: 'Version lookup unavailable in this runtime.' }, 500);await mount(<SystemPage />);
-    for (const label of ['Running version', 'Published version', 'Update', 'Tray mode']) expect(fact(label)).toContain('Not reported');
+    for (const id of ['version', 'update']) expect(row(id)).toContain('Not reported');
+    expect(row('version')).not.toContain('Tray mode');
     expect(container.textContent).toContain('Version lookup unavailable in this runtime.');
     version = () => json(versionOk);await click('Retry version read');
-    expect(fact('Running version')).toContain('1.0.0');expect(fact('Published version')).toContain('1.0.1');expect(fact('Update')).toContain('Update available');
+    expect(row('version')).toContain('1.0.0');expect(row('update')).toContain('Version 1.0.1 is published');expect(row('update')).toContain('Newer version');
     expect(requests.filter(r => r.method !== 'GET')).toEqual([]);expect(requests.filter(r => r.url === '/api/version')).toHaveLength(2);
   });
   it('ends loading and exposes a retry after an interrupted version read', async () => {
     version = () => Promise.reject(new Error('connection ended'));await mount(<SystemPage />);
-    expect(fact('Published version')).not.toContain('Reading');
+    expect(row('version')).not.toContain('Reading');
     expect(container.textContent).toContain('Version information could not be read.');
     expect(container.textContent).toContain('Process health is reported separately below.');
     expect([...container.querySelectorAll('button')].some(e => e.textContent === 'Retry version read')).toBe(true);

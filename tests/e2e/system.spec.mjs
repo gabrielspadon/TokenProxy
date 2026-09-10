@@ -55,7 +55,7 @@ async function open(page, runtime) {
   await expect(page.locator('.mantine-AppShell-header')).toContainText('Synthetic fixture', { timeout: 60000 });
 }
 
-test('system is one board of runtime, checks, capacity, configuration and maintenance', async ({ page, context, baseURL }) => {
+test('system is one control panel of rows, in groups, with every unserved reading marked', async ({ page, context, baseURL }) => {
   test.setTimeout(180000);
   page.setDefaultTimeout(20000);
   const { runtime } = await fixture({ page, context, baseURL });
@@ -64,15 +64,38 @@ test('system is one board of runtime, checks, capacity, configuration and mainte
   await expect(board).toBeVisible();
   await expect(board).toHaveAttribute('data-density', 'tidy');
   await expect(board.getByRole('group', { name: 'System summary' })).toBeVisible();
-  for (const id of ['process', 'version', 'unreported', 'admission', 'export', 'import', 'update', 'shutdown'])
-    await expect(board.locator(`article[data-account-id="${id}"]`)).toBeVisible();
-  await expect(board.locator('article[data-account-id="database"]')).toContainText('Database');
+  for (const group of ['Runtime', 'Backup', 'Request capacity', 'Reads', 'Retention', 'Network defaults', 'Observability', 'Sharing', 'Configuration workflows', 'Health checks', 'Stop'])
+    await expect(board.locator(`section[aria-label="${group} settings"]`)).toBeVisible();
+  for (const id of ['process', 'version', 'update', 'export', 'import', 'admission', 'database', 'shutdown'])
+    await expect(board.locator(`[data-row="${id}"]`)).toBeVisible();
+  await expect(board.locator('[data-row="database"]')).toContainText('Database');
   // The runtime facts no route serves say so rather than guessing a path.
-  const facts = board.locator('dl.system-facts');
-  for (const label of ['Data directory', 'Database file', 'Timers and background jobs', 'Restart after replacement'])
-    await expect(facts.locator('dt', { hasText: label }).first().locator('+ dd .unreported')).toHaveText('Not reported');
+  for (const id of ['datadir', 'dbfile', 'timers', 'restart'])
+    await expect(board.locator(`[data-row="${id}"] .unreported`)).toHaveText('Not reported');
+  // No card anywhere on the panel, and no dialog over it.
+  await expect(board.locator('article')).toHaveCount(0);
   await expect(page.locator('dialog')).toHaveCount(0);
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+});
+
+test('everyday keeps the process, backup, capacity, one health row and stop; advanced adds the switches', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime } = await fixture({ page, context, baseURL }, { level: 'everyday' });
+  await open(page, runtime);
+  const board = page.locator('section[aria-label="System"]');
+  for (const group of ['Runtime', 'Backup', 'Request capacity', 'Health checks', 'Stop'])
+    await expect(board.locator(`section[aria-label="${group} settings"]`)).toBeVisible();
+  for (const group of ['Reads', 'Retention', 'Network defaults', 'Observability', 'Sharing', 'Configuration workflows'])
+    await expect(board.locator(`section[aria-label="${group} settings"]`)).toHaveCount(0);
+  await expect(board.locator('[data-row="accounts"]').getByRole('link', { name: 'Open Capacity' })).toBeVisible();
+  await expect(board.locator('[data-row="admission-maxHandlers"]')).toHaveCount(0);
+  // The search narrows the rows and says so when nothing matches.
+  await page.getByRole('searchbox', { name: 'Search settings' }).fill('shut');
+  await expect(board.locator('[data-row]')).toHaveCount(1);
+  await expect(board.locator('[data-row="shutdown"]')).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Search settings' }).fill('nothing matches this');
+  await expect(board).toContainText('No setting matches.');
 });
 
 test('the shutdown confirmation names what is cut and who restarts it, and posts nothing first', async ({ page, context, baseURL }) => {
@@ -80,9 +103,9 @@ test('the shutdown confirmation names what is cut and who restarts it, and posts
   page.setDefaultTimeout(20000);
   const { runtime, writes } = await fixture({ page, context, baseURL });
   await open(page, runtime);
-  await page.locator('article[data-account-id="shutdown"]').getByRole('button', { name: 'Shut down' }).click();
+  await page.locator('[data-setting="shutdown"]').getByRole('button', { name: 'Shut down' }).click();
   const ask = page.locator('form[aria-label="Shut down"]');
-  await expect(ask).toContainText('An operator credential. This holds even when sign-in is turned off.');
+  await expect(ask).toContainText('an operator credential. This holds even when sign-in is turned off.');
   await expect(ask).toContainText('Stops the process. Every request in flight is cut, and every client is refused.');
   await expect(ask).toContainText('Start TokenProxy again by hand on the machine that runs it.');
   await expect(page.locator('dialog')).toHaveCount(0);
@@ -97,11 +120,11 @@ test('the import confirmation names the replacement scope and carries the passwo
   page.setDefaultTimeout(20000);
   const { runtime, writes } = await fixture({ page, context, baseURL });
   await open(page, runtime);
-  const card = page.locator('article[data-account-id="import"]');
-  await card
+  const row = page.locator('[data-setting="import"]');
+  await row
     .locator('input[type="file"]')
     .setInputFiles({ name: 'synthetic-backup.json', mimeType: 'application/json', buffer: Buffer.from('{"settings":{}}') });
-  await card.getByRole('button', { name: 'Import configuration' }).click();
+  await row.getByRole('button', { name: 'Import configuration' }).click();
   const ask = page.locator('form[aria-label="Import configuration"]');
   await expect(ask).toContainText('Replaces settings, provider connections and nodes, proxy pools, client keys, routing plans, aliases, custom models and pricing with the file contents.');
   await expect(ask).toContainText('synthetic-backup.json');
@@ -117,7 +140,7 @@ test('a wrong password says so inside the confirmation and clears the field', as
   await page.unroute('**/api/settings/database');
   await page.route('**/api/settings/database', route => route.fulfill(json(401, { error: 'Invalid password' })));
   await open(page, runtime);
-  await page.locator('article[data-account-id="export"]').getByRole('button', { name: 'Export configuration' }).click();
+  await page.locator('[data-setting="export"]').getByRole('button', { name: 'Export configuration' }).click();
   const ask = page.locator('form[aria-label="Export configuration"]');
   const field = ask.locator('input[type="password"]');
   await field.fill('hunter2');
@@ -136,9 +159,8 @@ test('a failed version lookup is not rendered as up to date', async ({ page, con
     route.fulfill(json(200, { currentVersion: '0.0.1', latestVersion: null, hasUpdate: false, isTrayMode: false, buildSha: null }))
   );
   await open(page, runtime);
-  const facts = page.locator('article[data-account-id="version"] dl.system-facts');
-  await expect(facts).not.toContainText('Up to date');
-  const update = facts.locator('dt', { hasText: 'Update' }).first();
-  await expect(update.locator('+ dd .unreported')).toHaveText('Not reported');
-  await expect(update.locator('+ dd .why')).toContainText('A failed lookup is not the same as being current');
+  const update = page.locator('[data-row="update"]');
+  await expect(update).not.toContainText('Up to date');
+  await expect(update.locator('.unreported')).toHaveText('Not reported');
+  await expect(update).toContainText('A failed lookup is not the same as being current');
 });
