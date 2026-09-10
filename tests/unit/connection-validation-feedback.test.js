@@ -37,6 +37,7 @@ beforeEach(async () => {
   fixture.validation = { ok: true, kind: 'provider-validation', model: null, latencyMs: 22,
     checkedAt: '2026-09-06T12:00:00.000Z', generationVerified: false, upstreamContact: 'not-recorded' };
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
@@ -47,20 +48,33 @@ afterEach(() => { act(() => root.unmount()); container.remove(); });
 async function mount() { await act(async () => root.render(<MantineProvider env="test"><ConnectionPage params={Promise.resolve({ id: 'c-1' })} /></MantineProvider>)); }
 function fact(label) { return [...container.querySelectorAll('dt')].find(e => e.textContent === label)?.nextElementSibling.textContent; }
 const button = (label, scope = container) => [...scope.querySelectorAll('button')].find(node => node.textContent.trim().endsWith(label));
-const task = title => [...container.querySelectorAll('.account-task-form')].find(node => node.querySelector('h2').textContent === title);
+// Each task on the account page is a labelled section, and the task switch is
+// a segmented control rather than a row of buttons.
+const task = title => [...container.querySelectorAll('section')].find(node => node.getAttribute('aria-label') === title);
 async function click(label, scope) { await act(async () => button(label, scope).click()); }
+async function open(value) {
+  await act(async () => container.querySelector(`input[type="radio"][value="${value}"]`).click());
+}
+// A field that saves from itself: type, then commit with Enter.
+async function commit(input, value) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+}
 it('renders a check result separately from generation and independent capacity limits', async () => {
   await mount();
   expect(fact('Account ceiling')).toBe('3');
   expect(fact('Provider ceiling')).toBe('9');
-  await click('Diagnostics');
+  await open('diagnostics');
   expect(fact('Verdict')).toBe('Check passed');
   expect(fact('Generation')).toBe('Not verified by this check');
   expect(fact('Model')).toBe('Not recorded');
   expect(container.textContent).not.toContain('Answered');
 });
 it('keeps missing canonical validation unknown despite an old legacy success field', async () => {
-  fixture.validation = null; await mount(); await click('Diagnostics');
+  fixture.validation = null; await mount(); await open('diagnostics');
   expect(fact('Verdict')).toBe('Not established');
   expect(fact('Observed')).toBe('Not recorded');
 });
@@ -96,19 +110,14 @@ it('edits the union of exact snapshot keys and saved thresholds without losing c
   fixture.quotaPauseThresholds = { 'session (5h)': 10, 'weekly (7d)': 20 };
   await mount();
   const surface = task('Quota pause thresholds');
-  expect([...surface.querySelectorAll('label.field > span')].map(e => e.textContent)).toEqual(['session (5h)', 'weekly (7d)']);
+  expect([...surface.querySelectorAll('input')].map(input => input.getAttribute('aria-label')))
+    .toEqual(['Auto-pause threshold for session (5h)', 'Auto-pause threshold for weekly (7d)']);
   expect(surface.textContent).toContain('at or below');
-  expect(surface.textContent).toContain('Set 0 or leave empty');
+  expect(surface.textContent).toContain('0 turns pausing off');
   expect(surface.textContent).not.toContain('default policy');
-  const inputs = surface.querySelectorAll('input');
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inputs[0], '0');
-    inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await click('Review quota pause thresholds', surface);
-  const dialog = container.querySelector('dialog[open]'); expect(dialog.querySelector('input')).toBeNull();
-  await click('Save', dialog);
-  expect(fixture.calls).toEqual([{ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 0, 'weekly (7d)': 20 } } }]);
+  await commit(surface.querySelectorAll('input')[0], '0');
+  expect(container.querySelector('dialog')).toBeNull();
+  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 0, 'weekly (7d)': 20 } } });
 });
 
 it('shows unknown quota windows without fabricating a 5h input and keeps priority editable', async () => {
@@ -116,21 +125,15 @@ it('shows unknown quota windows without fabricating a 5h input and keeps priorit
   const thresholds = task('Quota pause thresholds');
   expect(thresholds.querySelectorAll('input')).toHaveLength(0);
   expect(thresholds.textContent).toContain('No exact quota windows have been observed or configured');
-  const input = task('Routing priority').querySelector('input');
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '4');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  await click('Review routing priority');
-  const dialog = container.querySelector('dialog[open]'); expect(dialog.querySelector('input')).toBeNull();
-  await click('Save', dialog);
-  expect(fixture.calls).toEqual([{ url: '/api/providers/c-1', method: 'PUT', body: { priority: 4 } }]);
+  await commit(task('Routing priority').querySelector('input'), '4');
+  expect(container.querySelector('dialog')).toBeNull();
+  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: { priority: 4 } });
 });
 
 it('allows fractional quota thresholds through native form validation and preserves their exact value', async () => {
   fixture.quotaPauseThresholds = { 'session (5h)': 12.5 }; await mount();
-  const surface = task('Quota pause thresholds'), form = surface.querySelector('form'), input = surface.querySelector('input');
-  expect(input.value).toBe('12.5'); expect(input.validity.stepMismatch).toBe(false); expect(form.checkValidity()).toBe(true);
-  await click('Review quota pause thresholds', surface); await click('Save', container.querySelector('dialog[open]'));
-  expect(fixture.calls).toEqual([{ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 12.5 } } }]);
+  const surface = task('Quota pause thresholds'), input = surface.querySelector('input');
+  expect(input.value).toBe('12.5%');
+  await commit(input, '7.5');
+  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 7.5 } } });
 });

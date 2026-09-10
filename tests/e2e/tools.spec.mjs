@@ -38,11 +38,15 @@ test('bridge status reflects actual running and stopped snapshots without claimi
   page,
 }) => {
   await page.goto('/dashboard/tools');
-  const rows = page.getByRole('region', { name: 'Extension comparison', exact: true }).getByRole('row');
-  await expect(rows.nth(1)).toContainText('Running');
-  await expect(rows.nth(1).getByRole('cell').nth(3)).toHaveText('2');
-  await expect(rows.nth(2)).toContainText('Stopped');
-  await expect(page.getByLabel('Observed extension summary')).toContainText('Bridge presets2');
+  // The board carries one card per preset; there is no table.
+  await expect(page.locator('table')).toHaveCount(0);
+  const filesystem = page.locator('article[data-account-id="filesystem"]');
+  const memory = page.locator('article[data-account-id="memory"]');
+  await expect(filesystem).toContainText('Running');
+  await expect(filesystem).toContainText('2 clients');
+  await expect(memory).toContainText('Stopped');
+  await expect(page.getByLabel('Observed extension summary')).toContainText('2 presets');
+  await expect(page.getByLabel('Observed extension summary')).toContainText('1 running');
   await expect(page.getByText(/Installation is not probed here/)).toBeVisible();
 });
 test('refresh re-reads bridge state and never starts a process', async ({ page }) => {
@@ -51,7 +55,7 @@ test('refresh re-reads bridge state and never starts a process', async ({ page }
     if (r.url().includes('/api/tools') && r.method() !== 'GET') writes.push(r.method());
   });
   await page.goto('/dashboard/tools');
-  await expect(page.getByRole('region', { name: 'Extension comparison', exact: true }).getByRole('row')).toHaveCount(3);
+  await expect(page.locator('article[data-account-id]')).toHaveCount(2);
   await page.route('**/api/tools', (r) =>
     r.fulfill(
       json(200, { ...snapshot, presets: [], summary: { presets: 0, running: 0, clients: 0 } })

@@ -15,13 +15,19 @@ import { call } from '@/shared/api';
 
 const fixture = vi.hoisted(() => ({ reads: {}, refresh: vi.fn() }));
 vi.mock('@/shared/api', () => ({ call: vi.fn() }));
+// The shared scope strip reads the whole workspace; these tests are about the
+// board under it, so it is stubbed rather than fixtured.
+vi.mock('@/shared/workspace/ScopeBar', () => ({ ScopeBar: () => null }));
 vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({ data: fixture.reads[url] || {}, loading: false, goodAt: 1, refresh: fixture.refresh }) }));
 vi.mock('@/shared/workspace/SelectionDock', () => ({ SelectionDock: ({ children }) => <div>{children}</div> }));
 let root, container;
 beforeEach(() => {
   vi.clearAllMocks(); fixture.reads = {};
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+  // A board toolbar carries a SegmentedControl, which measures itself.
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', ''); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open'); };
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
@@ -37,6 +43,21 @@ async function change(element, value) {
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
     element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
   });
+}
+// The page task switch is a segmented control; the provider picker is a
+// searchable combobox whose options render in a portal.
+const VIEW_LABEL = { accounts: 'Accounts', add: 'Add', import: 'Import', 'provider-policy': 'Providers', kiro: 'Kiro' };
+async function openTask(value) {
+  const tab = [...container.querySelectorAll('[role="tab"]')].find(
+    node => node.textContent.trim() === VIEW_LABEL[value]
+  );
+  await act(async () => tab.click());
+}
+async function pickProvider(id) {
+  const combobox = container.querySelector('[aria-label="Add a connection"] input[role="combobox"], [aria-label="Add a connection"] input[aria-autocomplete]');
+  await act(async () => combobox.click());
+  const option = [...document.querySelectorAll('[role="option"]')].find(node => node.getAttribute('value') === id || node.dataset.value === id);
+  await act(async () => option.click());
 }
 async function submit() { await act(async () => document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))); }
 
@@ -73,8 +94,13 @@ it('saves edited SAML mappings while preserving an untouched certificate and non
   fixture.reads['/api/auth/status'] = { authMode: 'sso', ssoType: 'saml', requireLogin: true, samlConfigured: true };
   fixture.reads['/api/settings'] = settings;
   call.mockResolvedValueOnce({ ok: true, body: {} }).mockResolvedValueOnce({ ok: true, body: { ...settings, samlAttributeName: 'commonName' } });
-  await mount(<AccessPage />); await change(input('Display-name attribute'), 'commonName'); await click('Review configuration');
-  const dialog = container.querySelector('dialog[open]'); await click('Save configuration', dialog);
+  await mount(<AccessPage />);
+  // Access is a board: the method's settings open in its own card, and the
+  // review is a confirmation beside the control rather than a dialog.
+  await act(async () => container.querySelector('button[aria-label="Expand SAML"]').click());
+  await change(input('Display-name attribute'), 'commonName'); await click('Review configuration');
+  const review = container.querySelector('[role="group"][aria-label="Configure single sign-on"]');
+  await click('Save configuration', review);
   expect(call.mock.calls[0]).toEqual(['/api/settings', { method: 'PATCH', body: { ...settings, samlAttributeName: 'commonName' } }]);
   expect(container.textContent).toContain('Sign-in has not been tested');
 });
@@ -85,8 +111,13 @@ it('restores a named release record with its concurrency version and verifies th
   fixture.reads['/api/admin/activation'] = { active, history: [active, target] };
   const saved = { ...target, status: 'active', concurrencyVersion: 'version-2' };
   call.mockResolvedValueOnce({ ok: true, body: saved }).mockResolvedValueOnce({ ok: true, body: { active: saved } });
-  await mount(<ConnectionsPage />); await change(input('Release record'), target.releaseId); await click('Restore a record');
-  const dialog = container.querySelector('dialog[open]'); expect(dialog.querySelector('select')).toBeNull(); await click('Restore record', dialog);
+  await mount(<ConnectionsPage />);
+  await change(document.querySelector('[aria-label="Release record to restore"]'), target.releaseId);
+  // Armed inline, then confirmed. No dialog stands between the two.
+  await click('Roll back');
+  expect(container.querySelector('dialog')).toBeNull();
+  expect(call).not.toHaveBeenCalled();
+  await click('Confirm');
   expect(call.mock.calls).toEqual([['/api/admin/rollback', { method: 'POST', body: { ifMatch: 'version-1', toReleaseId: target.releaseId } }], ['/api/admin/activation']]);
   expect(container.textContent).toContain('Recorded active release');
   expect(fixture.refresh).toHaveBeenCalled();
@@ -103,20 +134,23 @@ it('creates a dynamic node account with exact provider identity and verifies the
   fixture.reads['/api/provider-nodes'] = { nodes: [{ id: 'openai-compatible-fixture', name: 'Fixture node', type: 'openai-compatible' }] };
   const connection = { id: 'fixture-created', provider: 'openai-compatible-fixture' };
   call.mockResolvedValue({ ok: true, body: { connection } });
-  await mount(<ConnectionsPage />); await click('Add a connection');
-  const surface = container.querySelector('[aria-label="Add a connection"]'); await change(input('Provider', surface), connection.provider);
-  await change(input('Name', surface), 'Fixture account'); await click('Review account', surface);
-  const dialog = container.querySelector('dialog[open]'); expect(dialog.querySelector('input, select, textarea')).toBeNull(); await click('Add', dialog);
+  await mount(<ConnectionsPage />); await openTask('add');
+  const surface = container.querySelector('[aria-label="Add a connection"]');
+  await pickProvider(connection.provider);
+  await change(input('Name', surface), 'Fixture account');
+  expect(container.querySelector('dialog')).toBeNull();
+  await click('Add connection', surface);
   expect(call.mock.calls).toEqual([['/api/providers', { method: 'POST', body: { provider: connection.provider, name: 'Fixture account', defaultModel: null, apiKey: '' } }], ['/api/providers/fixture-created']]);
-  expect(dialog.textContent).toContain('The account is stored');
+  expect(surface.textContent).toContain('The account is stored');
 });
 
 it('keeps registry OAuth-only providers out of the API-key creation branch', async () => {
   call.mockResolvedValue({ ok: true, body: { flowType: 'authorization_code_pkce' } });
-  await mount(<ConnectionsPage />); await click('Add a connection');
-  const surface = container.querySelector('[aria-label="Add a connection"]'); await change(input('Provider', surface), 'codex');
+  await mount(<ConnectionsPage />); await openTask('add');
+  const surface = container.querySelector('[aria-label="Add a connection"]');
+  await pickProvider('codex');
   expect(input('API key', surface)).toBeUndefined();
-  expect(button('Review sign-in', surface)).toBeDefined();
+  expect(button('Sign in', surface)).toBeDefined();
   expect(call.mock.calls.every(([url]) => url.startsWith('/api/oauth/codex/authorize'))).toBe(true);
 });
 

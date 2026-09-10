@@ -43,7 +43,7 @@ it('does not send on mount and keeps partial import results plus the original dr
   await click('Review bulk import');
   expect(state.call).not.toHaveBeenCalled();
   state.call.mockResolvedValueOnce({ ok: true, body: { results: [{ id: 'new', success: true, added: true }, { id: 'bad', success: false, error: 'vision must be boolean' }] } }).mockResolvedValueOnce({ ok: true, body: { models: [models[0]] } });
-  await click('Confirm action');
+  await click('Confirm');
   expect(state.call.mock.calls).toEqual([['/api/models/custom', { method: 'POST', body: { models } }], ['/api/models/custom']]);
   expect(container.textContent).toContain('Batch partially completed');
   expect(container.textContent).toContain('vision must be boolean');
@@ -55,9 +55,9 @@ it('sends a single repeated-id delete after showing exact selected identities', 
   await fill(input('Registered provider'), 'p');
   await act(async () => { container.querySelectorAll('input[type="checkbox"]').forEach(box => box.click()); });
   await click('Review bulk deletion');
-  expect(document.querySelector('[role="dialog"]').textContent).toContain('second');
+  expect(container.querySelector('[role="region"][aria-label]:not([aria-label="Registered models to delete"]):not([aria-label="Model failures"])').textContent).toContain('second');
   state.call.mockResolvedValueOnce({ ok: true, body: { results: [{ id: 'first', success: true }, { id: 'second', success: true }] } }).mockResolvedValueOnce({ ok: true, body: { models: [] } });
-  await click('Confirm action');
+  await click('Confirm');
   expect(state.call.mock.calls[0]).toEqual(['/api/models/custom?providerAlias=p&type=llm&id=first&id=second', { method: 'DELETE' }]);
   expect(container.textContent).toContain('Saved state verified');
 });
@@ -66,7 +66,7 @@ it('keeps a successful write with failed readback unconfirmed and never repeats 
   await fill(input('Custom model JSON'), '[{"providerAlias":"p","id":"new"}]');
   await click('Review bulk import');
   state.call.mockResolvedValueOnce({ ok: true, body: { results: [{ id: 'new', success: true, added: true }] } }).mockResolvedValueOnce({ ok: false, status: 503, body: { error: 'read unavailable' } });
-  await click('Confirm action');
+  await click('Confirm');
   expect(container.textContent).toContain('Saved outcome needs verification');
   expect(state.call).toHaveBeenCalledTimes(2);
 });
@@ -74,9 +74,9 @@ it('keeps a successful write with failed readback unconfirmed and never repeats 
 it('names provider-wide cooldown scope and verifies every matching lock is absent', async () => {
   expect(container.querySelector('#catalog-tool-cooldown')).not.toBeNull();
   await click('Review cooldown clearance');
-  expect(document.querySelector('[role="dialog"]').textContent).toContain('across all matching accounts');
+  expect(container.querySelector('[role="region"][aria-label]:not([aria-label="Registered models to delete"]):not([aria-label="Model failures"])').textContent).toContain('across all matching accounts');
   state.call.mockResolvedValueOnce({ ok: true, body: { ok: true } }).mockResolvedValueOnce({ ok: true, body: { models: [] } });
-  await click('Confirm action');
+  await click('Confirm');
   expect(state.call.mock.calls[0]).toEqual(['/api/models/availability', { method: 'POST', body: { action: 'clearCooldown', provider: 'p', model: 'first' } }]);
   expect(container.textContent).toContain('does not prove model access');
 });
@@ -87,7 +87,7 @@ it('requires explicit confirmation for provider diagnostics and renders each mix
   await fill(input('Optional diagnostic prompt'), 'Synthetic prompt');
   await click('Review diagnostic sends');
   expect(state.call).not.toHaveBeenCalled();
-  expect(document.querySelector('[role="dialog"]').textContent).toContain('billed usage cannot be undone');
+  expect(container.querySelector('[role="region"][aria-label]:not([aria-label="Registered models to delete"]):not([aria-label="Model failures"])').textContent).toContain('billed usage cannot be undone');
   state.call.mockResolvedValueOnce({ ok: true, body: { ok: false, results: [{ model: 'p/first', ok: true, latencyMs: 0, preview: 'answer' }, { model: 'q/second', ok: false, error: 'synthetic refusal' }] } });
   await click('Send diagnostics');
   expect(state.call).toHaveBeenCalledExactlyOnceWith('/api/models/test', { method: 'POST', body: { models: ['p/first', 'q/second'], kind: 'llm', prompt: 'Synthetic prompt' } });
@@ -105,7 +105,7 @@ it('keeps suggested membership editable and verifies exact saved order', async (
   await fill(input('Ordered plan members'), 'q/second\np/first');
   await click('Review suggested plan');
   state.call.mockResolvedValueOnce({ ok: true, body: { name: 'synthetic-plan' } }).mockResolvedValueOnce({ ok: true, body: { combos: [{ name: 'synthetic-plan', models: ['q/second', 'p/first'] }] } });
-  await click('Confirm action');
+  await click('Confirm');
   expect(state.call.mock.calls[1]).toEqual(['/api/combos', { method: 'POST', body: { name: 'synthetic-plan', models: ['q/second', 'p/first'], kind: 'llm' } }]);
   expect(container.textContent).toContain('Saved state verified');
 });
@@ -115,7 +115,7 @@ it('synchronizes metadata only after confirmation and verifies the persisted che
   await click('Review catalog refresh');
   expect(state.call).not.toHaveBeenCalled();
   state.call.mockResolvedValueOnce({ ok: true, body: { result: { status: 'unchanged' } } }).mockResolvedValueOnce({ ok: true, body: { lastSync: 2000, lastResult: { status: 'unchanged' } } });
-  await click('Confirm action');
+  await click('Confirm');
   expect(state.call.mock.calls).toEqual([['/api/models/catalog-sync', { method: 'POST' }], ['/api/models/catalog-sync']]);
   expect(container.textContent).toContain('Saved state verified');
 });
