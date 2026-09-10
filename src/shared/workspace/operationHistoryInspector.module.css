@@ -1,115 +1,95 @@
+/* Retained operation history. The inventory is the shared board
+   (src/shared/workspace/board.module.css); this file carries the lens heading,
+   the subject mark, the expanded evidence block and the limits note. */
 .inspector {
-  margin-top: 20px;
-  padding: 16px 18px;
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
+  margin-top: 16px;
   color: var(--ink);
   min-width: 0;
   --mantine-color-dimmed: var(--slate);
 }
+.lens {
+  margin-bottom: 8px;
+}
 .inspector h3 {
-  font-size: 18px;
+  font-size: var(--type-ui);
+  font-weight: 600;
+  margin: 0 0 3px;
+}
+.inspector h4 {
+  font-size: var(--type-ui);
   font-weight: 600;
   margin: 0 0 4px;
 }
-.inspector h4 {
-  font-size: 13px;
-  font-weight: 600;
-  margin: 0 0 6px;
-}
 .inspector h5 {
-  font-size: 13px;
+  font-size: var(--type-dense);
   font-weight: 600;
-  margin: 12px 0 3px;
-}
-.head {
-  min-width: 0;
-  flex: 1 1 260px;
+  margin: 10px 0 2px;
 }
 .note {
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.55;
   color: var(--slate);
   max-width: 80ch;
   margin: 0;
 }
 .filter {
-  width: 190px;
+  width: 170px;
 }
 /* Mantine's input reset clears the outline the global :focus-visible rule
    supplies, so this control was keyboard-reachable with no visible focus at
-   all while the page's own native selects kept their ring. Measured at 1440px:
-   focused and blurred computed styles were byte-identical before this rule. */
+   all while the page's own native selects kept their ring. */
 .filter input:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: -2px;
 }
-.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.9fr) minmax(240px, 1fr);
-  gap: 22px;
-  align-items: start;
-  margin-top: 14px;
-}
-.tableColumn {
-  min-width: 0;
-}
-.table {
-  font-size: 13px;
-}
-.table th {
-  font-size: 13px;
-  white-space: nowrap;
-  font-weight: 500;
+
+/* The subject a row belongs to: an icon where an account board carries a
+   provider mark, so the two read on the same grid. */
+.subjectMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
   color: var(--slate);
 }
-.table td {
-  white-space: nowrap;
-  vertical-align: top;
+.subjectMark :global(.icon) {
+  font-size: 15px;
+  width: 15px;
+  height: 15px;
 }
-/* Occurrence and capture time are measured values: mono, tabular, right-aligned. */
-.table th:nth-child(4),
-.table th:nth-child(5),
-.table td.time {
-  text-align: end;
+.unresolvedMark {
+  display: inline-flex;
+  color: var(--slate);
+}
+.unresolvedMark :global(.icon) {
+  font-size: 15px;
+  width: 15px;
+  height: 15px;
+}
+.idButton {
   font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  font-size: var(--type-dense);
 }
+
 /* A start with no terminal receipt is marked structurally, not only by colour:
    the dashed leading rule survives greyscale and colour-vision deficiency. */
-.table tr[data-kind='unresolved'] {
+/* The retained state vocabulary is load-bearing copy, so it wraps inside the
+   board's state column rather than being shortened into something it is not. */
+.wrapState > span,
+.wrapState > span > span {
+  white-space: normal;
+}
+.unresolvedRow {
   box-shadow: inset 3px 0 var(--slate);
-  background: var(--paper);
-}
-.table tr[data-kind='unresolved'] td {
-  border-block-end-style: dashed;
-}
-.table tr[data-selected] {
-  background: var(--signal-wash);
-  box-shadow: inset 3px 0 var(--signal);
-}
-.rowButton {
-  font-size: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--control-edge);
-  text-underline-offset: 3px;
-  max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
-}
-.rowButton:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
-}
-.rowButton code {
-  font-family: var(--mono);
-  font-size: 13px;
 }
 .state {
-  font-size: 13px;
+  font-size: var(--type-dense);
   font-weight: 500;
   white-space: normal;
   display: inline-block;
@@ -131,33 +111,38 @@
 }
 .code {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
 .unknown {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
 .measure {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-dense);
   font-variant-numeric: tabular-nums;
 }
 .unresolvedBanner {
-  font-size: 13px;
+  max-width: none;
+  font-size: var(--type-dense);
   line-height: 1.5;
-  margin: 12px 0 0;
-  padding: 9px 12px;
+  margin: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--rule);
   border-inline-start: 3px solid var(--slate);
   background: var(--paper);
-  max-width: 90ch;
+}
+.alert {
+  margin: 8px 10px;
 }
 .selected {
   min-width: 0;
+  font-size: var(--type-dense);
 }
 .selected p {
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.55;
   margin: 4px 0 0;
 }
@@ -167,17 +152,17 @@
 .operationId {
   display: block;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-dense);
   color: var(--slate);
   overflow-wrap: anywhere;
-  margin: 4px 0 8px;
+  margin: 4px 0 6px;
 }
 .facts {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   column-gap: 14px;
-  row-gap: 7px;
-  font-size: 13px;
+  row-gap: 3px;
+  font-size: var(--type-dense);
   line-height: 1.4;
   margin: 6px 0 0;
 }
@@ -185,31 +170,26 @@
   color: var(--slate);
 }
 .facts dd {
-  margin: 0;
+  margin: 0 0 4px;
   text-align: start;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
-.hint {
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--slate);
-  border-inline-start: 1px solid var(--rule);
-  padding-inline-start: 20px;
-  margin: 0;
-}
-.empty {
-  color: var(--slate);
-  font-size: 13px;
-  line-height: 1.6;
-  padding: 14px 0;
-  max-width: 80ch;
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+  font-size: var(--type-dense);
 }
 .limits {
-  margin-top: 16px;
+  margin-top: 12px;
   border-top: 1px solid var(--rule);
-  padding-top: 12px;
-  font-size: 13px;
+  padding-top: 10px;
+  font-size: var(--type-dense);
 }
 .limits summary {
   cursor: pointer;
@@ -221,42 +201,21 @@
 }
 .limits ul {
   padding-inline-start: 18px;
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   line-height: 1.6;
   color: var(--slate);
   max-width: 90ch;
 }
 .limits li {
   list-style: disc;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
+}
+.freshness {
+  margin-top: 6px;
 }
 
-@media (max-width: 1000px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
-  }
-  .selected,
-  .hint {
-    border-inline-start: 0;
-    border-top: 1px solid var(--rule);
-    padding-inline-start: 0;
-    padding-top: 14px;
-  }
-}
 @media (max-width: 560px) {
-  .inspector {
-    padding: 14px 12px;
-  }
   .filter {
     width: 100%;
-  }
-  .facts {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 2px;
-  }
-  .facts dd {
-    text-align: start;
-    margin-bottom: 7px;
   }
 }

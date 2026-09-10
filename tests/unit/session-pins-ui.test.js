@@ -79,6 +79,7 @@ beforeEach(async () => {
     configurable: true,
     value: vi.fn(query => ({ matches: query.includes('min-width: 90em'), addEventListener() {}, removeEventListener() {} })),
   });
+  window.localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced'));
   state.calls = [];
   state.scope = null;
   state.preview = { ok: true, body: preview };
@@ -106,7 +107,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 const button = (text) =>
-  [...container.querySelectorAll('button')].find((b) => b.textContent.includes(text));
+  [...container.querySelectorAll('button')].find(
+    (b) => b.textContent.includes(text) || b.getAttribute('aria-label') === text
+  );
 const click = (text) => act(async () => button(text).click());
 async function select() {
   await act(async () => container.querySelector('button[aria-label^="Inspect pin"]').click());
@@ -152,28 +155,33 @@ it('returns focus to the selected inventory control when the direct editor close
 
 it('selection survives a refresh and live reorder without moving off the selected pin', async () => {
   await select();
-  expect(container.querySelector('tr[data-selected]').textContent).toContain('claude-fable-5');
+  expect(container.querySelector('[data-pin-id][data-expanded]').textContent).toContain(
+    'claude-fable-5'
+  );
   // A live update prepends another pin; the selected row must stay selected.
   const other = { ...pin, id: 'other-pin', model: 'other-model', connectionId: 'account-b' };
   state.pages.root = { ...state.pages.root, pins: [other, pin] };
   await click('Refresh pins');
-  const selectedRow = container.querySelector('tr[data-selected]');
+  const selectedRow = container.querySelector('[data-pin-id][data-expanded]');
   expect(selectedRow.textContent).toContain('claude-fable-5');
   expect(container.querySelector('[aria-label="Selected pin controls"]').textContent).toContain(
     'account-a'
   );
 });
 
-it('places keyboard focus on the actual native horizontal inventory scroller', async () => {
+it('reflows the inventory instead of hiding columns behind a horizontal scroller', async () => {
   await render();
-  const scroller = container.querySelector('[aria-label="Session pins table, scroll horizontally for all columns"]');
-  expect(scroller.tagName).toBe('DIV');
-  expect(scroller.tabIndex).toBe(0);
-  expect(scroller.style.getPropertyValue('--table-overflow')).toBe('auto');
-  expect(scroller.style.getPropertyValue('--table-min-width')).toContain('48.75rem');
-  scroller.focus();
-  expect(document.activeElement).toBe(scroller);
-  expect(scroller.querySelector('table')).not.toBeNull();
+  // The board replaces the scrolling table: every column of the old table is
+  // present as text on the row itself, so nothing is reachable only by
+  // scrolling sideways.
+  const board = container.querySelector('[aria-label="Account pins"]');
+  expect(board.dataset.layout).toBe('rows');
+  expect(board.dataset.density).toBe('tidy');
+  const row = container.querySelector('[data-pin-id]:not(button)');
+  expect(row.textContent).toContain('claude-fable-5');
+  expect(row.textContent).toContain('account-a');
+  expect(row.textContent).toContain('Pinned');
+  expect(container.querySelector('table')).toBeNull();
 });
 
 it('a selected pin missing from the refreshed page keeps its selection and says so', async () => {

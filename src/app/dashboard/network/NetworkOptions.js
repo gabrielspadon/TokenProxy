@@ -2,8 +2,8 @@
 import { useEffect, useState } from 'react';
 import { Button, Checkbox, Group, Stack, Textarea, TextInput } from '@mantine/core';
 import { call } from '@/shared/api';
-import { Confirm } from '@/shared/components/Confirm';
 import { Notice } from '@/shared/components/Notice';
+import { boardStyles as board } from '@/shared/workspace/Board';
 
 export const NETWORK_ACTIONS = [
   { id: 'export', title: 'Download declarative adapters', path: '/api/providers/custom', method: 'GET', fields: [], effect: 'Downloads all adapter definitions. Static headers can contain credentials; keep the file private. This does not export attached account credentials.' },
@@ -61,16 +61,25 @@ export default function NetworkOptions({ pools = [], onSaved, actionId = 'adapte
     setBusy(false); setSubmitted(true); setReviewing(false); onSaved?.();
     setNotice({ tone: verified ? 'ok' : 'warn', title: action.id === 'test' ? 'The proxy candidate test completed.' : verified ? 'Saved state read back.' : 'Saved state could not be fully confirmed.', next: action.id === 'test' ? `HTTP ${response.body?.status ?? 'not recorded'}. No routing policy was saved.` : 'Close and refresh before another change. Configuration does not establish upstream account readiness.' });
   }
+  const undo = ['cloudflare', 'vercel'].includes(action.id)
+    ? 'Remote resources remain until removed at the host. Removing the gateway pool does not remove the deployment.'
+    : 'Review the saved state before another change. Provider authentication is separate.';
   return <section className="panel" aria-label={action.title}><h3>{action.title}</h3>
       <form onSubmit={event => { event.preventDefault(); try { buildNetworkOptions(action, values, selected); setNotice(null); setReviewing(true); } catch (error) { setNotice({ tone: 'bad', title: error.message }); } }}><Stack gap="md">
 
         <p>{action.effect}</p>{notice ? <Notice {...notice} /> : null}
         {!submitted ? action.fields.map(([key, label, type]) => type === 'json'
-          ? <Textarea key={key} label={label} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} minRows={7} disabled={busy || reviewing} autoComplete="off" description="Supports name, prefix, baseUrl, endpoints, headers and auth. Headers can contain credentials." />
-          : <TextInput key={key} label={label} type={type || 'text'} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} disabled={busy || reviewing} autoComplete={type === 'password' ? 'off' : undefined} />) : null}
-        {action.id === 'delete' && !submitted ? pools.map(pool => <Checkbox key={pool.id} label={pool.name || pool.id} checked={selected.includes(pool.id)} disabled={busy || reviewing} onChange={event => { const checked = event.currentTarget.checked; setSelected(current => checked ? [...current, pool.id] : current.filter(id => id !== pool.id)); }} />) : null}
-        <Group justify="flex-end"><Button variant="default" onClick={close} disabled={busy || reviewing}>Reset task</Button>{!submitted ? <Button type="submit" color={action.id === 'delete' ? 'red' : undefined} loading={busy}>Review action</Button> : null}</Group>
+          ? <Textarea size="xs" key={key} label={label} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} minRows={7} disabled={busy || reviewing} autoComplete="off" description="Supports name, prefix, baseUrl, endpoints, headers and auth. Headers can contain credentials." />
+          : <TextInput size="xs" key={key} label={label} type={type || 'text'} value={values[key] || ''} onChange={event => { const value = event.currentTarget.value; setValues(current => ({ ...current, [key]: value })); }} disabled={busy || reviewing} autoComplete={type === 'password' ? 'off' : undefined} />) : null}
+        {action.id === 'delete' && !submitted ? pools.map(pool => <Checkbox size="xs" key={pool.id} label={pool.name || pool.id} checked={selected.includes(pool.id)} disabled={busy || reviewing} onChange={event => { const checked = event.currentTarget.checked; setSelected(current => checked ? [...current, pool.id] : current.filter(id => id !== pool.id)); }} />) : null}
+        <Group justify="flex-end"><Button size="xs" variant="default" onClick={close} disabled={busy || reviewing}>Reset task</Button>{!submitted ? <Button size="xs" type="submit" color={action.id === 'delete' ? 'red' : undefined} loading={busy}>Review action</Button> : null}</Group>
       </Stack></form>
-    <Confirm open={reviewing} title={action.title} verb={action.title} changes={action.effect} requires="An authorized operator session and the stated service prerequisites." undo={['cloudflare', 'vercel'].includes(action.id) ? 'Remote resources remain until removed at the host. Removing the gateway pool does not remove the deployment.' : 'Review the saved state before another change. Provider authentication is separate.'} irreversible={action.id === 'delete'} busy={busy} refusal={notice} onConfirm={submit} onClose={() => { if (!busy) setReviewing(false); }} />
+    {reviewing ? <div className={board.notice} role="alertdialog" aria-label={`Review ${action.title}`}>
+      <p className={board.muted}>{action.effect} Requires an authorized operator session and the stated service prerequisites. {undo}</p>
+      <Group gap="xs" mt="xs">
+        <Button size="compact-xs" color={action.id === 'delete' ? 'red' : undefined} loading={busy} onClick={submit}>{action.title}</Button>
+        <Button size="compact-xs" variant="default" disabled={busy} onClick={() => { if (!busy) setReviewing(false); }}>Cancel</Button>
+      </Group>
+    </div> : null}
     </section>;
 }

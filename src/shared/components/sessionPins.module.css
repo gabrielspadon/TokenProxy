@@ -1,219 +1,203 @@
+/* Account pins. The inventory itself is the shared board
+   (src/shared/workspace/board.module.css); only the lens heading, the inline
+   binding controls and the retained-evidence blocks live here. */
 .workbench {
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border, var(--rule));
+  margin-top: 14px;
   color: var(--ink);
   min-width: 0;
   --mantine-color-dimmed: var(--slate);
 }
-.workbench h3 {
-  font-size: 17px;
-  font-weight: 500;
-  margin: 0 0 5px;
+.lens {
+  font-size: var(--type-ui);
+  font-weight: 600;
+  margin: 0 0 6px;
 }
 .workbench h4 {
-  font-size: 14px;
+  font-size: var(--type-ui);
   font-weight: 600;
-  margin: 0 0 8px;
+  margin: 0;
 }
 .note {
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.55;
   color: var(--slate);
   max-width: 80ch;
-  margin: 4px 0 10px;
+  margin: 4px 0 8px;
 }
 .notice {
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.5;
-  padding: 9px 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--rule);
   border-inline-start: 3px solid var(--control-edge);
   background: var(--paper);
-  margin: 0 0 10px;
+  margin: 0;
 }
 .alert {
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.5;
-  padding: 9px 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--rule);
   border-inline-start: 3px solid var(--refusal);
   background: color-mix(in srgb, var(--refusal) 8%, var(--raised));
-  margin: 0 0 10px;
-}
-.table {
-  font-size: 13px;
-}
-.scrollContainer { max-width: 100%; overscroll-behavior-inline: contain; }
-.scrollContainer:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
-.table th {
-  font-size: 13px;
-  white-space: nowrap;
-  font-weight: 500;
-  color: var(--slate);
-}
-.table td {
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.table td:first-child {
-  font-family: var(--mono);
-}
-.table button {
-  font-size: inherit;
-  font-family: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--control-edge);
-  text-underline-offset: 3px;
-}
-.table button:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
-}
-.table tr[data-selected] {
-  background: var(--signal-wash);
-  box-shadow: inset 3px 0 var(--signal);
-}
-.facts {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  column-gap: 14px;
-  row-gap: 8px;
-  font-size: 13px;
-  line-height: 1.4;
-  margin: 0 0 14px;
-}
-.facts dt {
-  color: var(--slate);
-}
-.facts dd {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
 }
-.history {
-  margin: 0 0 12px;
-  padding-inline-start: 18px;
-  font-size: 13px;
-  line-height: 1.7;
+.deadlineMark {
+  display: inline-flex;
+  color: var(--ember);
 }
-.history code {
-  font-family: var(--mono);
-  font-size: 13px;
-  overflow-wrap: anywhere;
+.deadlineMark :global(.icon) {
+  font-size: 15px;
+  width: 15px;
+  height: 15px;
+}
+
+/* The expanded row: binding controls first, then the retained evidence. */
+.dockBody {
+  font-size: var(--type-dense);
+  line-height: 1.5;
+}
+.dockHead {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dockHead .note {
+  margin: 2px 0 0;
 }
 .form {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   align-items: end;
-  margin: 0 0 12px;
+  margin: 0 0 10px;
+}
+.control {
+  min-width: 0;
+  width: 190px;
+}
+.control :global(.mantine-InputWrapper-label) {
+  font-size: var(--type-dense);
+  color: var(--slate);
+  margin-bottom: 2px;
 }
 .field {
   display: grid;
-  gap: 3px;
-  font-size: 13px;
+  gap: 2px;
+  font-size: var(--type-dense);
   color: var(--slate);
 }
-.field select,
 .field input {
   font: inherit;
   color: var(--ink);
-  padding: 5px 8px;
+  padding: 4px 7px;
   border: 1px solid var(--control-edge);
+  border-radius: 4px;
   background: var(--raised);
-  min-width: 200px;
+  min-width: 190px;
 }
-.field select:focus-visible,
 .field input:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: -2px;
 }
 .preview {
-  margin-top: 14px;
-  padding: 10px 12px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
   border-inline-start: 3px solid var(--signal);
+  border-radius: 0 4px 4px 0;
   background: var(--paper);
-  font-size: 13px;
-  line-height: 1.5;
 }
 .preview p {
   margin: 4px 0 0;
 }
 .receipt {
-  margin-top: 14px;
-  padding: 10px 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--rule);
   border-inline-start: 3px solid var(--control-edge);
   background: var(--paper);
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.5;
 }
 .receipt strong {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
 }
-.receipt code {
+.receipt code,
+.preview code {
   font-family: var(--mono);
-  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  column-gap: 14px;
+  row-gap: 4px;
+  font-size: var(--type-dense);
+  line-height: 1.4;
+  margin: 0 0 12px;
+}
+.facts dt {
+  color: var(--slate);
+}
+.facts dd {
+  margin: 0 0 4px;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.history {
+  margin: 0 0 10px;
+  padding-inline-start: 16px;
+  font-size: var(--type-dense);
+  line-height: 1.65;
+}
+.history code {
+  font-family: var(--mono);
   overflow-wrap: anywhere;
 }
 .empty {
   color: var(--slate);
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.6;
-  padding: 14px 0;
+  padding: 8px 0;
 }
 .pager {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 6px;
+  margin-top: 8px;
 }
 .timeline {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--rule);
 }
 .timelineControls {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   align-items: end;
-  margin: 0 0 12px;
+  margin: 0 0 10px;
 }
 .timelineList {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 13px;
+  font-size: var(--type-dense);
   line-height: 1.55;
 }
 .timelineList > li {
-  padding: 8px 0 8px 12px;
+  padding: 6px 0 6px 10px;
   border-inline-start: 3px solid var(--control-edge);
 }
 .timelineList > li + li {
   border-top: 1px solid var(--paper);
-}
-.timelineList > li[data-kind='switch'] {
-  border-inline-start-color: var(--control-edge);
 }
 .timelineList > li[data-kind='action'] {
   border-inline-start-color: var(--signal);
 }
 .timelineList p {
   margin: 3px 0 0;
-}
-.timelineList button {
-  margin-top: 5px;
-  font-size: 13px;
-  text-decoration: underline;
-  text-decoration-color: var(--control-edge);
-  text-underline-offset: 3px;
-}
-.timelineList button:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
 }
 .timelineKind {
   font-weight: 600;
@@ -225,12 +209,12 @@
 .timelineIds {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
-  margin: 4px 0 0;
+  gap: 3px 12px;
+  margin: 3px 0 0;
 }
 .timelineIds div {
   display: flex;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
 }
 .timelineIds dt {
@@ -241,24 +225,11 @@
 }
 .timelineIds code {
   font-family: var(--mono);
-  font-size: 13px;
   overflow-wrap: anywhere;
 }
-.dockBody {
-  padding: 12px;
+.attemptLink {
+  display: block;
+  margin-top: 4px;
+  color: var(--signal-deep);
+  font-size: var(--type-dense);
 }
-.pinLayout { display: grid; gap: 16px; min-width: 0; }
-.pinLayout[data-selected] { grid-template-columns: minmax(0, 1fr) minmax(320px, 390px); align-items: start; }
-.pinInventory { min-width: 0; grid-column: 1; grid-row: 1; }
-.pinEditor { min-width: 0; grid-column: 2; grid-row: 1; border: 1px solid var(--control-edge); border-radius: var(--radius); background: var(--raised); }
-.pinEditorHeader { display: flex; align-items: start; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--rule); }
-.pinEditorHeader > div { min-width: 0; overflow-wrap: anywhere; }
-.pinEditor .field { min-width: 0; max-width: 100%; }
-.pinEditor .field select, .pinEditor .field input { min-width: 0; max-width: 100%; }
-@media (max-width: 1100px) {
-  .pinLayout[data-selected] { grid-template-columns: minmax(0, 1fr); }
-  .pinEditor { grid-column: 1; grid-row: 1; }
-  .pinLayout[data-selected] .pinInventory { grid-row: 2; }
-}
-
-.attemptLink { display:block; margin-top:5px; color:var(--signal); font-size:13px; }
