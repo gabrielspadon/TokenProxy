@@ -76,7 +76,7 @@ describe('real credential selector parity with frozen quota transport', () => {
       const accounts = Array.from({ length: 1 + random(6) }, (_, i) => {
         const windows = random(4) === 0 ? [] : [win('monthly (30d)', random(3) ? 70 : 0, 10 + random(500)), win('weekly (7d)', 20 + random(80), 1 + random(150)), win('session (5h)', 20 + random(80), 1 + random(4))];
         if (random(9) === 0) windows.push(win('weekly fable (7d)', 0, 10));
-        return { id: `trial-${trial}-${i}`, provider: 'claude', isActive: random(8) !== 0, authType: 'oauth', priority: random(4), maxConcurrent: 2,
+        return { id: `trial-${trial}-${i}`, provider: 'claude', isActive: random(8) !== 0, authType: 'oauth', accessToken: 'synthetic', refreshToken: 'synthetic', priority: random(4), maxConcurrent: 2,
           providerSpecificData: { enabledModels: random(8) ? [] : ['claude-sonnet-5'] },
           quotaPauseThresholds: random(5) ? {} : { 'monthly (30d)': 10 }, lastQuotaSnapshot: { windows, fetchedAt: new Date(NOW).toISOString() } };
       });
@@ -92,7 +92,7 @@ describe('real credential selector parity with frozen quota transport', () => {
   it('retains temporary failures but respects operator exclusions and model allowlists', async () => {
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW);
     const until = new Date(NOW + 60000).toISOString();
-    const accounts = ['a', 'b'].map(id => ({ id, provider: 'claude', isActive: true, authType: 'oauth', maxConcurrent: 2 }));
+    const accounts = ['a', 'b'].map(id => ({ id, provider: 'claude', isActive: true, authType: 'oauth', accessToken: 'synthetic', refreshToken: 'synthetic', maxConcurrent: 2 }));
     accounts[0][`modelLock_${MODEL}`] = until;
     accounts[0][`modelFailure_${MODEL}`] = { until, status: 429, message: 'Rate limit exceeded' };
     const base = { pin: { connectionId: 'a' } };

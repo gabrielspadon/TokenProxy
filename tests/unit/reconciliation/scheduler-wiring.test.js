@@ -89,7 +89,9 @@ let adapter;
  * A synthetic connection. `maxConcurrent` is the per-account admission ceiling
  * the lease registry reads through effectiveCapacity.
  */
-function connection(id, { key, maxConcurrent, snapshot = null, extra = {} } = {}) {
+// Every fixture account holds a key: live selection now skips a stored account
+// with nothing to present, and these tests describe accounts that can answer.
+function connection(id, { key = `synthetic-${id}`, maxConcurrent, snapshot = null, extra = {} } = {}) {
   return {
     id,
     name: `account-${id}`,
