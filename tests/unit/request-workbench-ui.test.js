@@ -28,10 +28,12 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
-it('opens with no network request, exposes every operation, and leaves sending disabled without a key', async () => {
+it('opens with no network request, reaches every operation from the board, and leaves sending disabled without a key', async () => {
   await mount();
   expect(fetch).not.toHaveBeenCalled();
-  expect(container.querySelectorAll('select option')).toHaveLength(20);
+  const chips = [...container.querySelectorAll('[aria-label="Operation summary"] button')];
+  expect(chips.reduce((total, chip) => total + Number(chip.querySelector('strong').textContent), 0)).toBe(20);
+  expect(container.querySelector('[data-layout]')).not.toBeNull();
   expect(button('Send gateway request').disabled).toBe(true);
   expect(container.textContent).toContain('No provider requests run when you open this page');
   expect(container.querySelector('a[href="/dashboard/compatibility"]')).toBeTruthy();

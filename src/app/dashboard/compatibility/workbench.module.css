@@ -1,166 +1,47 @@
-.grid {
+.body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
+  gap: 10px;
+  align-content: start;
 }
-.book,
-.inspector {
-  min-width: 0;
+.views {
+  max-width: 100%;
 }
-.scopes {
-  padding: 12px;
-  margin-bottom: 16px;
-  border: 1px solid var(--rule);
-  background: var(--paper);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.scopes summary {
-  cursor: pointer;
-  color: var(--ink);
-  font-weight: 500;
-}
-.scopes ul {
-  padding-inline-start: 18px;
-}
-.scopes li {
-  list-style: disc;
-  margin-block: 6px;
-}
-.fixtureRow {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 6px 12px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--rule);
-  font-size: 13px;
-}
-.fixtureRow[data-selected] {
-  background: var(--signal-wash);
-  box-shadow: inset 3px 0 var(--signal);
-}
-.fixtureRow .sub {
-  display: block;
-  font-family: var(--mono);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
+.lead {
+  font-size: var(--type-dense);
+  line-height: var(--line-ui);
   color: var(--slate);
-  overflow-wrap: anywhere;
+  max-width: 90ch;
 }
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-top: 10px;
-}
+/* The inline fixture editor: an add row that lives in the board, never a layer. */
 .editor {
-  border-top: 1px solid var(--rule);
-  margin-top: 18px;
-  padding-top: 14px;
+  padding: 8px 10px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
 }
 .editorGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 12px;
 }
-.editorGrid label,
-.editor > label {
-  display: block;
-  font-size: 13px;
-  color: var(--slate);
-  min-width: 0;
-}
-.editorGrid input,
-.editorGrid select,
-.editor textarea {
-  display: block;
-  width: 100%;
-  margin-top: 3px;
-  font-size: 14px;
-  color: var(--ink);
-}
-.editor textarea {
+.payload textarea {
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: var(--type-dense);
   line-height: 1.5;
-  min-height: 160px;
-}
-.consent {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  font-size: 13px;
-  color: var(--ink);
-  margin: 10px 0;
-}
-.queue {
-  font-size: 13px;
-  color: var(--slate);
-  font-variant-numeric: tabular-nums;
-  margin: 6px 0 12px;
-}
-.queue b {
-  font-family: var(--mono);
-  font-weight: 500;
-  color: var(--ink);
 }
 .tableScroll {
   overflow-x: auto;
   min-width: 0;
+  padding: 0 10px 8px;
 }
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.table th {
-  text-align: start;
-  font-weight: 500;
-  color: var(--slate);
-  white-space: nowrap;
-  padding: 5px 10px 5px 0;
-  border-bottom: 1px solid var(--rule);
-}
-.table td {
-  padding: 5px 10px 5px 0;
-  border-bottom: 1px solid var(--rule);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.table code {
+.tableScroll :global(code) {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--type-dense);
 }
-.table tr[data-selected] {
-  background: var(--signal-wash);
-  box-shadow: inset 3px 0 var(--signal);
-}
-.table button {
-  font: inherit;
-  text-decoration: underline;
-  text-decoration-color: var(--control-edge);
-  text-underline-offset: 3px;
-}
-.table button:focus-visible,
-.fixtureRow button:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: -2px;
-}
-@media (max-width: 1100px) {
-  .grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 20px;
+@media (max-width: 760px) {
+  .views {
+    width: 100%;
   }
-}
-@media (max-width: 520px) {
   .editorGrid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-
-.editor h3 { font-size: 18px; font-weight: 500; margin-bottom: 12px; }
-.book, .inspector { padding: 16px; background: var(--raised); border: 1px solid var(--rule); border-radius: 8px; }

@@ -16,8 +16,9 @@ export function ControlEvidence({ control, settings, stageMap, recent = [], onIn
   const reasons = { epoch_boundary: 'Stable or unknown cache boundary', window_pressure: 'Below context-pressure threshold', no_backend: 'No compression sidecar configured', phantom: 'Reported reduction without corresponding body reduction' };
   const observations = recent.filter(record => record.saver === control.stage).slice(0, 5);
 
-  return <details className="savings-control-details">
-      <summary aria-label={`Evidence and requirements for ${control.name}`}>Evidence and requirements</summary>
+  // The row's caret is the disclosure, so this renders open, with no second
+  // layer of its own.
+  return <div className="savings-control-details" role="region" aria-label={`Evidence and requirements for ${control.name}`}>
       {unavailable ? <p role="status">Runtime unavailable. {unavailable} Saved value {currentState.toLowerCase()} is preserved for compatibility.</p> : null}
       <dl className="shaping-evidence-states">
         <div><dt>Configured</dt><dd>{currentState} globally</dd></div>
@@ -36,5 +37,5 @@ export function ControlEvidence({ control, settings, stageMap, recent = [], onIn
         <dl className="shaping-control-facts"><div><dt>Setting</dt><dd><code>{control.key}</code></dd></div>{control.technical ? <div><dt>Engine name</dt><dd>{control.technical}</dd></div> : null}<div><dt>Source</dt><dd><code>{control.source}</code></dd></div><div><dt>Stage</dt><dd>{control.stage ? <code>{control.stage}</code> : 'No dedicated byte-ledger stage'}</dd></div></dl>
         {observations.length ? <ul className="shaping-observations">{observations.map((row, index) => <li key={`${row.ts}-${index}`}><span>{row.applied ? 'Applied record' : 'Bypassed record'}</span><span>{reasons[row.reason] || 'Specific reason not retained'}</span>{Number.isFinite(row.bytesSaved) ? <SignedBytes value={row.bytesSaved} /> : <span>Bytes not recorded</span>}</li>)}</ul> : <p>No recent stage outcome is available in this bounded sample. Absence is not proof the stage never ran.</p>}
       <div className="shaping-next"><Link href="/dashboard/context">Inspect request evidence</Link><button type="button" className="link-button" onClick={onInvestigate}>Compare saved profiles</button></div>
-    </details>;
+    </div>;
 }
