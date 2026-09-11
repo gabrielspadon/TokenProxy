@@ -89,21 +89,21 @@ test('Everyday savings and disabled-key limits persist and restore through real 
     await expect(savingsSwitch).toBeChecked({ checked: on });
     expect((await read('/api/admin/shaping')).currentHash).toBe(saved.afterHash);
   }
-  const selectedKey = page.getByRole('region', { name: 'Selected key configuration', exact: true });
+  // The key's limits are edited in place on its expanded card: the field
+  // commits on Enter or blur and the board reads the key back.
+  const cost = page.getByLabel('Cost ceiling for Synthetic budget evidence', { exact: true });
   async function configureKey() {
     await page.getByRole('button', { name: 'Configure Synthetic budget evidence', exact: true }).click();
-    await expect(selectedKey.getByLabel('Cost ceiling', { exact: true })).toBeEditable();
+    await expect(cost).toBeEditable();
   }
   async function saveKey(value) {
-    await selectedKey.getByLabel('Cost ceiling', { exact: true }).fill(String(value));
-    await selectedKey.getByRole('button', { name: 'Review key budgets and model access', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Save limits', exact: true });
+    await cost.fill(String(value));
     const responsePromise = page.waitForResponse(response => new URL(response.url()).pathname === keyPath && response.request().method() === 'PUT');
-    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await cost.press('Enter');
     const response = await responsePromise;
     synthetic(response);
     expect(response.request().postDataJSON()).toEqual({ maxCostUsd: value });
-    await expect(dialog).not.toBeVisible();
+    await expect(cost).toBeEnabled();
   }
   const initialSavings = await read('/api/admin/shaping');
   const initialKey = (await read(keyPath)).key;
@@ -125,20 +125,18 @@ test('Everyday savings and disabled-key limits persist and restore through real 
 
     await navigate('/dashboard/keys');
     await configureKey();
-    const cost = selectedKey.getByLabel('Cost ceiling', { exact: true });
-    await cost.fill('1.25');
-    const tasks = page.getByRole('navigation', { name: 'Key tasks', exact: true });
-    await tasks.getByRole('button', { name: 'Advanced', exact: true }).click();
-    await expect(cost).toBeHidden();
-    await tasks.getByRole('button', { name: 'Limits', exact: true }).click();
-    await expect(cost).toHaveValue('1.25');
-    expect((await read(keyPath)).key).toEqual(initialKey);
-    report.checks.push('Key draft survives task changes without changing persisted limits');
+    await expect(cost).toHaveValue('1');
     await saveKey(1.25);
+    expect((await read(keyPath)).key).toEqual({ ...initialKey, maxCostUsd: 1.25 });
+    const tasks = page.getByRole('radiogroup', { name: 'Tasks for Synthetic budget evidence', exact: true });
+    await tasks.getByText('Client setup', { exact: true }).click();
+    await expect(cost).toBeHidden();
+    await tasks.getByText('Limits', { exact: true }).click();
+    await expect(cost).toHaveValue('1.25');
+    report.checks.push('A committed key limit survives task changes without another write');
     await reload();
     await configureKey();
     await expect(cost).toHaveValue('1.25');
-    expect((await read(keyPath)).key).toEqual({ ...initialKey, maxCostUsd: 1.25 });
     report.checks.push('Only the disabled synthetic key cost ceiling changes and survives reload');
     await saveKey(1);
     await reload();

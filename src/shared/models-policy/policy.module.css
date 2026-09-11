@@ -321,6 +321,9 @@
 }
 .stack {
   display: grid;
+  /* One track no wider than the stack: an implicit auto track grows to a
+     wide table's content and pushes the page past a phone viewport. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
 }
@@ -492,3 +495,10 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
+.review {
+  contain: inline-size;
+  min-width: 0;
+}
+/* A grid item sizes to its min-content by default, so the 660px history
+   table would widen the page; zero lets its scroll container scroll. */
+.pageTabs { min-width: 0; }

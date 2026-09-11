@@ -1,9 +1,10 @@
 'use client';
 import { cloneElement, useState } from 'react';
-import { Alert, Badge, Button, Group, Modal, Stack, Table, Tabs, Text } from '@mantine/core';
+import { Alert, Badge, Button, Group, Table, Tabs, Text } from '@mantine/core';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
 import { useResource } from '@/shared/workspace/useResource';
+import { InlineConfirm } from '@/shared/workspace/InlineConfirm';
 import { useDensity, useLevel } from '@/shared/workspace/Board';
 import shared from '@/shared/workspace/workspace.module.css';
 import { PolicyEditor } from './PolicyEditor';
@@ -159,9 +160,11 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
       });
     });
   }
-  function load(id, discard = false) {
+  // Loading over unsaved edits asks first, beside the control that asked: the
+  // failure notice or the stored draft's row.
+  function load(id, discard = false, origin = 'failure') {
     if (dirty && !discard) {
-      setDiscardTarget(id);
+      setDiscardTarget({ id, origin });
       return;
     }
     action(async () => {
@@ -281,6 +284,51 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
       setNotice({message:'Current policy and operation receipts read. Inspect the recorded outcome before reviewing a new activation or restoration.'});
     });
   }
+  // The review carries a diff table wider than a phone. Containing its inline
+  // size keeps it from widening the page; the table scrolls inside instead.
+  const reviewConfirm = review && (
+    <div className={styles.review}>
+    <InlineConfirm
+      title={review.action === 'activate' ? 'Review draft activation' : 'Review configuration restoration'}
+      changes="Only the covered fields below will change. In-flight requests retain their existing selection. The server rechecks the active hash and draft revision atomically."
+      verb={review.action === 'activate' ? `Activate revision ${review.revision}` : `Restore version ${review.id}`}
+      busy={busy}
+      onConfirm={publish}
+      onCancel={() => setReview(null)}
+    >
+      {failure && (
+        <Alert color="red" p="xs" title="Publication did not complete">
+          {failure.message}
+          <Text size="xs">
+            {failure.code}
+            {failure.details?.receipt
+              ? ` · receipt ${failure.details.receipt.id} (${failure.details.receipt.outcome})`
+              : ''}
+          </Text>
+        </Alert>
+      )}
+      <Text size="xs" className={styles.mono}>
+        Expected active {review.expectedCurrent}
+      </Text>
+      <Differences changes={review.diff} />
+      <Text size="xs" c="var(--ember)">
+        A partial or interrupted operation requires receipt inspection. It is never retried
+        automatically.
+      </Text>
+    </InlineConfirm>
+    </div>
+  );
+  const discardConfirm = discardTarget && (
+    <InlineConfirm
+      title="Replace local draft edits?"
+      changes="The latest stored revision will replace unsaved edits in this view. Published configuration and stored history are unchanged."
+      verb="Reload and discard local edits"
+      dismiss="Keep editing"
+      busy={busy}
+      onConfirm={() => load(discardTarget.id, true)}
+      onCancel={() => setDiscardTarget(null)}
+    />
+  );
   return (
     <div className={`${shared.lensPage} ${styles.root}`} data-density={density}>
       <div className={shared.lensHeading}>
@@ -328,6 +376,7 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
           )}
         </Alert>
       )}
+      {discardTarget?.origin === 'failure' && discardConfirm}
       {notice && (
         <div className={styles.notice} role="status" data-partial={notice.partial || undefined}>
           <strong>{notice.title || (notice.partial ? 'Partial completion' : 'Recorded')}</strong>
@@ -421,6 +470,7 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
               )}
             </Group>
           </div>
+          {review?.action === 'activate' && reviewConfirm}
           {busy && <Text role="status">Reading or recording policy state…</Text>}
           {current.error && (
             <Alert color="red" title="Active configuration unavailable">
@@ -486,8 +536,12 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
               initialKind={historyKind}
               refreshKey={historyKey}
               disabled={busy || publicationUncertain}
-              onLoadDraft={load}
+              onLoadDraft={(id) => load(id, false, 'history')}
               onRollback={(id) => publication('rollback', id)}
+              pending={[
+                review?.action === 'rollback' && { kind: 'versions', id: review.id, node: reviewConfirm },
+                discardTarget?.origin === 'history' && { kind: 'drafts', id: discardTarget.id, node: discardConfirm },
+              ].filter(Boolean)}
             />
             <ConfigurationDomains />
             <PlanTransfer
@@ -504,81 +558,6 @@ export function ModelsPolicy({ automaticRouting, catalogControls, catalogTools }
         </Tabs.Panel>
       </Tabs>
       </div>
-      <Modal
-        opened={Boolean(review)}
-        onClose={() => {
-          if (!busy) setReview(null);
-        }}
-        title={
-          review?.action === 'activate'
-            ? 'Review draft activation'
-            : 'Review configuration restoration'
-        }
-        size="xl"
-        closeButtonProps={{ disabled: busy, 'aria-label': 'Close publication review' }}
-      >
-        {review && (
-          <Stack>
-            <Text size="sm">
-              Only the covered fields below will change. In-flight requests retain their existing
-              selection. The server rechecks the active hash and draft revision atomically.
-            </Text>
-            {failure && (
-              <Alert color="red" title="Publication did not complete">
-                {failure.message}
-                <Text size="sm">
-                  {failure.code}
-                  {failure.details?.receipt
-                    ? ` · receipt ${failure.details.receipt.id} (${failure.details.receipt.outcome})`
-                    : ''}
-                </Text>
-              </Alert>
-            )}
-            <Text size="sm" className={styles.mono}>
-              Expected active {review.expectedCurrent}
-            </Text>
-            <Differences changes={review.diff} />
-            <Text size="sm" c="var(--ember)">
-              A partial or interrupted operation requires receipt inspection. It is never retried
-              automatically.
-            </Text>
-            <Group justify="end">
-              <Button variant="default" disabled={busy} onClick={() => setReview(null)}>
-                Cancel
-              </Button>
-              <Button loading={busy} onClick={publish}>
-                {review.action === 'activate'
-                  ? `Activate revision ${review.revision}`
-                  : `Restore version ${review.id}`}
-              </Button>
-            </Group>
-          </Stack>
-        )}
-      </Modal>
-      <Modal
-        opened={Boolean(discardTarget)}
-        onClose={() => {
-          if (!busy) setDiscardTarget(null);
-        }}
-        title="Replace local draft edits?"
-        size="sm"
-        closeButtonProps={{ disabled: busy, 'aria-label': 'Close draft reload review' }}
-      >
-        <Stack>
-          <Text>
-            The latest stored revision will replace unsaved edits in this view. Published
-            configuration and stored history are unchanged.
-          </Text>
-          <Group justify="end">
-            <Button variant="default" disabled={busy} onClick={() => setDiscardTarget(null)}>
-              Keep editing
-            </Button>
-            <Button loading={busy} onClick={() => load(discardTarget, true)}>
-              Reload and discard local edits
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
     </div>
   );
 }

@@ -9,7 +9,7 @@ const auth=JSON.parse(await readFile(path.join(process.env.TOKENPROXY_PRIVATE_PR
 await mkdir(output,{recursive:true});const browser=await chromium.launch(),context=await browser.newContext({viewport:{width:1440,height:1000},acceptDownloads:true,reducedMotion:'reduce'}),page=await context.newPage();
 const report={fixture:'private sanitized historical copy',checks:[],errors:[]};page.on('pageerror',error=>report.errors.push(error.message));
 const savedName=`Snapshot investigation ${Date.now()}`;
-const modal=page.getByRole('dialog',{name:'Saved investigations',exact:true});
+const modal=page.getByRole('region',{name:'Saved investigations',exact:true});
 async function openSaved(){await page.getByRole('button',{name:'Saved investigations',exact:true}).click();await modal.waitFor();}
 async function provider(name){await page.getByRole('combobox',{name:'Provider filter',exact:true}).click();await page.getByRole('option',{name,exact:true}).click();}
 try{
@@ -52,7 +52,7 @@ try{
   await modal.getByRole('button',{name:'Save new entry',exact:true}).click();await modal.getByText('Synthetic offline persistence fixture',{exact:true}).waitFor();
   assert.equal((await (await page.request.get(`${base}/api/admin/investigations`)).json()).items.length,countBefore);await page.unroute('**/api/admin/investigations');report.checks.push({optimisticConflict:true,failedSavePreservesStoredCount:true});
   await page.getByRole('button',{name:'Close saved investigations',exact:true}).click();
-  await page.getByRole('button',{name:'Export evidence',exact:true}).click();const exportModal=page.getByRole('dialog',{name:'Export recorded evidence',exact:true});
+  await page.getByRole('button',{name:'Export evidence',exact:true}).click();const exportModal=page.getByRole('region',{name:'Export recorded evidence',exact:true});
   const downloaded=page.waitForEvent('download');await exportModal.getByRole('button',{name:'Download JSON evidence',exact:true}).click();const download=await downloaded;
   const payload=JSON.parse(await readFile(await download.path(),'utf8'));assert.equal(payload.manifest.returnedRecords,1);assert.equal(payload.items[0].id,entry.definition.selection.id);assert.equal(payload.manifest.mode,'selected');assert.equal(payload.manifest.complete,true);assert(payload.freshness.snapshotStartedAt);assert(!JSON.stringify(payload).includes(auth.initialPassword));
   await writeFile(path.join(output,'selected-evidence.json'),JSON.stringify(payload,null,2));await page.screenshot({path:path.join(output,'export-complete.png'),fullPage:true});report.checks.push({downloadedExactSelection:true,completeManifest:true,source:payload.manifest.source});

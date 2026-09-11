@@ -38,12 +38,10 @@ test('workspace preferences expose appearance without a language control', async
   await page.goto('/dashboard/context');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
-  const preferences = page.getByRole('button', { name: 'Workspace preferences', exact: true });
-  await preferences.click();
-  const dialog = page.getByRole('dialog', { name: 'Workspace preferences' });
-  await expect(dialog.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
-  await expect(dialog.getByRole('combobox')).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await expect(preferences).toBeFocused();
+  // Preferences apply in place in the rail; nothing opens over the page.
+  const preferences = page.getByRole('group', { name: 'Workspace preferences', exact: true });
+  await expect(preferences.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
+  await expect(preferences.getByRole('combobox')).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(catalogRequests).toEqual([]);
 });

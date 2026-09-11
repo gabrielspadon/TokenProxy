@@ -48,13 +48,16 @@ test("a key with no ceiling reads no ceiling, never zero", async ({ page }) => {
 });
 
 test("a failing read keeps the last good list rather than emptying it", async ({ page }) => {
-  let first = true;
-  await page.route("**/api/keys", (r) => {
-    if (first) { first = false; return r.fulfill(json(200, { keys: [row()] })); }
-    return r.fulfill(json(500, { error: "Failed to fetch keys" }));
-  });
+  // Reads succeed until the list is on screen, then fail. A single-shot flag
+  // would hand the 200 to the request React discards when a dev build mounts
+  // the effect twice, and the kept request would see the 500 first.
+  let failing = false;
+  await page.route("**/api/keys", (r) => failing
+    ? r.fulfill(json(500, { error: "Failed to fetch keys" }))
+    : r.fulfill(json(200, { keys: [row()] })));
   await page.goto("/dashboard/keys");
   await expect(page.getByText("agent laptop")).toBeVisible();
+  failing = true;
   // The freshness marker reports the fixture's own snapshot state on an
   // isolated preview, so what this holds is that a failing read never turns the
   // last good list into an empty one. Refresh forces the failing read rather

@@ -259,6 +259,7 @@ describe('Policy workbench controls', () => {
     expect(document.querySelector('[aria-label="Member 1 model"]').value).toBe('claude/local-edit');
     await click('Reload stored revision');
     expect(document.body.textContent).toContain('Replace local draft edits?');
+    expect(document.querySelector('[role="group"][aria-label="Replace local draft edits?"]')).toBeTruthy();
     await click('Keep editing');
     expect(document.querySelector('[aria-label="Member 1 model"]').value).toBe('claude/local-edit');
     await click('Reload stored revision');
@@ -286,6 +287,7 @@ describe('Policy workbench controls', () => {
     current.currentHash = nextHash;
     await click('Review activation');
     expect(document.querySelector('[aria-label="Covered configuration changes"]')).toBeTruthy();
+    expect(document.querySelector('[role="group"][aria-label="Review draft activation"]')).toBeTruthy();
     await click('Activate revision 1');
     expect(calls.find((call) => call.url.endsWith('/activate')).body).toEqual({
       expectedRevision: 1,
@@ -314,6 +316,7 @@ describe('Policy workbench controls', () => {
     await click('Review activation');
     await click('Activate revision 1');
     expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Review draft activation"]')).toBeNull();
     expect(document.body.textContent).toContain('Active hash changed');
     expect(button('Review activation').disabled).toBe(true);
     expect(calls.filter(call=>call.url.endsWith('/activate'))).toHaveLength(1);
@@ -335,6 +338,8 @@ describe('Policy workbench controls', () => {
     await click('Immutable versions');
     await click('Review restoration');
     expect(calls.some((call) => call.url.endsWith('/rollback'))).toBe(false);
+    // The review reads under the version row that opened it.
+    expect(document.querySelector('table[aria-label="Configuration versions"] [role="group"][aria-label="Review configuration restoration"]')).toBeTruthy();
     await click('Restore version 1');
     expect(calls.find((call) => call.url.endsWith('/rollback')).body).toEqual({
       expectedCurrent: hash,

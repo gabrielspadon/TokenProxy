@@ -8,7 +8,7 @@ async function read(page,path) {
 }
 async function openSaved(page) {
   await page.getByRole('button',{name:'Saved investigations',exact:true}).click();
-  return page.getByRole('dialog',{name:'Saved investigations',exact:true});
+  return page.getByRole('region',{name:'Saved investigations',exact:true});
 }
 async function save(page,name) {
   const dialog=await openSaved(page);
@@ -48,7 +48,7 @@ test('shared filters, selected account and comparison persist across lenses, rel
     await page.reload();
     await expect(page.getByLabel('Retained evidence selection')).toContainText('Synthetic research account');
     await page.getByRole('button',{name:'Export evidence',exact:true}).click();
-    const exportDialog=page.getByRole('dialog',{name:'Export recorded evidence',exact:true});
+    const exportDialog=page.getByRole('region',{name:'Export recorded evidence',exact:true});
     const download=page.waitForEvent('download');
     await exportDialog.getByRole('button',{name:'Download JSON evidence',exact:true}).click();
     const file=await download;
@@ -77,12 +77,11 @@ test('shared filters, selected account and comparison persist across lenses, rel
     expect((await read(page,'/api/admin/investigations')).items.some(row=>row.id===entry.id)).toBe(true);
     await dialog.getByRole('button',{name:'Close saved investigations',exact:true}).click();
 
-    await page.getByLabel('Shared analysis scope').getByRole('button',{name:'Observation mode: Snapshot',exact:true}).click();
-    const observation=page.getByRole('dialog',{name:'Workspace observations',exact:true});
-    await expect(observation).toContainText('Live updates are unavailable');
-    await observation.getByLabel('Update behavior',{exact:true}).click();
-    await page.getByRole('option',{name:'Pause background updates',exact:true}).click();
-    await observation.getByRole('button',{name:'Apply observation behavior',exact:true}).click();
+    const updates=page.getByRole('radiogroup',{name:'Update behavior',exact:true});
+    await expect(page.locator('[data-observation-control]')).toContainText('Snapshot');
+    await expect(updates.getByRole('radio',{name:'Live',exact:true})).toBeDisabled();
+    await updates.getByText('Paused',{exact:true}).click();
+    await expect(updates.getByRole('radio',{name:'Paused',exact:true})).toBeChecked();
     await page.getByRole('button',{name:'Refresh workspace data',exact:true}).click();
     await expect(page.getByLabel('Retained evidence selection')).toContainText('Synthetic research account');
   } finally {

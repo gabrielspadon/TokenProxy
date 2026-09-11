@@ -92,8 +92,8 @@ test('legacy profile defaults appear in editing and promotion without rewriting 
   const workbench = page.locator('.shaping-workbench');
   const oldRow = workbench.locator('.shaping-library .shaping-profile-row').filter({ has: page.getByText(storedOld.name, { exact: true }) });
   await oldRow.getByRole('button', { name: 'Revise', exact: true }).click();
+  // The editor lists every setting directly; the former disclosure is gone.
   const editor = workbench.locator('.shaping-editor');
-  await editor.locator('summary').filter({ hasText: /^Review and edit all/ }).click();
   for (const label of Object.values(NEW_FLAGS)) {
     const flag = editor.getByRole('checkbox', { name: label, exact: true });
     await expect(flag).toBeVisible();
@@ -104,10 +104,11 @@ test('legacy profile defaults appear in editing and promotion without rewriting 
   expect(JSON.stringify(storedOld)).toBe(unchangedRecord);
   await workbench.locator('.shaping-library .shaping-profile-row').filter({ has: page.getByText(baseline.name, { exact: true }) }).getByRole('button', { name: 'Baseline', exact: true }).click();
   await oldRow.getByRole('button', { name: 'Candidate', exact: true }).click();
-  await workbench.getByRole('combobox', { name: 'Synthetic fixture set', exact: true }).selectOption('context-integrity-v1');
+  await workbench.getByRole('combobox', { name: 'Evaluation set', exact: true }).selectOption('context-integrity-v1');
   await workbench.getByRole('button', { name: 'Run offline comparison', exact: true }).click();
   await workbench.getByRole('button', { name: 'Review promotion', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Promote this profile', exact: true });
+  // The promotion question stands inline under the control that asked, not in a dialog.
+  const dialog = workbench.getByRole('group', { name: 'Promote this profile', exact: true });
   const epochDiff = dialog.locator('tbody tr').filter({ has: page.locator('th').filter({ hasText: /^Boundary-aware clearing$/ }) });
   await expect(epochDiff.locator('td')).toHaveText(['true', 'false']);
   const promote = dialog.getByRole('button', { name: 'Promote profile', exact: true });
