@@ -34,6 +34,11 @@
   --nav-muted: #a6b9c4;
   --nav-active: #21414c;
   --nav-selected-edge: #75d1ce;
+  /* The rail is navy in both schemes, so a selected segment is always a light
+     tile on it. These do not flip with the scheme; --raised and --ink do, which
+     turned the selected chip darker than its own track in dark. */
+  --nav-selected-surface: #fff;
+  --nav-selected-text: #17232d;
   --overlay: rgb(12 25 35 / 46%);
   --sans: 'Manrope', 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: 'IBM Plex Mono', 'Noto Sans Mono', ui-monospace, monospace;

@@ -131,6 +131,8 @@ function WorkspaceShell({ children }) {
             onClick={() => setMobileOpen(!mobileOpen)}
             hiddenFrom="md"
             size="sm"
+            aria-expanded={mobileOpen}
+            aria-controls="workspace-navigation"
             aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           />
           <Link href="/dashboard" className={styles.wordmark}>
@@ -151,7 +153,7 @@ function WorkspaceShell({ children }) {
           </Tooltip>
         </Group>
       </AppShell.Header>
-      <AppShell.Navbar className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
+      <AppShell.Navbar id="workspace-navigation" className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
         <ScrollArea className={styles.navScroll}>
           <nav aria-label="Sections">
             <div className={styles.navigationMode}>
