@@ -437,34 +437,12 @@
 }
 @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
 
-/* A login's seats, kept adjacent so a personal and an organisation seat read
-   as one login rather than as duplicated accounts. The rail carries the
-   group's capacity tone; the seats stay individually rendered inside it. */
-.seatGroup { min-width: 0; }
-.seatGroup[data-seats='multi'] {
-  border-inline-start: 2px solid var(--rule);
-  padding-inline-start: 8px;
-}
-.seatGroup[data-seats='multi'][data-capacity='serving'] { border-inline-start-color: var(--positive); }
-.seatGroup[data-seats='multi'][data-capacity='returns'] { border-inline-start-color: var(--ember); }
-.seatHead {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-  margin-bottom: 4px;
-  font-size: var(--type-dense);
-}
-.seatHead strong { color: var(--ink); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-.seatHead span { color: var(--slate); }
-/* The number that changes what the operator does next. */
-.seatReturns { color: var(--ember); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.seatCards { display: grid; gap: 8px; }
-.card[data-capacity='returns'] { border-color: color-mix(in srgb, var(--ember) 45%, var(--rule)); }
-.card[data-capacity='no-evidence'] { border-style: dashed; }
-.seatName { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
+/* Everyday: compact cards, grouped by serving state.
 
-/* Everyday: compact progress cards grouped by state. */
+   One spacing scale for the whole card, declared once on .card and read by
+   every part of it, so "a bit more room here" cannot drift into six different
+   gaps. Tidy sets it; the comfy density below re-declares the same two numbers
+   and every part follows. */
 .density { flex-shrink: 0; }
 .group { padding: 6px 10px 10px; border-bottom: 1px solid var(--rule); }
 .group:last-of-type { border-bottom: 0; }
@@ -476,31 +454,128 @@
   font-size: var(--type-dense);
   font-weight: 600;
   color: var(--ink);
+  /* The state name never wraps; the note beside it gives up width instead. */
+  white-space: nowrap;
+  min-width: 0;
 }
-.groupTitle i { width: 7px; height: 7px; border-radius: 50%; background: var(--slate); }
+.groupTitle i { width: 7px; height: 7px; border-radius: 50%; background: var(--slate); flex: none; }
 .groupTitle[data-tone='positive'] i { background: var(--positive); }
 .groupTitle[data-tone='ember'] i { background: var(--ember); }
 .groupTitle[data-tone='refusal'] i { background: var(--refusal); }
-.groupTitle span { color: var(--slate); font-weight: 500; }
+.groupTitle span {
+  color: var(--slate);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The unverified section is a disclosure, so its heading is the control. */
+.group[data-collapsed] > .groupTitle { cursor: pointer; list-style: none; margin-bottom: 0; }
+.group[data-collapsed][open] > .groupTitle { margin-bottom: 8px; }
+.group[data-collapsed] > .groupTitle::-webkit-details-marker { display: none; }
+.group[data-collapsed] > .groupTitle::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-inline-end: 1.5px solid var(--slate);
+  border-block-end: 1.5px solid var(--slate);
+  rotate: -45deg;
+  margin-inline-start: 2px;
+}
+.group[data-collapsed][open] > .groupTitle::after { rotate: 45deg; }
+.group[data-collapsed] > .groupTitle:hover { color: var(--signal-deep); }
+.group[data-collapsed] > .groupTitle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 8px; align-items: start; }
 .card {
+  --card-pad: 8px 10px;
+  --card-gap: 6px;
   min-width: 0;
   border: 1px solid var(--rule);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: var(--card-pad);
   background: var(--raised);
 }
 .card[data-expanded] { grid-column: 1 / -1; border-color: var(--signal); box-shadow: inset 3px 0 var(--signal); }
 .card[data-bucket='low'] { border-color: color-mix(in srgb, var(--ember) 45%, var(--rule)); }
 .card[data-bucket='attention'] { border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule)); }
-.cardHead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* The head reserves the same height whether the name takes one line or two, so
+   the primary fact below starts at the same y on every card in a row. Ragged
+   figures down a grid are the thing that makes a board hard to scan. */
+.cardHead { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 38px; }
 .cardHead :global(.provider-mark) { width: 22px; height: 22px; min-width: 22px; border-radius: 6px; border: 1px solid var(--rule); background: var(--raised); }
 .cardHead :global(.provider-mark img) { width: 18px; height: 18px; }
 .cardHead .identityText { flex: 1; }
+/* A login is one long unbroken token, so the default anywhere-break split it
+   mid-word ("research@example.te / st"). One line, elided, with the full name
+   still reachable through the field's own title. */
+.cardHead .nameButton { -webkit-line-clamp: 1; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .cardHead :global(.mantine-ActionIcon-root) { width: 26px; height: 26px; min-width: 26px; min-height: 26px; }
-.cardState { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+
+/* The one primary fact. Same slot, same size, same alignment on every card, so
+   the column of figures is comparable down the grid without reading a label. */
+.cardFact {
+  display: grid;
+  gap: 1px;
+  margin: var(--card-gap) 0 0;
+  min-width: 0;
+}
+.cardFact strong {
+  font-size: var(--type-section);
+  font-weight: 650;
+  line-height: 1.2;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cardFact small {
+  font-size: var(--type-dense);
+  color: var(--slate);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardState { display: flex; align-items: center; gap: 8px; margin-top: var(--card-gap); }
 .cardAttempts { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
-.cardWindows { display: grid; gap: 4px; margin-top: 6px; }
+/* How much the reading is worth, said in words. No colour: it is a caveat on
+   the figure above, not a fourth severity competing with the meters. */
+.cardBand {
+  padding: 0 5px;
+  min-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px dashed var(--rule);
+  border-radius: 9px;
+  color: var(--slate);
+  font-size: var(--type-dense);
+  white-space: nowrap;
+}
+.cardWindows { display: grid; gap: 4px; margin-top: var(--card-gap); }
+
+/* Cooling down is its own visual language, not a tinted copy of a serving
+   card. The surface recedes to the page, an ember rail carries the state
+   without a second colour anywhere else, and the return time is the figure
+   that reads first. A depleted account must never look like a usable one. */
+.card[data-section='resting'] {
+  background: var(--paper);
+  border-color: color-mix(in srgb, var(--ember) 30%, var(--rule));
+  box-shadow: inset 3px 0 var(--ember);
+  padding-inline-start: 13px;
+}
+.card[data-section='resting'] .cardFact strong { color: var(--ember); }
+/* Its meters are history, not status: they say how it got here, so they read
+   as a flat trace rather than competing with the return time above them. */
+.card[data-section='resting'] .cardWindows { opacity: 0.72; }
+.card[data-section='resting'] .cardWindows .meter { box-shadow: inset 0 0 0 1px var(--rule); }
+
+/* Unverified has no reading to show at all, so the card says so by being
+   drawn with nothing filled in. */
+.card[data-section='unverified'] { background: transparent; border-style: dashed; }
+.card[data-section='unverified'] .cardFact strong { color: var(--slate); font-weight: 600; }
 .cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) minmax(40px, auto) minmax(0, auto); }
 .cardWindows .lineReset { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cardWindows .meter { height: 7px; border-radius: 4px; }
@@ -539,9 +614,10 @@
 .board[data-density='comfy'] .quota { gap: 6px; }
 .board[data-density='comfy'] .line { min-height: 22px; }
 .board[data-density='comfy'] .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
-.board[data-density='comfy'] .card { padding: 14px 16px; }
-.board[data-density='comfy'] .cardWindows { gap: 8px; margin-top: 10px; }
-.board[data-density='comfy'] .cardState { margin-top: 10px; }
+/* One place sets the card's scale; every part of it reads the same two numbers. */
+.board[data-density='comfy'] .card { --card-pad: 14px 16px; --card-gap: 10px; }
+.board[data-density='comfy'] .card[data-section='resting'] { padding-inline-start: 19px; }
+.board[data-density='comfy'] .cardWindows { gap: 8px; }
 .board[data-density='comfy'] .fleet,
 .board[data-density='comfy'] .toolbar { padding-block: 10px; }
 .board[data-density='comfy'] .group { padding: 10px 14px 14px; }

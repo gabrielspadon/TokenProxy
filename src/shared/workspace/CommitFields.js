@@ -107,15 +107,27 @@ export function CommitText({ value, onCommit, onBlur, onKeyDown, ...props }) {
 // A name reads as text until it is renamed, so a row stays a row. Escape
 // abandons the edit without committing, which is why the cancelled flag exists:
 // leaving the field is what saves, and Escape has to disarm that.
-export function NameField({ name, label, disabled, expanded, onCommit, onOpen }) {
+/**
+ * `display` shortens what is SHOWN without touching what is edited. A card
+ * states the seat on its own line underneath, so repeating it inside the name
+ * only cost the width that told two seats of one login apart. The rename still
+ * opens on the stored name, and the full name stays in the title.
+ */
+export function NameField({ name, display, label, disabled, expanded, onCommit, onOpen }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const [cancelled, setCancelled] = useState(false);
   if (!editing)
     return (
       <span className={board.nameLine}>
-        <button type="button" className={board.nameButton} aria-expanded={expanded} onClick={onOpen}>
-          {name}
+        <button
+          type="button"
+          className={board.nameButton}
+          aria-expanded={expanded}
+          title={name}
+          onClick={onOpen}
+        >
+          {display || name}
         </button>
         <Tooltip label="Rename">
           <button
