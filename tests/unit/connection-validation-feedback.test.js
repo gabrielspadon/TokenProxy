@@ -23,6 +23,10 @@ vi.mock('@/shared/api', () => ({ call: vi.fn(async (url, options) => {
     if (patch) fixture.settings = { ...fixture.settings, providerStrategies: { ...fixture.settings.providerStrategies, [patch.providerId]: { ...fixture.settings.providerStrategies[patch.providerId], ...patch.values } } };
     return { ok: true, body: fixture.settings };
   }
+  // The threshold write reads the account back before it merges, so the plain
+  // GET answers with the same connection the poll renders.
+  if (url === '/api/providers/c-1' && !options)
+    return { ok: true, body: { connection: { id: 'c-1', provider: 'openai', authType: 'apikey', name: 'Fixture account', isActive: true, priority: null, quotaPauseThresholds: fixture.quotaPauseThresholds } } };
   return { ok: true, body: {} };
 }) }));
 const { default: ConnectionPage } = await import('../../src/app/dashboard/connections/[id]/page.js');
@@ -117,7 +121,13 @@ it('edits the union of exact snapshot keys and saved thresholds without losing c
   expect(surface.textContent).not.toContain('default policy');
   await commit(surface.querySelectorAll('input')[0], '0');
   expect(container.querySelector('dialog')).toBeNull();
-  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 0, 'weekly (7d)': 20 } } });
+  // Read first, merge into what is stored, and carry the read controls as the
+  // conflict expectation, so a threshold set elsewhere is not reverted here.
+  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1' });
+  expect(fixture.calls[1]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: {
+    quotaPauseThresholds: { 'session (5h)': 0, 'weekly (7d)': 20 },
+    expectedControls: { isActive: true, priority: null, quotaPauseThresholds: { 'session (5h)': 10, 'weekly (7d)': 20 } },
+  } });
 });
 
 it('shows unknown quota windows without fabricating a 5h input and keeps priority editable', async () => {
@@ -135,5 +145,9 @@ it('allows fractional quota thresholds through native form validation and preser
   const surface = task('Quota pause thresholds'), input = surface.querySelector('input');
   expect(input.value).toBe('12.5%');
   await commit(input, '7.5');
-  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: { quotaPauseThresholds: { 'session (5h)': 7.5 } } });
+  expect(fixture.calls[0]).toEqual({ url: '/api/providers/c-1' });
+  expect(fixture.calls[1]).toEqual({ url: '/api/providers/c-1', method: 'PUT', body: {
+    quotaPauseThresholds: { 'session (5h)': 7.5 },
+    expectedControls: { isActive: true, priority: null, quotaPauseThresholds: { 'session (5h)': 12.5 } },
+  } });
 });

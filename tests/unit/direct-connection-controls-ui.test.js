@@ -202,9 +202,20 @@ it('sends only the field that changed when the allowlist is edited', async () =>
 it('edits a quota threshold from its own field and takes a polled change back', async () => {
   fixture.reads['/api/providers/exact-account'] = { connection: { ...account, lastQuotaSnapshot: { windows: [{ key: 'session' }] }, quotaPauseThresholds: {} } };
   await mount(<ConnectionPage params={Promise.resolve({ id: account.id })} />);
-  call.mockResolvedValue({ ok: true, body: {} });
+  call
+    .mockResolvedValueOnce({ ok: true, body: { connection: { ...account, quotaPauseThresholds: { session: 4 } } } })
+    .mockResolvedValueOnce({ ok: true, body: {} })
+    .mockResolvedValueOnce({ ok: true, body: { connection: { ...account, quotaPauseThresholds: { session: 10 } } } });
   await commit(container.querySelector('[aria-label="Auto-pause threshold for session"]'), '10');
-  expect(call.mock.calls[0]).toEqual(['/api/providers/exact-account', { method: 'PUT', body: { quotaPauseThresholds: { session: 10 } } }]);
+  // The rendered copy is a ten-second poll, so the write reads the account
+  // first and merges into the stored map rather than into the rendered one.
+  expect(call.mock.calls[0]).toEqual(['/api/providers/exact-account']);
+  expect(call.mock.calls[1]).toEqual(['/api/providers/exact-account', { method: 'PUT', body: {
+    quotaPauseThresholds: { session: 10 },
+    expectedControls: { isActive: true, priority: 3, quotaPauseThresholds: { session: 4 } },
+  } }]);
+  expect(call.mock.calls[2]).toEqual(['/api/providers/exact-account']);
+  expect(container.textContent).not.toContain('was accepted, but the saved state was not read back');
   fixture.reads['/api/providers/exact-account'] = { connection: { ...account, lastQuotaSnapshot: { windows: [{ key: 'session' }] }, quotaPauseThresholds: { session: 20 } } };
   await mount(<ConnectionPage params={Promise.resolve({ id: account.id })} />);
   expect(container.querySelector('[aria-label="Auto-pause threshold for session"]').value).toBe('20%');

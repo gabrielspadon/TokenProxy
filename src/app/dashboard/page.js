@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
-import { SegmentedControl } from '@mantine/core';
+import { Pagination, SegmentedControl, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { orderQuotaWindows } from '@/shared/workspace/QuotaEvidence';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
@@ -22,6 +22,7 @@ const VIEWS = [
 export default function CapacityPage() {
   const workspace = useWorkspace();
   const { accounts, quota, snapshot, setSelectedAccountId } = workspace;
+  const { activityGroupPage, setActivityGroupPage } = workspace;
   const drains = useResource(DRAIN_ENDPOINT, { onSnapshot: workspace.observeSnapshot });
   // The sidebar switch owns the level. Everyday is compact progress cards with
   // pause, rename and expand; Advanced is the dense board with every control.
@@ -111,6 +112,22 @@ export default function CapacityPage() {
       <ScopeBar showRefresh={view !== 'accounts'} />
       {view !== 'support' && <CapacityActivity />}
       <div className={shared.lensBody}>
+        {view === 'accounts' && activity.data?.groupPagination?.totalPages > 1 && (
+          <div className={styles.activityPages}>
+            <Text size="xs" c="dimmed">
+              Activity covers {activity.data.groupPagination.pageSize} accounts per page. Accounts
+              off this page read as unknown; the totals above cover the whole scope.
+            </Text>
+            <Pagination
+              size="xs"
+              total={activity.data.groupPagination.totalPages}
+              value={activityGroupPage}
+              onChange={setActivityGroupPage}
+              disabled={activity.loading}
+              aria-label="Activity pages"
+            />
+          </div>
+        )}
         {view === 'accounts' ? (
           <AccountBoard
             rows={rows}
