@@ -269,21 +269,22 @@ describe('auth.js selection emissions', () => {
     leases.releaseAccountLease(picked.accountLease);
   });
 
-  it('emits SEL.model-locked with the lock key and expiry', async () => {
+  it('never emits SEL.model-locked: a timed lock no longer removes an account', async () => {
+    // The only account in the pool carries a two-hour lock on the model being
+    // asked for. It is still selected, because a lock is a failure record and
+    // not an admission gate: benching the last seat is what answered the caller
+    // with "reset after 6m 51s" instead of trying the account again.
     dbMocks.getProviderConnections.mockImplementation(async () => [
       connection('conn_llllllll', {
         key: KEY_A,
         snapshot: snapshot(60),
         extra: { 'modelLock_claude-sonnet-4': new Date(Date.now() + 2 * HOUR).toISOString() },
       }),
-      connB(),
     ]);
     const picked = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions('sess-lock'));
-    expect(picked.connectionId).toBe('conn_bbbbbbbb');
-    const line = findLine('SEL.model-locked');
-    expect(line).toContain('conn=conn_lll');
-    expect(line).toContain('lock=modelLock_claude-sonnet-4');
-    expect(line).toMatch(/until=\d{4}-/);
+    expect(picked.connectionId).toBe('conn_llllllll');
+    expect(picked.allRateLimited).not.toBe(true);
+    expect(findLine('SEL.model-locked')).toBeUndefined();
     leases.releaseAccountLease(picked.accountLease);
   });
 

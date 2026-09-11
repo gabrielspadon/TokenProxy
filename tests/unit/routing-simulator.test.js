@@ -58,13 +58,16 @@ describe('immutable offline account policy', () => {
     const support = fixture([account('a', [], { providerSpecificData: { enabledModels: ['claude-sonnet-5'] } }), account('b')]);
     expect(run(support).exclusions).toContainEqual({ connectionId: 'a', reason: 'account-model-excluded' });
   });
-  it('holds temporary pin locks, overrides them for explicit operator disable, and evaluates captured time', () => {
+  it('keeps a pinned account carrying a temporary failure, and still honours an operator disable', () => {
     const until = new Date(NOW + 60000).toISOString();
     const a = account('a', [], { [`modelLock_${model}`]: until, [`modelFailure_${model}`]: { until, status: 429, message: 'burst request limit', failureClass: 'rate' } });
     const extra = { pin: { connectionId: 'a', pinnedAt: null, expiresAt: null }, affinitySource: 'captured-session' };
     const capture = fixture([a, account('b')], extra);
-    expect(run(capture).localSelection.reason).toBe('temporary-pin-wait');
-    expect(run(capture).affinity.retryAt).toBe(until);
+    // A temporary failure no longer parks the pin on a cooldown: the account
+    // stays selected and is simply tried again, so there is no retryAt to give.
+    expect(run(capture).localSelection.reason).toBe('pinned');
+    expect(run(capture).localSelection.connectionId).toBe('a');
+    expect(run(capture).affinity.retryAt).toBeNull();
     const disabled = fixture([a, account('b')], { ...extra, disabledModels: { 'cc::a': [model] } });
     expect(run(disabled).localSelection.connectionId).toBe('b');
   });
@@ -101,12 +104,13 @@ describe('immutable offline account policy', () => {
     }
   });
   it('does not make mismatched lock metadata authoritative by normalizing timestamp spelling', () => {
+    // Whatever the pairing says, an unmatched record cannot bench the account:
+    // that is the point of dropping the lock from admission.
     const raw = account('a', [], { [`modelLock_${model}`]: '2026-09-06T16:01:00Z',
       [`modelFailure_${model}`]: { until: '2026-09-06T16:01:00.000Z', status: 429, message: 'weekly quota exhausted' } });
     const capture = fixture([raw, account('b')], { pin: { connectionId: 'a', pinnedAt: null, expiresAt: null }, affinitySource: 'captured-session' });
-    // The gateway uses exact timestamp-string pairing. An unmatched record has
-    // unknown status and therefore the established temporary wait classification.
-    expect(run(capture).localSelection.reason).toBe('temporary-pin-wait');
+    expect(run(capture).localSelection.reason).toBe('pinned');
+    expect(run(capture).localSelection.connectionId).toBe('a');
   });
   it('rejects tampering, unsupported versions, unrelated models and smuggled fields', () => {
     const capture = fixture([account('a')]);

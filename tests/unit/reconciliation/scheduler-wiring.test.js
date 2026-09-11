@@ -857,7 +857,10 @@ describe('model entitlement and temporary pin recovery', () => {
     leases.releaseAccountLease(picked.accountLease);
   });
 
-  it.each([429, 503])('waits on a temporary %i lock and recovers the same pin', async (status) => {
+  // The pin used to be PARKED on a temporary failure: selection answered
+  // allRateLimited/mustWait and the caller waited out the cooldown. It is now
+  // kept and served, which is the same continuity without the wait.
+  it.each([429, 503])('keeps serving the pinned account through a temporary %i failure', async (status) => {
     const pool = [connection('alpha', { snapshot: snapshot(90) }), connection('beta', { snapshot: snapshot(90) })];
     dbMocks.getProviderConnections.mockResolvedValue(pool);
     const first = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
@@ -868,8 +871,10 @@ describe('model entitlement and temporary pin recovery', () => {
       [`modelLock_${MODEL}`]: until,
       [`modelFailure_${MODEL}`]: { status, until, message: 'Temporary limit', failureClass: status === 429 ? 'rate' : 'transient' },
     });
-    const wait = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
-    expect(wait).toMatchObject({ allRateLimited: true, mustWait: true, retryAfter: until });
+    const during = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());
+    expect(during.allRateLimited).not.toBe(true);
+    expect(during.connectionId).toBe(first.connectionId);
+    leases.releaseAccountLease(during.accountLease);
     expect(rows('SELECT connectionId FROM sessionAffinity')[0].connectionId).toBe(first.connectionId);
     vi.setSystemTime(NOW + 30_001);
     const recovered = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions());

@@ -1,6 +1,5 @@
 import { accountSupportsModel } from '@/shared/utils/accountModelEligibility.js';
-import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
-import { getActiveModelFailure, isModelLockActive } from 'open-sse/services/accountFallback.js';
+import { getExhaustedQuotaWindow } from 'open-sse/services/accountFallback.js';
 
 /** The gateway's pre-quota account gate. Callers supply resolved operator state. */
 // An account that holds no credential at all cannot answer. Admitting it only
@@ -19,21 +18,18 @@ export function holdsCredential(connection) {
 
 export function accountAdmissionReason(connection, { model, preferredConnectionId = null,
   strictPreferredConnection = false, excluded = false, disabled = false,
-  draining = false, ignoreLockConn = null, now = Date.now() } = {}) {
+  draining = false, now = Date.now() } = {}) {
   if (strictPreferredConnection && connection.id !== preferredConnectionId) return 'strict-account-mismatch';
   if (excluded) return 'request-excluded';
   if (!accountSupportsModel(connection, model)) return 'account-model-excluded';
   if (disabled) return 'model-disabled';
   if (draining) return 'account-draining';
-  if (connection.id !== ignoreLockConn && isModelLockActive(connection, model, now)) return 'model-locked';
+  // The PROVIDER's own reading that this model's window is spent, which is a
+  // fact about the account rather than a penalty we imposed. Our timed
+  // `modelLock_*` records deliberately do NOT gate admission: an account that
+  // just failed stays in the pool and the request moves to the next one, so a
+  // failure can never empty the eligible set and strand the caller behind a
+  // cooldown it has to wait out.
+  if (getExhaustedQuotaWindow(connection, model, now)) return 'quota-exhausted';
   return null;
-}
-
-/** Temporary failures preserve an otherwise admissible session's account. */
-export function temporaryPinWait(connection, options = {}) {
-  if (!connection || accountAdmissionReason(connection, options) !== 'model-locked') return null;
-  const failure = getActiveModelFailure(connection, options.model, options.now);
-  const failureClass = failure && (connection[failure.failureKey]?.failureClass
-    || classifyAccountFailure(failure.status, failure.message));
-  return failure && ['rate', 'transient'].includes(failureClass) ? { ...failure, failureClass } : null;
 }

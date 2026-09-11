@@ -89,14 +89,17 @@ describe('real credential selector parity with frozen quota transport', () => {
     }
     expect(fetch).not.toHaveBeenCalled();
   });
-  it('retains temporary failures but respects operator exclusions and model allowlists', async () => {
+  it('keeps a pinned account with a temporary failure, and respects operator exclusions and model allowlists', async () => {
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(NOW);
     const until = new Date(NOW + 60000).toISOString();
     const accounts = ['a', 'b'].map(id => ({ id, provider: 'claude', isActive: true, authType: 'oauth', accessToken: 'synthetic', refreshToken: 'synthetic', maxConcurrent: 2 }));
     accounts[0][`modelLock_${MODEL}`] = until;
     accounts[0][`modelFailure_${MODEL}`] = { until, status: 429, message: 'Rate limit exceeded' };
     const base = { pin: { connectionId: 'a' } };
-    expect((await parity(accounts, base)).localSelection.reason).toBe('temporary-pin-wait');
+    // The failure record is retained and the pin is kept: a temporary failure
+    // no longer parks the session on a cooldown, it just gets tried again.
+    expect((await parity(accounts, base)).localSelection.reason).toBe('pinned');
+    expect((await parity(accounts, base)).localSelection.connectionId).toBe('a');
     expect((await parity(accounts, { ...base, excluded: ['a'] })).localSelection.connectionId).toBe('b');
     expect((await parity(accounts, { ...base, disabledModels: { 'cc::a': [MODEL] } })).localSelection.connectionId).toBe('b');
     accounts[0].providerSpecificData = { enabledModels: ['claude-sonnet-5'] };

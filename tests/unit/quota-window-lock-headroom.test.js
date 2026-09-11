@@ -223,14 +223,22 @@ describe('quota and temporary failure classification', () => {
     expect(result).toMatchObject({ failureClass: 'quota', mustWait: false, retrySameAccount: false });
     expect(lockMs()).toBe(143 * 3600_000);
   });
-  it('requires waiting for a temporary rate limit without replaying generation', async () => {
+  // mustWait is gone. Replay safety is NOT: `isReplaySafeRejection` still gates
+  // whether a possibly-billed generation may be re-dispatched, so this only
+  // asserts that a rate limit no longer refuses the pool on its own.
+  it('rotates on a temporary rate limit instead of making the caller wait', async () => {
     windowMocks.getWindows.mockResolvedValue([win('weekly (7d)', 90, WEEKLY_RESET)]);
     const result = await markAccountUnavailable(CONN, 429, 'rate limit', 'claude', MODEL);
-    expect(result).toMatchObject({ failureClass: 'rate', mustWait: true, retrySameAccount: false });
+    expect(result).toMatchObject({ failureClass: 'rate', mustWait: false, retrySameAccount: false });
     expect(result.cooldownMs).toBeGreaterThan(0);
   });
+  // The no-replay guard for an uncertain generation lives in
+  // `isReplaySafeRejection`, which reads the wire permission: 503 is not in
+  // REJECTED_STATUSES and carries no `x-tokenproxy-replay-safe: true`, so
+  // chat.js still refuses to re-dispatch it. Classification alone must not be
+  // the thing that refuses, which is what `mustWait: true` used to do.
   it('marks 503 as temporary without guessing that generation is safe to replay', async () => {
     const result = await markAccountUnavailable(CONN, 503, 'overloaded', 'claude', MODEL);
-    expect(result).toMatchObject({ failureClass: 'transient', mustWait: true, retrySameAccount: false });
+    expect(result).toMatchObject({ failureClass: 'transient', mustWait: false, retrySameAccount: false });
   });
 });

@@ -21,10 +21,9 @@ import {
   checkFallbackError,
   formatRetryAfter,
   getActiveModelFailure,
-  getEarliestModelLockUntil,
+  getExhaustedQuotaWindow,
   getModelFailureKey,
   getModelLockKey,
-  isModelLockActive,
 } from 'open-sse/services/accountFallback.js';
 import {
   FREE_TIER_RATE_LIMIT_COOLDOWN_MS,
@@ -65,7 +64,7 @@ import { normalizeAccountWindows, effectiveResetAt } from '@/shared/utils/quotaR
 import * as log from '../utils/logger.js';
 import { collectClientApiKeyCandidates } from '@/lib/auth/clientApiKey';
 import { resolveRoutingSessionIdentity } from './routingIdentity.js';
-import { accountAdmissionReason, holdsCredential, temporaryPinWait } from './accountAdmissionPolicy.js';
+import { accountAdmissionReason, holdsCredential } from './accountAdmissionPolicy.js';
 import { classifyAccountFailure } from '@/shared/utils/accountFailureClass.js';
 import { getDisabledModels } from '@/lib/disabledModelsDb';
 import { isAccountModelDisabled } from '@/shared/utils/disabledModelPolicy.js';
@@ -500,12 +499,11 @@ export async function getProviderCredentials(
       return null;
     }
 
-    // Filter out draining, model-locked and excluded connections.
-    // ignoreModelLockConnId: a same-account retry must still reach the just-
-    // failed connection (its transient model-lock would otherwise force a
-    // switch), so skip the lock check for that one connection only. Draining
-    // is checked ahead of that bypass: an operator drain must still exclude
-    // the connection from this same-account retry, not just a first attempt.
+    // Filter out draining and excluded connections. A timed failure record is
+    // NOT a filter: an account that just failed stays admissible, because the
+    // caller's request rotates past it on its own (chat.js excludes it for the
+    // rest of that request) and benching it here is what let a handful of
+    // failures empty the pool and answer the next request with a cooldown.
     //
     // A draining connection is excluded from NEW selection only. An existing
     // session pin or in-flight stream already bound to it is untouched here:
@@ -518,12 +516,11 @@ export async function getProviderCredentials(
         .filter(([, doc]) => doc?.isDraining)
         .map(([connectionId]) => connectionId)
     );
-    const ignoreLockConn = options?.ignoreModelLockConnId || null;
     // Exclusions carry their reason to the decision log (rows 32-33): a
     // filtered-out account is a decision, and "who was skipped and why" is the
     // first question an auditor asks of a refusal.
     const drainExcluded = [];
-    const modelLocked = [];
+    const quotaExhausted = [];
     const availableConnections = connections.filter((c) => {
       // A stored account with nothing to present cannot answer; it is skipped
       // here so an upstream 401 never stands in for the pool's real state.
@@ -533,13 +530,10 @@ export async function getProviderCredentials(
       }
       const admissionReason = accountAdmissionReason(c, { model, preferredConnectionId,
         strictPreferredConnection, excluded: excludeSet.has(c.id), disabled: modelDisabled(c),
-        draining: draining.has(c.id), ignoreLockConn });
+        draining: draining.has(c.id) });
       if (admissionReason === 'model-disabled') emit('SEL', 'skipped', { conn: prefix8(c.id), why: admissionReason });
       if (admissionReason === 'account-draining') drainExcluded.push(prefix8(c.id));
-      if (admissionReason === 'model-locked') {
-        const failure = getActiveModelFailure(c, model);
-        modelLocked.push({ conn: prefix8(c.id), lock: String(getModelLockKey(model)).slice(0, 60), until: failure?.until ?? null });
-      }
+      if (admissionReason === 'quota-exhausted') quotaExhausted.push(prefix8(c.id));
       if (admissionReason) return false;
       return true;
     });
@@ -549,30 +543,8 @@ export async function getProviderCredentials(
         ...(drainExcluded.length > 3 ? { more: drainExcluded.length - 3 } : {}),
       });
     }
-    for (const m of modelLocked) {
-      emit('SEL', 'model-locked', {
-        conn: m.conn,
-        lock: m.lock,
-        ...(m.until ? { until: m.until } : {}),
-      });
-    }
-
-    if (modelLocked.length && routingSessionHash) {
-      const repos = await createSchedulerRepos({ now: Date.now() });
-      const pin = repos.getPin({ sessionHash: routingSessionHash, model: model || MODEL_ANY });
-      const pinned = connections.find((c) => c.id === pin?.connectionId);
-      const failure = temporaryPinWait(pinned, { model, preferredConnectionId,
-        strictPreferredConnection, excluded: excludeSet.has(pinned?.id), disabled: pinned ? modelDisabled(pinned) : false,
-        draining: draining.has(pinned?.id), ignoreLockConn });
-      const failureClass = failure?.failureClass;
-      if (failure) {
-        return {
-          allRateLimited: true, retryAfter: failure.until,
-          retryAfterHuman: formatRetryAfter(failure.until), lastError: failure.message,
-          lastErrorCode: failure.status, clientErrorStatus: failure.clientErrorStatus,
-          failureClass, mustWait: true,
-        };
-      }
+    for (const c of quotaExhausted) {
+      emit('SEL', 'quota-paused', { conn: c, why: 'provider-window-exhausted' });
     }
 
     // Filter out accounts paused due to low remaining quota (safety buffer).
@@ -645,12 +617,11 @@ export async function getProviderCredentials(
     connections.forEach((c) => {
       const excluded = excludeSet.has(c.id);
       const isDraining = draining.has(c.id);
-      const locked = isModelLockActive(c, model);
-      if (excluded || isDraining || locked) {
-        const lockUntil = getEarliestModelLockUntil(c, model);
+      const spent = getExhaustedQuotaWindow(c, model);
+      if (excluded || isDraining || spent) {
         log.debug(
           'AUTH',
-          `  → ${c.id?.slice(0, 8)} | ${excluded ? 'excluded' : ''} ${isDraining ? 'draining' : ''} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ''}`
+          `  → ${c.id?.slice(0, 8)} | ${excluded ? 'excluded' : ''} ${isDraining ? 'draining' : ''} ${spent ? `quotaExhausted(${model}) until ${spent.until}` : ''}`
         );
       }
     });
@@ -667,11 +638,14 @@ export async function getProviderCredentials(
       const selected = lockedPairs.sort((a, b) =>
         a.failure.until.localeCompare(b.failure.until)
       )[0];
+      // Nothing here benched these accounts: admission excluded them for a
+      // credential, a drain, an operator disable or a spent quota window. The
+      // stored failure record is only the best retry TIME we have to pass on.
       if (selected) {
         const { failure } = selected;
         log.warn(
           'AUTH',
-          `${provider} | all ${connections.length} accounts locked for ${model || 'all'} (${formatRetryAfter(failure.until)}) | lastError=${failure.message?.slice(0, 50) || 'none'}`
+          `${provider} | all ${connections.length} accounts unavailable for ${model || 'all'} (${formatRetryAfter(failure.until)}) | lastError=${failure.message?.slice(0, 50) || 'none'}`
         );
         return {
           allRateLimited: true,
@@ -1325,9 +1299,14 @@ export async function markAccountUnavailable(
     console.error(`❌ ${provider} [${status}]: ${reason}`);
   }
 
+  // mustWait is deliberately never set here. It told chat.js to hand the
+  // upstream's error straight back instead of trying another credential, so a
+  // single account's rate limit or transient 5xx refused the request while the
+  // rest of the pool sat idle. The failure record above still carries the reset
+  // for reporting; rotation is bounded by chat.js's own time budget.
   return {
     shouldFallback: true, cooldownMs, failureClass: lockClass,
-    retrySameAccount: false, mustWait: lockClass === 'rate' || lockClass === 'transient',
+    retrySameAccount: false, mustWait: false,
   };
 }
 
