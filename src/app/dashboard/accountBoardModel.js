@@ -104,7 +104,7 @@ const FULL = 100;
  * A recorded reset at or before `now` means the provider has handed the account
  * a whole fresh period, so the depleted reading that predates it describes a
  * period that no longer exists. This is the router's rule at
- * src/shared/utils/quotaRanking.js:292, and the provider-side exhaustion check
+ * src/shared/utils/quotaRanking.js:291, and the provider-side exhaustion check
  * refuses to call a model exhausted past its reset for the same reason at
  * open-sse/services/accountFallback.js:290.
  */
@@ -116,7 +116,7 @@ export function windowReplenished(window, now) {
 /**
  * What this window has left RIGHT NOW, in percent, or null when unreadable.
  *
- * src/shared/utils/quotaRanking.js:295 in the board's units: a replenished
+ * src/shared/utils/quotaRanking.js:300 in the board's units: a replenished
  * window reads full, never the zero on record. Reading that zero as depletion
  * is what parked replenished accounts beside genuinely exhausted ones.
  */
@@ -165,7 +165,7 @@ export function accountEvidence(account, now) {
  * ANY general window at or below zero, not every one. The router's rule 2 is
  * that every KNOWN hard window must have headroom, so a single exhausted weekly
  * takes the connection out of service however full its five-hour window reads
- * (src/shared/utils/quotaRanking.js:296, `if (effectiveRemaining <= 0) usable
+ * (src/shared/utils/quotaRanking.js:301, `if (effectiveRemaining <= 0) usable
  * = false`). The board's old rule was `every`, which is why an account the
  * router refuses to select still rendered as serving.
  */

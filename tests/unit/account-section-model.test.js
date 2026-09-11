@@ -3,9 +3,9 @@
 // The board and the router have to agree about the word "depleted", and they
 // did not. These assertions are the router's own rules restated in the board's
 // units, each citing where it came from:
-//   - a replenished window reads full   src/shared/utils/quotaRanking.js:295
+//   - a replenished window reads full   src/shared/utils/quotaRanking.js:300
 //   - the provider agrees past a reset  open-sse/services/accountFallback.js:290
-//   - ANY exhausted window benches      src/shared/utils/quotaRanking.js:296
+//   - ANY exhausted window benches      src/shared/utils/quotaRanking.js:301
 //   - general vs scoped windows         src/shared/utils/quotaRanking.js:132
 //   - fresh / stale / unknown evidence  src/shared/utils/quotaRanking.js:312,323
 import { describe, expect, it } from 'vitest';
