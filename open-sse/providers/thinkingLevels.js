@@ -95,20 +95,6 @@ const PATTERN_THINKING = [
     levels: ["none", "minimal", "low", "medium", "high"],
   },
   // ClinePass is an aggregator: its ids carry the upstream vendor's name, so a
-  // deepseek id resolves to the deepseek ladder none/high/max. The reporter
-  // states max is not supported there, and an unsupported level is a failed
-  // request rather than a degraded one (#2455). Dropping it lets the existing
-  // clamp walk max down to high instead.
-  {
-    provider: "clinepass",
-    pattern: "*deepseek*",
-    levels: ["none", "high"],
-  },
-  {
-    provider: "clinepass",
-    pattern: "*mimo*",
-    levels: ["none", "low", "medium", "high"],
-  },
 ];
 
 // Returns valid thinking levels for a model, or null when the model has no reasoning.

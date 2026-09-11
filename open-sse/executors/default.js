@@ -1,12 +1,10 @@
 import { applyOperatorHeaders, forwardClientHeaders } from "../utils/clientHeaderPassthrough.js";
 import { createHash } from "node:crypto";
-import { refreshClineToken } from "../services/tokenRefresh/providers.js";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
-import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
@@ -154,14 +152,6 @@ function normalizeMistralAssistantPrefix(body) {
 const HEADER_HOOKS = {
   // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
-  // An API key and an OAuth session token are not interchangeable here: the
-  // `workos:` prefix belongs to the session token, and putting it on a plain API
-  // key makes a valid key unusable, which is the 401 in #2333 and #2243. The
-  // models endpoint in services/clinepassModels.js already documents and applies
-  // this split; the chat path did not.
-  clineHeaders: (h, c) => Object.assign(h, c.apiKey
-    ? buildClineHeaders(null, { Authorization: `Bearer ${c.apiKey}` })
-    : buildClineHeaders(c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
 };
 
@@ -504,8 +494,6 @@ export class DefaultExecutor extends BaseExecutor {
       iflow: () => this.refreshIflow(credentials.refreshToken, proxyOptions),
       gemini: () => this.refreshFromGrant(credentials, proxyOptions),
       kiro: () => this.refreshKiro(credentials.refreshToken, proxyOptions),
-      cline: () => this.refreshCline(credentials.refreshToken, proxyOptions),
-      clinepass: () => this.refreshCline(credentials.refreshToken, proxyOptions),
       kimi: () => this.refreshKimi(credentials, proxyOptions),
       "kimi-coding": () => this.refreshKimi(credentials, proxyOptions),
       kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions)
@@ -567,12 +555,6 @@ export class DefaultExecutor extends BaseExecutor {
     if (!response.ok) return null;
     const tokens = await response.json();
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken || refreshToken, expiresIn: tokens.expiresIn };
-  }
-
-  async refreshCline(refreshToken, proxyOptions = null) {
-    // One implementation, shared with the background refresh map. Keeping a
-    // second copy here is how the scheduled path drifted out of contract.
-    return refreshClineToken(refreshToken, proxyOptions);
   }
 
   // CLIProxyAPI DeviceFlowClient.RefreshToken — form body + X-Msh-* headers + stable device_id

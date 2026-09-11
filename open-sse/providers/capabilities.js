@@ -200,31 +200,12 @@ const XIAOMI_TOKENPLAN_CAPABILITIES = {
 // A provider entry REPLACES the pattern caps rather than merging over them
 // (getStaticCapabilitiesForModel step 1), so this restates every non-default
 // capability "*deepseek-v4*" supplies. Dropping one silently reverts it.
-const DEEPSEEK_V4_CAPABILITIES = {
-  reasoning: true,
-  search: true,
-  thinkingFormat: "deepseek",
-  contextWindow: 1000000,
-  maxOutput: 384000,
-};
 
-// deepseek-v4-pro-max / -none are routing variants of deepseek-v4-pro
-// (registry `upstreamModelId`), so they reach the same upstream model.
-const DEEPSEEK_CAPABILITIES = {
-  "deepseek-v4-pro": DEEPSEEK_V4_CAPABILITIES,
-  "deepseek-v4-pro-max": DEEPSEEK_V4_CAPABILITIES,
-  "deepseek-v4-pro-none": DEEPSEEK_V4_CAPABILITIES,
-  "deepseek-v4-flash": DEEPSEEK_V4_CAPABILITIES,
-};
 
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
 export const PROVIDER_CAPABILITIES = {
-  // DeepSeek platform only — see DEEPSEEK_CAPABILITIES above. Both the id and
-  // the ui alias are registered because either can reach capability lookup.
-  "deepseek": DEEPSEEK_CAPABILITIES,
-  "ds": DEEPSEEK_CAPABILITIES,
   // Token Plan exposes text-only V2.5 chat models under the same IDs that the
   // standard MiMo API uses for a multimodal family. Keep both the canonical ID
   // and the routed model alias because combo/capacity checks receive either.
@@ -250,12 +231,6 @@ export const PROVIDER_CAPABILITIES = {
   // multimodal capabilities but no reasoning, which left the model with no
   // effort control at all even though the family is reasoning-tuned and other
   // gateways expose one for it (#3464). Scoped to this provider so a MiMo
-  // served elsewhere, on a wire that would reject the parameter, is untouched.
-  // A provider entry REPLACES the pattern caps, so each row restates them.
-  "clinepass": {
-    "mimo-v2.5": { vision: true, audioInput: true, videoInput: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
-    "mimo-v2.5-pro": { vision: true, audioInput: true, videoInput: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
-  },
   "codex": {
     "gpt-5.6-sol":               CODEX_GPT_56_SOL_CAPS,
     "gpt-5.6-sol-review":        CODEX_GPT_56_SOL_CAPS,

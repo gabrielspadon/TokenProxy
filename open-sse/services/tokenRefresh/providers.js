@@ -625,41 +625,6 @@ export async function refreshCopilotToken(githubAccessToken, log) {
 // CodeBuddy (Tencent) refresh — POST /v2/plugin/auth/token/refresh with the
 // refresh token carried in the X-Refresh-Token header (not a form body),
 // matching the official CodeBuddy CLI. Response: { code: 0, data: <token> }.
-// Cline's refresh endpoint takes a JSON body, not the form-encoded
-// grant_type/refresh_token/client_id the generic path sends, and answers the
-// generic shape with a 400. It also expects the access token to carry a
-// `workos:` prefix. The executor knew all this; the background refresh map did
-// not, so a scheduled refresh failed silently while an on-request one worked.
-// One implementation, both callers.
-export async function refreshClineToken(refreshToken, proxyOptions = null, log = null) {
-  if (!refreshToken) return null;
-  return dedupRefresh("cline", refreshToken, async () => {
-  try {
-    const response = await proxyAwareFetch(PROVIDERS.cline.refreshUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ refreshToken, grantType: "refresh_token", clientType: "extension" }),
-    }, proxyOptions);
-    if (!response.ok) {
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Cline token", { status: response.status });
-      return null;
-    }
-    const payload = await response.json();
-    const data = payload?.data || payload;
-    const expiresAtIso = data?.expiresAt;
-    const expiresIn = expiresAtIso
-      ? Math.max(1, Math.floor((new Date(expiresAtIso).getTime() - Date.now()) / 1000))
-      : undefined;
-    let accessToken = data?.accessToken;
-    if (accessToken && !accessToken.startsWith("workos:")) accessToken = `workos:${accessToken}`;
-    return { accessToken, refreshToken: data?.refreshToken || refreshToken, expiresIn };
-  } catch (error) {
-    log?.error?.("TOKEN_REFRESH", "Error refreshing Cline token", { error: error.message });
-    return null;
-  }
-  }, log, null, credentialContentRevision({providerSpecificData:proxyOptions}));
-}
-
 export async function refreshCodebuddyToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("codebuddy-cn", refreshToken, async () => {

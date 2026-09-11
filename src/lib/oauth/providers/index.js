@@ -19,8 +19,6 @@ import kiro from "./kiro.js";
 import cursor from "./cursor.js";
 import kimi from "./kimi.js";
 import kilocode from "./kilocode.js";
-import cline from "./cline.js";
-import clinepass from "./clinepass.js";
 import gitlab from "./gitlab.js";
 import codebuddyCn from "./codebuddy-cn.js";
 import codebuddyIntl from "./codebuddy-intl.js";
@@ -45,8 +43,6 @@ const PROVIDERS = {
   cursor,
   kimi,
   kilocode,
-  cline,
-  clinepass,
   gitlab,
   "codebuddy-cn": codebuddyCn,
   "codebuddy-intl": codebuddyIntl,

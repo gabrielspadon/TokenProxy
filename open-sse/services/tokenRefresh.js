@@ -12,7 +12,6 @@ import {
   refreshIflowToken,
   refreshGitHubToken,
   refreshCopilotToken,
-  refreshClineToken,
   refreshProxyOptions,
   refreshCodebuddyToken,
   refreshCodebuddyIntlToken,
@@ -206,8 +205,6 @@ const REFRESH_HANDLERS = {
   // routes both to it, and clinepass's registry points at the same api.cline.bot
   // refresh URL. Absent from this map they fell through to the generic
   // form-encoded refresh, which that endpoint answers with a 400.
-  cline: (c, log) => refreshClineToken(c.refreshToken, refreshProxyOptions(c), log),
-  clinepass: (c, log) => refreshClineToken(c.refreshToken, refreshProxyOptions(c), log),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
   "codebuddy-intl": (c, log) => refreshCodebuddyIntlToken(c.refreshToken, log),
   trae: (c, log) => refreshTraeToken(c.refreshToken, c, log),
