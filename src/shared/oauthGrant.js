@@ -175,14 +175,20 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
     const appPort = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
     const q = new URLSearchParams({ app_port: appPort, state: a.state, code_verifier: a.codeVerifier, redirect_uri: a.redirectUri });
     const sp = await call(`/api/oauth/${provider}/start-proxy?${q}`);
-    if (!sp.ok || !sp.body.success) return stop({ ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body });
+    // `state` rides back on every refusal from here down. authorize has already
+    // issued it, so the provider may ALREADY have redirected the operator to a URL
+    // carrying a code; the row gates its paste box on `out.state`, so withholding
+    // it is what made the fallback unreachable on the failures that actually happen.
+    if (!sp.ok || !sp.body.success) return stop({ ok: false, status: sp.status, state: a.state, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body });
     const shown = showAuthUrl(win, a.authUrl);
     if (shown !== "shown") {
       // The proxy is already listening by this point. Returning without closing
-      // it leaves the loopback port held for its full timeout (300s for codex
+      // it leaves the loopback port held for its full timeout (600s for codex
       // and xai), so the next attempt hits EADDRINUSE on a port nothing is
       // waiting on.
       await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
+      // No state, deliberately: the window never reached the provider, so no code
+      // exists anywhere and the paste box would ask for something unobtainable.
       return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
     }
     say("Finish the sign-in in the window that opened.");
