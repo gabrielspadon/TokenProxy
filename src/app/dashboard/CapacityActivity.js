@@ -537,7 +537,7 @@ export function CapacityActivity() {
       <footer className={styles.foot}>
         <span>
           {chart === 'calendar'
-            ? `Daily totals · UTC${scopeStart ? '' : ', the last year'}. Select a day to focus.`
+            ? `Daily totals · UTC${scopeStart ? '' : ', the last year'}.${Number.isFinite(bucketMs) && bucketMs > DAY ? ` This period is too long for whole days, so each cell covers ${interval(bucketMs)} and some days read empty.` : ''} Select a day to focus.`
             : `${Number.isFinite(bucketMs) ? `${interval(bucketMs)} intervals${bucket && bucketMs > bucket ? ` (the ${interval(bucket)} scale is too fine for this period)` : ''} · UTC. Select an interval to focus.` : 'Selected UTC period.'}`}{' '}
           {resource.receivedAt ? `Updated ${utc(resource.receivedAt)} UTC.` : ''}
         </span>

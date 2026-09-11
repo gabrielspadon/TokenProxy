@@ -29,6 +29,7 @@ import { TONE, WORDS, AUTH } from '@/shared/status';
 import { fmtNum, fmtRelative, fmtTime, fmtDuration, isEpoch } from '@/shared/format';
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from '@/shared/constants/providers';
 import { resolveAccountCapacity, resolveProviderCeiling } from '@/shared/utils/accountCapacity';
+import { captureAccountControls } from '@/shared/utils/accountControls';
 import { Icon } from '@/shared/components/Icon';
 import { ProviderMark } from '@/shared/components/ProviderMark';
 import { StateWord, boardStyles, useLevel } from '@/shared/workspace/Board';
@@ -530,14 +531,30 @@ export default function ConnectionPage({ params }) {
                             onCommit={(value) =>
                               run(
                                 'thresholds',
-                                () =>
-                                  put({
+                                // The whole map is written, and `c` is a poll up to
+                                // ten seconds old, so it is re-read first: merging
+                                // into the rendered copy silently reverts a
+                                // threshold someone else set in between.
+                                async () => {
+                                  const read = await call(`/api/providers/${id}`);
+                                  if (!read.ok || read.body?.connection?.id !== id)
+                                    return { ...read, ok: false };
+                                  const before = read.body.connection;
+                                  return put({
                                     quotaPauseThresholds: {
-                                      ...(c.quotaPauseThresholds || {}),
+                                      ...(before.quotaPauseThresholds || {}),
                                       [scope]: value,
                                     },
-                                  }),
-                                { title: `Auto-pause for ${scope} saved` }
+                                    expectedControls: captureAccountControls(before),
+                                  });
+                                },
+                                {
+                                  title: `Auto-pause for ${scope} saved`,
+                                  verify: () =>
+                                    readBack(
+                                      (saved) => (saved.quotaPauseThresholds?.[scope] ?? 0) === value
+                                    ),
+                                }
                               )
                             }
                           />
