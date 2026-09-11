@@ -125,7 +125,9 @@ function waitForCallback(expectedState, signal) {
 // Run one grant. `report(step)` receives short sentences for the dialog.
 // Returns {ok, connection} | {ok:false, status, body} for refusal rendering.
 // reauth: {reauthConnectionId, forceReauth} carried into exchange for rebinds.
-export async function runGrant(provider, flowType, { report, signal, reauth, deviceHook, deviceOptions = {}, meta = {} } = {}) {
+// onFallback({provider, state}) fires once a fixed-port sign-in is live, so the
+// caller can offer the paste-back fallback WHILE the grant runs.
+export async function runGrant(provider, flowType, { report, signal, reauth, deviceHook, onFallback, deviceOptions = {}, meta = {} } = {}) {
   if (reauth?.reauthConnectionId && requiresCredentialDocument(provider)) return { ok: false, status: 409, body: { error: 'Use a credential document to replace this account. The local callback flow creates a new account.' } };
   const say = report || (() => {});
   const origin = window.location.origin;
@@ -192,6 +194,14 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
       return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
     }
     say("Finish the sign-in in the window that opened.");
+    // The paste-back escape hatch is armed HERE, while the grant is still
+    // running, not on the refusal below. Gating it on the refusal meant it only
+    // appeared after PROXY_QUERY_DEADLINE_MS, so an operator whose callback was
+    // never going to arrive watched an unchanging row for ten minutes and then
+    // gave up before the one control that could have finished the sign-in ever
+    // rendered. The state is the one this grant issued, so a URL pasted from any
+    // other sign-in is still refused by the gateway.
+    onFallback?.({ provider, state: a.state });
     const done = await pollStatus(provider, a.state, signal, PROXY_QUERY_DEADLINE_MS);
     // The proxy is deliberately NOT stopped on the failure path: its session still
     // holds the codeVerifier the paste-back fallback needs. `state` goes back with

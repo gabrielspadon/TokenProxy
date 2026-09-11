@@ -239,6 +239,27 @@ function createProxyLifecycle({ timeoutMs, onStop }) {
       servers = next.filter(Boolean);
       timer = setTimeout(stop, timeoutMs);
     },
+    // A retry that reuses a LISTENING proxy gets the full timeout again, counted
+    // from the retry. Without this the timer adopt() armed still expired on the
+    // FIRST attempt's schedule, and the already-running fast path never re-armed
+    // it. A second sign-in started after a ten-minute timeout was therefore
+    // killed within seconds of opening: the old timer fired, closed the port the
+    // provider was about to redirect to, and dropPendingSessions deleted the
+    // retry's own pending session under it, after which poll-status answered
+    // "unknown" for the rest of that grant's deadline. That is the sign-in window
+    // opening and nothing ever happening after it, and it got worse every
+    // attempt, because each retry inherited a shorter remainder of the first
+    // one's clock.
+    //
+    // FAILURE DIRECTION: this only ever EXTENDS a life already armed. `!timer`
+    // means nothing is listening on this lifecycle's behalf, so renew() refuses
+    // rather than arming a timer over no listeners, which would call stop() on a
+    // lifecycle that had already released.
+    renew() {
+      if (!timer) return;
+      clearTimer();
+      timer = setTimeout(stop, timeoutMs);
+    },
   };
 }
 
@@ -331,6 +352,7 @@ export function startCodexProxy(appPort) {
     // proxy still owns the redirect target.
     codexAppPort = appPort;
     if (codexProxy.running()) {
+      codexProxy.renew();
       resolve({ success: true });
       return;
     }
@@ -475,6 +497,7 @@ export function startXaiProxy(appPort) {
   return new Promise((resolve) => {
     xaiAppPort = appPort;
     if (xaiProxy.running()) {
+      xaiProxy.renew();
       resolve({ success: true });
       return;
     }
@@ -598,6 +621,7 @@ export function clearTraeSession(state) {
 export function startTraeProxy() {
   return new Promise((resolve) => {
     if (traeProxy.running()) {
+      traeProxy.renew();
       resolve({ success: true, port: traeProxyPort, callbackUrl: `http://127.0.0.1:${traeProxyPort}${TRAE_CONFIG.callbackPath}` });
       return;
     }
@@ -705,6 +729,7 @@ export function clearWindsurfSession(state) {
 export function startWindsurfProxy() {
   return new Promise((resolve) => {
     if (windsurfProxy.running()) {
+      windsurfProxy.renew();
       resolve({ success: true, port: windsurfProxyPort, callbackUrl: `http://127.0.0.1:${windsurfProxyPort}${WINDSURF_CONFIG.callbackPath}` });
       return;
     }
@@ -805,6 +830,7 @@ export function clearDevinSession(state) {
 export function startDevinProxy() {
   return new Promise((resolve) => {
     if (devinProxy.running()) {
+      devinProxy.renew();
       resolve({ success: true, port: devinProxyPort, callbackUrl: `http://127.0.0.1:${DEVIN_CONFIG.callbackPort}${DEVIN_CONFIG.callbackPath}` });
       return;
     }
@@ -904,6 +930,7 @@ export function clearZedSession(state) {
 export function startZedProxy(preferredPort = 0) {
   return new Promise((resolve) => {
     if (zedProxy.running()) {
+      zedProxy.renew();
       resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
       return;
     }
