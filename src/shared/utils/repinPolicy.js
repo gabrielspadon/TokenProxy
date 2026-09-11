@@ -151,7 +151,14 @@ function restockedSincePin(pin, cohort, targetId, nowMs, model) {
  *   this session right now and the caller queues or fails over; it never means
  *   "silently pick something".
  */
-export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoad = null, model = null } = {}) {
+export function decideRepin({
+  pin,
+  accounts,
+  now,
+  unavailableIds = [],
+  activeLoad = null,
+  model = null,
+} = {}) {
   const unavailable = new Set(unavailableIds);
   const cohort = (Array.isArray(accounts) ? accounts : []).filter((a) => !unavailable.has(a?.id));
   const pinnedId = pin?.connectionId ?? null;
@@ -216,8 +223,40 @@ export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoa
   // THE DECISION POINT. The pinned account still has headroom, so it keeps the
   // session: no ranking outcome and no other account's reset takes a healthy
   // pin, because the switch would cost a full cache re-prime and buy nothing.
-  if (ranked.eligible.some((r) => r.id === pinnedId)) {
-    return keep(pin, 'pin-healthy');
+  //
+  // EXCEPT WHEN "HEALTHY" IS ONLY AN ABSENCE OF EVIDENCE (2026-09-11). An
+  // account whose quota read failed carries NO windows, and resolveWindows
+  // reports it `usable: true` because nothing depleted it — nothing was read at
+  // all. That lands it in `eligible`, this test matches, and the pin is held on
+  // a seat we know nothing about for as long as the session keeps talking.
+  // Measured: connection 01d2af87 carried 43 live pins with zero rows in
+  // quotaWindows, the oldest bound 186 hours, while accounts with read evidence
+  // and real headroom sat beside it.
+  //
+  // The ranker already grades this: `evidenceBand` 2 is "no orderable window",
+  // and it demotes such a seat behind every readable one for a NEW pin
+  // (quotaRanking.js evidenceBandOf). Only the pin path ignored the grade. So
+  // the hold now requires POSITIVE evidence of headroom, not merely the absence
+  // of evidence of depletion, and an unreadable pin yields to a readable
+  // alternative when one exists.
+  //
+  // This deliberately does NOT touch the two holds above. All-depleted still
+  // holds, because there the pin is ineligible on evidence we DID read and have
+  // reason to distrust. Degraded still holds, because when nothing anywhere is
+  // readable there is no better-evidenced seat to move to — which is exactly
+  // the condition this branch requires and cannot find.
+  const pinnedRecord = ranked.eligible.find((r) => r.id === pinnedId);
+  if (pinnedRecord) {
+    const blindPin = pinnedRecord.windows.length === 0;
+    const readableAlternative =
+      blindPin && ranked.eligible.find((r) => r.id !== pinnedId && r.windows.length > 0);
+    if (!readableAlternative) return keep(pin, 'pin-healthy');
+    return move(
+      pinnedId,
+      readableAlternative.id,
+      TRIGGERS.UNAVAILABLE,
+      'pinned-evidence-absent:moving-to-readable'
+    );
   }
 
   // The pinned account is depleted. Choose again from scratch: `winner` is the
@@ -231,6 +270,6 @@ export function decideRepin({ pin, accounts, now, unavailableIds = [], activeLoa
     pinnedId,
     winner,
     returning ? TRIGGERS.RESET : TRIGGERS.EXHAUSTION,
-    returning ? 'pinned-window-exhausted:returning-to-restored' : 'pinned-window-exhausted',
+    returning ? 'pinned-window-exhausted:returning-to-restored' : 'pinned-window-exhausted'
   );
 }
