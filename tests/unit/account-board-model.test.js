@@ -39,11 +39,15 @@ describe('account buckets', () => {
     expect(accountStateWord(account(), NOW)).toBe('Ready');
     expect(accountStateWord(account({ status: 'unqualified' }), NOW)).toBe('Ready');
   });
-  it('puts a manual pause and a quota pause in the same bucket with distinct words', () => {
+  // These two shared a bucket, which put the operator's own hold and a hold
+  // nobody chose behind one chip and one colour. The words already differed;
+  // the count above them did not, so the strip agreed with a board that was
+  // saying the wrong thing. Taxonomy pinned in account-state-taxonomy.test.js.
+  it('counts a manual pause apart from an automatic quota pause', () => {
     expect(accountBucket(account({ isActive: false }), NOW)).toBe('paused');
     expect(accountStateWord(account({ isActive: false }), NOW)).toBe('Paused');
     const quotaPaused = account({ quotaPauseThresholds: { session: 70 } });
-    expect(accountBucket(quotaPaused, NOW)).toBe('paused');
+    expect(accountBucket(quotaPaused, NOW)).toBe('quotaHold');
     expect(accountStateWord(quotaPaused, NOW)).toBe('Quota pause');
   });
   it('flags low quota only from fresh known windows', () => {
@@ -78,7 +82,7 @@ describe('account buckets', () => {
     const near = account({ quotaPauseThresholds: { session: 40 } }, [
       { key: 'session', remainingPercentage: 35, resetAt: minutes(90) },
     ]);
-    expect(accountBucket(near, NOW)).toBe('paused');
+    expect(accountBucket(near, NOW)).toBe('quotaHold');
   });
   it('keeps the specific gate word for attention states', () => {
     expect(accountStateWord(account({ isDraining: true }), NOW)).toBe('Draining');
@@ -133,8 +137,9 @@ describe('account buckets', () => {
       ready: 1,
       low: 0,
       depleted: 0,
+      quotaHold: 1,
       paused: 1,
-      attention: 1,
+      attention: 0,
       unknown: 0,
     });
   });
@@ -173,7 +178,9 @@ describe('board filters and labels', () => {
     expect(filterAccounts(accounts, { query: '  ' }, NOW)).toHaveLength(2);
   });
   it('composes the serving-state axis with the health axis rather than replacing it', () => {
-    const drained = account({ id: 'c', connectionId: 'c', isActive: false }, [
+    // Empty rather than switched off: an account an operator paused now has its
+    // own section, so it could no longer stand in for a cooling-down one.
+    const drained = account({ id: 'c', connectionId: 'c' }, [
       { key: 'session', remainingPercentage: 0, resetAt: minutes(90) },
     ]);
     const accounts = [account(), drained];
@@ -183,10 +190,10 @@ describe('board filters and labels', () => {
     expect(filterAccounts(accounts, { section: 'serving' }, NOW).map((item) => item.id)).toEqual([
       'a',
     ]);
-    // Both axes at once narrow to the intersection; the drained account is
-    // also paused, so it survives both filters together.
+    // Both axes at once narrow to the intersection; the drained account is out
+    // of quota as well as cooling down, so it survives both filters together.
     expect(
-      filterAccounts(accounts, { section: 'resting', bucket: 'paused' }, NOW).map((i) => i.id)
+      filterAccounts(accounts, { section: 'resting', bucket: 'depleted' }, NOW).map((i) => i.id)
     ).toEqual(['c']);
     expect(filterAccounts(accounts, { section: 'resting', bucket: 'ready' }, NOW)).toHaveLength(0);
   });
