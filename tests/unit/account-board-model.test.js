@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   accountBucket,
+  accountCapacity,
+  accountSeat,
   accountStateWord,
+  capacityReturnsAt,
+  capacitySummary,
   credentialModes,
   filterAccounts,
   fleetSummary,
+  groupBySeat,
+  groupCapacity,
+  groupReturnsAt,
   providerList,
   resetShort,
   visibleWindowLines,
@@ -95,6 +102,94 @@ describe('account buckets', () => {
   });
 });
 
+describe('capacity axis', () => {
+  const seat = (id, windows, overrides = {}) =>
+    account({ id, connectionId: id, displayName: id, ...overrides }, windows);
+  it('licenses serving only from a live window with headroom', () => {
+    expect(accountCapacity(account(), NOW)).toBe('serving');
+    const drained = account({}, [{ key: 'session', remainingPercentage: 0, resetAt: minutes(90) }]);
+    expect(accountCapacity(drained, NOW)).toBe('returns');
+    // One window with room is enough, even beside an exhausted one.
+    const mixed = account({}, [
+      { key: 'session', remainingPercentage: 0, resetAt: minutes(90) },
+      { key: 'weekly', remainingPercentage: 40, resetAt: minutes(3000) },
+    ]);
+    expect(accountCapacity(mixed, NOW)).toBe('serving');
+  });
+  it('separates an unmeasured account from a depleted one', () => {
+    const stale = account({
+      lastQuotaSnapshot: {
+        fetchedAt: minutes(-30),
+        windows: [{ key: 'session', remainingPercentage: 0, resetAt: minutes(90) }],
+      },
+    });
+    expect(accountCapacity(stale, NOW)).toBe('no-evidence');
+    const unlimited = account({}, [{ key: 'session', remainingPercentage: 0, unlimited: true }]);
+    expect(accountCapacity(unlimited, NOW)).toBe('no-evidence');
+    expect(accountCapacity(account({}, []), NOW)).toBe('no-evidence');
+  });
+  it('reports the latest reset among an account’s depleted windows', () => {
+    const both = account({}, [
+      { key: 'session', remainingPercentage: 0, resetAt: minutes(90) },
+      { key: 'weekly', remainingPercentage: 0, resetAt: minutes(3000) },
+    ]);
+    expect(capacityReturnsAt(both, NOW)).toBe(Date.parse(minutes(3000)));
+    expect(capacityReturnsAt(account(), NOW)).toBeNull();
+  });
+  it('counts every account once across the capacity states', () => {
+    const drained = account({}, [{ key: 'session', remainingPercentage: 0, resetAt: minutes(90) }]);
+    expect(capacitySummary([account(), drained, account({}, [])], NOW)).toEqual({
+      serving: 1,
+      returns: 1,
+      'no-evidence': 1,
+    });
+  });
+  it('splits a login name into its login and its seat', () => {
+    expect(accountSeat({ displayName: 'ops@example.test (org)' })).toEqual({
+      login: 'ops@example.test',
+      seat: 'org',
+    });
+    expect(accountSeat({ displayName: 'ops@example.test' })).toEqual({
+      login: 'ops@example.test',
+      seat: null,
+    });
+  });
+  it('groups distinct seats of one login without merging them', () => {
+    const groups = groupBySeat([
+      seat('ops (org)', [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(3000) }]),
+      seat('ops (personal)', [{ key: 'weekly', remainingPercentage: 55, resetAt: minutes(5000) }]),
+      seat('other', [{ key: 'session', remainingPercentage: 20, resetAt: minutes(90) }]),
+    ]);
+    expect(groups.map((group) => group.login)).toEqual(['ops', 'other']);
+    const ops = groups.find((group) => group.login === 'ops');
+    // Both seats survive the grouping; collapsing them would hide the 55%.
+    expect(ops.seats.map((item) => item.seatLabel)).toEqual(['org', 'personal']);
+  });
+  it('reads a login as serving when any one of its seats can take work', () => {
+    const group = groupBySeat([
+      seat('ops (org)', [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(3000) }]),
+      seat('ops (personal)', [{ key: 'weekly', remainingPercentage: 55, resetAt: minutes(5000) }]),
+    ])[0];
+    expect(groupCapacity(group, NOW)).toBe('serving');
+    const drained = groupBySeat([
+      seat('ops (org)', [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(3000) }]),
+      seat('ops (personal)', [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(5000) }]),
+    ])[0];
+    expect(groupCapacity(drained, NOW)).toBe('returns');
+    const blind = groupBySeat([seat('ops (org)', [])])[0];
+    expect(groupCapacity(blind, NOW)).toBe('no-evidence');
+  });
+  it('takes the earliest seat return, the opposite of the within-account rule', () => {
+    const drained = groupBySeat([
+      seat('ops (org)', [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(3000) }]),
+      seat('ops (personal)', [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(5000) }]),
+    ])[0];
+    expect(groupReturnsAt(drained, NOW)).toBe(Date.parse(minutes(3000)));
+    const serving = groupBySeat([seat('ops (org)', undefined)])[0];
+    expect(groupReturnsAt(serving, NOW)).toBeNull();
+  });
+});
+
 describe('board filters and labels', () => {
   it('filters by bucket and by a case-insensitive needle over name, email, provider and id', () => {
     const accounts = [
@@ -113,6 +208,24 @@ describe('board filters and labels', () => {
     expect(filterAccounts(accounts, { query: 'OPS@' }, NOW).map((item) => item.id)).toEqual(['b']);
     expect(filterAccounts(accounts, { query: 'codex' }, NOW)).toHaveLength(2);
     expect(filterAccounts(accounts, { query: '  ' }, NOW)).toHaveLength(2);
+  });
+  it('composes the capacity axis with the health axis rather than replacing it', () => {
+    const drained = account({ id: 'c', connectionId: 'c', isActive: false }, [
+      { key: 'session', remainingPercentage: 0, resetAt: minutes(90) },
+    ]);
+    const accounts = [account(), drained];
+    expect(filterAccounts(accounts, { capacity: 'returns' }, NOW).map((item) => item.id)).toEqual([
+      'c',
+    ]);
+    expect(filterAccounts(accounts, { capacity: 'serving' }, NOW).map((item) => item.id)).toEqual([
+      'a',
+    ]);
+    // Both axes at once narrow to the intersection; the drained account is
+    // also paused, so it survives both filters together.
+    expect(
+      filterAccounts(accounts, { capacity: 'returns', bucket: 'paused' }, NOW).map((i) => i.id)
+    ).toEqual(['c']);
+    expect(filterAccounts(accounts, { capacity: 'returns', bucket: 'ready' }, NOW)).toHaveLength(0);
   });
   it('flattens product groups into labelled lines', () => {
     const codex = account({}, [
@@ -173,10 +286,15 @@ describe('window visibility', () => {
     expect(recovered.hidden).toEqual([]);
   });
   it('does not let a stale depleted weekly window hide anything', () => {
-    const stale = claude(70, 0, { lastQuotaSnapshot: { fetchedAt: minutes(-600), windows: [
-      { key: 'session (5h)', remainingPercentage: 70, resetAt: minutes(90) },
-      { key: 'weekly (7d)', remainingPercentage: 0, resetAt: minutes(3000) },
-    ] } });
+    const stale = claude(70, 0, {
+      lastQuotaSnapshot: {
+        fetchedAt: minutes(-600),
+        windows: [
+          { key: 'session (5h)', remainingPercentage: 70, resetAt: minutes(90) },
+          { key: 'weekly (7d)', remainingPercentage: 0, resetAt: minutes(3000) },
+        ],
+      },
+    });
     expect(visibleWindowLines(stale, new Set(), NOW).hidden).toEqual([]);
   });
   it('keeps a manual hide until the person shows the window again, whatever the weekly does', () => {

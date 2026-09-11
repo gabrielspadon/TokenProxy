@@ -139,6 +139,36 @@ export function groupBySeat(accounts) {
   );
 }
 
+/**
+ * The capacity state of a whole login, from its seats.
+ *
+ * A login can serve work if ANY of its seats can, so one serving seat makes the
+ * group serving even beside a drained twin. `returns` needs at least one
+ * depleted seat and no serving one; a group with neither is `no-evidence`.
+ * This is the only place the two axes are combined, and it is deliberately not
+ * a merge: the seats stay listed separately underneath.
+ */
+export function groupCapacity(group, now) {
+  const states = group.seats.map((seat) => accountCapacity(seat, now));
+  if (states.includes('serving')) return 'serving';
+  return states.includes('returns') ? 'returns' : 'no-evidence';
+}
+
+/**
+ * When a drained login can work again, as epoch ms, or null.
+ *
+ * The EARLIEST return among its depleted seats, which is the opposite of the
+ * rule inside one account. Within an account every exhausted window must roll
+ * before it is usable; across seats the first seat to come back is enough,
+ * because the other seat was never what the work was waiting on.
+ */
+export function groupReturnsAt(group, now) {
+  const times = group.seats
+    .map((seat) => capacityReturnsAt(seat, now))
+    .filter((time) => Number.isFinite(time));
+  return times.length ? Math.min(...times) : null;
+}
+
 // The word beside the dot. Buckets are coarse on purpose; the word keeps the
 // specific gate when there is one, so "Draining" and "Cooldown" stay distinct.
 export function accountStateWord(account, now) {
@@ -156,11 +186,15 @@ export function fleetSummary(accounts, now) {
   return counts;
 }
 
-export function filterAccounts(accounts, { query = '', bucket = null }, now) {
+// The two axes filter independently and compose, because they answer different
+// questions: a `returns` account can also be `paused`, and an operator narrowing
+// to one is not asking to leave the other behind.
+export function filterAccounts(accounts, { query = '', bucket = null, capacity = null }, now) {
   const needle = query.trim().toLowerCase();
   return accounts.filter(
     (account) =>
       (!bucket || accountBucket(account, now) === bucket) &&
+      (!capacity || accountCapacity(account, now) === capacity) &&
       (!needle ||
         `${account.displayName || account.name || ''} ${account.email || ''} ${account.provider} ${accountControlId(account)}`
           .toLowerCase()
@@ -200,9 +234,11 @@ export function headroomOf(account, now) {
 
 // Everyday card order inside a bucket: most headroom first, unknown last, then name.
 export function orderCards(accounts, now) {
-  const name = (account) => String(account.displayName || account.name || accountControlId(account));
+  const name = (account) =>
+    String(account.displayName || account.name || accountControlId(account));
   return [...accounts].sort((a, b) => {
-    const ha = headroomOf(a, now), hb = headroomOf(b, now);
+    const ha = headroomOf(a, now),
+      hb = headroomOf(b, now);
     if (ha === null && hb !== null) return 1;
     if (hb === null && ha !== null) return -1;
     return (hb ?? 0) - (ha ?? 0) || name(a).localeCompare(name(b));
@@ -235,8 +271,10 @@ export function visibleWindowLines(account, hiddenIds, now) {
   const shown = [];
   const hidden = [];
   for (const line of lines) {
-    if (hiddenIds.has(windowHiddenId(account, line.key))) hidden.push({ ...line, reason: 'manual' });
-    else if (line.order < (depletedOrder[line.product] ?? -1)) hidden.push({ ...line, reason: 'depleted' });
+    if (hiddenIds.has(windowHiddenId(account, line.key)))
+      hidden.push({ ...line, reason: 'manual' });
+    else if (line.order < (depletedOrder[line.product] ?? -1))
+      hidden.push({ ...line, reason: 'depleted' });
     else shown.push(line);
   }
   return { shown, hidden };
