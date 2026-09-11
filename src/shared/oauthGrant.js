@@ -175,7 +175,14 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
     const sp = await call(`/api/oauth/${provider}/start-proxy?${q}`);
     if (!sp.ok || !sp.body.success) return stop({ ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body });
     const shown = showAuthUrl(win, a.authUrl);
-  if (shown !== "shown") return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
+    if (shown !== "shown") {
+      // The proxy is already listening by this point. Returning without closing
+      // it leaves the loopback port held for its full timeout (300s for codex
+      // and xai), so the next attempt hits EADDRINUSE on a port nothing is
+      // waiting on.
+      await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
+      return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
+    }
     say("Finish the sign-in in the window that opened.");
     const done = await pollStatus(provider, a.state, signal);
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
@@ -191,7 +198,14 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
     });
     if (!reg.ok || !reg.body.success) return stop({ ok: false, status: reg.status, body: { error: "The sign-in session could not be registered." } });
     const shown = showAuthUrl(win, a.authUrl);
-  if (shown !== "shown") return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
+    if (shown !== "shown") {
+      // The proxy is already listening by this point. Returning without closing
+      // it leaves the loopback port held for its full timeout (300s for codex
+      // and xai), so the next attempt hits EADDRINUSE on a port nothing is
+      // waiting on.
+      await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
+      return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
+    }
     say("Finish the sign-in in the window that opened.");
     const done = await pollStatus(provider, a.state, signal, PROXY_SESSION_DEADLINE_MS);
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
