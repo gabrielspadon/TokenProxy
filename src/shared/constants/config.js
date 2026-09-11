@@ -102,6 +102,13 @@ export const QUOTA_AUTOPING_CONFIG = {
       settingsKey: "codexAutoPing",
       quotaKey: "session",
       expectedWindows: ["session"],
+      // "session" carries no parseable duration, but the adapter already knows
+      // what it is: open-sse/services/usage/codex.js:211 names a window
+      // "session" exactly when limit_window_seconds is 18000, and "weekly" at
+      // 604800. Declared here so the dashboard reads the SAME source as kimi
+      // below rather than a second table beside it. Warming is unaffected:
+      // windowPeriodMs already fell through to an 18000000 default for this key.
+      windowPeriodsMs: { session: 18000000, weekly: 604800000 },
       authTypes: ["oauth"],
       // Codex reports a session window with a FUTURE reset even while idle and
       // pushes that reset forward as time passes, so one reading cannot tell an

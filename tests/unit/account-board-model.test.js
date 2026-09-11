@@ -113,8 +113,8 @@ describe('board filters and labels', () => {
       { key: 'Weekly (7d)', remainingPercentage: 20 },
     ]);
     expect(windowLines(codex).map((line) => line.label)).toEqual([
-      'Session',
-      'Codex Spark · Weekly',
+      'Session (5h)',
+      'Codex Spark · Weekly (7d)',
       'Weekly (7d)',
     ]);
   });
