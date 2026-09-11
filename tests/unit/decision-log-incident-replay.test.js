@@ -322,7 +322,11 @@ function serialize(ls) {
 }
 
 describe("incident replay: diagnose the quota lock + failover from the log alone", () => {
-  it("returns an ordinary rate cooldown without amplifying attempts", async () => {
+  // A rate limit used to end the request on the account that hit it: classification
+  // alone set mustWait, which returns the 429 instead of rotating, and the rest of
+  // the pool sat idle. An upstream 429 is a rejection BEFORE generation, so
+  // re-dispatching it on a different credential cannot double-bill anyone.
+  it("rotates a rate limit across the pool instead of ending on the first account", async () => {
     harness.upstream = vi.fn(() => Response.json({
       error: { type: "rate_limit_error", message: "Number of request tokens has exceeded your rate limit" },
     }, { status: 429, headers: { "retry-after": "60" } }));
@@ -330,14 +334,16 @@ describe("incident replay: diagnose the quota lock + failover from the log alone
       rid: "aa000006", messages: [{ role: "user", content: "rate control" }],
     }));
     expect(response.status).toBe(429);
-    expect(response.headers.get("retry-after")).toBe("60");
-    expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("false");
-    expect(harness.upstream).toHaveBeenCalledTimes(1);
+    // Both accounts were tried; neither had anything to give.
+    expect(harness.upstream).toHaveBeenCalledTimes(harness.connections.length);
+    // Nothing was generated, so the client may safely retry.
+    expect(response.headers.get("x-tokenproxy-replay-safe")).toBe("true");
     await response.text();
     const decisions = take();
+    // The failure record is still written; it just no longer gates anything.
     expect(decisions.some((line) => line.includes("LOCK.applied") && line.includes("class=rate"))).toBe(true);
-    expect(decisions.some((line) => line.includes("UP.no-replay") && line.includes("why=account-cooldown"))).toBe(true);
-    expect(decisions.some((line) => line.includes("UP.failover"))).toBe(false);
+    expect(decisions.some((line) => line.includes("UP.no-replay") && line.includes("why=account-cooldown"))).toBe(false);
+    expect(decisions.some((line) => line.includes("UP.failover"))).toBe(true);
   });
 
   it("plays beats 1-5 and matches the golden capture", async () => {
@@ -394,7 +400,9 @@ describe("incident replay: diagnose the quota lock + failover from the log alone
     expect(req2[1]).toContain("conn=conn-bbb");
     expect(req2[1]).toContain("cr=0");
 
-    // ── beat 3: the quota lock still holds — the scheduler skips aaaa1111 ──
+    // ── beat 3: aaaa1111 carries the quota failure record but is NOT benched.
+    // The session repinned to bbbb2222 on the failover above and stays there,
+    // so nothing has to skip an account for the pool to keep serving. ──
     harness.upstream = () =>
       claudeSse({ usage: { input_tokens: 10, output_tokens: 5 } });
     const anchors = [
@@ -408,8 +416,11 @@ describe("incident replay: diagnose the quota lock + failover from the log alone
     await res3.text();
     const b3 = take();
     captured.push(...b3);
-    expect(b3.some((l) => /SEL\.model-locked/.test(l) && l.includes("conn=conn-aaa"))).toBe(true);
-    expect(b3.some((l) => /SEL\.win/.test(l) && l.includes("conn=conn-bbb"))).toBe(true);
+    // No account was skipped for carrying a failure record, and the very account
+    // that took the quota lock in beat 2 is selected again and serves the request.
+    // That is the whole point: the record reports, it does not bench.
+    expect(b3.some((l) => /SEL\.model-locked/.test(l))).toBe(false);
+    expect(b3.some((l) => /SEL\.(win|pin-hit|repin)/.test(l) && l.includes("conn-aaa"))).toBe(true);
     const req3 = b3.filter((l) => l.includes(" REQ."));
     expect(req3).toHaveLength(1);
     expect(req3[0]).toContain("rid=aa000003");

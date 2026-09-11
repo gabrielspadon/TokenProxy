@@ -512,14 +512,16 @@ describe('handleNonStreamingResponse post-processing gates', () => {
     expect(res.resetsAtMs).toBeGreaterThan(Date.now());
   });
 
-  it('HTTP 200 with empty content fails 502 and locks with a cooldown', async () => {
+  it('HTTP 200 with empty content fails 502 and leaves the account in rotation', async () => {
     const params = handlerParams({
       providerResponse: jsonProviderResponse(completion({ role: 'assistant', content: '   ' })),
     });
     const res = await handleNonStreamingResponse(params);
     expect(res.status).toBe(502);
     expect(res.error).toMatch(/Empty response content/);
-    expect(res.resetsAtMs).toBeGreaterThan(Date.now());
+    // No forced deadline: an empty body is the request's failure, not the
+    // account's, so nothing here may bench a seat that still has headroom.
+    expect(res.resetsAtMs ?? null).toBeNull();
   });
 });
 

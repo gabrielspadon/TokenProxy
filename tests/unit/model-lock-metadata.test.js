@@ -10,7 +10,10 @@ const dbMocks = vi.hoisted(() => ({
 vi.mock("@/lib/localDb", () => dbMocks);
 vi.mock("@/lib/network/connectionProxy", () => ({
   pickProxyPoolId: vi.fn(),
-  resolveConnectionProxyConfig: vi.fn(async () => ({})),
+  // A lock no longer short-circuits selection, so these cases now run all the
+  // way to the proxy step; an empty object reads as an unusable proxy there.
+  resolveConnectionProxyConfig: vi.fn(async () => ({ kind: "usable" })),
+  toConnectionProxyOptions: vi.fn(() => ({ connectionProxyEnabled: false })),
 }));
 vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -196,33 +199,40 @@ describe("model-keyed failure metadata", () => {
     });
   });
 
-  it("returns metadata from the earliest selected lock rather than another model or connection", async () => {
+  // A stored failure pair no longer removes its account from selection, so these
+  // three cases are now about the OPPOSITE fact: the metadata is kept for
+  // reporting while the account itself stays in the pool and gets tried.
+  it("keeps an account with a stored failure pair selectable", async () => {
     const early = {
       id: "early",
       provider: "demo",
+      authType: "api_key",
+      apiKey: "early-key",
       ...pair(ALPHA, { until: future(2), status: 429, message: "alpha early", clientErrorStatus: 404 }),
       ...pair(BETA, { until: future(1), status: 401, message: "beta earlier but unrelated" }),
     };
     const late = {
       id: "late",
       provider: "demo",
+      authType: "api_key",
+      apiKey: "late-key",
       ...pair(ALPHA, { until: future(4), status: 401, message: "alpha late" }),
     };
     dbMocks.getProviderConnections.mockResolvedValue([late, early]);
 
-    await expect(getProviderCredentials("demo", null, ALPHA)).resolves.toMatchObject({
-      allRateLimited: true,
-      retryAfter: future(2),
-      lastError: "alpha early",
-      lastErrorCode: 429,
-      clientErrorStatus: 404,
-    });
+    const picked = await getProviderCredentials("demo", null, ALPHA);
+    expect(picked.allRateLimited).not.toBe(true);
+    expect(["early", "late"]).toContain(picked.connectionId);
+    // The pair is still readable for reporting; it simply gates nothing.
+    expect(getActiveModelFailure(early, ALPHA)).toMatchObject({ until: future(2), status: 429, message: "alpha early" });
   });
 
-  it("keeps a strict preferred connection pinned when another account is available", async () => {
+  it("serves a strict preferred connection that carries an account-wide failure pair", async () => {
     const pinned = {
       id: "video-a",
       provider: "demo",
+      authType: "api_key",
+      apiKey: "video-a-key",
       ...pair(null, {
         until: future(5),
         status: 429,
@@ -244,31 +254,23 @@ describe("model-keyed failure metadata", () => {
       null,
       null,
       { preferredConnectionId: "video-a", strictPreferredConnection: true },
-    )).resolves.toMatchObject({
-      allRateLimited: true,
-      retryAfter: future(5),
-      lastError: "video A is locked",
-      lastErrorCode: 429,
-      clientErrorStatus: 404,
-    });
+    )).resolves.toMatchObject({ connectionId: "video-a" });
   });
 
-  it("does not borrow flat error state for a legacy lock without a matching pair", async () => {
+  it("serves a legacy lock without a matching pair rather than refusing on it", async () => {
     dbMocks.getProviderConnections.mockResolvedValue([{
       id: "legacy",
       provider: "demo",
+      authType: "api_key",
+      apiKey: "legacy-key",
       [getModelLockKey(ALPHA)]: future(3),
       lastError: "beta secret reason",
       errorCode: 404,
     }]);
 
-    await expect(getProviderCredentials("demo", null, ALPHA)).resolves.toMatchObject({
-      allRateLimited: true,
-      retryAfter: future(3),
-      lastError: null,
-      lastErrorCode: null,
-      clientErrorStatus: null,
-    });
+    const picked = await getProviderCredentials("demo", null, ALPHA);
+    expect(picked.allRateLimited).not.toBe(true);
+    expect(picked.connectionId).toBe("legacy");
   });
 
   it("stores a bounded, whitespace-sanitized reason with its selected pair", async () => {

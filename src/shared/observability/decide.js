@@ -57,7 +57,7 @@ export const VERDICTS = Object.freeze({
   AUTHZ: Object.freeze(['admit', 'refused', 'mutation-refused']),
   MODEL: Object.freeze(['normalized', 'disabled', 'auto-routed', 'combo-cycle', 'capability-substituted', 'context-overflow']),
   RANK: Object.freeze(['ordered', 'degraded', 'depleted', 'invalid-record', 'shape-mismatch']),
-  SEL: Object.freeze(['win', 'pin-hit', 'pin-expired', 'repin', 'skipped', 'operator-pinned', 'refused', 'drain-excluded', 'model-locked', 'quota-paused', 'quota-unknown', 'proxy-unusable']),
+  SEL: Object.freeze(['win', 'pin-hit', 'pin-expired', 'repin', 'skipped', 'operator-pinned', 'refused', 'drain-excluded', 'quota-paused', 'quota-unknown', 'proxy-unusable']),
   LEASE: Object.freeze(['refused', 'ungated', 'double-release']),
   CRED: Object.freeze(['refresh-failed', 'rotated', 'same', 'chain-diverged', 'dedup-reuse', 'no-refresh-path']),
   LOCK: Object.freeze(['applied', 'permanent', 'monthly-reset', 'clamped', 'model-unavailable']),

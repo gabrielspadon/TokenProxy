@@ -314,7 +314,7 @@ describe('disabled model policy reaches real account selection', () => {
     expect(adapter.all('SELECT DISTINCT model FROM sessionAffinity')).toEqual([{ model: MODEL }]);
   });
 
-  it('does not let same-account retry or a temporary lock hold an explicitly disabled pin', async () => {
+  it('moves off an explicitly disabled pin, and a temporary failure elsewhere does not narrow the pool', async () => {
     const first = await select();
     const { buildModelFailureUpdate, getModelLockKey } = await import('open-sse/services/accountFallback.js');
     const pinned = state.connections.find((c) => c.id === first.connectionId);
@@ -329,10 +329,13 @@ describe('disabled model policy reaches real account selection', () => {
     state.connections.push(account('account-c'));
     await disable('cc', [MODEL], first.connectionId);
     const next = await select();
-    expect(next?.connectionId).toBe('account-c');
+    // The disable is what moves the pin. The other locked account is still a
+    // candidate, so selection lands on it rather than skipping to account-c:
+    // only an operator decision removes an account, never a failure record.
+    expect(next?.connectionId).toBe(alsoLocked.id);
+    expect(next?.connectionId).not.toBe(first.connectionId);
     expect(await select('strict', {
       preferredConnectionId: first.connectionId, strictPreferredConnection: true,
-      ignoreModelLockConnId: first.connectionId,
     })).toBeNull();
   });
 
