@@ -56,9 +56,21 @@ export function accountControlEvidence(account, now) {
   return { health, gates, observedAt: account.lastQualifiedAt || account.lastTestedAt };
 }
 
-export function accountWindowStale(window, now) {
+// How old a reading may be before the board stops calling it current.
+export const OBSERVATION_MAX_AGE_MS = 900000;
+
+// Is the OBSERVATION old, missing, or ahead of the clock? The age question on
+// its own, with no opinion about the period the reading describes. Split out
+// because a replenished window is not an old reading: it is a current reading
+// of a period that has since rolled over, and the two need different answers
+// (see windowReplenished in accountBoardModel.js).
+export function accountWindowObservationStale(window, now) {
   const observedAt = Date.parse(window.observedAt);
-  return !Number.isFinite(observedAt) || observedAt > now || now - observedAt > 900000 || Date.parse(window.resetAt) <= now;
+  return !Number.isFinite(observedAt) || observedAt > now || now - observedAt > OBSERVATION_MAX_AGE_MS;
+}
+
+export function accountWindowStale(window, now) {
+  return accountWindowObservationStale(window, now) || Date.parse(window.resetAt) <= now;
 }
 
 export function sortAccountControls(accounts, sort, now) {
