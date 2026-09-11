@@ -956,14 +956,24 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   if (!hasUsefulContent(translatedResponse, isClaudeMessageResponse, isResponsesResponse)) {
     appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY} (empty content)` });
     if (log?.warn) {
-      log.warn("CHATCORE", `${provider}/${model} returned HTTP 200 with empty content (finish_reason=${translatedResponse?.choices?.[0]?.finish_reason || "unknown"}) — treating as failure, locking for ${Math.round(EMPTY_CONTENT_COOLDOWN_MS / 1000)}s`);
+      log.warn("CHATCORE", `${provider}/${model} returned HTTP 200 with empty content (finish_reason=${translatedResponse?.choices?.[0]?.finish_reason || "unknown"}) — failing this request; the account stays in rotation`);
     }
-    decide("STREAM", "empty", { rid, conn: connPrefix, why: "no-content", lock: true });
+    decide("STREAM", "empty", { rid, conn: connPrefix, why: "no-content", lock: false });
     reqSummary("failed", { ...saverFields, rid, conn: connPrefix, route, fmt, sel, status: HTTP_STATUS.BAD_GATEWAY, why: "empty-content" });
     return saverErrorResult(
       HTTP_STATUS.BAD_GATEWAY,
       provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : `Empty response content from ${provider}/${model}`,
-      Date.now() + EMPTY_CONTENT_COOLDOWN_MS,
+      // No forced deadline. A 200 carrying no content block is a property of THIS
+      // response, not evidence the account is broken: a max_tokens stop that spent
+      // its budget on thinking, a refusal, or a reply whose only block is
+      // redacted_thinking all land here. Forcing EMPTY_CONTENT_COOLDOWN_MS benched
+      // the account for seven minutes, and measured on production every one of
+      // those locks hit the two seats still serving, which emptied the eligible
+      // pool and produced SEL refused why=none-eligible. Passing null lets
+      // classifyAccountFailure decide, which for a transient is seconds. The
+      // caller still fails over: chat.js adds the connection to its per-request
+      // exclude set after ACCOUNT_RETRY_LIMIT, so nothing loops.
+      null,
       null,
       rid,
     );

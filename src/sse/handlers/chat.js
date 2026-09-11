@@ -35,7 +35,7 @@ import { isRequestReplayBufferError } from "open-sse/services/accountFallback.js
 import { peekStreamForContent } from "open-sse/utils/streamContent.js";
 import { getActiveRequests } from "@/lib/usageDb.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
-import { EMPTY_CONTENT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import { TRANSIENT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { decide, idPrefix, relativeReset, requestRid, reqSummary } from "@/shared/observability/decide.js";
@@ -1147,7 +1147,8 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
             `Empty streaming response from ${provider}/${model}`,
             provider,
             model,
-            Date.now() + EMPTY_CONTENT_COOLDOWN_MS,
+            // Same reasoning as the accepted-empty-generation path below.
+            null,
             { safeToReplay: false },
             { rid }
           );
@@ -1191,12 +1192,15 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
           `${reason} from ${provider}/${model}`,
           provider,
           model,
-          Date.now() + EMPTY_CONTENT_COOLDOWN_MS,
+          // No forced deadline: an empty generation describes THIS response, not a
+          // broken account, so classifyAccountFailure decides the cooldown and the
+          // per-request exclude set still moves the retry to another seat.
+          null,
           { safeToReplay: false },
           { rid }
         );
         return terminalAttemptResponse(errorResponse(lastStatus, reason, {
-          retryAfter: { ms: EMPTY_CONTENT_COOLDOWN_MS },
+          retryAfter: { ms: TRANSIENT_COOLDOWN_MS },
           failurePhase: "provider",
         }));
       }
