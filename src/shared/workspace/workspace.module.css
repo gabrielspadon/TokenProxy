@@ -95,10 +95,10 @@
   justify-content: center;
 }
 .navigationMode :global(.mantine-SegmentedControl-label[data-active]) {
-  color: var(--ink);
+  color: var(--nav-selected-text);
 }
 .navigationMode :global(.mantine-SegmentedControl-indicator) {
-  background: var(--raised);
+  background: var(--nav-selected-surface);
 }
 .navGroup {
   padding: 6px 12px;
@@ -191,14 +191,14 @@
   color: var(--nav-text);
 }
 .railSetting :global(.mantine-SegmentedControl-label[data-active]) {
-  color: var(--ink);
+  color: var(--nav-selected-text);
 }
 .railSetting :global(.mantine-SegmentedControl-label[data-disabled]) {
   color: var(--nav-muted);
   opacity: 0.6;
 }
 .railSetting :global(.mantine-SegmentedControl-indicator) {
-  background: var(--raised);
+  background: var(--nav-selected-surface);
 }
 .railNote,
 .railAlert {

@@ -17,7 +17,7 @@ import {
   Tooltip,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useHotkeys, useLocalStorage, useMediaQuery } from '@mantine/hooks';
+import { useHotkeys, useLocalStorage, useMediaQuery, useMounted } from '@mantine/hooks';
 import { NAV, navigationGroups } from '@/shared/nav';
 import { useAuthStatus } from '@/store/authStatus';
 import { Icon } from './Icon';
@@ -86,6 +86,12 @@ function WorkspaceShell({ children }) {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
   const { colorScheme, setColorScheme } = useMantineColorScheme();
+  // The server renders this rail against defaultColorScheme, so it marks the
+  // wrong segment active whenever a different scheme is stored. Mantine omits
+  // data-active rather than writing false, and hydration never removes a DOM
+  // attribute its vdom lacks, so the stale mark survives every later render.
+  // Remounting once mounted discards that subtree and rebuilds it from state.
+  const mounted = useMounted();
   const auth = useAuthStatus((state) => state.status);
   const load = useAuthStatus((state) => state.load);
   const { snapshot, accounts } = useWorkspace();
@@ -131,6 +137,8 @@ function WorkspaceShell({ children }) {
             onClick={() => setMobileOpen(!mobileOpen)}
             hiddenFrom="md"
             size="sm"
+            aria-expanded={mobileOpen}
+            aria-controls="workspace-navigation"
             aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
           />
           <Link href="/dashboard" className={styles.wordmark}>
@@ -151,7 +159,7 @@ function WorkspaceShell({ children }) {
           </Tooltip>
         </Group>
       </AppShell.Header>
-      <AppShell.Navbar className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
+      <AppShell.Navbar id="workspace-navigation" className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
         <ScrollArea className={styles.navScroll}>
           <nav aria-label="Sections">
             <div className={styles.navigationMode}>
@@ -198,7 +206,7 @@ function WorkspaceShell({ children }) {
               position="right-end"
               events={{ hover: true, focus: true, touch: false }}
             >
-              <SegmentedControl fullWidth size="xs" aria-labelledby="appearance-label" value={colorScheme} onChange={setColorScheme}
+              <SegmentedControl key={mounted ? 'client' : 'server'} fullWidth size="xs" aria-labelledby="appearance-label" value={colorScheme} onChange={setColorScheme}
                 data={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'auto', label: 'System' }]} />
             </Tooltip>
             <div className={styles.railAccount}>
