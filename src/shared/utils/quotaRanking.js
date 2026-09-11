@@ -395,13 +395,40 @@ function loadOf(activeLoad, id) {
     + (Number.isFinite(inFlight) && inFlight > 0 ? inFlight : 0);
 }
 
+// DEADLINE RESOLUTION, and why an exact millisecond was the wrong unit.
+//
+// This compared `effectiveResetAt` as an exact integer, which made the key
+// decisive for any two accounts whose resets differ at all. On the live fleet
+// that is every pair: 15 weekly windows across 15 connections carried 15
+// distinct resetAt values, staircased by minutes because each account's period
+// started whenever that account first served. Two seats 60 minutes apart on a
+// 7-DAY horizon are the same scheduling decision, but `left !== right` ranked
+// one strictly ahead, so the sort returned before it ever reached `byLoad` and
+// the load-spread key never ran. One seat then took 68.7% of six hours of
+// traffic (1125 requests against 343, 190 and 1) and drove itself into the
+// weekly depletion that refuses the whole pool.
+//
+// A deadline is therefore compared at the resolution its own horizon makes
+// meaningful: 1/24th of the horizon, so 7h buckets on a weekly window and
+// 12.5m buckets on a 5h session. Inside one bucket the two accounts tie and
+// the comparator falls through to load, which is the spread. Across buckets
+// the key stays exactly as decisive as before, so a materially sooner deadline
+// still wins outright and quota awareness is untouched: this widens a tie, it
+// does not replace the ordering.
+export const DEADLINE_BUCKETS_PER_HORIZON = 24;
+export function deadlineBucket(resetAt, horizonMs) {
+  if (!Number.isFinite(resetAt)) return Infinity;
+  if (!Number.isFinite(horizonMs) || horizonMs < MIN_REAL_HORIZON_MS) return resetAt;
+  return Math.floor(resetAt / (horizonMs / DEADLINE_BUCKETS_PER_HORIZON));
+}
+
 // Compare the full deadline vector, aligned by horizon. Missing evidence is
 // unknown, so it cannot win a tie against a readable deadline at that horizon.
 function compareHorizons(a, b) {
   const horizons = [...new Set([...a.deadlines.keys(), ...b.deadlines.keys()])].sort((x, y) => y - x);
   for (const horizon of horizons) {
-    const left = a.deadlines.get(horizon) ?? Infinity;
-    const right = b.deadlines.get(horizon) ?? Infinity;
+    const left = deadlineBucket(a.deadlines.get(horizon) ?? Infinity, horizon);
+    const right = deadlineBucket(b.deadlines.get(horizon) ?? Infinity, horizon);
     if (left !== right) return left < right ? -1 : 1;
   }
   return 0;
