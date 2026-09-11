@@ -492,7 +492,11 @@
 .group[data-collapsed] > .groupTitle:hover { color: var(--signal-deep); }
 .group[data-collapsed] > .groupTitle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
 
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 8px; align-items: start; }
+/* Cards in one row share a height. They were top-aligned, so a card carrying
+   one quota line ended above its neighbour carrying two and the row's lower
+   edge came out as a staircase. Nothing inside a card moves; only the box
+   reaches the same depth as the tallest in its row. */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 8px; align-items: stretch; }
 .card {
   --card-pad: 8px 10px;
   --card-gap: 6px;
@@ -503,6 +507,21 @@
   background: var(--raised);
 }
 .card[data-expanded] { grid-column: 1 / -1; border-color: var(--signal); box-shadow: inset 3px 0 var(--signal); }
+/* Colour on a card is ONE hue, and it comes from the card's own bucket rather
+   than from the heading above it, so the rail, the dot in the state chip and
+   the headline figure can never disagree. A depleted card inside "Cooling
+   down" is red because that is what it is, not ember because of its neighbours.
+   Two colours on one card was most of what made these unreadable: the section
+   painted an ember rail while the bucket painted a red border around it. */
+.card { --card-rail: var(--rule); --card-ink: var(--ink); }
+.card[data-tone='positive'] { --card-rail: var(--positive); --card-ink: var(--positive); }
+.card[data-tone='ember'] { --card-rail: var(--ember); --card-ink: var(--ember); }
+.card[data-tone='refusal'] { --card-rail: var(--refusal); --card-ink: var(--refusal); }
+.card[data-tone='slate'] { --card-rail: var(--slate); --card-ink: var(--ink); }
+/* A card with no rail has its border to warn with. Every surface sharing
+   src/shared/workspace/Board.js renders one, so this stays unscoped; the
+   section rules further down are later in the file and override it where a
+   rail is drawn, which is also where the two used to disagree. */
 .card[data-bucket='low'] { border-color: color-mix(in srgb, var(--ember) 45%, var(--rule)); }
 .card[data-bucket='attention'] { border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule)); }
 /* The head reserves the same height whether the name takes one line or two, so
@@ -568,21 +587,51 @@
 }
 .cardWindows { display: grid; gap: 4px; margin-top: var(--card-gap); }
 
-/* Cooling down is its own visual language, not a tinted copy of a serving
-   card. The surface recedes to the page, an ember rail carries the state
-   without a second colour anywhere else, and the return time is the figure
-   that reads first. A depleted account must never look like a usable one. */
-.card[data-section='resting'] {
+/* A card that is not serving is not a tinted copy of one that is. Three
+   devices, declared once and shared by every non-serving section so none of
+   them can drift into its own visual language: the surface recedes to the
+   page, a rail at the inline start carries the card's single hue, and the
+   headline takes that hue too. An account that cannot take work must never
+   look like one that can. */
+.card[data-section='action']:not([data-expanded]),
+.card[data-section='resting']:not([data-expanded]),
+.card[data-section='held']:not([data-expanded]) {
   background: var(--paper);
-  border-color: color-mix(in srgb, var(--ember) 30%, var(--rule));
-  box-shadow: inset 3px 0 var(--ember);
+  border-color: color-mix(in srgb, var(--card-rail) 30%, var(--rule));
+  box-shadow: inset 3px 0 var(--card-rail);
   padding-inline-start: 13px;
 }
-.card[data-section='resting'] .cardFact strong { color: var(--ember); }
-/* Its meters are history, not status: they say how it got here, so they read
-   as a flat trace rather than competing with the return time above them. */
-.card[data-section='resting'] .cardWindows { opacity: 0.72; }
-.card[data-section='resting'] .cardWindows .meter { box-shadow: inset 0 0 0 1px var(--rule); }
+.card[data-section='action'] .cardFact strong,
+.card[data-section='resting'] .cardFact strong,
+.card[data-section='held'] .cardFact strong { color: var(--card-ink); }
+/* The evidence line. On these cards it carries a sentence rather than a label,
+   so it gets two lines and RESERVES both whether or not it fills them: a row
+   whose notes run one line, then two, then one is the ragged edge that makes a
+   grid unreadable. It breaks on words, and only inside a word when a single
+   token is wider than the card. */
+.card[data-section='action'] .cardFact small,
+.card[data-section='resting'] .cardFact small,
+.card[data-section='held'] .cardFact small,
+.card[data-section='unverified'] .cardFact small {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.35;
+  min-height: 2.7em;
+}
+/* Their meters are history, not status: they say how the account got here, so
+   they read as a flat trace rather than competing with the headline above. */
+.card[data-section='action'] .cardWindows,
+.card[data-section='resting'] .cardWindows,
+.card[data-section='held'] .cardWindows,
+.card[data-section='unverified'] .cardWindows { opacity: 0.72; }
+.card[data-section='action'] .cardWindows .meter,
+.card[data-section='resting'] .cardWindows .meter,
+.card[data-section='held'] .cardWindows .meter,
+.card[data-section='unverified'] .cardWindows .meter { box-shadow: inset 0 0 0 1px var(--rule); }
+.cardWindows:empty { display: none; }
 
 /* Unverified has no reading to show at all, so the card says so by being
    drawn with nothing filled in. */
@@ -628,7 +677,9 @@
 .board[data-density='comfy'] .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
 /* One place sets the card's scale; every part of it reads the same two numbers. */
 .board[data-density='comfy'] .card { --card-pad: 14px 16px; --card-gap: 10px; }
-.board[data-density='comfy'] .card[data-section='resting'] { padding-inline-start: 19px; }
+.board[data-density='comfy'] .card[data-section='action']:not([data-expanded]),
+.board[data-density='comfy'] .card[data-section='resting']:not([data-expanded]),
+.board[data-density='comfy'] .card[data-section='held']:not([data-expanded]) { padding-inline-start: 19px; }
 .board[data-density='comfy'] .cardWindows { gap: 8px; }
 .board[data-density='comfy'] .fleet,
 .board[data-density='comfy'] .toolbar { padding-block: 10px; }

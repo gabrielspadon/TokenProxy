@@ -1,4 +1,5 @@
 import { classifyWindow } from '@/shared/utils/quotaRanking';
+import { getPausedWindow } from '@/shared/utils/quotaPause';
 import {
   accountControlId,
   accountControlState,
@@ -13,14 +14,32 @@ import { groupQuotaProducts } from './quotaProductGroups';
 // lands in exactly one bucket; the order here is the order the strip renders.
 // `depleted` is its own word because `low` used to hold both nineteen percent
 // and nothing at all, and those are different problems with different answers.
+// `paused` and `quotaHold` split for the same reason one step further on: one
+// chip counted the operator's own holds together with holds nobody chose, so
+// the strip agreed with a board that was already saying the wrong word.
 export const BUCKETS = [
   { id: 'ready', label: 'Ready', tone: 'positive' },
   { id: 'low', label: 'Low quota', tone: 'ember' },
   { id: 'depleted', label: 'Out of quota', tone: 'refusal' },
-  { id: 'paused', label: 'Paused', tone: 'slate' },
-  { id: 'attention', label: 'Attention', tone: 'refusal' },
+  { id: 'quotaHold', label: 'Auto-paused', tone: 'ember' },
+  { id: 'paused', label: 'Paused by you', tone: 'slate' },
+  { id: 'attention', label: 'Needs you', tone: 'refusal' },
   { id: 'unknown', label: 'Unknown', tone: 'slate' },
 ];
+
+// The states that need the OPERATOR, not a clock. A dead credential and a
+// provider that refused the account never return on their own, so nothing that
+// lands here may be filed beside accounts that are merely waiting.
+export const ACTION_STATES = new Set([
+  'No credential',
+  'Needs sign-in',
+  'Disabled by error',
+  'Needs attention',
+]);
+// The operator's own two holds. Nothing has failed on either.
+export const OPERATOR_HOLDS = new Set(['Paused', 'Draining']);
+// Automatic, timed, self-clearing. These are the ones "cooling down" describes.
+export const TIMED_HOLDS = new Set(['Quota pause', 'Cooldown']);
 
 export const SORTS = [
   { value: 'name', label: 'Name' },
@@ -54,9 +73,9 @@ export function liveWindows(account, now) {
 
 export function accountBucket(account, now) {
   const state = accountControlState(account, now);
-  if (state === 'Paused' || state === 'Quota pause') return 'paused';
-  if (state === 'Draining' || state === 'Cooldown' || state === 'Needs attention')
-    return 'attention';
+  if (ACTION_STATES.has(state)) return 'attention';
+  if (OPERATOR_HOLDS.has(state)) return 'paused';
+  if (TIMED_HOLDS.has(state)) return 'quotaHold';
   // Nothing left is its own answer, ahead of the low line. Both fell into `low`
   // before, so an account at 0% and one at 19% carried the same word.
   if (accountDepleted(account, now)) return 'depleted';
@@ -174,12 +193,12 @@ export function accountDepleted(account, now) {
   return general.length > 0 && general.some((window) => windowHeadroom(window, now) <= 0);
 }
 
-// An operator's own gate, or a recorded fault. None of these is serving traffic,
-// whatever the quota says.
-const HELD_STATES = new Set(['Paused', 'Quota pause', 'Draining', 'Cooldown', 'Needs attention']);
-
+// An operator's own gate, an automatic hold, or a recorded fault. None of these
+// is serving traffic, whatever the quota says. Which KIND it is decides the
+// section, so the three sets above are kept apart rather than merged here.
 export function accountHeld(account, now) {
-  return HELD_STATES.has(accountControlState(account, now));
+  const state = accountControlState(account, now);
+  return ACTION_STATES.has(state) || OPERATOR_HOLDS.has(state) || TIMED_HOLDS.has(state);
 }
 
 /**
@@ -212,10 +231,22 @@ export const SECTIONS = [
     note: 'Quota confirmed. These take work.',
   },
   {
+    id: 'action',
+    label: 'Needs you',
+    tone: 'refusal',
+    note: 'Switched off by a failure, or holding no credential. These do not come back on their own.',
+  },
+  {
     id: 'resting',
     label: 'Cooling down',
     tone: 'ember',
-    note: 'Out of quota or held back. Each card leads with when it returns.',
+    note: 'Out of quota or auto-paused. Each card leads with when it returns.',
+  },
+  {
+    id: 'held',
+    label: 'Paused by you',
+    tone: 'slate',
+    note: 'Your own hold. Nothing has failed on these.',
   },
   {
     id: 'unverified',
@@ -228,13 +259,22 @@ export const SECTIONS = [
 /**
  * The one section an account belongs to.
  *
- * Depleted or held is `resting`, because both answer "not now, and here is
- * when". An account with no evidence at all is `unverified` UNLESS something
- * proves it works, which is the only thing that earns it a place beside
- * accounts whose quota is known.
+ * "Cooling down" means it comes back on its own, so only the things a clock
+ * clears are filed there: out of quota, an automatic quota pause, a recorded
+ * cooldown. A dead credential never returns and an operator's hold returns when
+ * the operator says so, so neither belongs beside them. Those two are the
+ * sections that were missing, and folding them into `resting` is what let the
+ * board answer "cooling down" about an account that a 401 had killed.
+ *
+ * An account with no evidence at all is `unverified` UNLESS something proves it
+ * works, which is the only thing that earns it a place beside accounts whose
+ * quota is known.
  */
 export function accountSection(account, now) {
-  if (accountHeld(account, now) || accountDepleted(account, now)) return 'resting';
+  const state = accountControlState(account, now);
+  if (ACTION_STATES.has(state)) return 'action';
+  if (OPERATOR_HOLDS.has(state)) return 'held';
+  if (TIMED_HOLDS.has(state) || accountDepleted(account, now)) return 'resting';
   return accountEvidence(account, now) === 'unknown' && !accountProven(account)
     ? 'unverified'
     : 'serving';
@@ -260,6 +300,15 @@ export function accountReturnsAt(account, now) {
     .map((window) => Date.parse(window.resetAt));
   const cooldown = Date.parse(account.rateLimitedUntil);
   if (Number.isFinite(cooldown)) times.push(cooldown);
+  // An auto-paused account is not empty, so no window above answers for it: it
+  // returns when the window that crossed the threshold rolls over. Without this
+  // the card led with "No timed return recorded" about the one hold the board
+  // can actually put a clock on.
+  const paused = getPausedWindow(account, now);
+  if (paused) {
+    const window = accountWindows(account).find((entry) => entry.key === paused.key);
+    times.push(Date.parse(window?.resetAt));
+  }
   const future = times.filter((time) => Number.isFinite(time) && time > now);
   return future.length ? Math.max(...future) : null;
 }
@@ -293,12 +342,65 @@ export function accountSeat(account) {
 export function accountStateWord(account, now) {
   const state = accountControlState(account, now);
   const bucket = accountBucket(account, now);
-  if (bucket === 'paused' || bucket === 'attention')
+  if (bucket === 'paused' || bucket === 'attention' || bucket === 'quotaHold')
     return state === 'Needs attention' ? 'Attention' : state;
   if (bucket === 'depleted') return 'Out of quota';
   if (bucket === 'low') return 'Low quota';
   if (bucket === 'unknown') return 'Unknown';
   return state === 'Enabled' || state === 'Not checked' ? 'Ready' : state;
+}
+
+// The provider's own words, trimmed to a card line. `lastError` is written by
+// src/sse/services/auth.js and already stripped of credential-shaped text on
+// the way out (redactError, src/lib/admin/project.js:92); a card has room for a
+// clause rather than the full 300 characters it may carry.
+function errorText(account) {
+  const text = typeof account.lastError === 'string' ? account.lastError.trim() : '';
+  if (text) return text.length > 110 ? `${text.slice(0, 109)}\u2026` : text;
+  const code = Number(account.errorCode);
+  return Number.isFinite(code) && code > 0 ? `The provider refused this account (${code})` : '';
+}
+
+// States whose reason is a fixed sentence, because the evidence IS the state.
+const FIXED_REASON = {
+  'No credential': 'No credential stored, so this account cannot answer',
+  Paused: 'You switched this off here. Nothing has failed.',
+  Draining: 'Draining: finishing its open streams, then idle',
+  'Needs attention': 'The last connection test came back degraded',
+  Cooldown: 'Rate limited by the provider until its cooldown ends',
+  'Not checked': 'No connection test has run against this account yet',
+};
+
+/**
+ * Why this account is NOT serving, in one line, from the evidence that put it
+ * there. Null for an account that is serving, where the meters already answer.
+ *
+ * Four accounts rendered as "Paused" with nothing on the card to separate the
+ * ones an operator had paused from the ones a 401 had killed. Each branch below
+ * reads the field that actually decided the state: `lastError` and `errorCode`
+ * for a failure, the crossed window and its threshold for an auto-pause, the
+ * empty window for exhaustion, the absence itself for an unmeasured account.
+ */
+export function accountStateReason(account, now) {
+  const state = accountControlState(account, now);
+  if (state === 'Needs sign-in' || state === 'Disabled by error')
+    return errorText(account) || 'The provider refused this account, so it was switched off here';
+  if (state === 'Quota pause') {
+    const paused = getPausedWindow(account, now);
+    return `${paused.key} is at ${paused.remainingPercentage}% left, under your ${paused.threshold}% pause line`;
+  }
+  if (FIXED_REASON[state]) return FIXED_REASON[state];
+  if (accountDepleted(account, now)) {
+    const empty = generalWindows(account, now).filter((window) => windowHeadroom(window, now) <= 0);
+    return empty.length === 1
+      ? `${empty[0].key} has nothing left`
+      : `${empty.length} quota windows have nothing left`;
+  }
+  if (accountEvidence(account, now) === 'unknown')
+    return accountProven(account)
+      ? 'No quota window to read. It is here because it has served work.'
+      : 'No quota window to read, and nothing has proved this account works';
+  return null;
 }
 
 export function fleetSummary(accounts, now) {

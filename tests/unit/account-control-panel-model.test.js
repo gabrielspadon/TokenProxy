@@ -7,7 +7,11 @@ const account = { id: 'one', provider: 'codex', authType: 'oauth', isActive: tru
 describe('account panel quota evidence', () => {
   it('keeps configured pause, recorded health and simultaneous local gates distinct', () => {
     const evidence = accountControlEvidence({ ...account, isActive: false, status: 'healthy', isDraining: true, quotaPauseThresholds: { 'semanal / 周': 10 }, lastQuotaSnapshot: { windows: [{ key: 'semanal / 周', remainingPercentage: 5 }] } }, now);
-    expect(evidence).toMatchObject({ health: 'Recorded status healthy', gates: ['Quota pause at 5% remaining in semanal / 周 (threshold 10%)', 'Local drain is on'] });
+    // The switch-off itself is now a gate of its own, and it names WHO did it:
+    // the tooltip on a row a 401 had killed used to be silent about the one
+    // fact the operator needed. See tests/unit/account-state-taxonomy.test.js.
+    expect(evidence).toMatchObject({ health: 'Recorded status healthy', gates: ['Switched off by the operator', 'Quota pause at 5% remaining in semanal / 周 (threshold 10%)', 'Local drain is on'] });
+    expect(accountControlEvidence({ ...account, isActive: false, testStatus: 'unavailable', errorCode: 401 }, now).gates).toEqual(['Switched off automatically after a provider failure']);
     expect(accountControlEvidence({ ...account }, now)).toMatchObject({ health: 'Provider health unknown', gates: [] });
     expect(accountControlState({ ...account, status: 'drained' }, now)).toBe('Draining');
   });

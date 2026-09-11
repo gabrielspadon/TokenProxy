@@ -33,8 +33,57 @@ export function mergeAccountControls(connections, rows) {
   return [...accounts, ...rows.filter(row => !known.has(accountControlId(row)))].sort((a, b) => String(a.provider || '').localeCompare(String(b.provider || '')) || String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''), undefined, { numeric: true }) || accountControlId(a).localeCompare(accountControlId(b), undefined, { numeric: true }));
 }
 
+// What switched an account off, read from what actually switched it off.
+//
+// `isActive === false` alone answered "Paused" for every one of these, and two
+// of the three were never the operator's doing. Both automatic writers are in
+// src/sse/services/auth.js (:1086 a permanent Codex OAuth failure, :1117 Qoder
+// quota exhaustion) and both leave the same three fields behind, which is what
+// this reads. The vocabulary is the one the repository already uses for a
+// failed connection: src/lib/db/repos/connectionsRepo.js:630 treats error,
+// expired and unavailable as degraded, and :650 folds 401 and 403 together as
+// an authentication cause.
+const REAUTH_STATUS = new Set(['reauth_required', 'expired']);
+const FAILED_STATUS = new Set(['unavailable', 'error']);
+
+/**
+ * Evidence that something OTHER than the operator turned this account off:
+ * 'auth' when the credential itself was rejected, 'error' when the provider
+ * refused the account some other way, null when nothing failed.
+ *
+ * Evidence only. The caller decides whether it is looking at an account that
+ * is currently switched off, because a live account can still carry the record
+ * of a failure it has since recovered from.
+ */
+export function accountFailure(account) {
+  const code = Number(account.errorCode);
+  const failed = Number.isFinite(code) && code > 0;
+  if (REAUTH_STATUS.has(account.testStatus) || code === 401) return 'auth';
+  if (FAILED_STATUS.has(account.testStatus) || failed) return 'error';
+  return null;
+}
+
+/**
+ * The one state word for an account.
+ *
+ * Four facts used to share the word "Paused": the operator's own hold, an
+ * automatic quota pause, an account the provider refused and disabled, and a
+ * row carrying no credential at all. Only the first may say "Paused"; the other
+ * three need a different word, and two of them need the operator to act rather
+ * than to wait. Credential first, because a row that cannot authenticate cannot
+ * serve whatever else is true of it. `hasCredential` is derived server-side in
+ * redactConnectionSecrets (src/lib/providerNormalization.js) from the same
+ * predicate the gateway admits on; absent (a health row with no matching
+ * connection) is not an accusation, so only an explicit false counts.
+ */
 export function accountControlState(account, now) {
-  if (account.isActive === false) return 'Paused';
+  if (account.hasCredential === false) return 'No credential';
+  if (account.isActive === false) {
+    const failure = accountFailure(account);
+    if (failure === 'auth') return 'Needs sign-in';
+    if (failure === 'error') return 'Disabled by error';
+    return 'Paused';
+  }
   if (getPausedWindow(account, now)) return 'Quota pause';
   if (account.drain?.isDraining || account.isDraining || account.status === 'drained') return 'Draining';
   if (account.status === 'cooldown') return 'Cooldown';
@@ -47,6 +96,8 @@ export function accountControlState(account, now) {
 export function accountControlEvidence(account, now) {
   const paused = getPausedWindow(account, now);
   const gates = [];
+  if (account.hasCredential === false) gates.push('No credential stored');
+  if (account.isActive === false) gates.push(accountFailure(account) ? 'Switched off automatically after a provider failure' : 'Switched off by the operator');
   if (paused) gates.push(`Quota pause at ${paused.remainingPercentage}% remaining in ${paused.key} (threshold ${paused.threshold}%)`);
   if (account.drain?.isDraining || account.isDraining || account.status === 'drained') gates.push('Local drain is on');
   if (account.status === 'cooldown') gates.push('Recorded cooldown');

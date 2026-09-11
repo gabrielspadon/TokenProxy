@@ -82,12 +82,16 @@ async function pick(label) {
   await act(async () => chip(label).click());
 }
 
+// Research is in a recorded cooldown, which is an automatic timed hold rather
+// than an operator's own. It used to be counted under "attention" beside a
+// dead credential; the chips now separate what a clock clears from what needs
+// a person (tests/unit/account-state-taxonomy.test.js).
 it('keeps unknown health separate from recorded unhealthy accounts', async () => {
   await render();
-  await pick('attention');
+  await pick('auto-paused');
   expect(board().textContent).toContain('Research');
   expect(board().textContent).not.toContain('Personal');
-  await pick('attention');
+  await pick('auto-paused');
   await pick('unknown');
   expect(board().textContent).toContain('Personal');
   expect(board().textContent).not.toContain('Research');
@@ -106,10 +110,10 @@ it('does not present disabled or unqualified accounts as observed unhealthy', as
     isActive: false,
   });
   await render();
-  await pick('attention');
+  await pick('needs you');
   expect(board().textContent).not.toContain('Never validated');
-  await pick('attention');
-  await pick('paused');
+  await pick('needs you');
+  await pick('paused by you');
   expect(board().textContent).toContain('Never validated');
 });
 
