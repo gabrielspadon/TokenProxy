@@ -39,6 +39,15 @@
      turned the selected chip darker than its own track in dark. */
   --nav-selected-surface: #fff;
   --nav-selected-text: #17232d;
+  /* A segmented control on the rail needs a boundary you can see, and the same
+     one in both schemes. --nav-active was carrying the track, and it is only
+     1.47:1 against the navy in light and 1.62:1 in dark, so the control read as
+     loose floating labels and read DIFFERENTLY between the two. The edge below
+     is 3.2:1 against the lighter of the two navies, which is the non-text
+     contrast a control boundary owes. Fixed values, not derived from --navy,
+     because the point is that they do not move when the scheme does. */
+  --nav-track: #1b3440;
+  --nav-track-edge: #587483;
   --overlay: rgb(12 25 35 / 46%);
   --sans: 'Manrope', 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: 'IBM Plex Mono', 'Noto Sans Mono', ui-monospace, monospace;
