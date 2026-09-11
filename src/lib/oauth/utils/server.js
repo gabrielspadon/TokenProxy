@@ -132,11 +132,63 @@ export function waitForCallbackParams(getParams, timeoutMs = OAUTH_TIMEOUT, poll
   });
 }
 
+// A fixed-port callback proxy must answer on whatever the provider's registered
+// redirect URI resolves to. Codex registers http://localhost:1455/auth/callback,
+// and on a dual-stack host `localhost` resolves ::1 FIRST (/etc/hosts carries
+// `::1 localhost`), so a listener bound only to 127.0.0.1 is never reached: the
+// browser connects to [::1]:1455 and gets ECONNREFUSED. The redirect URI is fixed
+// by OpenAI's client registration, so the bind is what has to change.
+//
+// Binding the unspecified address would also fix reachability and is NOT
+// acceptable: measured on this host, `server.listen(port)` with no host reaches
+// the LAN address too, which would expose a port carrying an authorization code
+// beyond loopback. Two explicit loopback listeners reach ::1 and 127.0.0.1 and
+// refuse everything else.
+//
+// A host with IPv6 disabled still gets a working v4 listener; only a total
+// failure, where NEITHER family binds, is an error. EADDRINUSE on either family
+// is reported as port_busy, because a half-held port fails the next attempt too.
+function listenLoopbackDual(server6, server4, port) {
+  const bind = (server, host, ipv6Only) => new Promise((resolve) => {
+    const onError = (err) => resolve({ ok: false, code: err.code });
+    server.once("error", onError);
+    server.listen({ port, host, ...(ipv6Only ? { ipv6Only: true } : {}) }, () => {
+      server.removeListener("error", onError);
+      resolve({ ok: true });
+    });
+  });
+  // v6 first, with ipv6Only set so it cannot swallow the v4 address; the v4 bind
+  // that follows then either succeeds or reports a genuine conflict.
+  return bind(server6, "::1", true).then(async (v6) => {
+    const v4 = await bind(server4, "127.0.0.1", false);
+    if (!v6.ok && !v4.ok) {
+      return { ok: false, busy: v6.code === "EADDRINUSE" || v4.code === "EADDRINUSE", reason: v4.code || v6.code };
+    }
+    if (v6.code === "EADDRINUSE" || v4.code === "EADDRINUSE") {
+      return { ok: false, busy: true, reason: "EADDRINUSE" };
+    }
+    return { ok: true };
+  });
+}
+
+// Closes every listener a proxy holds. Leaking one keeps the fixed port bound for
+// the full timeout, and the next sign-in then hits EADDRINUSE on a port nothing
+// is waiting on.
+function closeAll(servers) {
+  for (const server of servers) {
+    if (server) server.close();
+  }
+}
+
 // Singleton proxy server for Codex OAuth callback on fixed port
-let codexProxyServer = null;
+let codexProxyServers = [];
 let codexProxyTimeout = null;
 
-const CODEX_PROXY_TIMEOUT_MS = 300000; // 5 minutes
+// A sign-in carrying 2FA, an account chooser or a password manager routinely runs
+// past five minutes, and when the proxy closed first the callback landed on a dead
+// port. Ten minutes matches the deadline the grant-side wait already uses for the
+// session-registering proxies, so proxy and poll now expire together.
+const CODEX_PROXY_TIMEOUT_MS = 600000; // 10 minutes
 const CODEX_PORT = CODEX_CONFIG.fixedPort;
 
 // Pending exchange sessions keyed by state — used by server-side exchange mode
@@ -200,12 +252,12 @@ function renderCodexResultPage(success, message) {
  */
 export function startCodexProxy(appPort) {
   return new Promise((resolve) => {
-    if (codexProxyServer) {
+    if (codexProxyServers.length) {
       resolve({ success: true });
       return;
     }
 
-    const server = http.createServer(async (req, res) => {
+    const handler = async (req, res) => {
       const url = new URL(req.url, "http://localhost");
 
       if (url.pathname !== "/callback" && url.pathname !== "/auth/callback") {
@@ -270,20 +322,21 @@ export function startCodexProxy(appPort) {
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       stopCodexProxy();
-    });
+    };
 
-    server.listen(CODEX_PORT, "127.0.0.1", () => {
-      codexProxyServer = server;
+    // One handler, two listeners: ::1 and 127.0.0.1. Codex's redirect URI names
+    // `localhost`, which resolves to either depending on the host's resolver order.
+    const server6 = http.createServer(handler);
+    const server4 = http.createServer(handler);
+    listenLoopbackDual(server6, server4, CODEX_PORT).then((outcome) => {
+      if (!outcome.ok) {
+        closeAll([server6, server4]);
+        resolve({ success: false, reason: outcome.busy ? "port_busy" : outcome.reason });
+        return;
+      }
+      codexProxyServers = [server6, server4];
       codexProxyTimeout = setTimeout(() => stopCodexProxy(), CODEX_PROXY_TIMEOUT_MS);
       resolve({ success: true });
-    });
-
-    server.on("error", (err) => {
-      if (err.code === "EADDRINUSE") {
-        resolve({ success: false, reason: "port_busy" });
-      } else {
-        resolve({ success: false, reason: err.message });
-      }
     });
   });
 }
@@ -296,10 +349,8 @@ export function stopCodexProxy() {
     clearTimeout(codexProxyTimeout);
     codexProxyTimeout = null;
   }
-  if (codexProxyServer) {
-    codexProxyServer.close();
-    codexProxyServer = null;
-  }
+  closeAll(codexProxyServers);
+  codexProxyServers = [];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -308,9 +359,10 @@ export function stopCodexProxy() {
 // generalizing the Codex one to keep the codex hot-path byte-equivalent.
 // ───────────────────────────────────────────────────────────────────────────
 
-let xaiProxyServer = null;
+let xaiProxyServers = [];
 let xaiProxyTimeout = null;
-const XAI_PROXY_TIMEOUT_MS = 300000; // 5 minutes
+// Ten minutes, matching CODEX_PROXY_TIMEOUT_MS and the grant-side poll deadline.
+const XAI_PROXY_TIMEOUT_MS = 600000; // 10 minutes
 const XAI_PROXY_PORT = 56121;
 const xaiPendingExchanges = new Map();
 
@@ -344,12 +396,12 @@ function renderXaiResultPage(success, message) {
  */
 export function startXaiProxy(appPort) {
   return new Promise((resolve) => {
-    if (xaiProxyServer) {
+    if (xaiProxyServers.length) {
       resolve({ success: true });
       return;
     }
 
-    const server = http.createServer(async (req, res) => {
+    const handler = async (req, res) => {
       const url = new URL(req.url, "http://localhost");
       if (url.pathname !== "/callback" && url.pathname !== "/auth/callback") {
         res.writeHead(404);
@@ -412,20 +464,22 @@ export function startXaiProxy(appPort) {
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       stopXaiProxy();
-    });
+    };
 
-    server.listen(XAI_PROXY_PORT, "127.0.0.1", () => {
-      xaiProxyServer = server;
+    // xAI's registered redirect URI names 127.0.0.1 explicitly, so the v4 listener
+    // is the one that matters. The v6 listener costs nothing and keeps both
+    // fixed-port proxies on one shape, which is what stops this pair drifting.
+    const server6 = http.createServer(handler);
+    const server4 = http.createServer(handler);
+    listenLoopbackDual(server6, server4, XAI_PROXY_PORT).then((outcome) => {
+      if (!outcome.ok) {
+        closeAll([server6, server4]);
+        resolve({ success: false, reason: outcome.busy ? "port_busy" : outcome.reason });
+        return;
+      }
+      xaiProxyServers = [server6, server4];
       xaiProxyTimeout = setTimeout(() => stopXaiProxy(), XAI_PROXY_TIMEOUT_MS);
       resolve({ success: true });
-    });
-
-    server.on("error", (err) => {
-      if (err.code === "EADDRINUSE") {
-        resolve({ success: false, reason: "port_busy" });
-      } else {
-        resolve({ success: false, reason: err.message });
-      }
     });
   });
 }
@@ -435,10 +489,8 @@ export function stopXaiProxy() {
     clearTimeout(xaiProxyTimeout);
     xaiProxyTimeout = null;
   }
-  if (xaiProxyServer) {
-    xaiProxyServer.close();
-    xaiProxyServer = null;
-  }
+  closeAll(xaiProxyServers);
+  xaiProxyServers = [];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
