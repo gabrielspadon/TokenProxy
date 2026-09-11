@@ -11,6 +11,7 @@ const PROXY_SESSION = ["trae", "windsurf", "zed", "devin"]; // start-proxy then 
 // Flows that never navigate the browser, so they open no sign-in window.
 const WINDOWLESS_FLOWS = new Set(["device_code", "browser_token", "import_token"]);
 const POPUP_BLOCKED = "The browser blocked the sign-in window. Allow pop-ups for this page, then try again.";
+const POPUP_CLOSED = "The sign-in window was closed before it opened the provider. Start again from the connection.";
 
 export const requiresCredentialDocument = provider => PROXY_QUERY.includes(provider) || PROXY_SESSION.includes(provider);
 
@@ -25,32 +26,53 @@ export function credentialDocument(text, force = false) {
   return { ...body, ...(force ? { force: true } : {}) };
 }
 
-// Every local callback proxy closes itself after five minutes (OAUTH_TIMEOUT in
-// src/lib/oauth/constants/oauth.js), so a wait that outlives that deadline can
-// never succeed. Both waits below end on it, because a grant with no end state
-// leaves the row spinning with nothing to report.
+// A wait that outlives the proxy it is waiting on can never succeed, and a grant
+// with no end state leaves the row spinning, so both waits below end on a
+// deadline. The proxies do NOT share one: codex and xai close at five minutes
+// (CODEX_PROXY_TIMEOUT_MS and XAI_PROXY_TIMEOUT_MS, src/lib/oauth/utils/server.js
+// :139 and :313) while trae, windsurf, devin and zed close at ten, from their
+// own oauthTimeoutMs (600_000 for all four, read at server.js:535, :634, :719
+// and :831). Cutting the long ones off at five abandoned sign-ins the proxy
+// would still have accepted, so each wait carries its own flow's deadline.
 const GRANT_DEADLINE_MS = 300_000;
+const PROXY_SESSION_DEADLINE_MS = 600_000;
 const GRANT_TIMED_OUT = "The sign-in did not finish in time. Close the sign-in window and start again.";
 
 // The sign-in window is opened inside the caller's own event handler, BEFORE the
 // first await. A window.open issued after an await has spent its transient user
 // activation, which Firefox and Safari refuse outright, and a refused open used to
-// leave the row waiting on a window that never existed. `noopener` is deliberately
-// absent: src/app/callback/page.js relays the provider's answer through
-// window.opener.postMessage, which is null under noopener.
+// leave the row waiting on a window that never existed.
+//
+// The `noopener` feature cannot be used here: it makes window.open return null,
+// and this flow needs the handle to navigate the window once authorize answers.
+// Severing the reference by hand costs nothing instead. The window is still on
+// about:blank and same-origin at this point, so window.opener is writable, and
+// clearing it means the PROVIDER origin never inherits a handle that can
+// navigate this tab. The callback still reaches us: src/app/callback/page.js
+// relays through BroadcastChannel and a localStorage record (page.js:39-41),
+// both of which waitForCallback listens on, and the window.opener.postMessage
+// it tries first is explicitly best-effort.
 function openSignInWindow() {
-  try { return window.open("about:blank", "tokenproxy_oauth", "width=600,height=700"); } catch { return null; }
+  try {
+    const win = window.open("about:blank", "tokenproxy_oauth", "width=600,height=700");
+    try { if (win) win.opener = null; } catch { /* already cross-origin */ }
+    return win;
+  } catch { return null; }
 }
 
+// Separates "the browser refused to open a window" from "the person closed the
+// blank window while authorize was in flight". The two need different sentences,
+// because only one of them is fixed by allowing pop-ups.
 function showAuthUrl(win, url) {
-  if (!win || win.closed) return false;
-  try { win.location.href = url; return true; } catch { return false; }
+  if (!win) return "blocked";
+  if (win.closed) return "closed";
+  try { win.location.href = url; return "shown"; } catch { return "blocked"; }
 }
 
 // Poll /poll-status until done or error. The gateway clears the session on
 // either, so a second read after "done" would say "unknown"; stop at the first.
-async function pollStatus(provider, state, signal) {
-  const deadline = Date.now() + GRANT_DEADLINE_MS;
+async function pollStatus(provider, state, signal, deadlineMs = GRANT_DEADLINE_MS) {
+  const deadline = Date.now() + deadlineMs;
   for (;;) {
     if (signal?.aborted) return { status: "error", error: "Cancelled." };
     await new Promise((r) => setTimeout(r, 2000));
@@ -152,7 +174,8 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
     const q = new URLSearchParams({ app_port: appPort, state: a.state, code_verifier: a.codeVerifier, redirect_uri: a.redirectUri });
     const sp = await call(`/api/oauth/${provider}/start-proxy?${q}`);
     if (!sp.ok || !sp.body.success) return stop({ ok: false, status: sp.status, body: sp.body?.success === false ? { error: sp.body.error || "The local callback port could not be opened." } : sp.body });
-    if (!showAuthUrl(win, a.authUrl)) return stop({ ok: false, status: 0, body: { error: POPUP_BLOCKED } });
+    const shown = showAuthUrl(win, a.authUrl);
+  if (shown !== "shown") return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
     say("Finish the sign-in in the window that opened.");
     const done = await pollStatus(provider, a.state, signal);
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
@@ -167,16 +190,18 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
       method: "POST", body: { codeVerifier: a.codeVerifier, redirectUri: sp.body.callbackUrl },
     });
     if (!reg.ok || !reg.body.success) return stop({ ok: false, status: reg.status, body: { error: "The sign-in session could not be registered." } });
-    if (!showAuthUrl(win, a.authUrl)) return stop({ ok: false, status: 0, body: { error: POPUP_BLOCKED } });
+    const shown = showAuthUrl(win, a.authUrl);
+  if (shown !== "shown") return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
     say("Finish the sign-in in the window that opened.");
-    const done = await pollStatus(provider, a.state, signal);
+    const done = await pollStatus(provider, a.state, signal, PROXY_SESSION_DEADLINE_MS);
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
     if (done.status !== "done") return stop({ ok: false, status: 0, body: { error: done.error || "The provider refused the sign-in." } });
     return { ok: true, connection: { id: done.connectionId, provider, email: done.email } };
   }
 
   // Plain browser redirect through /callback (authorization_code[_pkce]).
-  if (!showAuthUrl(win, a.authUrl)) return stop({ ok: false, status: 0, body: { error: POPUP_BLOCKED } });
+  const shown = showAuthUrl(win, a.authUrl);
+  if (shown !== "shown") return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
   say("Finish the sign-in in the window that opened.");
   const data = await waitForCallback(a.state, signal);
   if (!data) return stop({ ok: false, status: 0, body: { error: "Cancelled." } });

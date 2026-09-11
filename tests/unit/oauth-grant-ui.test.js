@@ -113,3 +113,53 @@ it('renders a grant refusal as its own sentence instead of blaming an unreachabl
   expect(refusal(0, { error: 'fetch failed', code: 'network' }).title).toBe('The gateway did not answer.');
   expect(refusal(0, {}).title).toBe('The gateway did not answer.');
 });
+
+// A proxy-session flow waits on a proxy that lives for ten minutes, not five.
+// Cutting it off at the shorter deadline abandoned sign-ins the proxy would
+// still have accepted, so the wait carries its own flow's deadline.
+it('waits the full proxy-session deadline rather than the five-minute grant deadline', async () => {
+  vi.useFakeTimers();
+  popupStub();
+  call
+    .mockResolvedValueOnce({ ok: true, body: { authUrl: 'https://auth.trae.invalid/authorize', state: 'fixture-state',
+      codeVerifier: 'fixture-verifier', redirectUri: 'http://127.0.0.1:9999/callback', flowType: 'authorization_code_pkce' } })
+    .mockResolvedValueOnce({ ok: true, body: { success: true, callbackUrl: 'http://127.0.0.1:9999/callback' } })
+    .mockResolvedValueOnce({ ok: true, body: { success: true } })
+    .mockResolvedValue({ ok: true, body: { status: 'pending' } });
+  const pending = runGrant('trae', 'authorization_code_pkce', {});
+  // Past the five-minute grant deadline the codex/xai flows use: still polling.
+  await vi.advanceTimersByTimeAsync(320_000);
+  const pollsAtFiveMinutes = call.mock.calls.filter((args) => String(args[0]).includes('poll-status')).length;
+  expect(pollsAtFiveMinutes).toBeGreaterThan(0);
+  // Past ten minutes it gives up, so the row never spins forever either.
+  await vi.advanceTimersByTimeAsync(320_000);
+  expect(await pending).toMatchObject({ ok: false });
+});
+
+// Blocked and closed need different sentences: only one is fixed by allowing
+// pop-ups, and telling someone to allow pop-ups they already allowed is noise.
+it('separates a closed sign-in window from a blocked one', async () => {
+  const popup = { location: { href: '' }, closed: true, close: vi.fn() };
+  vi.stubGlobal('open', vi.fn(() => popup));
+  // The closed check runs AFTER authorize answers, so that call has to resolve.
+  call.mockResolvedValueOnce({ ok: true, body: { authUrl: 'https://auth.anthropic.invalid/authorize',
+    state: 'fixture-state', codeVerifier: 'fixture-verifier', flowType: 'authorization_code_pkce' } });
+  const out = await runGrant('claude', 'authorization_code_pkce', {});
+  expect(out).toMatchObject({ ok: false, status: 0 });
+  expect(out.body.error).toMatch(/closed/i);
+  expect(out.body.error).not.toMatch(/pop-ups/i);
+});
+
+// The provider origin must not inherit a handle that can navigate this tab.
+// `noopener` cannot be used, since the flow needs the handle itself, so the
+// reference is severed by hand while the window is still same-origin.
+it('severs the opener so the provider origin cannot navigate the dashboard tab', async () => {
+  const popup = { location: { href: '' }, closed: true, close: vi.fn(), opener: window };
+  vi.stubGlobal('open', vi.fn(() => popup));
+  // Severing happens inside openSignInWindow, before anything is awaited, so the
+  // grant is stopped at the closed-window check rather than driven to completion.
+  call.mockResolvedValueOnce({ ok: true, body: { authUrl: 'https://auth.anthropic.invalid/authorize',
+    state: 'fixture-state', codeVerifier: 'fixture-verifier', flowType: 'authorization_code_pkce' } });
+  await runGrant('claude', 'authorization_code_pkce', {});
+  expect(popup.opener).toBeNull();
+});
