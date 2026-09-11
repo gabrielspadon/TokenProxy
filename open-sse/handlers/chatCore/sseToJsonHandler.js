@@ -553,7 +553,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       if (provider === "antigravity" && !hasUsefulOutput) {
         trackDoneOnce();
         appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY} (empty content)` });
-        decide("STREAM", "empty", { rid, conn: connPrefix, why: "no-content", lock: true });
+        decide("STREAM", "empty", { rid, conn: connPrefix, why: "no-content", lock: false });
         reqSummary("failed", { ...saverFields, rid, conn: connPrefix, route, fmt, sel, status: HTTP_STATUS.BAD_GATEWAY, why: "empty-content" });
         return saverErrorResult(HTTP_STATUS.BAD_GATEWAY, ANTIGRAVITY_SAFE_ERROR_MESSAGE, null, null, rid);
       }
@@ -785,7 +785,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     if (provider === "antigravity" && !hasUsefulOutput) {
       trackDoneOnce();
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY} (empty content)` });
-      decide("STREAM", "empty", { rid, conn: connPrefix, why: "no-content", lock: true });
+      decide("STREAM", "empty", { rid, conn: connPrefix, why: "no-content", lock: false });
       reqSummary("failed", { ...saverFields, rid, conn: connPrefix, route, fmt, sel, status: HTTP_STATUS.BAD_GATEWAY, why: "empty-content" });
       return saverErrorResult(HTTP_STATUS.BAD_GATEWAY, ANTIGRAVITY_SAFE_ERROR_MESSAGE, null, null, rid);
     }
