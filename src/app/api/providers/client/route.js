@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/localDb";
+import { connectionIdentity } from "@/lib/db/repos/connectionsRepo.js";
 import { backfillAccountIdentity } from "@/lib/oauth/providers";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { isQuotaEligible } from "@/shared/utils/quotaPause.js";
@@ -65,6 +66,15 @@ function sanitize(c) {
     for (const f of SAFE_PSD_FIELDS) {
       if (c.providerSpecificData[f] !== undefined) psd[f] = c.providerSpecificData[f];
     }
+    // accountId and plan are both on the list above, but a codex row spells them
+    // chatgptAccountId and chatgptPlanType, so copying by key dropped exactly the
+    // provider whose seat and tier the board most needs to tell apart: two Codex
+    // rows sharing one email differ only by which workspace they hold. The
+    // repository already folds both spellings when it projects those values into
+    // their own columns, so the same fold answers here rather than a second one.
+    const identity = connectionIdentity(c);
+    if (psd.accountId === undefined && identity.accountId) psd.accountId = identity.accountId;
+    if (psd.plan === undefined && identity.plan) psd.plan = identity.plan;
     safe.providerSpecificData = psd;
   }
   return safe;

@@ -13,7 +13,7 @@ import { deriveAccountDisplayName, normalizeAccountIdentity } from "../../oauth/
 // without decrypting every row. A codex row spells its upstream account id
 // chatgptAccountId and its tier chatgptPlanType, so both spellings fold onto
 // the shared names and one rule then covers every provider.
-function connectionIdentity(conn) {
+export function connectionIdentity(conn) {
   const psd = conn?.providerSpecificData && typeof conn.providerSpecificData === "object"
     && !Array.isArray(conn.providerSpecificData) ? conn.providerSpecificData : {};
   return normalizeAccountIdentity({
