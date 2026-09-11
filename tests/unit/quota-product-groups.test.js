@@ -8,7 +8,7 @@ describe('quota product display groups', () => {
   it('groups the requested synthetic three-period General and Spark example as two products', () => {
     const groups = groupQuotaProducts('codex', windows(['monthly', 'spark_monthly', 'weekly', 'spark_weekly', 'hourly', 'spark_hourly']));
     expect(groups.map(group => [group.label, group.windows.map(window => window.label)])).toEqual([
-      ['General', ['Hourly', 'Weekly', 'Monthly']], ['Codex Spark', ['Hourly', 'Weekly', 'Monthly']],
+      ['General', ['Hourly (1h)', 'Weekly (7d)', 'Monthly (30d)']], ['Codex Spark', ['Hourly (1h)', 'Weekly (7d)', 'Monthly (30d)']],
     ]);
   });
 
@@ -16,14 +16,14 @@ describe('quota product display groups', () => {
     const input = windows(['spark_weekly_secondary', 'weekly_secondary', 'spark_weekly', 'session', 'weekly', 'spark_session']);
     const groups = groupQuotaProducts('codex', input);
     expect(groups.map(group => [group.label, group.windows.length])).toEqual([['General', 3], ['Codex Spark', 3]]);
-    expect(groups[0].windows.map(window => window.label)).toEqual(['Session', 'Weekly', 'Weekly (secondary)']);
+    expect(groups[0].windows.map(window => window.label)).toEqual(['Session (5h)', 'Weekly (7d)', 'Weekly (7d, secondary)']);
     expect(groups.flatMap(group => group.windows.map(window => window.key)).sort()).toEqual(input.map(window => window.key).sort());
   });
 
   it('keeps actual Codex review and Spark families separate, including primary collisions', () => {
     const groups = groupQuotaProducts('codex', windows(['review_session', 'spark_session_primary', 'weekly', 'review_weekly', 'spark_session', 'session_primary']));
     expect(groups.map(group => group.id)).toEqual(['general', 'spark', 'review']);
-    expect(groups[1].windows.map(window => window.label)).toEqual(['Session', 'Session (primary)']);
+    expect(groups[1].windows.map(window => window.label)).toEqual(['Session (5h)', 'Session (5h, primary)']);
     expect(groups[2].label).toBe('Code review');
   });
 

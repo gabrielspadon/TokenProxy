@@ -69,13 +69,28 @@ export function AddAccountRow({ onClose, onAdded }) {
   const modes = entry ? credentialModes(entry) : [];
   const needsConnections =
     entry &&
-    (OPTION_PROVIDERS.has(entry.id) ||
-      entry.baseUrlField ||
-      accountOptionFields(entry.id).length > 2 ||
-      !['oauth', 'apikey'].includes(mode));
+    // An OAuth sign-in collects nothing in this row — the provider's own window
+    // does it — so an optional tuning field can never be the reason to send it
+    // away. The length test counts accountOptionFields, which ALWAYS appends
+    // refreshLeadMs and customHeaders, so any provider declaring even one
+    // optional field scored 3+ and was redirected to Connections. codex declares
+    // workspaceId and chatgptAccountId purely as post-hoc tuning, scored 4, and
+    // became unaddable here: the row rendered "needs extra settings" instead of
+    // Sign in, so a second Codex account could not be started at all. The gate
+    // belongs on what the row cannot COLLECT.
+    (!['oauth', 'apikey'].includes(mode) ||
+      (mode === 'apikey' &&
+        (OPTION_PROVIDERS.has(entry.id) ||
+          entry.baseUrlField ||
+          accountOptionFields(entry.id).length > 2)));
   const paste = mode === 'oauth' && PASTE_FLOWS.has(flow?.flowType);
   async function pick(value) {
     const current = ++choice.current;
+    // A grant still in flight for the PREVIOUS provider is abandoned the moment
+    // the operator picks another. Without this it keeps running, and its late
+    // result arrives after the epoch check below has already discarded it, so
+    // the row stayed busy with no way to recover but a cancel.
+    abortRef.current?.abort();
     const id = providerChoiceId(value);
     setSelection(value);
     setFlow(null);
@@ -125,10 +140,16 @@ export function AddAccountRow({ onClose, onAdded }) {
         ? { ok: true, connection: response.body.connection }
         : { ok: false, status: response.status, body: response.body };
     }
-    if (current !== choice.current) return;
+    // The epoch check moved BELOW these resets. A grant abandoned by a provider
+    // switch still settles, and when it did the old order returned before
+    // clearing `busy`, so the row stayed disabled with no way out but a cancel.
+    // Releasing the row is safe for a stale epoch precisely because it owns no
+    // selection state; everything after the check does.
     setSecret('');
     setBusy(false);
     setDevice(null);
+    setStep('');
+    if (current !== choice.current) return;
     if (!out.ok) {
       setError(refusal(out.status, out.body));
       return;
