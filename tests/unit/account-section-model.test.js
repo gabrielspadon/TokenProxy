@@ -208,6 +208,17 @@ describe('sections', () => {
     );
     expect(order.map((item) => item.id)).toEqual(['fat', 'thin', 'blind']);
   });
+  it('orders equal names numerically, so +2 precedes +10', () => {
+    // These names end in a digit far more often than not, and a plain compare
+    // put spadon+10 through +14 ahead of spadon+2 through +9.
+    const flat = (id) => seat(id, [{ key: 'weekly', remainingPercentage: 50, resetAt: minutes(3000) }]);
+    const order = orderSection(
+      [flat('spadon+10'), flat('spadon+2'), flat('spadon+9')],
+      'serving',
+      NOW
+    );
+    expect(order.map((item) => item.id)).toEqual(['spadon+2', 'spadon+9', 'spadon+10']);
+  });
   it('orders cooling down by soonest return, with no known return last', () => {
     const order = orderSection(
       [

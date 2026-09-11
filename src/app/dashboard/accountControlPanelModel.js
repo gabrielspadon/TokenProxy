@@ -30,7 +30,7 @@ export function mergeAccountControls(connections, rows) {
   const health = new Map(rows.map(row => [accountControlId(row), row]));
   const accounts = configured.map(connection => ({ ...health.get(connection.id), ...connection, connectionId: connection.id, displayName: connection.name || connection.displayName || connection.email || health.get(connection.id)?.displayName || connection.id }));
   const known = new Set(accounts.map(accountControlId));
-  return [...accounts, ...rows.filter(row => !known.has(accountControlId(row)))].sort((a, b) => String(a.provider || '').localeCompare(String(b.provider || '')) || String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || '')) || accountControlId(a).localeCompare(accountControlId(b)));
+  return [...accounts, ...rows.filter(row => !known.has(accountControlId(row)))].sort((a, b) => String(a.provider || '').localeCompare(String(b.provider || '')) || String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''), undefined, { numeric: true }) || accountControlId(a).localeCompare(accountControlId(b), undefined, { numeric: true }));
 }
 
 export function accountControlState(account, now) {
@@ -75,7 +75,8 @@ export function accountWindowStale(window, now) {
 
 export function sortAccountControls(accounts, sort, now) {
   const name = account => String(account.displayName || account.name || accountControlId(account));
-  const compareName = (a, b) => name(a).localeCompare(name(b)) || String(a.provider || '').localeCompare(String(b.provider || '')) || accountControlId(a).localeCompare(accountControlId(b));
+  // Numeric collation: a plain compare puts spadon+10 ahead of spadon+2.
+  const compareName = (a, b) => name(a).localeCompare(name(b), undefined, { numeric: true }) || String(a.provider || '').localeCompare(String(b.provider || '')) || accountControlId(a).localeCompare(accountControlId(b), undefined, { numeric: true });
   const metric = account => {
     const windows = accountWindows(account).filter(window => !window.unlimited && !accountWindowStale(window, now));
     const values = windows.map(window => sort === 'reset' ? Date.parse(window.resetAt) : window.remaining)

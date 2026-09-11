@@ -87,12 +87,56 @@ describe('account buckets', () => {
     expect(accountBucket(account({ status: 'degraded' }), NOW)).toBe('attention');
     expect(accountBucket(account({ isActive: undefined, status: 'unknown' }), NOW)).toBe('unknown');
   });
+  it('separates an account with nothing left from one that is merely low', () => {
+    // Both used to read 'low', so 0% and 19% carried the same word.
+    const empty = account({}, [{ key: 'session', remainingPercentage: 0, resetAt: minutes(90) }]);
+    expect(accountBucket(empty, NOW)).toBe('depleted');
+    expect(accountStateWord(empty, NOW)).toBe('Out of quota');
+    const nearly = account({}, [{ key: 'session', remainingPercentage: 19, resetAt: minutes(90) }]);
+    expect(accountBucket(nearly, NOW)).toBe('low');
+    expect(accountStateWord(nearly, NOW)).toBe('Low quota');
+    // A window past its reset is full, so it is neither depleted nor low.
+    const rolled = account({}, [{ key: 'session', remainingPercentage: 0, resetAt: minutes(-10) }]);
+    expect(accountBucket(rolled, NOW)).toBe('ready');
+  });
+  it('refuses to read an absence of evidence as capacity', () => {
+    // The terminal fallback returned 'ready', which asserted capacity from
+    // nothing at all. Only a proof earns the word.
+    expect(accountBucket(account({ status: 'unqualified' }, []), NOW)).toBe('unknown');
+    expect(accountStateWord(account({ status: 'unqualified' }, []), NOW)).toBe('Unknown');
+    expect(accountBucket(account({}, []), NOW)).toBe('ready');
+    const served = account({ status: 'unqualified', activity: { records: 9, failed: 1 } }, []);
+    expect(accountBucket(served, NOW)).toBe('ready');
+  });
+  it('gives the card chip and the health strip one answer, not two', () => {
+    // The strip counts buckets and the chip prints a word. They were computed
+    // separately, so one account could be counted 'unknown' and show 'Ready'.
+    const fleet = [
+      account(),
+      account({ id: 'b', connectionId: 'b', status: 'unqualified' }, []),
+      account({ id: 'c', connectionId: 'c' }, [
+        { key: 'session', remainingPercentage: 0, resetAt: minutes(90) },
+      ]),
+    ];
+    const summary = fleetSummary(fleet, NOW);
+    const words = fleet.map((item) => accountStateWord(item, NOW));
+    expect(summary.unknown).toBe(words.filter((word) => word === 'Unknown').length);
+    expect(summary.depleted).toBe(words.filter((word) => word === 'Out of quota').length);
+    expect(summary.ready).toBe(words.filter((word) => word === 'Ready').length);
+  });
   it('sums every bucket over the given population', () => {
     const summary = fleetSummary(
       [account(), account({ isActive: false }), account({ status: 'cooldown' })],
       NOW
     );
-    expect(summary).toEqual({ ready: 1, low: 0, paused: 1, attention: 1, unknown: 0 });
+    expect(summary).toEqual({
+      ready: 1,
+      low: 0,
+      depleted: 0,
+      paused: 1,
+      attention: 1,
+      unknown: 0,
+    });
   });
 });
 

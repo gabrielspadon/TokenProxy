@@ -11,9 +11,12 @@ import { groupQuotaProducts } from './quotaProductGroups';
 
 // One glance answers "how many accounts can take work right now". Every account
 // lands in exactly one bucket; the order here is the order the strip renders.
+// `depleted` is its own word because `low` used to hold both nineteen percent
+// and nothing at all, and those are different problems with different answers.
 export const BUCKETS = [
   { id: 'ready', label: 'Ready', tone: 'positive' },
   { id: 'low', label: 'Low quota', tone: 'ember' },
+  { id: 'depleted', label: 'Out of quota', tone: 'refusal' },
   { id: 'paused', label: 'Paused', tone: 'slate' },
   { id: 'attention', label: 'Attention', tone: 'refusal' },
   { id: 'unknown', label: 'Unknown', tone: 'slate' },
@@ -35,13 +38,17 @@ export const LOW_REMAINING = 20;
 // account's OWN entitlement. A sub-quota was included here, so an account whose
 // Codex Spark lane was empty reported "Low quota" beside a plan-wide window at
 // 52%. Same classifier the router uses (src/shared/utils/quotaRanking.js:132).
+// Observation age only. `accountWindowStale` also folds in "the reset passed",
+// which would drop exactly the windows that have just been handed a fresh
+// period; windowHeadroom below already answers that question, and answering it
+// twice is what made a replenished account read as unmeasured.
 export function liveWindows(account, now) {
   return accountWindows(account).filter(
     (window) =>
       !window.unlimited &&
       Number.isFinite(window.remaining) &&
       classifyWindow(window.key) === 'general' &&
-      !accountWindowStale(window, now)
+      !accountWindowObservationStale(window, now)
   );
 }
 
@@ -50,8 +57,17 @@ export function accountBucket(account, now) {
   if (state === 'Paused' || state === 'Quota pause') return 'paused';
   if (state === 'Draining' || state === 'Cooldown' || state === 'Needs attention')
     return 'attention';
+  // Nothing left is its own answer, ahead of the low line. Both fell into `low`
+  // before, so an account at 0% and one at 19% carried the same word.
+  if (accountDepleted(account, now)) return 'depleted';
   const live = liveWindows(account, now);
-  if (live.some((window) => window.remaining <= Math.max(LOW_REMAINING, window.threshold || 0)))
+  // Headroom, not the stored number: a replenished window is full, so it is not
+  // the thing dragging an account onto the low line.
+  if (
+    live.some(
+      (window) => windowHeadroom(window, now) <= Math.max(LOW_REMAINING, window.threshold || 0)
+    )
+  )
     return 'low';
   if (live.length > 0) return state === 'Unknown' ? 'unknown' : 'ready';
   // No LIVE window. An unlimited one is still evidence of capacity, so that
@@ -63,8 +79,12 @@ export function accountBucket(account, now) {
   if (accountWindows(account).some((window) => window.unlimited)) {
     return state === 'Unknown' ? 'unknown' : 'ready';
   }
-  if (accountWindows(account).some((window) => accountWindowStale(window, now))) return 'unknown';
-  return state === 'Unknown' ? 'unknown' : 'ready';
+  if (accountWindows(account).some((window) => accountWindowObservationStale(window, now)))
+    return 'unknown';
+  // The terminal case: no readable window at all. This returned `ready`, which
+  // is the board asserting capacity from an absence of evidence. Only a proof
+  // earns the word now, and the absence itself is `unknown`.
+  return accountProven(account) && state !== 'Unknown' ? 'ready' : 'unknown';
 }
 
 // --- what the router actually believes ---------------------------------------
@@ -262,17 +282,23 @@ export function accountSeat(account) {
     : { login: full, seat: null };
 }
 
-// The word beside the dot, in precedence order. An operator's own gate is named
-// first because it outranks anything observed; then depletion, which is the
-// word the board never had and so reported as "Low quota" on an account with
-// nothing left at all; then the low line, then plain readiness.
+/**
+ * The word beside the dot on a card.
+ *
+ * Read from the BUCKET, never decided again. The chip and the health strip used
+ * to be computed by separate code, so the same account could be counted under
+ * one word in the strip and show another on its card. One function answers
+ * both; the word only adds the specific gate, which the coarse bucket drops.
+ */
 export function accountStateWord(account, now) {
   const state = accountControlState(account, now);
-  if (accountHeld(account, now)) return state === 'Needs attention' ? 'Attention' : state;
-  if (accountDepleted(account, now)) return 'Out of quota';
-  if (accountBucket(account, now) === 'low') return 'Low quota';
-  if (state === 'Enabled' || state === 'Not checked') return 'Ready';
-  return state;
+  const bucket = accountBucket(account, now);
+  if (bucket === 'paused' || bucket === 'attention')
+    return state === 'Needs attention' ? 'Attention' : state;
+  if (bucket === 'depleted') return 'Out of quota';
+  if (bucket === 'low') return 'Low quota';
+  if (bucket === 'unknown') return 'Unknown';
+  return state === 'Enabled' || state === 'Not checked' ? 'Ready' : state;
 }
 
 export function fleetSummary(accounts, now) {
@@ -329,7 +355,9 @@ export function headroomOf(account, now) {
 
 const accountName = (account) =>
   String(account.displayName || account.name || accountControlId(account));
-const byName = (a, b) => accountName(a).localeCompare(accountName(b));
+// Numeric collation, because these names end in a digit far more often than
+// not: a plain compare orders spadon+10 through +14 ahead of spadon+2.
+const byName = (a, b) => accountName(a).localeCompare(accountName(b), undefined, { numeric: true });
 
 // Most room first, an account with no reading last, then name. The everyday
 // order wherever cards are grouped by something other than a return time.
