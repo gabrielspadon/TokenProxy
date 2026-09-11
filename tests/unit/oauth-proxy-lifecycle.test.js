@@ -270,3 +270,71 @@ describe('defect 3 — a pending session dies with its listener', () => {
     expect(getXaiSessionStatus(state)).toBeNull();
   });
 });
+
+describe('defect 4 — a retry gets its own clock, not the remainder of the first attempt', () => {
+  it('re-arms the idle timer when a retry reuses a listening proxy', async () => {
+    // The fake clock goes in before the first start, because adopt() arms the
+    // idle timer at BIND time and a fake installed afterwards never owns it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await startCodexProxy(FIRST_APP_PORT);
+
+    // Nine minutes into an attempt that produced nothing. The operator starts
+    // again, and the proxy is still listening, so this takes the fast path.
+    await vi.advanceTimersByTimeAsync(540000);
+    const retryState = 'invented-retry-state';
+    expect(await startCodexProxy(SECOND_APP_PORT)).toEqual({ success: true });
+    registerCodexSession({
+      state: retryState,
+      codeVerifier: VERIFIER,
+      redirectUri: `http://localhost:${CODEX_PORT}/auth/callback`,
+    });
+
+    // Two minutes on: past the FIRST attempt's deadline, nowhere near the
+    // retry's own. Before the fix the fast path never re-armed the timer, so the
+    // original one fired right here — closing the port the provider was about to
+    // redirect to, and taking the retry's pending session with it. poll-status
+    // then answered "unknown" for the rest of that grant's deadline, which is
+    // the window opening and nothing ever happening after it. It also got worse
+    // every time, because each retry inherited a shorter remainder of the first
+    // attempt's clock.
+    await vi.advanceTimersByTimeAsync(120000);
+    vi.useRealTimers();
+
+    expect(getCodexSessionStatus(retryState)).toMatchObject({ status: 'pending' });
+    expect(await reachable('127.0.0.1', CODEX_PORT)).toBe(true);
+    clearCodexSession(retryState);
+  });
+
+  it('still closes the retry on its OWN deadline, so renewing is not an escape from one', async () => {
+    // FAILURE DIRECTION. renew() only ever extends a life already armed; the
+    // permissive reading would be a proxy that outlives every deadline because
+    // each start pushes it further out. One start, one full timeout, then gone.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await startCodexProxy(FIRST_APP_PORT);
+    await vi.advanceTimersByTimeAsync(540000);
+    await startCodexProxy(SECOND_APP_PORT);
+    await vi.advanceTimersByTimeAsync(600000 + 1);
+    vi.useRealTimers();
+
+    await waitUntil(async () => !(await reachable('127.0.0.1', CODEX_PORT)));
+    expect(await reachable('127.0.0.1', CODEX_PORT)).toBe(false);
+  });
+
+  it('keeps the same guarantee for xai', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await startXaiProxy(FIRST_APP_PORT);
+    await vi.advanceTimersByTimeAsync(540000);
+    await startXaiProxy(SECOND_APP_PORT);
+    const retryState = 'invented-xai-retry-state';
+    registerXaiSession({
+      state: retryState,
+      codeVerifier: VERIFIER,
+      redirectUri: `http://localhost:${XAI_PORT}/auth/callback`,
+    });
+    await vi.advanceTimersByTimeAsync(120000);
+    vi.useRealTimers();
+
+    expect(getXaiSessionStatus(retryState)).toMatchObject({ status: 'pending' });
+    expect(await reachable('127.0.0.1', XAI_PORT)).toBe(true);
+  });
+});
