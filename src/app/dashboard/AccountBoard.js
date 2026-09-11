@@ -416,6 +416,11 @@ function AccountCard({
       <header className={styles.cardHead}>
         <ProviderMark provider={account.provider} size="small" />
         <div className={styles.identityText}>
+          {/* Two seats of one login share a login, so the login is not what
+              tells them apart and the seat is. Carrying the seat inside the
+              name pushed it past the two lines a name has and elided it on the
+              longer of the pair, which is the one case it had to survive. It
+              leads the line underneath instead, where nothing can cut it. */}
           <NameField
             name={name}
             display={seat ? login : name}
@@ -425,8 +430,9 @@ function AccountCard({
             onCommit={onRename}
           />
           <small>
+            {seat ? <b className={styles.seatMark}>{seat} seat</b> : null}
+            {seat ? ' · ' : ''}
             {providerIdentity(account.provider).name}
-            {seat ? ` · ${seat} seat` : ''}
           </small>
         </div>
         <Tooltip label={paused ? 'Resume' : 'Pause'}>
@@ -801,8 +807,21 @@ export function AccountBoard({
               : 'Advanced view adds priority, drain and auto-pause'}
         </Text>
       </div>
-      <div className={styles.fleet} role="group" aria-label="Health summary" data-axis="health">
-        <span className={styles.axisLabel}>Health</span>
+      {/* A breakdown OF the row above, not a rival vocabulary beside it. These
+          words subdivide the sections ("out of quota" and "paused" both live
+          inside Cooling down), and stacking two same-weight strips made a
+          reader work that containment out for themselves. Indented, dimmer,
+          and named for what it is. */}
+      <div
+        className={styles.fleet}
+        role="group"
+        aria-label="Breakdown of the sections above"
+        data-axis="health"
+      >
+        <span className={styles.axisLabel} aria-hidden="true">
+          ↳
+        </span>
+        <span className={styles.axisLabel}>Breakdown</span>
         <button
           type="button"
           className={styles.fleetChip}

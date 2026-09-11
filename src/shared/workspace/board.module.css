@@ -62,8 +62,13 @@
    own row, dimmer, because the two axes answer different questions. */
 .fleet[data-axis='capacity'] { padding-bottom: 4px; border-bottom: 0; }
 .fleet[data-axis='capacity'] .fleetChip strong { font-size: var(--type-ui); }
-.fleet[data-axis='health'] { padding-top: 0; gap: 4px; }
+/* Indented under the section row, because it subdivides it rather than
+   competing with it. The figures stay small here; the section row above carries
+   the ones a glance is for. */
+.fleet[data-axis='health'] { padding-top: 0; padding-inline-start: 20px; gap: 4px; }
 .fleet[data-axis='health'] .fleetChip { color: var(--slate); opacity: 0.8; }
+.fleet[data-axis='health'] .fleetChip strong { font-weight: 600; }
+.fleet[data-axis='health'] .fleetChip i { width: 5px; height: 5px; }
 .fleet[data-axis='health'] .fleetChip:hover,
 .fleet[data-axis='health'] .fleetChip[aria-pressed='true'] { opacity: 1; }
 .axisLabel {
@@ -502,15 +507,22 @@
 .card[data-bucket='attention'] { border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule)); }
 /* The head reserves the same height whether the name takes one line or two, so
    the primary fact below starts at the same y on every card in a row. Ragged
-   figures down a grid are the thing that makes a board hard to scan. */
-.cardHead { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 38px; }
+   figures down a grid are the thing that makes a board hard to scan, and two
+   lines is what a login plus its seat needs at this width. */
+.cardHead { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 52px; }
 .cardHead :global(.provider-mark) { width: 22px; height: 22px; min-width: 22px; border-radius: 6px; border: 1px solid var(--rule); background: var(--raised); }
 .cardHead :global(.provider-mark img) { width: 18px; height: 18px; }
 .cardHead .identityText { flex: 1; }
-/* A login is one long unbroken token, so the default anywhere-break split it
-   mid-word ("research@example.te / st"). One line, elided, with the full name
-   still reachable through the field's own title. */
-.cardHead .nameButton { -webkit-line-clamp: 1; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; display: block; }
+/* The seat is what tells two cards of one login apart, so it leads its line and
+   carries the ink. Never elided: this line is short and always fits. */
+.seatMark { color: var(--ink); font-weight: 650; }
+/* A login is one long unbroken token. Eliding it to one line cost the seat,
+   which is the only thing telling two seats of one login apart, and letting the
+   browser break anywhere split it mid-word at a different letter on every card
+   ("research@example.te / st"). Two lines, breaking only at the points
+   NameField marks with <wbr> (after the @, before the seat), so every card in a
+   row breaks by the same rule and nothing is hidden. */
+.cardHead .nameButton { -webkit-line-clamp: 2; overflow-wrap: break-word; white-space: normal; }
 .cardHead :global(.mantine-ActionIcon-root) { width: 26px; height: 26px; min-width: 26px; min-height: 26px; }
 
 /* The one primary fact. Same slot, same size, same alignment on every card, so
