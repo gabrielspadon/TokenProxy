@@ -57,6 +57,23 @@
 .fleetChip[aria-pressed='true'] { background: var(--raised); border-color: var(--control-edge); color: var(--ink); }
 .fleetNote { white-space: nowrap; }
 
+/* The capacity strip is the primary read, so its chips carry the figure at a
+   larger size than the health strip below it. Health stays available on its
+   own row, dimmer, because the two axes answer different questions. */
+.fleet[data-axis='capacity'] { padding-bottom: 4px; border-bottom: 0; }
+.fleet[data-axis='capacity'] .fleetChip strong { font-size: var(--type-ui); }
+.fleet[data-axis='health'] { padding-top: 0; gap: 4px; }
+.fleet[data-axis='health'] .fleetChip { color: var(--slate); opacity: 0.8; }
+.fleet[data-axis='health'] .fleetChip:hover,
+.fleet[data-axis='health'] .fleetChip[aria-pressed='true'] { opacity: 1; }
+.axisLabel {
+  align-self: center;
+  margin-inline-end: 2px;
+  color: var(--slate);
+  font-size: var(--type-dense);
+  white-space: nowrap;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -419,6 +436,33 @@
   }
 }
 @media (prefers-reduced-motion: reduce) { .fill { transition: none; } }
+
+/* A login's seats, kept adjacent so a personal and an organisation seat read
+   as one login rather than as duplicated accounts. The rail carries the
+   group's capacity tone; the seats stay individually rendered inside it. */
+.seatGroup { min-width: 0; }
+.seatGroup[data-seats='multi'] {
+  border-inline-start: 2px solid var(--rule);
+  padding-inline-start: 8px;
+}
+.seatGroup[data-seats='multi'][data-capacity='serving'] { border-inline-start-color: var(--positive); }
+.seatGroup[data-seats='multi'][data-capacity='returns'] { border-inline-start-color: var(--ember); }
+.seatHead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-bottom: 4px;
+  font-size: var(--type-dense);
+}
+.seatHead strong { color: var(--ink); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.seatHead span { color: var(--slate); }
+/* The number that changes what the operator does next. */
+.seatReturns { color: var(--ember); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.seatCards { display: grid; gap: 8px; }
+.card[data-capacity='returns'] { border-color: color-mix(in srgb, var(--ember) 45%, var(--rule)); }
+.card[data-capacity='no-evidence'] { border-style: dashed; }
+.seatName { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
 
 /* Everyday: compact progress cards grouped by state. */
 .density { flex-shrink: 0; }
