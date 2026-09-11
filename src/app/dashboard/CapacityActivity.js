@@ -279,7 +279,15 @@ export function capacityTokensOption(points, bucketMs, style = 'lines') {
     series: [
       line('Tokens in', 'inputTokens', METRIC_COLORS.input, 0, 'inputSamples', plot, style),
       line('Tokens out', 'outputTokens', METRIC_COLORS.output, 0, 'outputSamples', plot, style),
-      line('Cache read', 'cacheReadTokens', METRIC_COLORS.cacheRead, 0, 'cacheReadSamples', plot, style),
+      line(
+        'Cache read',
+        'cacheReadTokens',
+        METRIC_COLORS.cacheRead,
+        0,
+        'cacheReadSamples',
+        plot,
+        style
+      ),
       line(
         'Cache write',
         'cacheWriteTokens',
@@ -397,7 +405,9 @@ export function CapacityActivity() {
           : points.at(-1)?.bucketStartMs;
       const start = scopeStart ? Date.parse(scopeStart) : end - 364 * DAY;
       const range =
-        Number.isFinite(start) && Number.isFinite(end) ? { start: day(start), end: day(end) } : null;
+        Number.isFinite(start) && Number.isFinite(end)
+          ? { start: day(start), end: day(end) }
+          : null;
       return capacityCalendarOption(
         points,
         metric,
@@ -494,8 +504,15 @@ export function CapacityActivity() {
           </Button>
         </div>
       ) : !points.length ? (
+        // The figures above come from the SUMMARY and this sentence was gated on
+        // the SERIES, so a response carrying one without the other said "no
+        // recorded activity" directly beneath a non-zero attempt count. Say what
+        // is actually missing: the attempts are real, only the per-bucket series
+        // that draws the chart is absent.
         <div className={styles.state}>
-          No recorded activity for this period. Account controls remain available below.
+          {summary?.records > 0
+            ? 'No per-interval series to chart for this period. The totals above still apply.'
+            : 'No recorded activity for this period. Account controls remain available below.'}
         </div>
       ) : (
         <>

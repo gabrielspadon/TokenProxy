@@ -84,21 +84,49 @@
 .navigationMode {
   padding: 4px 12px 12px;
 }
-.navigationMode :global(.mantine-SegmentedControl-root) {
-  background: var(--nav-active);
+/* Every segmented control on the rail, in ONE rule. The navigation-mode control
+   and the two preference controls used to repeat the same three declarations in
+   separate blocks, which is how they came to sit at different sizes on the same
+   rail. */
+.navigationMode :global(.mantine-SegmentedControl-root),
+.railSetting :global(.mantine-SegmentedControl-root) {
+  background: var(--nav-track);
+  border: 1px solid var(--nav-track-edge);
+  padding: 2px;
 }
-.navigationMode :global(.mantine-SegmentedControl-label) {
-  color: var(--nav-text);
-  min-height: 28px;
+.navigationMode :global(.mantine-SegmentedControl-label),
+.railSetting :global(.mantine-SegmentedControl-label) {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 26px;
+  /* Unselected is muted, so the chosen segment is the bright one. It used to be
+     --nav-text, the same value a nav destination's label carries, which left
+     every segment reading as selected. */
+  color: var(--nav-muted);
+  font-size: var(--type-dense);
 }
-.navigationMode :global(.mantine-SegmentedControl-label[data-active]) {
+.navigationMode :global(.mantine-SegmentedControl-label:hover),
+.railSetting :global(.mantine-SegmentedControl-label:hover) {
+  color: var(--nav-text);
+}
+.navigationMode :global(.mantine-SegmentedControl-label[data-active]),
+.railSetting :global(.mantine-SegmentedControl-label[data-active]),
+.navigationMode :global(.mantine-SegmentedControl-label[data-active]:hover),
+.railSetting :global(.mantine-SegmentedControl-label[data-active]:hover) {
   color: var(--nav-selected-text);
+  font-weight: 600;
 }
-.navigationMode :global(.mantine-SegmentedControl-indicator) {
+.navigationMode :global(.mantine-SegmentedControl-indicator),
+.railSetting :global(.mantine-SegmentedControl-indicator) {
   background: var(--nav-selected-surface);
+}
+/* The rail is navy in both schemes, so the page's --signal focus ring lands on
+   a surface it was never measured against. Use the rail's own light edge. */
+.navigationMode :global(.mantine-SegmentedControl-input:focus-visible + .mantine-SegmentedControl-label),
+.railSetting :global(.mantine-SegmentedControl-input:focus-visible + .mantine-SegmentedControl-label) {
+  outline: 2px solid var(--nav-selected-edge);
+  outline-offset: -2px;
 }
 .navGroup {
   padding: 6px 12px;
@@ -184,21 +212,9 @@
   color: var(--nav-muted);
   opacity: 0.6;
 }
-.railSetting :global(.mantine-SegmentedControl-root) {
-  background: var(--nav-active);
-}
-.railSetting :global(.mantine-SegmentedControl-label) {
-  color: var(--nav-text);
-}
-.railSetting :global(.mantine-SegmentedControl-label[data-active]) {
-  color: var(--nav-selected-text);
-}
 .railSetting :global(.mantine-SegmentedControl-label[data-disabled]) {
   color: var(--nav-muted);
   opacity: 0.6;
-}
-.railSetting :global(.mantine-SegmentedControl-indicator) {
-  background: var(--nav-selected-surface);
 }
 .railNote,
 .railAlert {

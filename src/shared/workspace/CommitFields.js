@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { NumberInput, TextInput, Tooltip } from '@mantine/core';
 import { Icon } from '@/shared/components/Icon';
 import board from './board.module.css';
@@ -107,15 +107,51 @@ export function CommitText({ value, onCommit, onBlur, onKeyDown, ...props }) {
 // A name reads as text until it is renamed, so a row stays a row. Escape
 // abandons the edit without committing, which is why the cancelled flag exists:
 // leaving the field is what saves, and Escape has to disarm that.
-export function NameField({ name, label, disabled, expanded, onCommit, onOpen }) {
+/**
+ * Where a login may break across lines.
+ *
+ * These names are one long unbroken token, so a browser left to itself breaks
+ * at whatever letter the box ends on: the same name broke after `te` on one
+ * card and after `exampl` on its neighbour, and a row of cards that each broke
+ * somewhere different was the complaint. `<wbr>` offers the two points a reader
+ * would choose, after the `@` and before a parenthesised seat, and the seat
+ * never splits, so it stays legible as the thing that tells two seats of one
+ * login apart. Nothing is elided: the whole name is present on every card.
+ */
+export function nameBreakPoints(name) {
+  return String(name)
+    .split(/(?<=@)|(?=\s*\()/g)
+    .filter(Boolean);
+}
+
+/**
+ * `display` shortens what is SHOWN without touching what is edited or what the
+ * title reports. A card states the seat on its own line, so carrying it inside
+ * the name as well only pushed the name past the two lines it has and elided
+ * the seat on the longer of two sibling cards, which is the case the seat
+ * exists to distinguish. The rename still opens on the stored name.
+ */
+export function NameField({ name, display, label, disabled, expanded, onCommit, onOpen }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   const [cancelled, setCancelled] = useState(false);
+  const segments = nameBreakPoints(display || name);
   if (!editing)
     return (
       <span className={board.nameLine}>
-        <button type="button" className={board.nameButton} aria-expanded={expanded} onClick={onOpen}>
-          {name}
+        <button
+          type="button"
+          className={board.nameButton}
+          aria-expanded={expanded}
+          title={name}
+          onClick={onOpen}
+        >
+          {segments.map((segment, index) => (
+            <Fragment key={index}>
+              {segment}
+              {index < segments.length - 1 ? <wbr /> : null}
+            </Fragment>
+          ))}
         </button>
         <Tooltip label="Rename">
           <button

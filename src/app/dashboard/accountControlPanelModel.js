@@ -30,7 +30,7 @@ export function mergeAccountControls(connections, rows) {
   const health = new Map(rows.map(row => [accountControlId(row), row]));
   const accounts = configured.map(connection => ({ ...health.get(connection.id), ...connection, connectionId: connection.id, displayName: connection.name || connection.displayName || connection.email || health.get(connection.id)?.displayName || connection.id }));
   const known = new Set(accounts.map(accountControlId));
-  return [...accounts, ...rows.filter(row => !known.has(accountControlId(row)))].sort((a, b) => String(a.provider || '').localeCompare(String(b.provider || '')) || String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || '')) || accountControlId(a).localeCompare(accountControlId(b)));
+  return [...accounts, ...rows.filter(row => !known.has(accountControlId(row)))].sort((a, b) => String(a.provider || '').localeCompare(String(b.provider || '')) || String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''), undefined, { numeric: true }) || accountControlId(a).localeCompare(accountControlId(b), undefined, { numeric: true }));
 }
 
 export function accountControlState(account, now) {
@@ -56,14 +56,27 @@ export function accountControlEvidence(account, now) {
   return { health, gates, observedAt: account.lastQualifiedAt || account.lastTestedAt };
 }
 
-export function accountWindowStale(window, now) {
+// How old a reading may be before the board stops calling it current.
+export const OBSERVATION_MAX_AGE_MS = 900000;
+
+// Is the OBSERVATION old, missing, or ahead of the clock? The age question on
+// its own, with no opinion about the period the reading describes. Split out
+// because a replenished window is not an old reading: it is a current reading
+// of a period that has since rolled over, and the two need different answers
+// (see windowReplenished in accountBoardModel.js).
+export function accountWindowObservationStale(window, now) {
   const observedAt = Date.parse(window.observedAt);
-  return !Number.isFinite(observedAt) || observedAt > now || now - observedAt > 900000 || Date.parse(window.resetAt) <= now;
+  return !Number.isFinite(observedAt) || observedAt > now || now - observedAt > OBSERVATION_MAX_AGE_MS;
+}
+
+export function accountWindowStale(window, now) {
+  return accountWindowObservationStale(window, now) || Date.parse(window.resetAt) <= now;
 }
 
 export function sortAccountControls(accounts, sort, now) {
   const name = account => String(account.displayName || account.name || accountControlId(account));
-  const compareName = (a, b) => name(a).localeCompare(name(b)) || String(a.provider || '').localeCompare(String(b.provider || '')) || accountControlId(a).localeCompare(accountControlId(b));
+  // Numeric collation: a plain compare puts spadon+10 ahead of spadon+2.
+  const compareName = (a, b) => name(a).localeCompare(name(b), undefined, { numeric: true }) || String(a.provider || '').localeCompare(String(b.provider || '')) || accountControlId(a).localeCompare(accountControlId(b), undefined, { numeric: true });
   const metric = account => {
     const windows = accountWindows(account).filter(window => !window.unlimited && !accountWindowStale(window, now));
     const values = windows.map(window => sort === 'reset' ? Date.parse(window.resetAt) : window.remaining)

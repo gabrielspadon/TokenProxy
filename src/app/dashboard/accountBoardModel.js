@@ -1,6 +1,8 @@
+import { classifyWindow } from '@/shared/utils/quotaRanking';
 import {
   accountControlId,
   accountControlState,
+  accountWindowObservationStale,
   accountWindowStale,
   accountWindowTime,
   accountWindows,
@@ -9,9 +11,12 @@ import { groupQuotaProducts } from './quotaProductGroups';
 
 // One glance answers "how many accounts can take work right now". Every account
 // lands in exactly one bucket; the order here is the order the strip renders.
+// `depleted` is its own word because `low` used to hold both nineteen percent
+// and nothing at all, and those are different problems with different answers.
 export const BUCKETS = [
   { id: 'ready', label: 'Ready', tone: 'positive' },
   { id: 'low', label: 'Low quota', tone: 'ember' },
+  { id: 'depleted', label: 'Out of quota', tone: 'refusal' },
   { id: 'paused', label: 'Paused', tone: 'slate' },
   { id: 'attention', label: 'Attention', tone: 'refusal' },
   { id: 'unknown', label: 'Unknown', tone: 'slate' },
@@ -29,10 +34,21 @@ export const SORTS = [
 // while the meter compared against 20.
 export const LOW_REMAINING = 20;
 
+// The windows the low line is read from: current, readable, limited, and the
+// account's OWN entitlement. A sub-quota was included here, so an account whose
+// Codex Spark lane was empty reported "Low quota" beside a plan-wide window at
+// 52%. Same classifier the router uses (src/shared/utils/quotaRanking.js:132).
+// Observation age only. `accountWindowStale` also folds in "the reset passed",
+// which would drop exactly the windows that have just been handed a fresh
+// period; windowHeadroom below already answers that question, and answering it
+// twice is what made a replenished account read as unmeasured.
 export function liveWindows(account, now) {
   return accountWindows(account).filter(
     (window) =>
-      !window.unlimited && Number.isFinite(window.remaining) && !accountWindowStale(window, now)
+      !window.unlimited &&
+      Number.isFinite(window.remaining) &&
+      classifyWindow(window.key) === 'general' &&
+      !accountWindowObservationStale(window, now)
   );
 }
 
@@ -41,8 +57,17 @@ export function accountBucket(account, now) {
   if (state === 'Paused' || state === 'Quota pause') return 'paused';
   if (state === 'Draining' || state === 'Cooldown' || state === 'Needs attention')
     return 'attention';
+  // Nothing left is its own answer, ahead of the low line. Both fell into `low`
+  // before, so an account at 0% and one at 19% carried the same word.
+  if (accountDepleted(account, now)) return 'depleted';
   const live = liveWindows(account, now);
-  if (live.some((window) => window.remaining <= Math.max(LOW_REMAINING, window.threshold || 0)))
+  // Headroom, not the stored number: a replenished window is full, so it is not
+  // the thing dragging an account onto the low line.
+  if (
+    live.some(
+      (window) => windowHeadroom(window, now) <= Math.max(LOW_REMAINING, window.threshold || 0)
+    )
+  )
     return 'low';
   if (live.length > 0) return state === 'Unknown' ? 'unknown' : 'ready';
   // No LIVE window. An unlimited one is still evidence of capacity, so that
@@ -54,66 +79,198 @@ export function accountBucket(account, now) {
   if (accountWindows(account).some((window) => window.unlimited)) {
     return state === 'Unknown' ? 'unknown' : 'ready';
   }
-  if (accountWindows(account).some((window) => accountWindowStale(window, now))) return 'unknown';
-  return state === 'Unknown' ? 'unknown' : 'ready';
+  if (accountWindows(account).some((window) => accountWindowObservationStale(window, now)))
+    return 'unknown';
+  // The terminal case: no readable window at all. This returned `ready`, which
+  // is the board asserting capacity from an absence of evidence. Only a proof
+  // earns the word now, and the absence itself is `unknown`.
+  return accountProven(account) && state !== 'Unknown' ? 'ready' : 'unknown';
 }
 
-// --- capacity axis -----------------------------------------------------------
-// The buckets above answer "what is this account's health". They cannot answer
-// "what can take work now, and when does more arrive", because a seat at 4% and
-// a seat at 67% are both `ready`. These read the same windows on the capacity
-// axis instead; nothing here replaces a bucket, both are exported.
+// --- what the router actually believes ---------------------------------------
+// The board used to read a window's stored `remaining` as its current headroom.
+// The router does not: it projects the period forward first, and the two
+// disagree on exactly the accounts an operator cares about. Everything below
+// is the router's own rule, restated in the units the board holds (percent
+// remaining rather than absolute units), with the source of each cited.
 
-export const CAPACITY = [
-  { id: 'serving', label: 'Serving now', tone: 'positive' },
-  { id: 'returns', label: 'Capacity returns', tone: 'ember' },
-  { id: 'no-evidence', label: 'No quota evidence', tone: 'slate' },
+// The scale a stored reading is on. `accountWindows` normalizes every provider
+// to percent remaining, so a full window is 100.
+const FULL = 100;
+
+/**
+ * Has this window's period already rolled over?
+ *
+ * A recorded reset at or before `now` means the provider has handed the account
+ * a whole fresh period, so the depleted reading that predates it describes a
+ * period that no longer exists. This is the router's rule at
+ * src/shared/utils/quotaRanking.js:291, and the provider-side exhaustion check
+ * refuses to call a model exhausted past its reset for the same reason at
+ * open-sse/services/accountFallback.js:290.
+ */
+export function windowReplenished(window, now) {
+  const resetAt = Date.parse(window.resetAt);
+  return Number.isFinite(resetAt) && resetAt <= now;
+}
+
+/**
+ * What this window has left RIGHT NOW, in percent, or null when unreadable.
+ *
+ * src/shared/utils/quotaRanking.js:300 in the board's units: a replenished
+ * window reads full, never the zero on record. Reading that zero as depletion
+ * is what parked replenished accounts beside genuinely exhausted ones.
+ */
+export function windowHeadroom(window, now) {
+  if (window.unlimited) return FULL;
+  if (!Number.isFinite(window.remaining)) return null;
+  return windowReplenished(window, now) ? FULL : window.remaining;
+}
+
+/**
+ * An account's GENERAL windows, the ones that constrain the whole connection.
+ *
+ * A sub-quota (`spark_weekly`, `weekly opus (7d)`) is not the account's
+ * entitlement and must never bench it, which is why the router classifies
+ * before it ranks (src/shared/utils/quotaRanking.js:132). Same classifier here,
+ * so the board and the router cannot disagree about which windows count.
+ */
+export function generalWindows(account, now) {
+  return accountWindows(account).filter(
+    (window) => classifyWindow(window.key) === 'general' && windowHeadroom(window, now) !== null
+  );
+}
+
+/**
+ * How much the board is entitled to claim about this account.
+ *
+ * The router's two bands, in order: completeness first, then confidence
+ * (src/shared/utils/quotaRanking.js:323 and :312). No readable general window
+ * is `unknown`. A general window we could not read, or a reading older than the
+ * observation line, is `stale`. Everything readable and current is `fresh`.
+ * The worst window sets the band, exactly as `bandOf` takes the maximum.
+ */
+export function accountEvidence(account, now) {
+  const general = accountWindows(account).filter(
+    (window) => classifyWindow(window.key) === 'general'
+  );
+  const readable = general.filter((window) => windowHeadroom(window, now) !== null);
+  if (readable.length === 0) return 'unknown';
+  if (readable.length < general.length) return 'stale';
+  return readable.some((window) => accountWindowObservationStale(window, now)) ? 'stale' : 'fresh';
+}
+
+/**
+ * Is this account out of quota right now?
+ *
+ * ANY general window at or below zero, not every one. The router's rule 2 is
+ * that every KNOWN hard window must have headroom, so a single exhausted weekly
+ * takes the connection out of service however full its five-hour window reads
+ * (src/shared/utils/quotaRanking.js:301, `if (effectiveRemaining <= 0) usable
+ * = false`). The board's old rule was `every`, which is why an account the
+ * router refuses to select still rendered as serving.
+ */
+export function accountDepleted(account, now) {
+  const general = generalWindows(account, now);
+  return general.length > 0 && general.some((window) => windowHeadroom(window, now) <= 0);
+}
+
+// An operator's own gate, or a recorded fault. None of these is serving traffic,
+// whatever the quota says.
+const HELD_STATES = new Set(['Paused', 'Quota pause', 'Draining', 'Cooldown', 'Needs attention']);
+
+export function accountHeld(account, now) {
+  return HELD_STATES.has(accountControlState(account, now));
+}
+
+/**
+ * With no quota reading to show, has this account been PROVEN to work?
+ *
+ * Two proofs, and nothing else: it served a request that did not fail, or its
+ * connection test passed. `status: 'healthy'` is exactly the latter — it is
+ * only reached once a probe has run and did not come back degraded
+ * (src/lib/admin/project.js:104-112). Being enabled is not a proof, and
+ * `unqualified` is the recorded "nothing has established this works".
+ */
+export function accountProven(account) {
+  const records = Number(account.activity?.records);
+  const failed = Number(account.activity?.failed) || 0;
+  if (Number.isFinite(records) && records > failed) return true;
+  return account.status === 'healthy';
+}
+
+// --- the sections the board renders ------------------------------------------
+// State first, identity second. Grouping by login put a drained seat and a full
+// one under one heading, which is the reading an operator has to undo by hand
+// before the board answers anything. Every account lands in exactly one
+// section, and the order here is the order they render.
+
+export const SECTIONS = [
+  {
+    id: 'serving',
+    label: 'Serving now',
+    tone: 'positive',
+    note: 'Quota confirmed. These take work.',
+  },
+  {
+    id: 'resting',
+    label: 'Cooling down',
+    tone: 'ember',
+    note: 'Out of quota or held back. Each card leads with when it returns.',
+  },
+  {
+    id: 'unverified',
+    label: 'Unverified',
+    tone: 'slate',
+    note: 'No quota evidence and nothing has proved these work.',
+  },
 ];
 
 /**
- * Which capacity state one account is in.
+ * The one section an account belongs to.
  *
- * A window with headroom is the only thing that licenses `serving`. Every live
- * window depleted is `returns`, because the capacity exists and its arrival is
- * known. No readable window is `no-evidence`: that account is not depleted, it
- * is unmeasured, and saying so is what tells a dead integration apart from an
- * exhausted one.
+ * Depleted or held is `resting`, because both answer "not now, and here is
+ * when". An account with no evidence at all is `unverified` UNLESS something
+ * proves it works, which is the only thing that earns it a place beside
+ * accounts whose quota is known.
  */
-export function accountCapacity(account, now) {
-  const live = liveWindows(account, now);
-  if (live.length === 0) return 'no-evidence';
-  return live.every((window) => window.remaining <= 0) ? 'returns' : 'serving';
+export function accountSection(account, now) {
+  if (accountHeld(account, now) || accountDepleted(account, now)) return 'resting';
+  return accountEvidence(account, now) === 'unknown' && !accountProven(account)
+    ? 'unverified'
+    : 'serving';
 }
 
-/**
- * When capacity returns, as epoch ms, or null.
- *
- * The LATEST reset among depleted windows, not the earliest: an account is
- * usable only once every exhausted window has rolled, so a 5h window reopening
- * while the weekly stays empty changes nothing.
- */
-export function capacityReturnsAt(account, now) {
-  const times = liveWindows(account, now)
-    .filter((window) => window.remaining <= 0)
-    .map((window) => Date.parse(window.resetAt))
-    .filter((time) => Number.isFinite(time) && time > now);
-  return times.length ? Math.max(...times) : null;
-}
-
-export function capacitySummary(accounts, now) {
-  const counts = Object.fromEntries(CAPACITY.map((item) => [item.id, 0]));
-  for (const account of accounts) counts[accountCapacity(account, now)] += 1;
+export function sectionSummary(accounts, now) {
+  const counts = Object.fromEntries(SECTIONS.map((item) => [item.id, 0]));
+  for (const account of accounts) counts[accountSection(account, now)] += 1;
   return counts;
 }
 
-// --- login grouping ----------------------------------------------------------
+/**
+ * When this account can work again, as epoch ms, or null.
+ *
+ * The LATEST reset among its exhausted windows, not the earliest: it is usable
+ * only once every exhausted window has rolled, so a 5h window reopening while
+ * the weekly stays empty changes nothing. A recorded cooldown is a deadline of
+ * the same kind and joins the same maximum.
+ */
+export function accountReturnsAt(account, now) {
+  const times = generalWindows(account, now)
+    .filter((window) => windowHeadroom(window, now) <= 0)
+    .map((window) => Date.parse(window.resetAt));
+  const cooldown = Date.parse(account.rateLimitedUntil);
+  if (Number.isFinite(cooldown)) times.push(cooldown);
+  const future = times.filter((time) => Number.isFinite(time) && time > now);
+  return future.length ? Math.max(...future) : null;
+}
+
+// --- seat labels -------------------------------------------------------------
 // One login can hold several DISTINCT upstream accounts, a personal seat and an
 // organisation seat. Verified 2026-09-11 across seven logins: every pair held
 // two different weekly windows, four days apart in one case, which a single
-// account cannot do. Grouped for reading, never merged, because collapsing them
-// would hide real capacity. Grouping is by the typed NAME because that is the
-// only identity these rows carry: claude connections store no email (14 of 14
-// null) and no upstream account id, unlike every other provider.
+// account cannot do. The seat is kept as a LABEL on the card rather than as a
+// nested group, so the relationship survives while the nesting that made the
+// board hard to read does not.
 const SEAT_SUFFIX = /\s*\(([^)]+)\)\s*$/;
 
 /** The login an account belongs to, and its seat name within that login. */
@@ -125,59 +282,23 @@ export function accountSeat(account) {
     : { login: full, seat: null };
 }
 
-/** Accounts grouped by login, each group keeping its own distinct seats. */
-export function groupBySeat(accounts) {
-  const groups = new Map();
-  for (const account of accounts) {
-    const { login, seat } = accountSeat(account);
-    const key = `${account.provider}::${login}`;
-    if (!groups.has(key)) groups.set(key, { key, login, provider: account.provider, seats: [] });
-    groups.get(key).seats.push({ ...account, seatLabel: seat });
-  }
-  return [...groups.values()].sort(
-    (a, b) => a.login.localeCompare(b.login) || a.provider.localeCompare(b.provider)
-  );
-}
-
 /**
- * The capacity state of a whole login, from its seats.
+ * The word beside the dot on a card.
  *
- * A login can serve work if ANY of its seats can, so one serving seat makes the
- * group serving even beside a drained twin. `returns` needs at least one
- * depleted seat and no serving one; a group with neither is `no-evidence`.
- * This is the only place the two axes are combined, and it is deliberately not
- * a merge: the seats stay listed separately underneath.
+ * Read from the BUCKET, never decided again. The chip and the health strip used
+ * to be computed by separate code, so the same account could be counted under
+ * one word in the strip and show another on its card. One function answers
+ * both; the word only adds the specific gate, which the coarse bucket drops.
  */
-export function groupCapacity(group, now) {
-  const states = group.seats.map((seat) => accountCapacity(seat, now));
-  if (states.includes('serving')) return 'serving';
-  return states.includes('returns') ? 'returns' : 'no-evidence';
-}
-
-/**
- * When a drained login can work again, as epoch ms, or null.
- *
- * The EARLIEST return among its depleted seats, which is the opposite of the
- * rule inside one account. Within an account every exhausted window must roll
- * before it is usable; across seats the first seat to come back is enough,
- * because the other seat was never what the work was waiting on.
- */
-export function groupReturnsAt(group, now) {
-  const times = group.seats
-    .map((seat) => capacityReturnsAt(seat, now))
-    .filter((time) => Number.isFinite(time));
-  return times.length ? Math.min(...times) : null;
-}
-
-// The word beside the dot. Buckets are coarse on purpose; the word keeps the
-// specific gate when there is one, so "Draining" and "Cooldown" stay distinct.
 export function accountStateWord(account, now) {
   const state = accountControlState(account, now);
   const bucket = accountBucket(account, now);
+  if (bucket === 'paused' || bucket === 'attention')
+    return state === 'Needs attention' ? 'Attention' : state;
+  if (bucket === 'depleted') return 'Out of quota';
   if (bucket === 'low') return 'Low quota';
-  if (state === 'Needs attention') return 'Attention';
-  if (state === 'Enabled' || state === 'Not checked') return 'Ready';
-  return state;
+  if (bucket === 'unknown') return 'Unknown';
+  return state === 'Enabled' || state === 'Not checked' ? 'Ready' : state;
 }
 
 export function fleetSummary(accounts, now) {
@@ -187,14 +308,14 @@ export function fleetSummary(accounts, now) {
 }
 
 // The two axes filter independently and compose, because they answer different
-// questions: a `returns` account can also be `paused`, and an operator narrowing
+// questions: a `resting` account can also be `paused`, and an operator narrowing
 // to one is not asking to leave the other behind.
-export function filterAccounts(accounts, { query = '', bucket = null, capacity = null }, now) {
+export function filterAccounts(accounts, { query = '', bucket = null, section = null }, now) {
   const needle = query.trim().toLowerCase();
   return accounts.filter(
     (account) =>
       (!bucket || accountBucket(account, now) === bucket) &&
-      (!capacity || accountCapacity(account, now) === capacity) &&
+      (!section || accountSection(account, now) === section) &&
       (!needle ||
         `${account.displayName || account.name || ''} ${account.email || ''} ${account.provider} ${accountControlId(account)}`
           .toLowerCase()
@@ -225,24 +346,41 @@ export function resetShort(window, now) {
   return time.label.startsWith('Resets in ') ? `in ${time.label.slice(10)}` : 'passed';
 }
 
-// The window a person watches first: the least remaining among fresh, known,
-// limited windows. Null when nothing fresh is known.
+// The window a person watches first: the least room left across this account's
+// general windows, replenishment already applied. Null when none is readable.
 export function headroomOf(account, now) {
-  const values = liveWindows(account, now).map((window) => window.remaining);
+  const values = generalWindows(account, now).map((window) => windowHeadroom(window, now));
   return values.length ? Math.min(...values) : null;
 }
 
-// Everyday card order inside a bucket: most headroom first, unknown last, then name.
+const accountName = (account) =>
+  String(account.displayName || account.name || accountControlId(account));
+// Numeric collation, because these names end in a digit far more often than
+// not: a plain compare orders spadon+10 through +14 ahead of spadon+2.
+const byName = (a, b) => accountName(a).localeCompare(accountName(b), undefined, { numeric: true });
+
+// Most room first, an account with no reading last, then name. The everyday
+// order wherever cards are grouped by something other than a return time.
 export function orderCards(accounts, now) {
-  const name = (account) =>
-    String(account.displayName || account.name || accountControlId(account));
-  return [...accounts].sort((a, b) => {
-    const ha = headroomOf(a, now),
-      hb = headroomOf(b, now);
-    if (ha === null && hb !== null) return 1;
-    if (hb === null && ha !== null) return -1;
-    return (hb ?? 0) - (ha ?? 0) || name(a).localeCompare(name(b));
-  });
+  const room = (account) => headroomOf(account, now) ?? -1;
+  return [...accounts].sort((a, b) => room(b) - room(a) || byName(a, b));
+}
+
+/**
+ * Card order WITHIN one section, keyed to what that section is for.
+ *
+ * Serving is ordered by headroom, because the seat that can absorb the most
+ * work is the one to reach for. Cooling down is ordered by return time, soonest
+ * first, because that is the one the operator is waiting on. Unverified has
+ * nothing to rank on, so it is alphabetical. Insertion order orders nothing.
+ */
+export function orderSection(accounts, section, now) {
+  if (section === 'serving') return orderCards(accounts, now);
+  if (section === 'resting') {
+    const at = (account) => accountReturnsAt(account, now) ?? Number.POSITIVE_INFINITY;
+    return [...accounts].sort((a, b) => at(a) - at(b) || byName(a, b));
+  }
+  return [...accounts].sort(byName);
 }
 
 // Bar colour scale. Depleted is nothing left; low is at or under the larger of

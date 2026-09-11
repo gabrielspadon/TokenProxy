@@ -37,19 +37,20 @@ import { HiddenCount, HiddenWindows, QuotaLine, useHiddenWindows } from './Quota
 import { ResetHorizon, UsageLine } from './ActivityEvidence';
 import {
   BUCKETS,
-  CAPACITY,
+  SECTIONS,
   SORTS,
   accountBucket,
-  accountCapacity,
+  accountEvidence,
+  accountReturnsAt,
+  accountSeat,
+  accountSection,
   accountStateWord,
-  capacitySummary,
   filterAccounts,
   fleetSummary,
-  groupBySeat,
-  groupCapacity,
-  groupReturnsAt,
-  orderCards,
+  headroomOf,
+  orderSection,
   providerList,
+  sectionSummary,
   visibleWindowLines,
   windowLines,
 } from './accountBoardModel';
@@ -59,6 +60,16 @@ import styles from '@/shared/workspace/board.module.css';
 
 const EMPTY = [];
 const TONE = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, bucket.tone]));
+// How much the card is entitled to claim, said in the operator's words rather
+// than the ranker's. `fresh` needs no badge: it is the case the meters already
+// describe, and a badge on every card is a badge that means nothing.
+const EVIDENCE_NOTE = {
+  stale: { label: 'Reading is old', title: 'The last quota read is past the freshness line.' },
+  unknown: {
+    label: 'No reading',
+    title: 'No readable quota window. Shown here because it has served work or passed its test.',
+  },
+};
 const number = (value) =>
   Number.isFinite(value)
     ? new Intl.NumberFormat('en', { maximumFractionDigits: 1 }).format(value)
@@ -338,9 +349,37 @@ function AccountRow({
 
 // Everyday: one compact card per account, progress first. Pause, rename and
 // expand stay direct; priority, drain, thresholds and comparison live in Advanced.
+/**
+ * The one number the card exists to show, chosen by which section it is in.
+ *
+ * Serving leads with headroom because that is what decides where work goes
+ * next. Cooling down leads with the return time because nothing else about a
+ * drained account changes what the operator does. Unverified leads with the
+ * absence itself, which is the honest answer and the reason the card is
+ * collapsed by default.
+ */
+function cardFact(account, section, now) {
+  if (section === 'unverified')
+    return { value: 'No quota evidence', note: 'Nothing has proved this account works' };
+  if (section === 'resting') {
+    const returnsAt = accountReturnsAt(account, now);
+    if (returnsAt === null)
+      return { value: accountStateWord(account, now), note: 'No timed return recorded' };
+    const time = accountWindowTime(new Date(returnsAt).toISOString(), now, true);
+    return {
+      value: time.label.startsWith('Resets in ') ? `Back in ${time.label.slice(10)}` : time.label,
+      note: `at ${new Date(returnsAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+    };
+  }
+  const headroom = headroomOf(account, now);
+  if (headroom === null) return { value: 'Proven by use', note: 'No quota window to read' };
+  return { value: `${number(headroom)}% left`, note: 'Least room across its quota windows' };
+}
+
 function AccountCard({
   account,
   now,
+  section,
   anchor,
   expanded,
   selectedScope,
@@ -356,35 +395,44 @@ function AccountCard({
   const id = accountControlId(account);
   const name = account.displayName || account.name || id;
   const bucket = accountBucket(account, now);
-  const capacity = accountCapacity(account, now);
   const word = accountStateWord(account, now);
   const evidence = accountControlEvidence(account, now);
+  const band = EVIDENCE_NOTE[accountEvidence(account, now)];
+  const { login, seat } = accountSeat(account);
   const paused = account.isActive === false;
   const lines = visibleWindowLines(account, hiddenWindows, now);
   const [showHidden, setShowHidden] = useState(false);
   const record = account.activity;
+  const fact = cardFact(account, section, now);
   return (
     <article
       className={styles.card}
       data-account-id={id}
       data-expanded={expanded || undefined}
       data-bucket={bucket}
-      data-capacity={capacity}
+      data-section={section}
       aria-label={name}
     >
       <header className={styles.cardHead}>
         <ProviderMark provider={account.provider} size="small" />
         <div className={styles.identityText}>
+          {/* Two seats of one login share a login, so the login is not what
+              tells them apart and the seat is. Carrying the seat inside the
+              name pushed it past the two lines a name has and elided it on the
+              longer of the pair, which is the one case it had to survive. It
+              leads the line underneath instead, where nothing can cut it. */}
           <NameField
             name={name}
+            display={seat ? login : name}
             disabled={!!busy}
             expanded={expanded}
             onOpen={() => onToggle(null)}
             onCommit={onRename}
           />
           <small>
+            {seat ? <b className={styles.seatMark}>{seat} seat</b> : null}
+            {seat ? ' · ' : ''}
             {providerIdentity(account.provider).name}
-            {account.seatLabel ? ` · ${account.seatLabel} seat` : ''}
           </small>
         </div>
         <Tooltip label={paused ? 'Resume' : 'Pause'}>
@@ -411,6 +459,11 @@ function AccountCard({
           </button>
         </Tooltip>
       </header>
+      {/* One primary fact, always in the same place, always the same size. */}
+      <p className={styles.cardFact} title={fact.note || undefined}>
+        <strong>{fact.value}</strong>
+        <small>{fact.note}</small>
+      </p>
       <div className={styles.cardState}>
         <Tooltip
           label={[evidence.health, ...evidence.gates, account.lastError].filter(Boolean).join('. ')}
@@ -420,6 +473,11 @@ function AccountCard({
             {word}
           </span>
         </Tooltip>
+        {band ? (
+          <span className={styles.cardBand} title={band.title}>
+            {band.label}
+          </span>
+        ) : null}
         {verdict ? (
           <Badge
             size="xs"
@@ -462,9 +520,6 @@ function AccountCard({
             onHide={(key) => onHideWindow(key, true)}
           />
         ))}
-        {!lines.shown.length && !lines.hidden.length ? (
-          <span className={styles.muted}>No quota recorded</span>
-        ) : null}
         {showHidden ? (
           <HiddenWindows hidden={lines.hidden} onShow={(key) => onHideWindow(key, false)} />
         ) : null}
@@ -543,10 +598,10 @@ export function AccountBoard({
   const resource = useResource('/api/providers');
   const [query, setQuery] = useState('');
   const [bucket, setBucket] = useState(null);
-  // Capacity is the primary axis and health the secondary one. They are
-  // separate state because they compose: narrowing to "capacity returns" is
-  // not a request to forget which of those are also paused.
-  const [capacity, setCapacity] = useState(null);
+  // Serving state is the primary axis and health the secondary one. They are
+  // separate state because they compose: narrowing to "cooling down" is not a
+  // request to forget which of those are also paused.
+  const [section, setSection] = useState(null);
   const [sort, setSort] = useState('name');
   const [sortAt, setSortAt] = useState(now);
   const [busy, setBusy] = useState({});
@@ -564,9 +619,9 @@ export function AccountBoard({
       (!scope.connectionId || accountControlId(account) === scope.connectionId)
   );
   const summary = fleetSummary(scoped, now);
-  const capacities = capacitySummary(scoped, now);
+  const sections = sectionSummary(scoped, now);
   const visible = sortAccountControls(
-    filterAccounts(scoped, { query, bucket, capacity }, now),
+    filterAccounts(scoped, { query, bucket, section }, now),
     sort,
     sortAt
   );
@@ -715,35 +770,32 @@ export function AccountBoard({
       data-layout={advanced ? 'rows' : 'cards'}
       data-density={density}
     >
-      {/* Capacity first: what can take work now, what is drained and when it
-          returns, and what was never measured. Health sits below it on its own
+      {/* Serving state first: what takes work now, what is out and when it
+          returns, and what nothing has proved. Health sits below it on its own
           row, because "paused" and "attention" answer a different question and
-          neither axis replaces the other. */}
+          neither axis replaces the other. One chip per section, counting the
+          same accounts the sections below hold. */}
       <div className={styles.fleet} role="group" aria-label="Capacity summary" data-axis="capacity">
         <button
           type="button"
           className={styles.fleetChip}
-          aria-pressed={!capacity}
-          onClick={() => setCapacity(null)}
+          aria-pressed={!section}
+          onClick={() => setSection(null)}
         >
           <strong>{scoped.length}</strong> accounts
         </button>
-        {/* These chips count ACCOUNTS on their own capacity. A section below
-            holds whole logins, so its heading names its own unit: a login
-            whose org seat is drained sits in "Serving now" while that seat is
-            still counted here under "capacity returns". Both readings are
-            true of different things, and each says which. */}
-        {CAPACITY.map((item) => (
+        {SECTIONS.map((item) => (
           <button
             type="button"
             key={item.id}
             className={styles.fleetChip}
             data-tone={item.tone}
-            aria-pressed={capacity === item.id}
-            onClick={() => setCapacity(capacity === item.id ? null : item.id)}
+            aria-pressed={section === item.id}
+            title={item.note}
+            onClick={() => setSection(section === item.id ? null : item.id)}
           >
             <i />
-            <strong>{capacities[item.id]}</strong> {item.label.toLowerCase()}
+            <strong>{sections[item.id]}</strong> {item.label.toLowerCase()}
           </button>
         ))}
         <span className={styles.spacer} />
@@ -755,8 +807,21 @@ export function AccountBoard({
               : 'Advanced view adds priority, drain and auto-pause'}
         </Text>
       </div>
-      <div className={styles.fleet} role="group" aria-label="Health summary" data-axis="health">
-        <span className={styles.axisLabel}>Health</span>
+      {/* A breakdown OF the row above, not a rival vocabulary beside it. These
+          words subdivide the sections ("out of quota" and "paused" both live
+          inside Cooling down), and stacking two same-weight strips made a
+          reader work that containment out for themselves. Indented, dimmer,
+          and named for what it is. */}
+      <div
+        className={styles.fleet}
+        role="group"
+        aria-label="Breakdown of the sections above"
+        data-axis="health"
+      >
+        <span className={styles.axisLabel} aria-hidden="true">
+          ↳
+        </span>
+        <span className={styles.axisLabel}>Breakdown</span>
         <button
           type="button"
           className={styles.fleetChip}
@@ -990,106 +1055,77 @@ export function AccountBoard({
           <span>Priority · drain · pause</span>
         </div>
       ) : null}
-      {/* Capacity sections, each holding its logins. A login with several
-          seats renders as one titled group so a personal and an organisation
-          seat read as two seats of one login, not as duplicate accounts. A
-          drained group leads with WHEN it comes back, which is the number that
-          changes what happens next. */}
+      {/* One section per serving state, flat. Grouping by login used to come
+          first, which put a drained seat and a full one under one heading and
+          left the operator to work out which was which. The seat relationship
+          survives as a label on each card; the nesting does not. Within a
+          section the order is the section's own question: most headroom where
+          work goes next, soonest return where the operator is waiting. */}
       {!advanced
-        ? CAPACITY.map((item) => {
-            // Group by LOGIN first, then place the whole login in one section.
-            // Sectioning first splits a login whose seats differ: the drained
-            // org seat landed three cards away from its serving personal twin
-            // and the pair read as duplicate accounts, which is the complaint
-            // this grouping exists to answer. `groupCapacity` decides the
-            // section, so the seats travel together.
-            const groups = groupBySeat(visible).filter(
-              (group) => groupCapacity(group, now) === item.id
+        ? SECTIONS.map((item) => {
+            const members = orderSection(
+              visible.filter((account) => accountSection(account, now) === item.id),
+              item.id,
+              now
             );
-            if (!groups.length) return null;
-            // The chip above counts ACCOUNTS on their own capacity; a section
-            // holds whole LOGINS. Those two numbers differ whenever a login's
-            // seats disagree, so the heading says which it is counting rather
-            // than showing a bare figure that contradicts the chip. Seats here
-            // are only those in this section's own state, so the three
-            // headings still add up to the chip row.
-            const seats = groups.flatMap((group) => group.seats);
-            const own = seats.filter((seat) => accountCapacity(seat, now) === item.id).length;
-            const logins = groups.length;
+            if (!members.length) return null;
+            const cards = members.map((account) => {
+              const id = accountControlId(account);
+              return (
+                <AccountCard
+                  key={id}
+                  account={account}
+                  now={now}
+                  section={item.id}
+                  anchor={anchor}
+                  expanded={selectedAccountId === id}
+                  selectedScope={selectedAccountId === id ? selectedScope : null}
+                  busy={rowBusy(id)}
+                  verdict={verdicts[id]}
+                  onToggle={() => toggle(id)}
+                  onInspect={(windowScope) => toggle(id, windowScope)}
+                  onRename={(name) => rename(account, name)}
+                  hiddenWindows={hiddenWindows}
+                  onHideWindow={(key, hide) => hideWindow(account, key, hide)}
+                  onPause={() =>
+                    savePolicy(
+                      account,
+                      'pause',
+                      { isActive: account.isActive === false },
+                      account.isActive === false ? 'Resume' : 'Pause'
+                    )
+                  }
+                />
+              );
+            });
+            const count = `${members.length} ${members.length === 1 ? 'account' : 'accounts'}`;
+            // An unverified account has nothing to show and nothing proving it
+            // works, so it is listed rather than laid out: it stays one click
+            // away instead of taking a card's worth of room from the accounts
+            // that are actually serving.
+            if (item.id === 'unverified')
+              return (
+                <details key={item.id} className={styles.group} data-collapsed="">
+                  <summary className={styles.groupTitle} data-tone={item.tone}>
+                    <i />
+                    {item.label}
+                    <span>
+                      {count} · {item.note}
+                    </span>
+                  </summary>
+                  <div className={styles.cards}>{cards}</div>
+                </details>
+              );
             return (
               <section key={item.id} className={styles.group} aria-label={`${item.label} accounts`}>
                 <h3 className={styles.groupTitle} data-tone={item.tone}>
                   <i />
                   {item.label}
                   <span>
-                    {own} {own === 1 ? 'account' : 'accounts'}
-                    {seats.length === logins
-                      ? ''
-                      : ` · ${logins} ${logins === 1 ? 'login' : 'logins'}`}
+                    {count} · {item.note}
                   </span>
                 </h3>
-                <div className={styles.cards}>
-                  {groups.map((group) => {
-                    const returnsAt = groupReturnsAt(group, now);
-                    const seats = orderCards(group.seats, now);
-                    const multi = seats.length > 1;
-                    return (
-                      <div
-                        key={group.key}
-                        className={styles.seatGroup}
-                        data-seats={multi ? 'multi' : 'single'}
-                        data-capacity={groupCapacity(group, now)}
-                        role={multi ? 'group' : undefined}
-                        aria-label={multi ? `${group.login}, ${seats.length} seats` : undefined}
-                      >
-                        {multi ? (
-                          <div className={styles.seatHead}>
-                            <strong>{group.login}</strong>
-                            <span>{seats.length} seats</span>
-                            {returnsAt ? (
-                              <span className={styles.seatReturns}>
-                                {
-                                  accountWindowTime(new Date(returnsAt).toISOString(), now, true)
-                                    .label
-                                }
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        <div className={styles.seatCards}>
-                          {seats.map((account) => {
-                            const id = accountControlId(account);
-                            return (
-                              <AccountCard
-                                key={id}
-                                account={account}
-                                now={now}
-                                anchor={anchor}
-                                expanded={selectedAccountId === id}
-                                selectedScope={selectedAccountId === id ? selectedScope : null}
-                                busy={rowBusy(id)}
-                                verdict={verdicts[id]}
-                                onToggle={() => toggle(id)}
-                                onInspect={(windowScope) => toggle(id, windowScope)}
-                                onRename={(name) => rename(account, name)}
-                                hiddenWindows={hiddenWindows}
-                                onHideWindow={(key, hide) => hideWindow(account, key, hide)}
-                                onPause={() =>
-                                  savePolicy(
-                                    account,
-                                    'pause',
-                                    { isActive: account.isActive === false },
-                                    account.isActive === false ? 'Resume' : 'Pause'
-                                  )
-                                }
-                              />
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <div className={styles.cards}>{cards}</div>
               </section>
             );
           })
@@ -1169,7 +1205,7 @@ export function AccountBoard({
               onClick={() => {
                 setQuery('');
                 setBucket(null);
-                setCapacity(null);
+                setSection(null);
                 if (scope.provider || scope.connectionId)
                   setScope({ provider: null, connectionId: null });
               }}

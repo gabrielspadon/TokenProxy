@@ -8,6 +8,16 @@ import { join } from 'path';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
+const BASE_EXCLUDE = ['**/node_modules/**', '**/.claude/**', '**/dist/**', '**/.stryker-tmp/**'];
+
+// Every suite that binds a real, provider-registered callback port. Adding a
+// new one means adding it HERE, not adding a teardown hook to a sibling.
+const FIXED_PORT_SUITES = [
+  '**/codex-callback-bind.test.js',
+  '**/oauth-proxy-servers.test.js',
+  '**/oauth-proxy-lifecycle.test.js',
+];
+
 export default defineConfig({
   // Pin root to this file's own dir so `cwd` at invocation time (e.g. Stryker
   // running from the repo root instead of tests/) can't shift where relative
@@ -72,15 +82,55 @@ export default defineConfig({
     // Turning the Node implementation off lets jsdom's real Storage through.
     execArgv: ['--no-experimental-webstorage'],
     globals: true,
-    include: ['**/*.test.js'],
+    // No root `include`. Vitest merges inherited ARRAYS rather than letting a
+    // project override them, so a root include of every test file was
+    // concatenated onto the fixed-port project's own three-file include and it
+    // collected the entire suite, running everything a second time in series.
+    // Each project below declares the files it owns.
     // Don't scan into git worktrees nested under .claude/ — they carry their
     // own copies of the test files but lack an installed node_modules (open-sse,
     // etc.), which makes provider imports fail during collection.
-    exclude: ['**/node_modules/**', '**/.claude/**', '**/dist/**', '**/.stryker-tmp/**'],
+    exclude: BASE_EXCLUDE,
     // Allow many it.concurrent cases (real provider smoke runs ~50 providers in parallel)
     maxConcurrency: 60,
     // Suppress noisy console output from handlers under test
     silent: false,
+
+    // FIXED-PORT SUITES RUN ALONE. Three files bind the same real callback
+    // ports (1455 codex, 56121 xai) because those numbers are registered with
+    // the providers and cannot be randomised. Vitest schedules files across
+    // workers, so whenever two of them land together the second `start` returns
+    // `{success: false, reason: "port_busy"}` and its assertions fail on an
+    // artifact of scheduling rather than on the tree. It stayed latent while the
+    // three were small; #61 grew oauth-proxy-lifecycle past the point where the
+    // full run could keep them apart, and the gate began reporting a regression
+    // that reproduces only in company (all three pass alone).
+    //
+    // This is the documented remedy: a project boundary, not cross-file
+    // teardown. A `beforeEach` that reclaimed the port was tried and was worse —
+    // it tore down a listener a concurrently running sibling was mid-assertion
+    // on, turning one failure into four across two files. One file reaching into
+    // a shared resource another file is using is sabotage, not isolation.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'parallel',
+          include: ['**/*.test.js'],
+          exclude: [...BASE_EXCLUDE, ...FIXED_PORT_SUITES],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'fixed-port',
+          include: FIXED_PORT_SUITES,
+          exclude: BASE_EXCLUDE,
+          // The whole point: these three never run beside each other.
+          fileParallelism: false,
+        },
+      },
+    ],
   },
   resolve: {
     // Use array form so subpath aliases (e.g. "@/lib/db/index.js") resolve correctly.
