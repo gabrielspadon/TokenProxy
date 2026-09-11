@@ -4,6 +4,25 @@ import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { decryptSecretJson, encryptSecretJson } from "../helpers/secretCol.js";
 import { captureAccountControls } from "../../../shared/utils/accountControls.js";
+import { deriveAccountDisplayName, normalizeAccountIdentity } from "../../oauth/providerHelpers.js";
+
+// The non-secret identity a connection carries, folded onto one vocabulary.
+//
+// providerSpecificData is the OWNER of these values; the columns written by
+// connToRow are a derived projection of it, kept so identity is queryable
+// without decrypting every row. A codex row spells its upstream account id
+// chatgptAccountId and its tier chatgptPlanType, so both spellings fold onto
+// the shared names and one rule then covers every provider.
+function connectionIdentity(conn) {
+  const psd = conn?.providerSpecificData && typeof conn.providerSpecificData === "object"
+    && !Array.isArray(conn.providerSpecificData) ? conn.providerSpecificData : {};
+  return normalizeAccountIdentity({
+    ...psd,
+    accountId: psd.accountId || psd.chatgptAccountId,
+    plan: psd.plan || psd.chatgptPlanType,
+    email: conn?.email || psd.email,
+  });
+}
 
 export async function notifyQuotaPolicyChange(id) {
   const state = global.__quotaAutoPing;
@@ -52,12 +71,19 @@ function rowToConn(row) {
 
 function connToRow(c) {
   const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
+  // Identity columns are a projection of providerSpecificData, which stays the
+  // single owner inside the encrypted blob. Recomputed on every write so a
+  // column can never drift from the blob it mirrors.
+  const identity = connectionIdentity(c);
   return {
     id,
     provider,
     authType,
     name: name ?? null,
     email: email ?? null,
+    accountId: identity.accountId ?? null,
+    plan: identity.plan ?? null,
+    organizationId: identity.organizationId ?? null,
     priority: priority ?? null,
     isActive: isActive === false ? 0 : 1,
     data: encryptSecretJson(rest),
@@ -73,13 +99,16 @@ function upsert(db, c) {
   else delete c.credentialRevisionId;
   const r = connToRow(c);
   db.run(
-    `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO providerConnections(id, provider, authType, name, email, accountId, plan, organizationId, priority, isActive, data, createdAt, updatedAt)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        provider=excluded.provider, authType=excluded.authType, name=excluded.name,
-       email=excluded.email, priority=excluded.priority, isActive=excluded.isActive,
+       email=excluded.email, accountId=excluded.accountId, plan=excluded.plan,
+       organizationId=excluded.organizationId,
+       priority=excluded.priority, isActive=excluded.isActive,
        data=excluded.data, updatedAt=excluded.updatedAt`,
-    [r.id, r.provider, r.authType, r.name, r.email, r.priority, r.isActive, r.data, r.createdAt, r.updatedAt]
+    [r.id, r.provider, r.authType, r.name, r.email, r.accountId, r.plan, r.organizationId,
+     r.priority, r.isActive, r.data, r.createdAt, r.updatedAt]
   );
 }
 
@@ -91,7 +120,18 @@ function deriveConnectionName(data, fallbackName) {
       || data.providerSpecificData?.githubName
       || fallbackName;
   }
-  return fallbackName;
+  // Identity captured at sign-in names the row, so a freshly added account is
+  // labelled without anyone typing. A user-set name never reaches here: the
+  // caller only asks for a derived one when `data.name` is empty.
+  const derived = deriveAccountDisplayName({
+    identity: connectionIdentity(data),
+    providerLabel: data.provider || "Account",
+    connectionId: data.id,
+  });
+  // deriveAccountDisplayName always answers, falling back to a provider label.
+  // Prefer the caller's fallback (the email, or "Account N") when identity
+  // carried nothing, so a provider that captures none behaves as it did.
+  return derived === (data.provider || "Account") ? fallbackName : derived;
 }
 
 // A credential that has just been reissued makes every record of the old one's
@@ -299,8 +339,25 @@ export async function createProviderConnection(data) {
     if (data.authType === "oauth" && data.email) {
       const incomingUsername = data.providerSpecificData?.username;
       const incomingWs = data.providerSpecificData?.chatgptAccountId;
+      const incomingAccountId = connectionIdentity(data).accountId;
       existing = all.find(c => {
         if (c.authType !== "oauth" || c.email !== data.email) return false;
+
+        // An upstream account id settles identity before any per-provider rule
+        // gets a say. One login routinely holds SEVERAL seats - a personal seat
+        // and an organisation seat - sharing an email while holding independent
+        // quota windows, so matching on email alone collapses two real accounts
+        // into one row and destroys the first one's token pair. A different id
+        // means a different account, full stop; the same id is the same account
+        // re-authenticating.
+        const existingAccountId = connectionIdentity(c).accountId;
+        if (incomingAccountId && existingAccountId) {
+          return incomingAccountId === existingAccountId;
+        }
+        // Only one side knows its id. The other predates identity capture, so
+        // they cannot be proven the same account and must not be merged on the
+        // email they happen to share.
+        if (incomingAccountId || existingAccountId) return false;
 
         // Codex/OpenAI can issue multiple OAuth grants for the same email.
         // Refresh tokens are rotated single-use; collapsing a new login onto an

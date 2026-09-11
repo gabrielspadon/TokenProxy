@@ -4,7 +4,7 @@ import { installGlobalProxyFetch } from "../../../../open-sse/utils/proxyFetch.j
 installGlobalProxyFetch();
 
 import { generatePKCE } from "../utils/pkce.js";
-import { extractCodexAccountInfo, fetchKiroProfileArn } from "../providerHelpers.js";
+import { extractCodexAccountInfo, extractKimiAccountInfo, fetchKiroProfileArn } from "../providerHelpers.js";
 
 import claude from "./claude.js";
 import codex from "./codex.js";
@@ -60,7 +60,7 @@ const PROVIDERS = {
 export { PROVIDERS };
 
 // Re-export helpers that other files import from this path
-export { extractCodexAccountInfo, fetchKiroProfileArn };
+export { extractCodexAccountInfo, extractKimiAccountInfo, fetchKiroProfileArn };
 
 /**
  * Get provider handler
@@ -213,39 +213,62 @@ export async function pollForToken(providerName, deviceCode, codeVerifier, extra
 }
 
 // Run-once guard across the process lifetime
-let codexBackfillDone = false;
+let identityBackfillDone = false;
 
-// Backfill email + chatgpt account info for existing codex OAuth connections missing them
-export async function backfillCodexEmails() {
-  if (codexBackfillDone) return;
-  codexBackfillDone = true;
+/**
+ * Recover identity for connections saved before their provider captured it.
+ *
+ * Only what is ALREADY on the row is used: this issues no network call and
+ * decodes nothing it was not handed. What each provider can recover offline
+ * differs, and the difference is a property of the token format:
+ *
+ *  - codex:  the stored id_token is a JWT carrying email and
+ *            chatgpt_account_id, so a row recovers its full identity.
+ *  - kimi:   no id_token exists, but the access token is a JWT carrying
+ *            user_id, so the row recovers a stable upstream subject (never an
+ *            email; the flow returns none anywhere).
+ *  - claude: NOT RECOVERABLE offline. The stored access token is an opaque
+ *            `sk-ant-oat` string rather than a JWT, and no id_token is kept,
+ *            so nothing on the row encodes the account. Identity arrives only
+ *            from the token response at sign-in, which providers/claude.js now
+ *            persists; existing rows gain it on their next re-authentication.
+ */
+export async function backfillAccountIdentity() {
+  if (identityBackfillDone) return;
+  identityBackfillDone = true;
   try {
     const { getProviderConnections, updateProviderConnection } = await import("@/lib/localDb");
     const connections = await getProviderConnections();
-    const targets = connections.filter((c) => {
-      if (c.provider !== "codex" || c.authType !== "oauth" || !c.idToken) return false;
-      const hasEmail = !!c.email;
-      const hasAccountInfo = !!c.providerSpecificData?.chatgptAccountId;
-      return !hasEmail || !hasAccountInfo;
-    });
-    for (const conn of targets) {
-      const info = extractCodexAccountInfo(conn.idToken);
-      if (!info.email && !info.chatgptAccountId) continue;
-      const patch = {};
-      if (!conn.email && info.email) patch.email = info.email;
-      if (info.chatgptAccountId || info.chatgptPlanType) {
-        patch.providerSpecificData = {
-          ...(conn.providerSpecificData || {}),
-          chatgptAccountId: info.chatgptAccountId,
-          chatgptPlanType: info.chatgptPlanType,
-        };
+    for (const conn of connections) {
+      if (conn.authType !== "oauth") continue;
+      const psd = conn.providerSpecificData || {};
+      let patch = null;
+
+      if (conn.provider === "codex" && conn.idToken && (!conn.email || !psd.chatgptAccountId)) {
+        const info = extractCodexAccountInfo(conn.idToken);
+        if (info.email || info.chatgptAccountId) {
+          patch = {};
+          if (!conn.email && info.email) patch.email = info.email;
+          if (info.chatgptAccountId || info.chatgptPlanType) {
+            patch.providerSpecificData = {
+              ...psd,
+              chatgptAccountId: info.chatgptAccountId,
+              chatgptPlanType: info.chatgptPlanType,
+            };
+          }
+        }
+      } else if (conn.provider === "kimi" && conn.accessToken && !psd.accountId) {
+        const info = extractKimiAccountInfo(conn.accessToken);
+        if (info.accountId) patch = { providerSpecificData: { ...psd, ...info } };
       }
-      if (Object.keys(patch).length) {
+
+      if (patch && Object.keys(patch).length) {
         await updateProviderConnection(conn.id, patch);
       }
     }
   } catch (err) {
-    codexBackfillDone = false;
-    console.log("backfillCodexEmails failed:", err?.message || err);
+    identityBackfillDone = false;
+    // The message only; a token value must never reach a log line.
+    console.log("backfillAccountIdentity failed:", err?.message || err);
   }
 }

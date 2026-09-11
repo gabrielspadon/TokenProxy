@@ -46,7 +46,9 @@ import {
 // 27 = explicit transformation outcome provenance; historical rows stay unknown.
 // 28 = exact preparation execution origins and indexed failure evidence.
 // 29 = controlled compatibility scopes and retained operator evaluation sets.
-export const SCHEMA_VERSION = 33;
+// 34 = queryable non-secret connection identity (accountId, plan,
+// organizationId) captured at OAuth sign-in; secrets stay in the blob.
+export const SCHEMA_VERSION = 34;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -115,6 +117,13 @@ export const TABLES = {
       authType: 'TEXT NOT NULL',
       name: 'TEXT',
       email: 'TEXT',
+      // Non-secret identity captured at sign-in (migration 003). accountId is
+      // the UPSTREAM subject and is deliberately NOT unique: two seats of one
+      // login share an email but hold independent quota windows, so they must
+      // stay separate rows. No secret ever lives in these columns.
+      accountId: 'TEXT',
+      plan: 'TEXT',
+      organizationId: 'TEXT',
       priority: 'INTEGER',
       isActive: 'INTEGER DEFAULT 1',
       data: 'TEXT NOT NULL',
@@ -125,6 +134,7 @@ export const TABLES = {
       'CREATE INDEX IF NOT EXISTS idx_pc_provider ON providerConnections(provider)',
       'CREATE INDEX IF NOT EXISTS idx_pc_provider_active ON providerConnections(provider, isActive)',
       'CREATE INDEX IF NOT EXISTS idx_pc_priority ON providerConnections(provider, priority)',
+      'CREATE INDEX IF NOT EXISTS idx_pc_account ON providerConnections(provider, accountId)',
     ],
   },
   providerNodes: {

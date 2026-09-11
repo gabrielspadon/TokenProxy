@@ -111,7 +111,9 @@ describe('generateAuthData', () => {
     expect(fixed).toContain('codex');
     for (const name of fixed) {
       const provider = mod.PROVIDERS[name];
-      const spy = vi.spyOn(provider, 'buildAuthUrl').mockReturnValue('https://example.invalid/auth');
+      const spy = vi
+        .spyOn(provider, 'buildAuthUrl')
+        .mockReturnValue('https://example.invalid/auth');
       const data = await mod.generateAuthData(name, 'http://127.0.0.1:20129/callback');
       expect(spy.mock.calls[0][1]).toBe(provider.loopbackRedirectUri);
       expect(data.redirectUri).toBe(provider.loopbackRedirectUri);
@@ -320,7 +322,10 @@ describe('device code flow dispatch', () => {
   });
 });
 
-describe('backfillCodexEmails', () => {
+// Renamed from backfillCodexEmails: it now recovers identity for kimi too, and
+// only from what is already stored. No JWT here is a real token — each is
+// base64url over claims this file wrote.
+describe('backfillAccountIdentity', () => {
   const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
   const makeJwt = (payload) => `${b64url({ alg: 'none' })}.${b64url(payload)}.sig`;
 
@@ -337,7 +342,7 @@ describe('backfillCodexEmails', () => {
         }),
       },
       { id: 2, provider: 'codex', authType: 'oauth', idToken: makeJwt({}) }, // undecodable info → skipped
-      { id: 3, provider: 'claude', authType: 'oauth', idToken: 'x' }, // wrong provider → filtered
+      { id: 3, provider: 'claude', authType: 'oauth', idToken: 'x' }, // not recoverable offline → skipped
       {
         id: 4,
         provider: 'codex',
@@ -348,7 +353,7 @@ describe('backfillCodexEmails', () => {
       }, // complete → filtered
     ]);
     const mod = await loadIndex();
-    await mod.backfillCodexEmails();
+    await mod.backfillAccountIdentity();
 
     expect(db.updateProviderConnection).toHaveBeenCalledTimes(1);
     const [id, patch] = db.updateProviderConnection.mock.calls[0];
@@ -360,17 +365,44 @@ describe('backfillCodexEmails', () => {
     });
 
     // run-once guard
-    await mod.backfillCodexEmails();
+    await mod.backfillAccountIdentity();
     expect(db.getProviderConnections).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a kimi subject from the access token, and leaves claude alone', async () => {
+    const db = await import('@/lib/localDb');
+    db.getProviderConnections.mockResolvedValue([
+      {
+        id: 'k1',
+        provider: 'kimi',
+        authType: 'oauth',
+        accessToken: makeJwt({ user_id: 'kimi-user-7' }),
+        providerSpecificData: { authMethod: 'device_code' },
+      },
+      // Claude stores an OPAQUE sk-ant-oat access token and keeps no id_token,
+      // so nothing on the row encodes the account and it must be left untouched
+      // rather than guessed at.
+      { id: 'c1', provider: 'claude', authType: 'oauth', accessToken: 'sk-ant-oat-opaque' },
+    ]);
+    const mod = await loadIndex();
+    await mod.backfillAccountIdentity();
+
+    expect(db.updateProviderConnection).toHaveBeenCalledTimes(1);
+    const [id, patch] = db.updateProviderConnection.mock.calls[0];
+    expect(id).toBe('k1');
+    expect(patch.providerSpecificData).toMatchObject({
+      authMethod: 'device_code',
+      accountId: 'kimi-user-7',
+    });
   });
 
   it('resets the run-once guard when the DB read fails, so a later call retries', async () => {
     const db = await import('@/lib/localDb');
     db.getProviderConnections.mockRejectedValueOnce(new Error('db down'));
     const mod = await loadIndex();
-    await mod.backfillCodexEmails(); // swallows, logs
+    await mod.backfillAccountIdentity(); // swallows, logs
     db.getProviderConnections.mockResolvedValueOnce([]);
-    await mod.backfillCodexEmails();
+    await mod.backfillAccountIdentity();
     expect(db.getProviderConnections).toHaveBeenCalledTimes(2);
   });
 });

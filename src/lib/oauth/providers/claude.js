@@ -1,4 +1,5 @@
 import { CLAUDE_CONFIG } from "../constants/oauth.js";
+import { extractClaudeAccountInfo } from "../providerHelpers.js";
 
 const claude = {
   config: CLAUDE_CONFIG,
@@ -49,12 +50,26 @@ const claude = {
 
     return await response.json();
   },
-  mapTokens: (tokens) => ({
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresIn: tokens.expires_in,
-    scope: tokens.scope,
-  }),
+  // The token response carries `account {uuid, email_address}` and
+  // `organization {uuid, name}` beside the token. Dropping them is what left
+  // every Claude row with a null email and no upstream id, so the typed name
+  // was the only identity the row had. They are persisted now.
+  //
+  // The account uuid matters more than the email: one login routinely holds a
+  // personal seat AND an organisation seat with independent quota windows, and
+  // only the uuid tells those two apart.
+  mapTokens: (tokens) => {
+    const identity = extractClaudeAccountInfo(tokens);
+    const mapped = {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresIn: tokens.expires_in,
+      scope: tokens.scope,
+    };
+    if (identity.email) mapped.email = identity.email;
+    if (Object.keys(identity).length) mapped.providerSpecificData = identity;
+    return mapped;
+  },
 };
 
 export default claude;

@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { KIMI_CONFIG } from "../constants/oauth.js";
+import { extractKimiAccountInfo } from "../providerHelpers.js";
 
 // Kimi Code device flow (CLIProxyAPI internal/auth/kimi). Id is `kimi`;
 // `kimi-coding` remains an alias key so old UI/API routes still resolve.
@@ -67,6 +68,10 @@ const kimi = {
     if (data.access_token && deviceId) data._kimiDeviceId = deviceId;
     return { ok: response.ok || !!data.access_token || !!data.error, data };
   },
+  // Kimi issues no id_token and exposes no profile endpoint, so the access
+  // token's own claims (user_id, sub) are the only identity available. That is
+  // still a stable upstream subject, which is what stops the row being
+  // anonymous; no email exists anywhere in this flow to capture.
   mapTokens: (tokens) => ({
     accessToken: tokens.access_token,
     refreshToken: tokens.refresh_token,
@@ -74,6 +79,7 @@ const kimi = {
     providerSpecificData: {
       authMethod: "device_code",
       ...(tokens._kimiDeviceId ? { deviceId: tokens._kimiDeviceId } : {}),
+      ...extractKimiAccountInfo(tokens.access_token),
     },
   }),
 };

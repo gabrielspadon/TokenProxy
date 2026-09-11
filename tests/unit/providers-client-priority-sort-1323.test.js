@@ -19,8 +19,8 @@
  *
  * These cases pin that down: the route answers 200 for the shapes a comparator
  * would throw on. Anything still 500-ing on this endpoint is upstream of the
- * sort, in `backfillCodexEmails()` (route.js:98) or `getProviderConnections()`
- * (route.js:107), and those live outside this file.
+ * sort, in `backfillAccountIdentity()` or `getProviderConnections()`, and those
+ * live outside this file.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { USAGE_SUPPORTED_PROVIDERS } from '@/shared/constants/providers';
@@ -33,7 +33,7 @@ vi.mock('@/lib/localDb', () => ({
 }));
 
 vi.mock('@/lib/oauth/providers', () => ({
-  backfillCodexEmails: async () => {},
+  backfillAccountIdentity: async () => {},
 }));
 
 const conn = (over = {}) => ({
