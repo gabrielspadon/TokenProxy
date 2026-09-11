@@ -31,7 +31,7 @@ vi.mock('@/lib/localDb', () => ({
 }));
 
 vi.mock('@/lib/oauth/providers', () => ({
-  backfillCodexEmails: async () => {},
+  backfillAccountIdentity: async () => {},
 }));
 
 const conn = (over = {}) => ({

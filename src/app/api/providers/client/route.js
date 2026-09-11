@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/localDb";
-import { backfillCodexEmails } from "@/lib/oauth/providers";
+import { backfillAccountIdentity } from "@/lib/oauth/providers";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { isQuotaEligible } from "@/shared/utils/quotaPause.js";
 
@@ -26,6 +26,10 @@ const SAFE_PSD_FIELDS = [
   "githubLogin", "githubName", "githubEmail", "githubUserId",
   "username", "firstName", "lastName", "authMethod", "authKind",
   "profileArn",
+  // Non-secret identity captured at sign-in. Without these the dashboard
+  // cannot tell a personal seat from an organisation seat of one login, which
+  // is the whole reason the identity is captured.
+  "plan", "organizationId", "organizationName", "organizationRole",
 ];
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -101,7 +105,7 @@ function sortConnections(connections, sort) {
 
 export async function GET(request) {
   try {
-    await backfillCodexEmails();
+    await backfillAccountIdentity();
 
     const { searchParams } = new URL(request.url);
     const provider = searchParams.get("provider") || "all";

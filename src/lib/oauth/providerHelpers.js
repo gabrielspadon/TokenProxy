@@ -81,8 +81,119 @@ export function extractCodexAccountInfo(idToken) {
   };
 }
 
+// -- Account identity --------------------------------------------------------
+// Who a connection actually belongs to, as opposed to what someone typed into
+// the name box. Every OAuth provider answers this in its own vocabulary, so the
+// shape below is the one thing the rest of the app reads:
+//
+//   { accountId, email, plan, organizationId, organizationName, organizationRole }
+//
+// accountId is the UPSTREAM subject, and it is the field that matters most:
+// two seats of one login (a personal seat and an organisation seat) share an
+// email and hold independent quota windows, so email alone cannot tell them
+// apart and must never be used to merge them.
+//
+// Everything here is non-secret identity. A token, an id_token and a refresh
+// token are secrets, and none of them belongs in this object.
+const IDENTITY_FIELDS = [
+  "accountId", "email", "plan",
+  "organizationId", "organizationName", "organizationRole",
+];
+
+function cleanIdentityValue(value) {
+  if (typeof value === "string") return value.trim() || undefined;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+/** Drop empty members so a caller can spread the result without writing nulls. */
+export function normalizeAccountIdentity(identity) {
+  const out = {};
+  for (const field of IDENTITY_FIELDS) {
+    const value = cleanIdentityValue(identity?.[field]);
+    if (value !== undefined) out[field] = value;
+  }
+  return out;
+}
+
+/**
+ * Identity out of an Anthropic OAuth token response.
+ *
+ * The token endpoint answers with `account {uuid, email_address}` and
+ * `organization {uuid, name}` beside the token, and mapTokens used to keep only
+ * the four token fields and drop both objects - which is why every Claude row
+ * on this install carries a null email and no upstream account id.
+ *
+ * The same values are what Claude Code itself persists as `oauthAccount`
+ * (accountUuid / emailAddress / organizationUuid / organizationName /
+ * organizationRole), so an auth file exported from that client folds in here
+ * too. Both spellings are accepted: snake_case from the wire, camelCase from an
+ * exported file.
+ */
+export function extractClaudeAccountInfo(tokens) {
+  if (!tokens || typeof tokens !== "object") return {};
+  const account = tokens.account || {};
+  const organization = tokens.organization || {};
+  return normalizeAccountIdentity({
+    accountId: account.uuid || account.account_uuid || tokens.accountUuid,
+    email: account.email_address || account.email || tokens.emailAddress,
+    // The token response carries no plan field; the usage endpoint is what
+    // knows it, so this stays undefined here rather than guessing one.
+    organizationId: organization.uuid || tokens.organizationUuid,
+    organizationName: organization.name || tokens.organizationName,
+    organizationRole: organization.role || tokens.organizationRole,
+  });
+}
+
+/**
+ * Identity out of a Kimi access token.
+ *
+ * Kimi's device flow returns no id_token and exposes no profile endpoint, but
+ * its access token is a JWT whose payload carries `user_id` and `sub`. That is
+ * a stable upstream subject, so the row stops being anonymous even though no
+ * email is available anywhere in the flow.
+ */
+export function extractKimiAccountInfo(accessToken) {
+  const payload = decodeJwtPayload(accessToken);
+  if (!payload) return {};
+  return normalizeAccountIdentity({
+    accountId: payload.user_id || payload.sub,
+    email: payload.email,
+  });
+}
+
+/**
+ * The label a connection shows when nobody has typed one.
+ *
+ * PRECEDENCE, in order, and it is the whole point of this function:
+ *   1. a name the USER set - always wins, and is never recomputed
+ *   2. the account email
+ *   3. the organisation name, for a seat that has one but no email
+ *   4. the upstream account id, shortened
+ *   5. "<provider> <id prefix>", which always exists
+ *
+ * Two seats of one login resolve to the same email at step 2, so an
+ * organisation seat is qualified with its organisationName. That keeps a
+ * personal seat and an org seat visibly different without merging them.
+ */
+export function deriveAccountDisplayName({ userName, identity, providerLabel = "Account", connectionId } = {}) {
+  const typed = typeof userName === "string" ? userName.trim() : "";
+  if (typed) return typed;
+
+  const id = normalizeAccountIdentity(identity);
+  if (id.email) return id.organizationName ? `${id.email} (${id.organizationName})` : id.email;
+  if (id.organizationName) return id.organizationName;
+  if (id.accountId) return `${providerLabel} ${id.accountId.slice(0, 8)}`;
+  // A row with no identity at all still needs a label that is stable across
+  // restarts and unique per connection, or the list shows several rows reading
+  // "Account" with nothing to tell them apart.
+  const suffix = typeof connectionId === "string" && connectionId ? connectionId.slice(0, 8) : "";
+  return suffix ? `${providerLabel} ${suffix}` : providerLabel;
+}
+
 export {
   BASE64_BLOCK_SIZE,
+  IDENTITY_FIELDS,
   validateXaiOAuthEndpoint,
   decodeXaiIdTokenEmail,
   decodeJwtPayload,
