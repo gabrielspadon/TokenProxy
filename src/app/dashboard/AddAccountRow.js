@@ -14,6 +14,10 @@ import styles from '@/shared/workspace/board.module.css';
 
 const MODE_WORD = { oauth: 'Sign in', apikey: 'API key', cookie: 'Cookie', none: 'No credential' };
 const PASTE_FLOWS = new Set(['browser_token', 'import_token']);
+// Fixed-port sign-ins whose callback lands on a loopback proxy rather than this
+// origin. When that callback never arrives the grant has no way to finish on its
+// own, so these are the flows that earn a paste-back fallback.
+const MANUAL_FALLBACK_PROVIDERS = new Set(['codex', 'xai']);
 const OPTION_PROVIDERS = new Set([
   'azure',
   'vertex',
@@ -84,6 +88,13 @@ export function AddAccountRow({ onClose, onAdded }) {
           entry.baseUrlField ||
           accountOptionFields(entry.id).length > 2)));
   const paste = mode === 'oauth' && PASTE_FLOWS.has(flow?.flowType);
+  // Set only once an automatic attempt has already failed, so the paste box is a
+  // fallback rather than the first thing offered. It carries the state of the
+  // grant that failed: the pasted URL must match THAT sign-in, not a later one.
+  const [manual, setManual] = useState(null);
+  const [pastedUrl, setPastedUrl] = useState('');
+  const [label, setLabel] = useState('');
+  const [note, setNote] = useState('');
   async function pick(value) {
     const current = ++choice.current;
     // A grant still in flight for the PREVIOUS provider is abandoned the moment
@@ -152,8 +163,17 @@ export function AddAccountRow({ onClose, onAdded }) {
     if (current !== choice.current) return;
     if (!out.ok) {
       setError(refusal(out.status, out.body));
+      // The automatic callback failed. For a fixed-port flow that means the
+      // loopback callback never landed, which the operator can still finish by
+      // hand: the provider already redirected their browser to a URL carrying
+      // the code. Offer the paste box bound to THIS sign-in's state, and only
+      // now, so it never replaces the automatic attempt.
+      if (mode === 'oauth' && !paste && out.state && MANUAL_FALLBACK_PROVIDERS.has(entry.id)) {
+        setManual({ provider: entry.id, state: out.state });
+      }
       return;
     }
+    await applyMetadata(out.connection?.id);
     const savedId = out.connection?.id;
     const read = savedId ? await call(`/api/providers/${encodeURIComponent(savedId)}`) : null;
     if (!read?.ok || read.body?.connection?.id !== savedId) {
@@ -168,10 +188,62 @@ export function AddAccountRow({ onClose, onAdded }) {
     onAdded?.(read.body.connection);
     onClose?.();
   }
+  // Optional, and never a precondition for the grant: a sign-in completes with
+  // both of these empty. The label goes to the `name` column and the note rides
+  // in providerSpecificData, which PUT merges rather than replaces. A failure
+  // here is reported without discarding the account that was already saved, and
+  // an empty label never overwrites a name the provider derived.
+  async function applyMetadata(connectionId) {
+    const trimmedLabel = label.trim();
+    const trimmedNote = note.trim();
+    if (!connectionId || (!trimmedLabel && !trimmedNote)) return;
+    const body = {};
+    if (trimmedLabel) body.name = trimmedLabel;
+    if (trimmedNote) body.providerSpecificData = { accountNote: trimmedNote };
+    const saved = await call(`/api/providers/${encodeURIComponent(connectionId)}`, {
+      method: 'PUT',
+      body,
+    });
+    if (!saved.ok) {
+      setError({
+        tone: 'warn',
+        title: 'The account was added, but the label and note were not saved.',
+        next: 'Set them from Connections.',
+      });
+    }
+  }
+
+  // The paste-back fallback. `manual.state` is the state of the sign-in that
+  // failed, and the gateway refuses a pasted URL whose own state disagrees with
+  // it, so a URL from another flow cannot complete this one.
+  async function finishManual() {
+    if (!manual || busy) return;
+    setBusy(true);
+    setError(null);
+    const response = await call(`/api/oauth/${manual.provider}/manual-code`, {
+      method: 'POST',
+      body: { url: pastedUrl.trim(), state: manual.state },
+    });
+    setBusy(false);
+    if (!response.ok || !response.body?.success) {
+      setError(refusal(response.status, response.body));
+      return;
+    }
+    setPastedUrl('');
+    setManual(null);
+    await applyMetadata(response.body.connection?.id);
+    onAdded?.(response.body.connection);
+    onClose?.();
+  }
+
   function cancel() {
     choice.current += 1;
     abortRef.current?.abort();
     setSecret('');
+    setPastedUrl('');
+    setManual(null);
+    // Release the loopback port the failed attempt left listening.
+    if (manual) call(`/api/oauth/${manual.provider}/stop-proxy`).catch(() => {});
     onClose?.();
   }
   const canSubmit =
@@ -254,6 +326,55 @@ export function AddAccountRow({ onClose, onAdded }) {
                 : 'Checking the sign-in method…'}
           </Text>
         )
+      ) : null}
+      {entry && !needsConnections && mode === 'oauth' && !paste ? (
+        <>
+          <TextInput
+            size="xs"
+            aria-label="Account label"
+            placeholder="Label (optional)"
+            value={label}
+            onChange={(event) => setLabel(event.currentTarget.value)}
+            className={styles.addName}
+            maxLength={120}
+          />
+          <TextInput
+            size="xs"
+            aria-label="Account note"
+            placeholder="Note (optional)"
+            value={note}
+            onChange={(event) => setNote(event.currentTarget.value)}
+            className={styles.addName}
+            maxLength={280}
+          />
+        </>
+      ) : null}
+      {manual ? (
+        <>
+          <Text size="xs" className={styles.addNote} role="status">
+            The sign-in window finished, but this app never received the callback. Copy the whole
+            address from that window&rsquo;s browser bar and paste it here to finish.
+          </Text>
+          <TextInput
+            size="xs"
+            aria-label="Pasted callback URL"
+            placeholder="http://localhost:1455/auth/callback?code=…&state=…"
+            value={pastedUrl}
+            onChange={(event) => setPastedUrl(event.currentTarget.value)}
+            className={styles.addSecret}
+            autoComplete="off"
+          />
+          <Button
+            size="xs"
+            variant="light"
+            loading={busy}
+            disabled={busy || !pastedUrl.trim()}
+            onClick={finishManual}
+            leftSection={<Icon name="i-check" />}
+          >
+            Finish sign-in
+          </Button>
+        </>
       ) : null}
       {device ? (
         <Text size="xs" className={styles.addNote}>

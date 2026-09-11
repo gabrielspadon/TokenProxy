@@ -28,14 +28,16 @@ export function credentialDocument(text, force = false) {
 
 // A wait that outlives the proxy it is waiting on can never succeed, and a grant
 // with no end state leaves the row spinning, so both waits below end on a
-// deadline. The proxies do NOT share one: codex and xai close at five minutes
-// (CODEX_PROXY_TIMEOUT_MS and XAI_PROXY_TIMEOUT_MS, src/lib/oauth/utils/server.js
-// :139 and :313) while trae, windsurf, devin and zed close at ten, from their
-// own oauthTimeoutMs (600_000 for all four, read at server.js:535, :634, :719
-// and :831). Cutting the long ones off at five abandoned sign-ins the proxy
-// would still have accepted, so each wait carries its own flow's deadline.
+// deadline. Every proxy-backed flow now closes at ten minutes: codex and xai were
+// raised to match trae, windsurf, devin and zed, whose own oauthTimeoutMs has
+// always been 600_000. Five minutes was not enough for a sign-in carrying 2FA, an
+// account chooser or a password manager, and the proxy closing first turned a slow
+// but valid sign-in into a dead port. GRANT_DEADLINE_MS still governs the plain
+// browser-redirect flow, which holds no proxy and relays through /callback.
 const GRANT_DEADLINE_MS = 300_000;
 const PROXY_SESSION_DEADLINE_MS = 600_000;
+// The fixed-port flows poll for exactly as long as their proxy lives.
+const PROXY_QUERY_DEADLINE_MS = 600_000;
 const GRANT_TIMED_OUT = "The sign-in did not finish in time. Close the sign-in window and start again.";
 
 // The sign-in window is opened inside the caller's own event handler, BEFORE the
@@ -184,9 +186,12 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
       return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
     }
     say("Finish the sign-in in the window that opened.");
-    const done = await pollStatus(provider, a.state, signal);
+    const done = await pollStatus(provider, a.state, signal, PROXY_QUERY_DEADLINE_MS);
+    // The proxy is deliberately NOT stopped on the failure path: its session still
+    // holds the codeVerifier the paste-back fallback needs. `state` goes back with
+    // the refusal so the row can offer a paste bound to THIS sign-in.
+    if (done.status !== "done") return stop({ ok: false, status: 0, state: a.state, body: { error: done.error || "The provider refused the sign-in." } });
     await call(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
-    if (done.status !== "done") return stop({ ok: false, status: 0, body: { error: done.error || "The provider refused the sign-in." } });
     return { ok: true, connection: { id: done.connectionId, provider, email: done.email } };
   }
 

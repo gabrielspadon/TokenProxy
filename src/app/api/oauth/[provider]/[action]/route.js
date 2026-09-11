@@ -76,23 +76,62 @@ async function saveConnection(data, reauth) {
   return { failure: NextResponse.json({ error }, { status }) };
 }
 
-async function completeXaiManualCode(code, state, reauth) {
-  const session = state ? getXaiSessionStatus(state) : null;
-  if (!session) {
-    throw new Error("xAI OAuth session not found; restart the login flow and paste the code again");
+// The paste-back fallback for the fixed-port flows. When the automatic callback
+// never lands — the loopback port was unreachable, or the proxy had already timed
+// out — the operator copies the URL out of the browser bar and finishes by hand.
+const MANUAL_CODE_PROVIDERS = {
+  xai: { getSession: getXaiSessionStatus, clearSession: clearXaiSession, stopProxy: stopXaiProxy, label: "xAI" },
+  codex: { getSession: getCodexSessionStatus, clearSession: clearCodexSession, stopProxy: stopCodexProxy, label: "Codex" },
+};
+
+// Accepts either a whole pasted callback URL or a bare code. A pasted URL carries
+// its own state, and that is what gets checked against the registered session: a
+// URL captured from a different grant must not be able to complete this one.
+export function parseManualCallback(input, fallbackState) {
+  const raw = String(input || "").trim();
+  const fallback = String(fallbackState || "").trim();
+  if (!raw) return { code: "", state: fallback };
+  let parsed = null;
+  if (/^https?:\/\//i.test(raw)) {
+    try { parsed = new URL(raw); } catch { parsed = null; }
+    if (!parsed) throw new Error("That does not look like a callback URL. Paste the whole address from the browser bar.");
+  } else if (raw.includes("code=")) {
+    // A query fragment pasted without its origin.
+    const query = raw.startsWith("?") ? raw.slice(1) : raw.replace(/^.*?\?/, "");
+    try { parsed = new URL(`http://localhost/?${query}`); } catch { parsed = null; }
   }
-  if (!code) throw new Error("Missing xAI authorization code");
+  if (!parsed) return { code: raw, state: fallback };
+  const error = parsed.searchParams.get("error");
+  if (error) throw new Error(parsed.searchParams.get("error_description") || error);
+  const code = (parsed.searchParams.get("code") || "").trim();
+  const urlState = (parsed.searchParams.get("state") || "").trim();
+  if (!code) throw new Error("That URL carries no authorization code. Copy the whole address the provider redirected to.");
+  return { code, state: urlState || fallback, urlState };
+}
+
+async function completeManualCode(provider, rawInput, rawState, reauth) {
+  const spec = MANUAL_CODE_PROVIDERS[provider];
+  if (!spec) throw new Error(`Manual code is not supported for ${provider}`);
+  const fallbackState = String(rawState || "").trim();
+  const { code, state, urlState } = parseManualCallback(rawInput, fallbackState);
+
+  // Security boundary: a pasted URL's own state must agree with the session the
+  // dashboard registered. Disagreement is refused before any exchange is attempted.
+  if (urlState && fallbackState && urlState !== fallbackState) {
+    throw new Error("That callback belongs to a different sign-in. Start the sign-in again and paste the new address.");
+  }
+  if (!state) throw new Error(`Missing ${spec.label} sign-in state; start the sign-in again and paste the new address.`);
+
+  const session = spec.getSession(state);
+  if (!session) {
+    throw new Error(`${spec.label} sign-in session not found or expired; start the sign-in again and paste the new address.`);
+  }
+  if (!code) throw new Error(`Missing ${spec.label} authorization code`);
 
   try {
-    const tokenData = await exchangeTokens(
-      "xai",
-      code,
-      session.redirectUri,
-      session.codeVerifier,
-      state
-    );
+    const tokenData = await exchangeTokens(provider, code, session.redirectUri, session.codeVerifier, state);
     const saved = await saveConnection({
-      provider: "xai",
+      provider,
       authType: "oauth",
       ...tokenData,
       expiresAt: tokenData.expiresIn
@@ -100,8 +139,8 @@ async function completeXaiManualCode(code, state, reauth) {
         : null,
       testStatus: "active",
     }, reauth);
-    clearXaiSession(state);
-    stopXaiProxy();
+    spec.clearSession(state);
+    spec.stopProxy();
     if (saved.failure) return saved;
     const connection = saved.connection;
     return {
@@ -113,8 +152,8 @@ async function completeXaiManualCode(code, state, reauth) {
       },
     };
   } catch (err) {
-    clearXaiSession(state);
-    stopXaiProxy();
+    spec.clearSession(state);
+    spec.stopProxy();
     throw err;
   }
 }
@@ -534,11 +573,12 @@ export async function POST(request, { params }) {
     }
 
     if (action === "manual-code") {
-      if (provider !== "xai") {
-        return NextResponse.json({ error: "Manual code only supported for xai" }, { status: 400 });
+      if (!MANUAL_CODE_PROVIDERS[provider]) {
+        return NextResponse.json({ error: `Manual code only supported for ${Object.keys(MANUAL_CODE_PROVIDERS).join("/")}` }, { status: 400 });
       }
-      const { code, state } = body;
-      const result = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim(), reauth);
+      // `url` carries a whole pasted callback address; `code` a bare code.
+      const { code, url, state } = body;
+      const result = await completeManualCode(provider, url ?? code, state, reauth);
       if (result.failure) return result.failure;
       return NextResponse.json({ success: true, connection: result.connection });
     }
