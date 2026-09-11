@@ -66,7 +66,7 @@ describe("account reset metadata precedence (PR #3075)", () => {
         Date.parse("2026-08-31T16:10:00.000Z"),
       );
 
-      expect(result).toEqual({ shouldFallback: true, cooldownMs: 600000, failureClass: 'rate', retrySameAccount: false, mustWait: true });
+      expect(result).toEqual({ shouldFallback: true, cooldownMs: 600000, failureClass: 'rate', retrySameAccount: false, mustWait: false });
       expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
         "connection-3075",
         expect.objectContaining({

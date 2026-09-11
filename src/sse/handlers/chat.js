@@ -50,6 +50,14 @@ import { recordApiKeyDevice } from "@/sse/services/apiKeyDevices.js";
 const REQUEST_CONNECTION_HEADER = "x-connection-id";
 // The header a caller uses to cap how many accounts one request may spend.
 const REQUEST_MAX_ATTEMPTS_HEADER = "x-max-attempts";
+// How long one request may spend walking the pool before it stops rotating and
+// hands back the upstream response it actually has. Accounts are no longer
+// benched after a failure, so nothing else bounds the walk: without this a
+// request could serially eat every account's connect timeout and leave the
+// caller waiting minutes for an error it could have had on the second attempt.
+// Checked only at a rotation, so fast failures (a 429 answers instantly) still
+// sweep the whole pool; it is slow failures that stop the sweep.
+const ROTATION_BUDGET_MS = 120_000;
 /**
  * Read the caller's attempt ceiling. Anything that is not a positive safe
  * integer is no ceiling at all: a "0", a "-1" or a "many" must not be read as
@@ -902,10 +910,10 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // background job and wrong for an interactive client that would rather see
   // the first real error than wait out eight upstream timeouts.
   const maxAttempts = readAttemptCeiling(request);
+  const rotationStartedAt = Date.now();
 
   while (true) {
     if (callerSignal?.aborted) return errorResponse(499, "Request aborted");
-    const lastFailedConn = failCountByConn.size ? [...failCountByConn.entries()].find(([id, c]) => c >= 1 && c < ACCOUNT_RETRY_LIMIT)?.[0] : null;
     // Session affinity's ONLY input. resolveRoutingSessionHash (auth.js) hashes
     // whatever identity sessionManager can read out of these two fields; given
     // neither, it falls back to the literal "anonymous" and every request of a
@@ -925,7 +933,6 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       // joins every SEL/LEASE/LOCK line this selection emits.
       logCtx: { rid },
     };
-    if (lastFailedConn) credentialOptions.ignoreModelLockConnId = lastFailedConn;
     if (requestReplayConnectionId) credentialOptions.preferredConnectionId = requestReplayConnectionId;
     // A combo may pin this member to one account (#1477): not every account of a
     // provider is equivalent, and a combo built to try a free tier before a paid
@@ -1272,6 +1279,15 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         if (maxAttempts && excludeConnectionIds.size + 1 >= maxAttempts) {
           log.warn("CHAT", `[${provider}/${model}] attempt ceiling ${maxAttempts} reached`);
           decide("UP", "attempt-ceiling", { rid, attempts: maxAttempts });
+          leaseHandedOff = true;
+          return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
+        }
+        // Time budget spent. Another account would mean another upstream wait
+        // the caller has already paid too much for, so give them the real error.
+        const elapsedMs = Date.now() - rotationStartedAt;
+        if (elapsedMs >= ROTATION_BUDGET_MS) {
+          log.warn("CHAT", `[${provider}/${model}] rotation budget spent after ${Math.round(elapsedMs / 1000)}s over ${excludeConnectionIds.size + 1} account(s)`);
+          decide("UP", "attempt-ceiling", { rid, attempts: excludeConnectionIds.size + 1, why: `budget-${Math.round(elapsedMs / 1000)}s` });
           leaseHandedOff = true;
           return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
         }

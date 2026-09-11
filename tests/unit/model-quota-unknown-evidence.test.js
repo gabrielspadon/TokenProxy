@@ -20,7 +20,7 @@ describe('model-keyed quota evidence', () => {
     const connection = account(value);
     expect(getExhaustedQuotaWindow(connection, model, now)).toEqual({ key: model, until });
     expect(getActiveModelFailure(connection, model, now)).toMatchObject({ status: 429, until });
-    expect(accountAdmissionReason(connection, { model, now })).toBe('model-locked');
+    expect(accountAdmissionReason(connection, { model, now })).toBe('quota-exhausted');
     expect(getExhaustedQuotaWindow(connection, 'another-model', now)).toBeNull();
   });
   it('recovers at the stated reset and does not create a hard gate for unlimited or non-model-keyed providers', () => {

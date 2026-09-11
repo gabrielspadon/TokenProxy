@@ -1,6 +1,6 @@
 import { configHash, CONFIG_SCOPE } from './db/helpers/configHistory.js';
 import { assertRoutingDocument, validateRoutingDocument } from './configuration/routingConfig.js';
-import { accountAdmissionReason, temporaryPinWait } from '@/sse/services/accountAdmissionPolicy.js';
+import { accountAdmissionReason } from '@/sse/services/accountAdmissionPolicy.js';
 import { planAccountSelection } from '@/sse/services/accountScheduler.js';
 import { isAccountModelDisabled } from '@/shared/utils/disabledModelPolicy.js';
 import { isNoAuthProvider, isProviderDisabled } from '@/shared/constants/providers.js';
@@ -212,8 +212,9 @@ export function simulateRouting(args) {
   });
   const usable = inspected.filter(entry => !entry.reason);
   const livePin = state.pin?.expiresAt && Date.parse(state.pin.expiresAt) <= now ? null : state.pin;
-  const pinned = state.accounts.find(a => a.id === livePin?.connectionId && a.isActive && a.provider === provider);
-  const wait = pinned ? temporaryPinWait(pinned, optionsFor(pinned)) : null;
+  // No 'temporary-pin-wait' state exists any more: a failed account is not
+  // benched, so a pinned session rotates to the next account instead of parking
+  // until a cooldown expires.
   const plan = planAccountSelection({ accounts: usable.map(e => e.account), pin: livePin, activeLoad: state.activeLoad, model, now });
   const preferred = request.preferredConnectionId ? usable.find(e => e.account.id === request.preferredConnectionId) : null;
   const orderedIds = preferred ? [preferred.account.id] : plan.preferred.map(r => r.id);
@@ -225,9 +226,9 @@ export function simulateRouting(args) {
   const noAuth = isNoAuthProvider(provider);
   const noAuthDisabled = noAuth && (isProviderDisabled(state.settings, provider)
     || isAccountModelDisabled(state.disabledModels, provider, model, null, providerAliases, state.providerNodes));
-  const chosen = wait || noAuth ? null : candidates.find(c => !c.atCapacity) ?? null;
+  const chosen = noAuth ? null : candidates.find(c => !c.atCapacity) ?? null;
   const reason = noAuth ? noAuthDisabled ? 'provider-or-model-disabled' : 'noauth-proxy-topology-unavailable'
-    : wait ? 'temporary-pin-wait' : chosen ? preferred ? 'operator-pinned' : livePin?.connectionId === chosen.connectionId ? 'pinned' : livePin ? 'repin' : 'first-pin'
+    : chosen ? preferred ? 'operator-pinned' : livePin?.connectionId === chosen.connectionId ? 'pinned' : livePin ? 'repin' : 'first-pin'
       : candidates.length ? 'at-capacity' : 'no-eligible-account';
   const missing = (request.requiredCapabilities || []).filter(key => state.capabilities[key] !== true);
   const cap = state.capabilities;
@@ -237,16 +238,16 @@ export function simulateRouting(args) {
       draftHash: draftPreview?.documentHash ?? null, capturedAt: state.capturedAt, captureAuthenticity: 'not-attested', sideEffects: false },
     requested: request, resolved: state.scope, served: null,
     localSelection: { connectionId: chosen?.connectionId ?? null, model, reason,
-      status: chosen ? 'candidate' : wait || reason === 'at-capacity' ? 'wait' : noAuth && !noAuthDisabled ? 'unknown' : 'refused' },
+      status: chosen ? 'candidate' : reason === 'at-capacity' ? 'wait' : noAuth && !noAuthDisabled ? 'unknown' : 'refused' },
     readiness: 'unknown', upstreamVerified: false,
     candidates, exclusions: [...inspected.filter(e => e.reason).map(e => ({ connectionId: e.account.id, reason: e.reason })),
       ...plan.ranked.filter(r => !r.usable && !orderedIds.includes(r.id)).map(r => ({ connectionId: r.id, reason: 'quota-window-excluded' }))],
     ranking: plan.ranked.map(r => ({ connectionId: r.id, usable: r.usable, hardBlocked: r.hardBlocked === true,
       reason: r.reason ?? null, selectedByAffinity: orderedIds.includes(r.id) && !r.usable })),
     affinity: { source: state.affinitySource, previousConnectionId: livePin?.connectionId ?? null,
-      action: wait ? 'wait' : preferred ? 'operator-preference' : plan.repin.action,
-      reason: wait ? 'temporary-pin-wait' : preferred ? 'operator-preference' : plan.repin.reason,
-      retryAt: wait?.until ?? null, modelSubstitution: false },
+      action: preferred ? 'operator-preference' : plan.repin.action,
+      reason: preferred ? 'operator-preference' : plan.repin.reason,
+      retryAt: null, modelSubstitution: false },
     capabilityFit: { source: 'captured-gateway-capability-resolver', upstreamVerified: false,
       required: request.requiredCapabilities || [], missingOrUnknown: missing,
       contextFitsDeclaredWindow: request.contextTokens === undefined || cap.contextWindow === null ? null : request.contextTokens <= cap.contextWindow,
