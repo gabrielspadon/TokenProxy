@@ -180,19 +180,94 @@ function closeAll(servers) {
   }
 }
 
-// Singleton proxy server for Codex OAuth callback on fixed port
-let codexProxyServers = [];
-let codexProxyTimeout = null;
+// One lifecycle per callback proxy, owning its listeners and its idle timer.
+// Six copies of the same singleton pattern each carried the same three faults,
+// which this makes inexpressible rather than merely fixed:
+//
+// 1. LIVENESS ANSWERS TO THE KERNEL. `running()` asks the listeners themselves
+//    (`server.listening`) instead of trusting a non-empty variable. A listener
+//    that stopped without going through stop() no longer reads as running, so the
+//    already-started fast path cannot report success for a port nothing holds.
+// 2. THE TIMER CANNOT BE ORPHANED. The handle belongs to the lifecycle and
+//    `adopt()` clears the one it replaces before storing the next. A single
+//    module-level variable could be overwritten by a second successful bind,
+//    leaving the first proxy bound with no timer left to close it.
+// 3. A PENDING SESSION DIES WITH ITS LISTENER. Only the listener that just closed
+//    could have completed it, so leaving it behind makes poll-status answer
+//    "pending" against a dead port for the full deadline, which is what an
+//    operator experiences as the sign-in window doing nothing. A session that
+//    already reached done or error is the OUTCOME the dashboard is about to read
+//    (the handler sets it, then stops the proxy in its `finally`), so it survives
+//    and poll-status clears it.
+//
+// FAILURE DIRECTION. The permissive path is the already-running fast path. It is
+// now gated on `running()` rather than on a variable being set, so a leaked or
+// externally-closed listener takes the REBIND path instead of being reported as a
+// working proxy. `dropPendingSessions` only ever deletes `status === "pending"`.
+function createProxyLifecycle({ timeoutMs, onStop }) {
+  let servers = [];
+  let timer = null;
+
+  const clearTimer = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  const release = () => {
+    clearTimer();
+    closeAll(servers);
+    servers = [];
+  };
+
+  const stop = () => {
+    release();
+    onStop?.();
+  };
+
+  return {
+    stop,
+    running: () => servers.some((server) => server?.listening),
+    // Drop whatever this lifecycle still holds before a fresh bind, so a
+    // half-held listener is never abandoned by the attempt that replaces it.
+    reset: release,
+    // Take ownership of freshly bound listeners and arm the only timer that will
+    // ever close them.
+    adopt(next) {
+      clearTimer();
+      servers = next.filter(Boolean);
+      timer = setTimeout(stop, timeoutMs);
+    },
+  };
+}
+
+// A state whose listener is gone can only mislead, so it goes; a terminal one is
+// the result the dashboard still has to read, so it stays.
+function dropPendingSessions(sessions) {
+  for (const [state, session] of sessions) {
+    if (session?.status === "pending") sessions.delete(state);
+  }
+}
 
 // A sign-in carrying 2FA, an account chooser or a password manager routinely runs
 // past five minutes, and when the proxy closed first the callback landed on a dead
 // port. Ten minutes matches the deadline the grant-side wait already uses for the
 // session-registering proxies, so proxy and poll now expire together.
-const CODEX_PROXY_TIMEOUT_MS = 600000; // 10 minutes
+const FIXED_PORT_PROXY_TIMEOUT_MS = 600000; // 10 minutes
 const CODEX_PORT = CODEX_CONFIG.fixedPort;
 
 // Pending exchange sessions keyed by state — used by server-side exchange mode
 const pendingExchanges = new Map();
+const codexProxy = createProxyLifecycle({
+  timeoutMs: FIXED_PORT_PROXY_TIMEOUT_MS,
+  onStop: () => dropPendingSessions(pendingExchanges),
+});
+// The dashboard port of the attempt in flight. Read at REQUEST time, not captured
+// when the handler is built: the fast path keeps the first attempt's handler
+// alive, and a captured port sent Mode B's 302 to whatever port the first attempt
+// happened to use, which a later sign-in from a different port never occupies.
+let codexAppPort = null;
 
 /**
  * Register a pending exchange session for server-side mode.
@@ -252,10 +327,15 @@ function renderCodexResultPage(success, message) {
  */
 export function startCodexProxy(appPort) {
   return new Promise((resolve) => {
-    if (codexProxyServers.length) {
+    // Set before the fast path returns, so the attempt that reuses a running
+    // proxy still owns the redirect target.
+    codexAppPort = appPort;
+    if (codexProxy.running()) {
       resolve({ success: true });
       return;
     }
+    // Anything still held is not listening, or `running()` would have said so.
+    codexProxy.reset();
 
     const handler = async (req, res) => {
       const url = new URL(req.url, "http://localhost");
@@ -318,7 +398,7 @@ export function startCodexProxy(appPort) {
       }
 
       // Mode B: legacy channel fallback — 302 redirect to app /callback
-      const redirectUrl = `http://localhost:${appPort}/callback${url.search}`;
+      const redirectUrl = `http://localhost:${codexAppPort}/callback${url.search}`;
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       stopCodexProxy();
@@ -334,8 +414,7 @@ export function startCodexProxy(appPort) {
         resolve({ success: false, reason: outcome.busy ? "port_busy" : outcome.reason });
         return;
       }
-      codexProxyServers = [server6, server4];
-      codexProxyTimeout = setTimeout(() => stopCodexProxy(), CODEX_PROXY_TIMEOUT_MS);
+      codexProxy.adopt([server6, server4]);
       resolve({ success: true });
     });
   });
@@ -345,26 +424,24 @@ export function startCodexProxy(appPort) {
  * Stop the Codex proxy server and cleanup
  */
 export function stopCodexProxy() {
-  if (codexProxyTimeout) {
-    clearTimeout(codexProxyTimeout);
-    codexProxyTimeout = null;
-  }
-  closeAll(codexProxyServers);
-  codexProxyServers = [];
+  codexProxy.stop();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // xAI fixed-port proxy on 127.0.0.1:56121
-// Same shape as the Codex proxy. Kept as a parallel implementation rather than
-// generalizing the Codex one to keep the codex hot-path byte-equivalent.
+// Same shape as the Codex proxy, now over the shared lifecycle. The older comment
+// here kept the two as hand-maintained copies "to keep the codex hot-path
+// byte-equivalent"; that predates a lifecycle bug which was present in both
+// copies at once, so the shared helper is what keeps them parallel from here.
 // ───────────────────────────────────────────────────────────────────────────
 
-let xaiProxyServers = [];
-let xaiProxyTimeout = null;
-// Ten minutes, matching CODEX_PROXY_TIMEOUT_MS and the grant-side poll deadline.
-const XAI_PROXY_TIMEOUT_MS = 600000; // 10 minutes
 const XAI_PROXY_PORT = 56121;
 const xaiPendingExchanges = new Map();
+const xaiProxy = createProxyLifecycle({
+  timeoutMs: FIXED_PORT_PROXY_TIMEOUT_MS,
+  onStop: () => dropPendingSessions(xaiPendingExchanges),
+});
+let xaiAppPort = null;
 
 export function registerXaiSession({ state, codeVerifier, redirectUri }) {
   if (!state || !codeVerifier || !redirectUri) return false;
@@ -396,10 +473,12 @@ function renderXaiResultPage(success, message) {
  */
 export function startXaiProxy(appPort) {
   return new Promise((resolve) => {
-    if (xaiProxyServers.length) {
+    xaiAppPort = appPort;
+    if (xaiProxy.running()) {
       resolve({ success: true });
       return;
     }
+    xaiProxy.reset();
 
     const handler = async (req, res) => {
       const url = new URL(req.url, "http://localhost");
@@ -460,7 +539,7 @@ export function startXaiProxy(appPort) {
       }
 
       // Mode B: legacy fallback redirect
-      const redirectUrl = `http://localhost:${appPort}/callback${url.search}`;
+      const redirectUrl = `http://localhost:${xaiAppPort}/callback${url.search}`;
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       stopXaiProxy();
@@ -477,20 +556,14 @@ export function startXaiProxy(appPort) {
         resolve({ success: false, reason: outcome.busy ? "port_busy" : outcome.reason });
         return;
       }
-      xaiProxyServers = [server6, server4];
-      xaiProxyTimeout = setTimeout(() => stopXaiProxy(), XAI_PROXY_TIMEOUT_MS);
+      xaiProxy.adopt([server6, server4]);
       resolve({ success: true });
     });
   });
 }
 
 export function stopXaiProxy() {
-  if (xaiProxyTimeout) {
-    clearTimeout(xaiProxyTimeout);
-    xaiProxyTimeout = null;
-  }
-  closeAll(xaiProxyServers);
-  xaiProxyServers = [];
+  xaiProxy.stop();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -498,10 +571,15 @@ export function stopXaiProxy() {
 // Callback path = /callback with params refreshToken + loginHost.
 // ───────────────────────────────────────────────────────────────────────────
 
-let traeProxyServer = null;
-let traeProxyTimeout = null;
 let traeProxyPort = null;
 let traeSession = null;
+const traeProxy = createProxyLifecycle({
+  timeoutMs: TRAE_CONFIG.oauthTimeoutMs,
+  onStop: () => {
+    traeProxyPort = null;
+    if (traeSession?.status === "pending") traeSession = null;
+  },
+});
 
 export function registerTraeSession({ state }) {
   if (!state) return false;
@@ -519,10 +597,11 @@ export function clearTraeSession(state) {
 
 export function startTraeProxy() {
   return new Promise((resolve) => {
-    if (traeProxyServer) {
+    if (traeProxy.running()) {
       resolve({ success: true, port: traeProxyPort, callbackUrl: `http://127.0.0.1:${traeProxyPort}${TRAE_CONFIG.callbackPath}` });
       return;
     }
+    traeProxy.reset();
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, "http://localhost");
       if (url.pathname !== TRAE_CONFIG.callbackPath && url.pathname !== "/auth/callback") {
@@ -582,9 +661,8 @@ export function startTraeProxy() {
       }
     });
     server.listen(0, "127.0.0.1", () => {
-      traeProxyServer = server;
       traeProxyPort = server.address().port;
-      traeProxyTimeout = setTimeout(() => stopTraeProxy(), TRAE_CONFIG.oauthTimeoutMs);
+      traeProxy.adopt([server]);
       resolve({ success: true, port: traeProxyPort, callbackUrl: `http://127.0.0.1:${traeProxyPort}${TRAE_CONFIG.callbackPath}` });
     });
     server.on("error", (err) => resolve({ success: false, reason: err.message }));
@@ -592,9 +670,7 @@ export function startTraeProxy() {
 }
 
 export function stopTraeProxy() {
-  if (traeProxyTimeout) { clearTimeout(traeProxyTimeout); traeProxyTimeout = null; }
-  if (traeProxyServer) { traeProxyServer.close(); traeProxyServer = null; }
-  traeProxyPort = null;
+  traeProxy.stop();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -602,10 +678,15 @@ export function stopTraeProxy() {
 // Callback path = /windsurf-auth-callback with params access_token (firebase JWT) + state.
 // ───────────────────────────────────────────────────────────────────────────
 
-let windsurfProxyServer = null;
-let windsurfProxyTimeout = null;
 let windsurfProxyPort = null;
 let windsurfSession = null;
+const windsurfProxy = createProxyLifecycle({
+  timeoutMs: WINDSURF_CONFIG.oauthTimeoutMs,
+  onStop: () => {
+    windsurfProxyPort = null;
+    if (windsurfSession?.status === "pending") windsurfSession = null;
+  },
+});
 
 export function registerWindsurfSession({ state }) {
   if (!state) return false;
@@ -623,10 +704,11 @@ export function clearWindsurfSession(state) {
 
 export function startWindsurfProxy() {
   return new Promise((resolve) => {
-    if (windsurfProxyServer) {
+    if (windsurfProxy.running()) {
       resolve({ success: true, port: windsurfProxyPort, callbackUrl: `http://127.0.0.1:${windsurfProxyPort}${WINDSURF_CONFIG.callbackPath}` });
       return;
     }
+    windsurfProxy.reset();
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, "http://localhost");
       if (url.pathname !== WINDSURF_CONFIG.callbackPath) {
@@ -681,9 +763,8 @@ export function startWindsurfProxy() {
       }
     });
     server.listen(0, "127.0.0.1", () => {
-      windsurfProxyServer = server;
       windsurfProxyPort = server.address().port;
-      windsurfProxyTimeout = setTimeout(() => stopWindsurfProxy(), WINDSURF_CONFIG.oauthTimeoutMs);
+      windsurfProxy.adopt([server]);
       resolve({ success: true, port: windsurfProxyPort, callbackUrl: `http://127.0.0.1:${windsurfProxyPort}${WINDSURF_CONFIG.callbackPath}` });
     });
     server.on("error", (err) => resolve({ success: false, reason: err.message }));
@@ -691,18 +772,21 @@ export function startWindsurfProxy() {
 }
 
 export function stopWindsurfProxy() {
-  if (windsurfProxyTimeout) { clearTimeout(windsurfProxyTimeout); windsurfProxyTimeout = null; }
-  if (windsurfProxyServer) { windsurfProxyServer.close(); windsurfProxyServer = null; }
-  windsurfProxyPort = null;
+  windsurfProxy.stop();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Devin Cloud PKCE callback proxy. Singleton session.
 
-let devinProxyServer = null;
-let devinProxyTimeout = null;
 let devinProxyPort = null;
 let devinSession = null;
+const devinProxy = createProxyLifecycle({
+  timeoutMs: DEVIN_CONFIG.oauthTimeoutMs,
+  onStop: () => {
+    devinProxyPort = null;
+    if (devinSession?.status === "pending") devinSession = null;
+  },
+});
 
 export function registerDevinSession({ state, codeVerifier, redirectUri }) {
   if (!state || !codeVerifier) return false;
@@ -720,10 +804,11 @@ export function clearDevinSession(state) {
 
 export function startDevinProxy() {
   return new Promise((resolve) => {
-    if (devinProxyServer) {
+    if (devinProxy.running()) {
       resolve({ success: true, port: devinProxyPort, callbackUrl: `http://127.0.0.1:${DEVIN_CONFIG.callbackPort}${DEVIN_CONFIG.callbackPath}` });
       return;
     }
+    devinProxy.reset();
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, "http://localhost");
       if (url.pathname !== DEVIN_CONFIG.callbackPath) {
@@ -766,9 +851,8 @@ export function startDevinProxy() {
       }
     });
     server.listen(DEVIN_CONFIG.callbackPort, "127.0.0.1", () => {
-      devinProxyServer = server;
       devinProxyPort = server.address().port;
-      devinProxyTimeout = setTimeout(() => stopDevinProxy(), DEVIN_CONFIG.oauthTimeoutMs);
+      devinProxy.adopt([server]);
       resolve({ success: true, port: devinProxyPort, callbackUrl: `http://127.0.0.1:${devinProxyPort}${DEVIN_CONFIG.callbackPath}` });
     });
     server.on("error", (error) => {
@@ -783,9 +867,7 @@ export function startDevinProxy() {
 }
 
 export function stopDevinProxy() {
-  if (devinProxyTimeout) { clearTimeout(devinProxyTimeout); devinProxyTimeout = null; }
-  if (devinProxyServer) { devinProxyServer.close(); devinProxyServer = null; }
-  devinProxyPort = null;
+  devinProxy.stop();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -794,10 +876,16 @@ export function stopDevinProxy() {
 // The proxy decrypts the access token using the private key stored in session.codeVerifier.
 // ───────────────────────────────────────────────────────────────────────────
 
-let zedProxyServer = null;
-let zedProxyTimeout = null;
 let zedProxyPort = null;
 let zedSession = null;
+const zedProxy = createProxyLifecycle({
+  timeoutMs: ZED_HOSTED_CONFIG.oauthTimeoutMs,
+  onStop: () => {
+    console.log(`[Zed proxy] stopping (port ${zedProxyPort || "-"})`);
+    zedProxyPort = null;
+    if (zedSession?.status === "pending") zedSession = null;
+  },
+});
 
 export function registerZedSession({ state, codeVerifier }) {
   if (!state || !codeVerifier) return false;
@@ -815,10 +903,11 @@ export function clearZedSession(state) {
 
 export function startZedProxy(preferredPort = 0) {
   return new Promise((resolve) => {
-    if (zedProxyServer) {
+    if (zedProxy.running()) {
       resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
       return;
     }
+    zedProxy.reset();
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url, "http://localhost");
       // Log path + redacted params (access_token is the RSA-encrypted credential).
@@ -878,9 +967,8 @@ export function startZedProxy(preferredPort = 0) {
       if (err.code === "EADDRINUSE" && tryPort !== 0) {
         console.log(`[Zed proxy] port ${tryPort} busy, falling back to random`);
         server.listen(0, "127.0.0.1", () => {
-          zedProxyServer = server;
           zedProxyPort = server.address().port;
-          zedProxyTimeout = setTimeout(() => stopZedProxy(), ZED_HOSTED_CONFIG.oauthTimeoutMs);
+          zedProxy.adopt([server]);
           console.log(`[Zed proxy] listening on random port ${zedProxyPort}`);
           resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
         });
@@ -890,9 +978,8 @@ export function startZedProxy(preferredPort = 0) {
       }
     });
     server.listen(tryPort, "127.0.0.1", () => {
-      zedProxyServer = server;
       zedProxyPort = server.address().port;
-      zedProxyTimeout = setTimeout(() => { console.log("[Zed proxy] timeout, stopping"); stopZedProxy(); }, ZED_HOSTED_CONFIG.oauthTimeoutMs);
+      zedProxy.adopt([server]);
       console.log(`[Zed proxy] listening on port ${zedProxyPort}`);
       resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
     });
@@ -900,9 +987,6 @@ export function startZedProxy(preferredPort = 0) {
 }
 
 export function stopZedProxy() {
-  console.log(`[Zed proxy] stopping (port ${zedProxyPort || "-"})`);
-  if (zedProxyTimeout) { clearTimeout(zedProxyTimeout); zedProxyTimeout = null; }
-  if (zedProxyServer) { zedProxyServer.close(); zedProxyServer = null; }
-  zedProxyPort = null;
+  zedProxy.stop();
 }
 
