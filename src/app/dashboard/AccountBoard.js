@@ -25,6 +25,7 @@ import {
   accountControlBaseline,
   accountControlEvidence,
   accountControlId,
+  accountControlState,
   accountWindowStale,
   accountWindowTime,
   mergeAccountControls,
@@ -44,6 +45,7 @@ import {
   accountReturnsAt,
   accountSeat,
   accountSection,
+  accountStateReason,
   accountStateWord,
   filterAccounts,
   fleetSummary,
@@ -349,26 +351,49 @@ function AccountRow({
 
 // Everyday: one compact card per account, progress first. Pause, rename and
 // expand stay direct; priority, drain, thresholds and comparison live in Advanced.
+// What the operator is being asked to DO, which is the only useful headline on
+// a card that no clock will clear. Keyed by state rather than by section, so a
+// draining account cannot inherit "resume this" from the paused one beside it.
+const STATE_ASK = {
+  'No credential': 'Add a credential',
+  'Needs sign-in': 'Sign in again',
+  'Disabled by error': 'Fix, then re-enable',
+  'Needs attention': 'Test this connection',
+  Paused: 'Resume when ready',
+  Draining: 'Draining to idle',
+};
+
 /**
- * The one number the card exists to show, chosen by which section it is in.
+ * The one fact the card exists to show, chosen by which section it is in.
  *
  * Serving leads with headroom because that is what decides where work goes
  * next. Cooling down leads with the return time because nothing else about a
- * drained account changes what the operator does. Unverified leads with the
- * absence itself, which is the honest answer and the reason the card is
- * collapsed by default.
+ * drained account changes what the operator does. The two sections that need a
+ * person lead with the instruction, because nothing about them changes until
+ * someone acts. Unverified leads with the absence itself.
+ *
+ * The note underneath is the EVIDENCE, one line, from whatever actually put the
+ * account in this state. It used to be a restatement of the section, which is
+ * how four accounts a 401 had killed carried the same words as four an operator
+ * had paused.
  */
 function cardFact(account, section, now) {
-  if (section === 'unverified')
-    return { value: 'No quota evidence', note: 'Nothing has proved this account works' };
+  const why = accountStateReason(account, now);
+  if (section === 'action' || section === 'held')
+    return {
+      value: STATE_ASK[accountControlState(account, now)] || accountStateWord(account, now),
+      note: why,
+    };
+  if (section === 'unverified') return { value: 'No quota evidence', note: why };
   if (section === 'resting') {
     const returnsAt = accountReturnsAt(account, now);
     if (returnsAt === null)
-      return { value: accountStateWord(account, now), note: 'No timed return recorded' };
+      return { value: accountStateWord(account, now), note: why || 'No timed return recorded' };
     const time = accountWindowTime(new Date(returnsAt).toISOString(), now, true);
     return {
       value: time.label.startsWith('Resets in ') ? `Back in ${time.label.slice(10)}` : time.label,
-      note: `at ${new Date(returnsAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+      note: why,
+      title: `Returns at ${new Date(returnsAt).toISOString().slice(0, 16).replace('T', ' ')} UTC`,
     };
   }
   const headroom = headroomOf(account, now);
@@ -399,7 +424,15 @@ function AccountCard({
   const evidence = accountControlEvidence(account, now);
   const band = EVIDENCE_NOTE[accountEvidence(account, now)];
   const { login, seat } = accountSeat(account);
+  const state = accountControlState(account, now);
   const paused = account.isActive === false;
+  // A row a 401 switched off is not a row the operator paused, and offering to
+  // "Resume" it says it was. A row holding no credential cannot be resumed at
+  // all: re-enabling it only sends the next request at an account with nothing
+  // to authenticate with, so that one slot carries the link to where a
+  // credential is actually added instead of a toggle that changes nothing.
+  const credentialless = state === 'No credential';
+  const pauseLabel = !paused ? 'Pause' : state === 'Paused' ? 'Resume' : 'Re-enable';
   const lines = visibleWindowLines(account, hiddenWindows, now);
   const [showHidden, setShowHidden] = useState(false);
   const record = account.activity;
@@ -410,6 +443,7 @@ function AccountCard({
       data-account-id={id}
       data-expanded={expanded || undefined}
       data-bucket={bucket}
+      data-tone={TONE[bucket]}
       data-section={section}
       aria-label={name}
     >
@@ -435,18 +469,32 @@ function AccountCard({
             {providerIdentity(account.provider).name}
           </small>
         </div>
-        <Tooltip label={paused ? 'Resume' : 'Pause'}>
-          <ActionIcon
-            variant={paused ? 'light' : 'subtle'}
-            color={paused ? 'teal' : 'gray'}
-            aria-label={`${paused ? 'Resume' : 'Pause'} ${name}`}
-            loading={busy === 'pause'}
-            disabled={(!!busy && busy !== 'pause') || typeof account.isActive !== 'boolean'}
-            onClick={onPause}
-          >
-            <Icon name={paused ? 'i-play' : 'i-pause'} />
-          </ActionIcon>
-        </Tooltip>
+        {credentialless ? (
+          <Tooltip label="Add a credential in Connections">
+            <ActionIcon
+              component={Link}
+              href={`/dashboard/connections/${encodeURIComponent(id)}`}
+              variant="subtle"
+              color="gray"
+              aria-label={`Add a credential for ${name} in Connections`}
+            >
+              <Icon name="i-open" />
+            </ActionIcon>
+          </Tooltip>
+        ) : (
+          <Tooltip label={pauseLabel}>
+            <ActionIcon
+              variant={paused ? 'light' : 'subtle'}
+              color={paused ? (state === 'Paused' ? 'teal' : 'orange') : 'gray'}
+              aria-label={`${pauseLabel} ${name}`}
+              loading={busy === 'pause'}
+              disabled={(!!busy && busy !== 'pause') || typeof account.isActive !== 'boolean'}
+              onClick={onPause}
+            >
+              <Icon name={paused ? 'i-play' : 'i-pause'} />
+            </ActionIcon>
+          </Tooltip>
+        )}
         <Tooltip label={expanded ? 'Collapse' : 'Details'}>
           <button
             type="button"
@@ -459,8 +507,14 @@ function AccountCard({
           </button>
         </Tooltip>
       </header>
-      {/* One primary fact, always in the same place, always the same size. */}
-      <p className={styles.cardFact} title={fact.note || undefined}>
+      {/* One primary fact, always in the same place, always the same size, and
+          under it the evidence for it in one line. Both slots are present on
+          every card of every section, so a row of cards breaks and truncates
+          identically whatever state they are in. */}
+      <p
+        className={styles.cardFact}
+        title={[fact.note, fact.title].filter(Boolean).join(' · ') || undefined}
+      >
         <strong>{fact.value}</strong>
         <small>{fact.note}</small>
       </p>
