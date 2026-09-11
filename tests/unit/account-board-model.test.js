@@ -55,7 +55,15 @@ describe('account buckets', () => {
         windows: [{ key: 'session', remainingPercentage: 8, resetAt: minutes(90) }],
       },
     });
-    expect(accountBucket(stale, NOW)).toBe('ready');
+    // Stale evidence is not headroom. This asserted 'ready', which is a claim
+    // that the account can take work while the only reading it has is older
+    // than the staleness line. Measured on the live fleet 2026-09-11: ten of
+    // thirty-one windows were inside that line, so two accounts in the SAME
+    // real state sorted differently on refresh timing alone — one
+    // weekly-depleted account read 'low' and its twin read 'ready'.
+    expect(accountBucket(stale, NOW)).toBe('unknown');
+    // A window that is present but unreadable is NOT stale: the account was
+    // measured, the number just could not be parsed. It keeps its state word.
     const unknown = account({}, [{ key: 'session', remainingPercentage: null, resetAt: null }]);
     expect(accountBucket(unknown, NOW)).toBe('ready');
     const unlimited = account({}, [{ key: 'session', remainingPercentage: 0, unlimited: true }]);
