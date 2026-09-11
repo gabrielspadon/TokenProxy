@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile, realpath } from 'node:fs/promises';
+import { chmod, readFile, writeFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // Read-only application verification. Authentication changes only its session.
@@ -10,6 +10,10 @@ assert.equal(owner.kind, 'tokenproxy-redesign-preview-v1');
 assert.equal(owner.root, root);
 assert.equal(owner.runId, run.runId);
 assert.match(run.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+// A dev preview only gets `routeTable` once redesign-preview.mjs proved a deep dynamic
+// route resolves. Without it the 200 assertions below are probing a possibly truncated
+// route table, and their failure would read as a broken handler instead.
+if (run.mode === 'dev') assert.ok(run.routeTable?.canaryStatus, 'dev process.json carries no routeTable receipt; start it through scripts/redesign-preview.mjs so the route-table probe runs');
 const identity = async () => {
   const response = await fetch(`${run.url}/__redesign_owner`, { headers: { 'x-redesign-owner': auth.ownerToken }, signal: AbortSignal.timeout(5000) });
   const value = await response.json();
@@ -24,17 +28,44 @@ const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).jo
 const results = [];
 let accounts;
 const paths = ['/api/providers', '/api/admin/health/detail', '/api/admin/quota', '/api/admin/models', '/api/context?period=24h', '/api/analytics?view=activity&groupBy=account&pageSize=50', '/api/analytics?view=economics&groupBy=account&pageSize=50'];
+// Renaming sessionId in routing-completion-seed.mjs would silently drop this endpoint, and
+// results.length is asserted below so a 7-path run cannot be recorded as the intended 8.
+const routed = ['populated', 'edge-cases', 'representative'].includes(seed.scenario);
+if (routed && !seed.routing?.sessionId) throw new Error(`Scenario ${seed.scenario} seeds a routing session but its receipt carries no routing.sessionId`);
 if (seed.routing?.sessionId) paths.push(`/api/context/sessions/${seed.routing.sessionId}?page=1&pageSize=25`);
+const expectedPaths = paths.length;
 for (const path of paths) {
   const response = await fetch(`${run.url}${path}`, { headers: { cookie }, signal: AbortSignal.timeout(45000) });
   assert.equal(response.status, 200, path);
   assert.equal(response.headers.get('x-tokenproxy-preview-version'), run.fixtureVersion);
   const data = await response.json();
+  // A handler answering 200 with `{}` would otherwise satisfy every assertion above, and the
+  // receipt would record an empty key list as if it were a verified projection.
+  const responseKeys = Object.keys(data);
+  assert.ok(responseKeys.length > 0, `${path} answered 200 with an empty body`);
   if (path === '/api/providers') accounts = data.connections;
-  results.push({ path, status: response.status, responseKeys: Object.keys(data) });
+  results.push({ path, status: response.status, responseKeys });
 }
+assert.equal(results.length, expectedPaths);
 assert.equal(accounts.length, seed.accounts);
+// enabledCount and providers are recorded in the receipt below, so assert them against what
+// the seed itself says it produced. Without this a projection that dropped isActive would
+// record enabledCount 0 on a run that enabled eight and still exit 0. Only the representative
+// scenario enables accounts, and only its receipt carries the ids, so the link is conditional
+// on the receipt's own capability rather than on a fixed count.
+const enabled = accounts.filter(account => account.isActive);
+if (seed.representative?.enabledAccountIds) {
+  assert.deepEqual(enabled.map(account => account.id).sort(), [...seed.representative.enabledAccountIds].sort());
+} else {
+  assert.equal(enabled.length, 0);
+}
+assert.equal(seed.version, run.fixtureVersion);
+assert.equal(seed.upstreamCalls, 0);
 const live = await identity();
-const receipt = { version: 'redesign-preview-read-v1', runId: run.runId, mode: run.mode, url: run.url, dataDir: run.dataDir || join(root, 'runtime'), fixtureVersion: run.fixtureVersion, clock: run.clock, sourceManifestHash: run.sourceManifestHash, sourceAttribution: run.sourceAttribution, recordedAt: new Date().toISOString(), accountCount: accounts.length, enabledCount: accounts.filter(account => account.isActive).length, providers: [...new Set(accounts.map(account => account.provider))], results, guard: live.guard, dataSource: 'actual authenticated application handlers reading disposable retained SQLite; no presentation interception', providerHealth: 'Qualification and entitlement remain unknown unless explicitly reported as synthetic evidence.', browserInspected: false };
+const receipt = { version: 'redesign-preview-read-v1', scenario: seed.scenario, runId: run.runId, mode: run.mode, url: run.url, dataDir: run.dataDir || join(root, 'runtime'), fixtureVersion: run.fixtureVersion, clock: run.clock, sourceManifestHash: run.sourceManifestHash, sourceAttribution: run.sourceAttribution, recordedAt: new Date().toISOString(), accountCount: accounts.length, enabledCount: accounts.filter(account => account.isActive).length, providers: [...new Set(accounts.map(account => account.provider))], results, guard: live.guard, dataSource: 'actual authenticated application handlers reading disposable retained SQLite; no presentation interception', providerHealth: 'Qualification and entitlement remain unknown unless explicitly reported as synthetic evidence.', browserInspected: false };
+// writeFile's `mode` applies only when it CREATES the file, so a re-run over an existing
+// receipt keeps whatever mode that file already had. chmod after the write is what actually
+// holds 0o600 across runs.
 await writeFile(join(root, 'preview-verification.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+await chmod(join(root, 'preview-verification.json'), 0o600);
 console.log(JSON.stringify(receipt, null, 2));

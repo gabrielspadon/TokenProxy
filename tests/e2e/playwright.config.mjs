@@ -5,6 +5,11 @@ import { defineConfig } from "playwright/test";
 export default defineConfig({
   testDir: ".",
   testMatch: /.*\.spec\.mjs$/,
+  // client-integration and compatibility-qualification are argv-driven node scripts that
+  // happen to end in .spec.mjs. Neither imports playwright/test, so collecting them makes
+  // a whole `playwright test` run fail before a single real spec starts. Their runners
+  // (tests/e2e/*-run.mjs) invoke them directly with process.execPath.
+  testIgnore: ['client-integration.spec.mjs', 'compatibility-qualification.spec.mjs'],
   timeout: 30000,
   retries: 0,
   reporter: [["list"]],

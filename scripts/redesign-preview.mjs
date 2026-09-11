@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, openSync, realpathSync } from 'node:fs';
+import { closeSync, existsSync, openSync, realpathSync, utimesSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve, relative } from 'node:path';
@@ -68,6 +68,84 @@ async function identity(root, method = 'GET', pathname = '/__redesign_owner') {
   return { ...receipt, guard: body.guard };
 }
 
+// Next's dev bundler resolves its startup promise on Watchpack's FIRST aggregation
+// (setup-dev-bundler.js:852) and never re-arms. With Next's aggregateTimeout of 5ms
+// (setup-dev-bundler.js:291) that aggregation is routinely partial. Its handler clears
+// and repopulates the route sets on every aggregation (setup-dev-bundler.js:325-329),
+// so the table is never permanently truncated: it is whatever the LAST aggregation saw,
+// and on a quiet tree the startup one is the only aggregation there is. A partial one
+// leaves a deep route answering with Next's /_not-found HTML exactly as a nonexistent
+// path does. Touching a watched route file forces a fresh aggregation, repairing the
+// table in place. That touch is an mtime write to the shared tracked tree: it changes no
+// content, so source-manifest provenance is unaffected, but every other watcher on this
+// tree recompiles, which is why this launcher owns the touch rather than each caller. That
+// recompile is not by itself a wedge: three concurrent two-preview starts on this host all
+// reached the canary 405 (attempts 1-2), because each preview compiles into its own
+// NEXT_DIST_DIR and the probe's retry budget absorbs a re-aggregation it did not ask for.
+// Prefer one preview at a time anyway, since every extra watcher spends the same CPU twice.
+const canaryRoute = '/api/admin/compatibility/runs/00000000-0000-4000-8000-000000000000/cancel';
+const canaryFile = join(project, 'src/app/api/admin/compatibility/runs/[id]/cancel/route.js');
+// That route exports POST only, so a routed, authenticated GET is Next's auto-implemented
+// 405. Assert that positively. Scoring "anything that is not 404 HTML" as ready would
+// bless an error page, and the 405 is the only answer that proves the entry resolved.
+const canaryRouted = 405;
+const canaryAttempts = 10;
+
+// A child killed by a signal keeps `exitCode === null` and reports the signal in
+// `signalCode`, so a guard reading exitCode alone treats an OOM-killed preview as
+// still starting. That kill is not hypothetical here: rendered-acceptance-run.mjs
+// documents a dev server dying on a 4 GB heap. Read both.
+const childDead = child => child.exitCode !== null || child.signalCode !== null;
+const childDeath = child => child.signalCode ? `killed by ${child.signalCode}` : `exited with code ${child.exitCode}`;
+
+async function devRouteTableReady(root, receipt, child) {
+  if (!existsSync(canaryFile)) throw new Error(`Dev preview route-table canary is missing; update canaryFile/canaryRoute together: ${canaryFile}`);
+  // Assert the canary still exports POST only. The 405 this probe waits for is
+  // Next's auto-implemented answer for an unexported method; the day someone adds
+  // `export function GET` here, every dev start burns the full retry budget and
+  // then reports a bundler fault that never happened.
+  const canarySource = await readFile(canaryFile, 'utf8');
+  // `export { GET } from './models/route'` is live in this tree at src/app/api/v1/route.js:1,
+  // and it answers a routed GET exactly as a local declaration does. A guard that reads only
+  // the declaration spellings passes a canary that has stopped being method-free.
+  const exportsGet = [/^\s*export\s+(async\s+)?function\s+GET\b/m, /^\s*export\s+const\s+GET\b/m, /^\s*export\s*\{[^}]*\bGET\b/m].some(pattern => pattern.test(canarySource));
+  if (exportsGet) throw new Error(`Dev preview canary now exports GET, so a routed GET no longer answers ${canaryRouted}; pick another method-free route or change canaryRouted: ${canaryFile}`);
+  const auth = await json(join(root, 'preview-auth.json'));
+  const base = `http://127.0.0.1:${receipt.port}`;
+  let last = 'no attempt completed';
+  for (let attempt = 0; attempt < canaryAttempts; attempt++) {
+    // Without this the probe spends its whole budget interrogating a corpse and
+    // then blames the route table, which is the one diagnosis that sends the
+    // reader to the bundler instead of to server.log.
+    if (childDead(child)) throw new Error(`Preview died during the route-table probe (${childDeath(child)}); inspect its private server.log`);
+    // Login resolves through the same truncated table as the canary, and a cold compile
+    // can outrun any single timeout, so every failure in here is an observation to retry.
+    // Tearing down a healthy preview because its route table is not repaired YET is the
+    // one outcome this probe must never produce.
+    try {
+      const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: auth.initialPassword }), signal: AbortSignal.timeout(60000) });
+      await login.arrayBuffer();
+      if (!login.ok) last = `login answered ${login.status}`;
+      else {
+        const cookie = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
+        const response = await fetch(`${base}${canaryRoute}`, { headers: { cookie }, signal: AbortSignal.timeout(60000) });
+        await response.arrayBuffer();
+        if (response.status === canaryRouted) return { attempts: attempt + 1, canaryRoute, canaryStatus: response.status, scope: 'one deep dynamic route resolved; not an assertion that every route aggregated' };
+        last = `canary answered ${response.status}`;
+      }
+    // undici reports a refused connection, a hang-up and a DNS failure all as
+    // `TypeError`; the discriminating value is on the cause. Keep both, because
+    // this string is the entire content of the terminal error below.
+    } catch (error) { last = `canary request failed with ${error.cause?.code ?? error.name}`; }
+    if (attempt === canaryAttempts - 1) break;
+    // Removing the canary mid-probe must not become a preview kill either.
+    try { const now = new Date(); utimesSync(canaryFile, now, now); }
+    catch (error) { last = `${last}; forced re-aggregation failed with ${error.code || error.name}`; }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  throw new Error(`Dev preview route table stayed truncated after forced re-aggregation (${last})`);
+}
+
 async function start(root, dist, buildReceiptPath, mode = 'production', preferredPort = 0) {
   const owner = await owned(root);
   const previous = await json(join(root, 'process.json')).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
@@ -77,14 +155,35 @@ async function start(root, dist, buildReceiptPath, mode = 'production', preferre
   const cwd = mode === 'dev' ? project : resolve(project, dist, 'standalone');
   if (mode === 'dev') await symlink(realpathSync(join(project, 'node_modules')), join(root, 'node_modules'), 'dir').catch(error => { if (error.code !== 'EEXIST') throw error; });
   if (mode === 'production') { await readFile(join(cwd, 'custom-server.js')); await readFile(join(cwd, 'server.js')); }
-  const buildId = mode === 'dev' ? null : (await readFile(resolve(project, dist, 'BUILD_ID'), 'utf8')).trim();
+  // The server runs from cwd=<dist>/standalone and next-server.js:644 resolves BUILD_ID under
+  // its own distDir, so the file it serves is <dist>/standalone/.next/BUILD_ID. Reading
+  // <dist>/BUILD_ID validates the receipt against a file this process never serves; the two
+  // agree only because one build copied the other, and a concurrent build desynchronizes them
+  // (measured 25 s apart on this tree). Read the served one, and refuse a disagreement.
+  const buildId = mode === 'dev' ? null : (await readFile(join(cwd, '.next', 'BUILD_ID'), 'utf8')).trim();
+  if (mode !== 'dev') {
+    const outerBuildId = (await readFile(resolve(project, dist, 'BUILD_ID'), 'utf8')).trim();
+    if (outerBuildId !== buildId) throw new Error(`Standalone BUILD_ID ${buildId} does not match ${dist}/BUILD_ID ${outerBuildId}; the tree was rebuilt while this copy was made`);
+  }
   const buildReceipt = buildReceiptPath ? await json(resolve(buildReceiptPath)) : null;
   if (buildReceipt && (buildReceipt.buildExit !== 0 || !/^[a-f\d]{64}$/.test(buildReceipt.sourceManifest) || !/^[a-f\d]{40}$/.test(buildReceipt.base))) throw new Error('Build receipt must report successful build and source revision/hash');
-  if (buildReceipt && (buildReceipt.sourceStable === false || buildReceipt.buildId && buildReceipt.buildId !== buildId)) throw new Error('Build receipt source drift or BUILD_ID mismatch');
+  // `receipt.buildId && …` would let a receipt with the field absent take the permissive path,
+  // which is the wrong failure direction for the one check that ties a receipt to this build.
+  // build.mjs:74-76 always populates it for a successful build, so requiring it costs nothing.
+  if (buildReceipt && (buildReceipt.sourceStable === false || buildReceipt.buildId !== buildId)) throw new Error('Build receipt source drift or BUILD_ID mismatch');
   if (buildReceipt) await save(join(root, 'build-receipt.json'), { ...buildReceipt, suppliedReceipt: resolve(buildReceiptPath), buildId });
   const port = await availablePort(preferredPort);
   const descriptor = openSync(join(root, 'server.log'), 'a', 0o600);
-  const child = spawn(process.execPath, ['--require', guard, mode === 'dev' ? join(project, 'tests/e2e/redesign-fixtures/dev-server.cjs') : 'custom-server.js'], {
+  // V8's default old-space ceiling on this host measures 4288 MB, and the launcher builds the
+  // child env by hand below, so an inherited NODE_OPTIONS cannot raise it. Every retained dev
+  // preview on this host (4 of 4) died on `Ineffective mark-compacts near heap limit`, the last
+  // one after a Mark-Compact that recovered 31 MB of 4080 at a 1356 ms pause. Choose the ceiling
+  // rather than inheriting one nobody picked. Production serves a finished build and does not
+  // churn HMR, so it keeps the default.
+  // ponytail: one fixed number, not a fraction of MemAvailable. 8 GB is ~4% of this host's
+  // 187 GB and clears the observed death by 2x; make it a flag if a preview ever needs more.
+  const devHeapMb = 8192;
+  const child = spawn(process.execPath, [...(mode === 'dev' ? [`--max-old-space-size=${devHeapMb}`] : []), '--require', guard, mode === 'dev' ? join(project, 'tests/e2e/redesign-fixtures/dev-server.cjs') : 'custom-server.js'], {
     cwd, detached: true, stdio: ['ignore', descriptor, descriptor],
     env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: join(root, 'home'), NODE_ENV: mode === 'dev' ? 'development' : 'production', ...(mode === 'dev' ? { NEXT_DIST_DIR: relative(project, join(root, 'next-dev')) } : {}), PORT: String(port), HOSTNAME: '127.0.0.1', DATA_DIR: join(root, 'runtime'), TOKENPROXY_PREVIEW_ISOLATED: '1', TOKENPROXY_REDESIGN_ROOT: root, TZ: 'UTC' },
   });
@@ -97,31 +196,67 @@ async function start(root, dist, buildReceiptPath, mode = 'production', preferre
   await save(join(root, 'process.json'), receipt);
   try {
     const readinessAttempts = mode === 'dev' ? 240 : 80;
+    let ready;
     for (let attempt = 0; attempt < readinessAttempts; attempt++) {
       if (spawnError) throw spawnError;
-      if (child.exitCode !== null) throw new Error('Preview exited before readiness; inspect its private server.log');
-      try { const live = await identity(root); child.unref(); return live; } catch (error) { if (attempt === readinessAttempts - 1) throw error; }
+      if (childDead(child)) throw new Error(`Preview ${childDeath(child)} before readiness; inspect its private server.log`);
+      try { ready = await identity(root); break; } catch (error) { if (attempt === readinessAttempts - 1) throw error; }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
+    // The loop leaves only two ways: `break` with `ready` set, or a rethrow on the
+    // last attempt. There is no third, so no `if (!ready)` arm is reachable here.
+    if (mode !== 'dev') { child.unref(); return ready; }
+    const routeTable = await devRouteTableReady(root, ready, child);
+    const repaired = { ...receipt, routeTable };
+    await save(join(root, 'process.json'), repaired);
+    child.unref();
+    return { ...ready, routeTable };
   } catch (error) {
     // This ChildProcess object is from this invocation, never a PID loaded from disk.
-    if (child.exitCode === null) child.kill('SIGTERM');
+    if (!childDead(child)) child.kill('SIGTERM');
+    // Both success paths unref; without it here the parent stays attached to the child it just
+    // signalled. Measured 4 ms against this launcher's handler-free child, but a child that
+    // ever gains a SIGTERM handler would hold the parent for as long as it chose to.
+    child.unref();
     throw error;
   }
 }
 
 async function main() {
   const [command = 'help', ...args] = process.argv.slice(2);
-  const flag = (name, fallback) => { const index = args.indexOf(name); return index < 0 ? fallback : args[index + 1]; };
+  // `args[index + 1]` on a TRAILING flag is undefined, not the fallback. Two of these fail
+  // silently rather than loudly: a trailing --mode becomes production through start()'s default
+  // parameter, and a trailing --build-receipt is falsy at the receipt read, which skips both
+  // provenance gates, writes no build-receipt.json and records the seed-time attribution as if
+  // none had been supplied. README:16 puts --build-receipt last, so a truncated paste lands here.
+  const flag = (name, fallback) => {
+    const index = args.indexOf(name);
+    if (index < 0) return fallback;
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith('--')) throw new Error(`${name} requires a value`);
+    return value;
+  };
   if (command === 'catalog') return SCENARIOS;
   if (command === 'build') return (await import('../tests/e2e/redesign-fixtures/build.mjs')).buildProduction();
   if (command === 'build-check') return (await import('../tests/e2e/redesign-fixtures/build.mjs')).verifyBuildIsolation();
   if (command === 'seed') return prepare(flag('--scenario', 'populated'), flag('--mode', 'production'));
   if (command === 'start') {
-    const root = flag('--run') || (await prepare(flag('--scenario', 'populated'), flag('--mode', 'production'))).root;
-    return start(root, flag('--dist', '.next'), flag('--build-receipt'), flag('--mode', 'production'), Number(flag('--port', 0)));
+    // start() rejects an unknown mode at :149, but only AFTER prepare() has seeded a full temp
+    // run, which is then orphaned. Validate before anything is created.
+    const mode = flag('--mode', 'production');
+    if (!['production', 'dev'].includes(mode)) throw new Error('Preview mode must be production or dev');
+    const root = flag('--run') || (await prepare(flag('--scenario', 'populated'), mode)).root;
+    return start(root, flag('--dist', '.next'), flag('--build-receipt'), mode, Number(flag('--port', 0)));
   }
-  if (command === 'status') return identity(flag('--run'));
+  if (command === 'status') {
+    const receipt = await identity(flag('--run'));
+    // start() saves the receipt at :174 so the readiness probe has something to challenge, and
+    // only rewrites it with routeTable at :189 once a deep dynamic route answered. A status read
+    // landing in that window would otherwise report a dev preview as if its route table were
+    // proven. verify-preview.mjs:16 already refuses such a receipt; fail here too, at the read.
+    if (receipt.mode === 'dev' && !receipt.routeTable) throw new Error('Dev preview has no route-table receipt yet; its start probe has not completed');
+    return receipt;
+  }
   if (command === 'recover-stopped') {
     const root = flag('--run');
     const owner = await owned(root);
@@ -131,6 +266,11 @@ async function main() {
     try { process.kill(receipt.pid, 0); }
     catch (error) { if (error.code === 'ESRCH') absent = true; else throw error; }
     if (!absent) throw new Error('Recorded PID still exists; refusing stale-receipt recovery');
+    // A cleanly stopped run satisfies every gate below (pid absent, port free, receipt matches),
+    // so without this it is relabelled unexpectedExit:true and its original stop timestamp is
+    // destroyed. stoppedAt is also what gates a fresh start() at :148, so the receipt this
+    // branch rewrites is load-bearing for ownership, not just for the record.
+    if (receipt.stoppedAt) throw new Error(`Preview already recorded as stopped at ${receipt.stoppedAt}; refusing to overwrite its stop receipt`);
     if (!Number.isInteger(receipt.port) || receipt.port < 1 || receipt.port > 65535) throw new Error('Invalid owned preview port');
     await availablePort(receipt.port);
     await save(join(owner.root, 'process.json'), { ...receipt, stoppedAt: new Date().toISOString(), unexpectedExit: true, recoveryEvidence: 'recorded PID absent and original loopback port available; no signal sent' });
@@ -140,12 +280,21 @@ async function main() {
     const root = flag('--run');
     await identity(root);
     const receipt = await identity(root, 'POST', '/__redesign_stop');
+    // identity() aborts at 2 s, so a live-but-slow preview throws exactly as a dead one does.
+    // Scoring that as death writes stoppedAt, which is the ONLY thing gating a fresh start() at
+    // :148, so a false death claim unlocks a second server over a live one. recover-stopped
+    // already holds the stronger evidence and this branch holds receipt.pid, so use it: the
+    // listener must stop answering AND the recorded process must be gone.
     let exited = false;
     for (let attempt = 0; attempt < 20; attempt++) {
       try { await identity(root); } catch { exited = true; break; }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     if (!exited) throw new Error('Stop accepted but owned listener still responds');
+    let absent = false;
+    try { process.kill(receipt.pid, 0); }
+    catch (error) { if (error.code === 'ESRCH') absent = true; else throw error; }
+    if (!absent) throw new Error(`Owned listener stopped answering but pid ${receipt.pid} still exists; refusing to record a stop this command cannot prove`);
     await save(join(root, 'process.json'), { ...receipt, stoppedAt: new Date().toISOString() });
     return { root, runId: receipt.runId, stopped: true, ownershipEndpointClosed: true };
   }
@@ -160,7 +309,7 @@ async function main() {
     await save(`${resolve(file)}.json`, receipt);
     return receipt;
   }
-  return { usage: 'node scripts/redesign-preview.mjs build-check|build; start --mode dev --scenario representative; start --mode production --dist .next --build-receipt /absolute/receipt; status|stop|recover-stopped --run /absolute/run; capture --run /absolute/run --route /dashboard --viewport 1440x900 --file /absolute/image.png; catalog', note: 'Dev compilation writes only into its owned runtime. Production uses an existing standalone build. Both modes block provider effects and keep disposable DATA_DIR.' };
+  return { usage: 'node scripts/redesign-preview.mjs build-check|build; start --mode dev --scenario representative; start --mode production --dist .next --build-receipt /absolute/receipt; status|stop|recover-stopped --run /absolute/run; capture --run /absolute/run --route /dashboard --viewport 1440x900 --file /absolute/image.png; catalog', note: 'Dev compilation writes its Next cache only into its owned runtime, but its route-table probe touches the mtime of one tracked source file in the shared tree, so a second watcher on this checkout recompiles alongside it; measured concurrent starts still resolved, but prefer one at a time. Production uses an existing standalone build. Both modes block provider effects and keep disposable DATA_DIR.' };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().then(value => console.log(JSON.stringify(value, null, 2))).catch(error => { console.error(error.message); process.exitCode = 1; });
