@@ -88,11 +88,23 @@ export function AddAccountRow({ onClose, onAdded }) {
           entry.baseUrlField ||
           accountOptionFields(entry.id).length > 2)));
   const paste = mode === 'oauth' && PASTE_FLOWS.has(flow?.flowType);
-  // Set only once an automatic attempt has already failed, so the paste box is a
-  // fallback rather than the first thing offered. It carries the state of the
-  // grant that failed: the pasted URL must match THAT sign-in, not a later one.
+  // Armed the moment a fixed-port sign-in goes live, and kept armed if it then
+  // fails. It carries the state of THAT sign-in, so a URL captured from any
+  // other grant is refused by the gateway rather than completing this one.
+  //
+  // It used to be set only on the refusal, which meant it first rendered after
+  // the ten-minute poll deadline. An operator whose callback was never going to
+  // arrive watched an unchanging row and gave up long before the one control
+  // that could have finished the sign-in appeared, which is indistinguishable
+  // from the window opening and nothing happening after it.
   const [manual, setManual] = useState(null);
   const [pastedUrl, setPastedUrl] = useState('');
+  const [manualBusy, setManualBusy] = useState(false);
+  // The connection this row just created, which turns the row into its second
+  // stage. Naming is asked for HERE, once there is something to name and with
+  // the identity the gateway captured already filled in, rather than before the
+  // sign-in where it was the only thing the operator could see.
+  const [saved, setSaved] = useState(null);
   const [label, setLabel] = useState('');
   const [note, setNote] = useState('');
   async function pick(value) {
@@ -120,6 +132,14 @@ export function AddAccountRow({ onClose, onAdded }) {
   }
   async function submit(event) {
     event.preventDefault();
+    // The second stage shares this form element, so Enter in the name or note
+    // field lands here. It saves the row it is editing; starting a second
+    // sign-in from a field that names an account already connected would be the
+    // opposite of what was typed.
+    if (saved) {
+      await saveMetadata();
+      return;
+    }
     if (!entry || busy) return;
     const current = choice.current;
     setBusy(true);
@@ -140,6 +160,9 @@ export function AddAccountRow({ onClose, onAdded }) {
           signal: controller.signal,
           report: (text) => current === choice.current && setStep(text),
           deviceHook: (info) => current === choice.current && setDevice(info),
+          // Fires once the loopback proxy is listening and the window has been
+          // navigated, so the escape hatch is on screen for the whole wait.
+          onFallback: (info) => current === choice.current && setManual(info),
         });
       }
     } else {
@@ -163,20 +186,41 @@ export function AddAccountRow({ onClose, onAdded }) {
     if (current !== choice.current) return;
     if (!out.ok) {
       setError(refusal(out.status, out.body));
-      // The automatic callback failed. For a fixed-port flow that means the
-      // loopback callback never landed, which the operator can still finish by
-      // hand: the provider already redirected their browser to a URL carrying
-      // the code. Offer the paste box bound to THIS sign-in's state, and only
-      // now, so it never replaces the automatic attempt.
+      // A refusal that still carries a state keeps the paste box on screen: the
+      // provider may already have redirected the operator to a URL holding the
+      // code, and that URL is the only thing left that can finish this grant.
       if (mode === 'oauth' && !paste && out.state && MANUAL_FALLBACK_PROVIDERS.has(entry.id)) {
         setManual({ provider: entry.id, state: out.state });
       }
       return;
     }
-    await applyMetadata(out.connection?.id);
-    const savedId = out.connection?.id;
-    const read = savedId ? await call(`/api/providers/${encodeURIComponent(savedId)}`) : null;
-    if (!read?.ok || read.body?.connection?.id !== savedId) {
+    await showSaved(out.connection?.id);
+  }
+
+  // The identity the gateway captured during the token exchange, read back off
+  // the row it saved. Codex spells its upstream account id `chatgptAccountId`
+  // and its tier `chatgptPlanType`, so both spellings are read. This is
+  // presentation only: it decides the sentence the row shows and the name it
+  // prefills, never whether two grants are the same account, which belongs to
+  // the repository that writes those columns.
+  function identitySentence(connection) {
+    const psd = connection?.providerSpecificData || {};
+    const who = connection?.email || psd.email || connection?.name || 'this account';
+    const plan = psd.plan || psd.chatgptPlanType || '';
+    const account = psd.accountId || psd.chatgptAccountId || '';
+    const detail = [plan ? `${plan} plan` : '', account ? `account ${String(account).slice(0, 8)}` : '']
+      .filter(Boolean)
+      .join(', ');
+    return detail ? `Signed in as ${who} (${detail}).` : `Signed in as ${who}.`;
+  }
+
+  // The account exists and is already on the board by the time this returns.
+  // Everything after it edits a row that is already working.
+  async function showSaved(connectionId) {
+    setManual(null);
+    setPastedUrl('');
+    const read = connectionId ? await call(`/api/providers/${encodeURIComponent(connectionId)}`) : null;
+    if (!read?.ok || read.body?.connection?.id !== connectionId) {
       setError({
         tone: 'warn',
         title: 'The account write was accepted, but the saved account was not read back.',
@@ -185,55 +229,81 @@ export function AddAccountRow({ onClose, onAdded }) {
       onAdded?.();
       return;
     }
-    onAdded?.(read.body.connection);
-    onClose?.();
+    const connection = read.body.connection;
+    onAdded?.(connection);
+    // Prefilled from what the sign-in itself reported, so the common case is
+    // reading a correct name rather than inventing one.
+    setLabel(connection.name || '');
+    setNote(connection.providerSpecificData?.accountNote || '');
+    setSaved(connection);
   }
-  // Optional, and never a precondition for the grant: a sign-in completes with
-  // both of these empty. The label goes to the `name` column and the note rides
-  // in providerSpecificData, which PUT merges rather than replaces. A failure
-  // here is reported without discarding the account that was already saved, and
-  // an empty label never overwrites a name the provider derived.
-  async function applyMetadata(connectionId) {
+
+  // Both fields are optional and neither gates anything. An untouched name is
+  // the one derived from the captured identity, so it is not written back; the
+  // note rides in providerSpecificData, which PUT merges rather than replaces.
+  // A failure here never discards the account, which is already stored.
+  async function saveMetadata() {
+    if (!saved || busy) return;
     const trimmedLabel = label.trim();
     const trimmedNote = note.trim();
-    if (!connectionId || (!trimmedLabel && !trimmedNote)) return;
     const body = {};
-    if (trimmedLabel) body.name = trimmedLabel;
-    if (trimmedNote) body.providerSpecificData = { accountNote: trimmedNote };
-    const saved = await call(`/api/providers/${encodeURIComponent(connectionId)}`, {
+    if (trimmedLabel && trimmedLabel !== saved.name) body.name = trimmedLabel;
+    if (trimmedNote !== (saved.providerSpecificData?.accountNote || '')) {
+      body.providerSpecificData = { accountNote: trimmedNote };
+    }
+    if (!Object.keys(body).length) {
+      onClose?.();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const response = await call(`/api/providers/${encodeURIComponent(saved.id)}`, {
       method: 'PUT',
       body,
     });
-    if (!saved.ok) {
+    setBusy(false);
+    if (!response.ok) {
       setError({
         tone: 'warn',
-        title: 'The account was added, but the label and note were not saved.',
+        title: 'The account is connected, but the name and note were not saved.',
         next: 'Set them from Connections.',
       });
+      return;
     }
+    const read = await call(`/api/providers/${encodeURIComponent(saved.id)}`);
+    onAdded?.(read.ok ? read.body.connection : saved);
+    onClose?.();
   }
 
-  // The paste-back fallback. `manual.state` is the state of the sign-in that
-  // failed, and the gateway refuses a pasted URL whose own state disagrees with
-  // it, so a URL from another flow cannot complete this one.
+  // The paste-back fallback. `manual.state` is the state of the sign-in this row
+  // started, and the gateway refuses a pasted URL whose own state disagrees with
+  // it, so a URL from another flow cannot complete this one. It runs on its own
+  // `manualBusy` rather than on `busy`, because the whole point is that it stays
+  // usable while the automatic wait is still running.
   async function finishManual() {
-    if (!manual || busy) return;
-    setBusy(true);
+    if (!manual || manualBusy) return;
+    // The automatic wait is abandoned first, and the epoch is bumped so its late
+    // refusal is discarded instead of landing on top of the account this is
+    // about to create.
+    choice.current += 1;
+    abortRef.current?.abort();
+    setManualBusy(true);
     setError(null);
     const response = await call(`/api/oauth/${manual.provider}/manual-code`, {
       method: 'POST',
       body: { url: pastedUrl.trim(), state: manual.state },
     });
-    setBusy(false);
+    setManualBusy(false);
     if (!response.ok || !response.body?.success) {
-      setError(refusal(response.status, response.body));
+      // manual-code answers a refusal with an operator-facing sentence, naming a
+      // state that belongs to a different sign-in or a session that has expired.
+      // That sentence is shown as written rather than flattened into the generic
+      // "The request failed", which named neither.
+      const stated = typeof response.body?.error === 'string' ? response.body.error.trim() : '';
+      setError(stated ? { tone: 'bad', title: stated } : refusal(response.status, response.body));
       return;
     }
-    setPastedUrl('');
-    setManual(null);
-    await applyMetadata(response.body.connection?.id);
-    onAdded?.(response.body.connection);
-    onClose?.();
+    await showSaved(response.body.connection?.id);
   }
 
   function cancel() {
@@ -250,89 +320,19 @@ export function AddAccountRow({ onClose, onAdded }) {
     entry &&
     !needsConnections &&
     !busy &&
+    !manualBusy &&
     (mode === 'oauth' ? Boolean(flow) && (!paste || secret.trim()) : secret.trim());
   return (
     <form className={styles.addRow} aria-label="Add account" onSubmit={submit}>
-      <Select
-        size="xs"
-        aria-label="Provider"
-        placeholder="Provider"
-        searchable
-        data={choices}
-        value={selection}
-        onChange={(value) => value && pick(value)}
-        className={styles.addProvider}
-        nothingFoundMessage="No provider matches"
-        allowDeselect={false}
-      />
-      {modes.length > 1 ? (
-        <Select
-          size="xs"
-          aria-label="Credential type"
-          data={modes.map((value) => ({ value, label: MODE_WORD[value] || value }))}
-          value={mode}
-          onChange={(value) => value && setMode(value)}
-          className={styles.addMode}
-          allowDeselect={false}
-        />
-      ) : null}
-      {entry && needsConnections ? (
-        <Text size="xs" className={styles.addNote}>
-          {entry.name || entry.id} needs extra settings.{' '}
-          <Link href="/dashboard/connections">Continue in Connections</Link>.
-        </Text>
-      ) : null}
-      {entry && !needsConnections && mode === 'apikey' ? (
+      {saved ? (
         <>
+          <Text size="xs" className={styles.addNote} role="status">
+            {identitySentence(saved)}
+          </Text>
           <TextInput
             size="xs"
             aria-label="Account name"
-            placeholder="Name (optional)"
-            value={name}
-            onChange={(event) => setName(event.currentTarget.value)}
-            className={styles.addName}
-            maxLength={120}
-          />
-          <PasswordInput
-            size="xs"
-            aria-label="API key"
-            placeholder="API key"
-            value={secret}
-            onChange={(event) => setSecret(event.currentTarget.value)}
-            className={styles.addSecret}
-            autoComplete="off"
-            required
-          />
-        </>
-      ) : null}
-      {entry && !needsConnections && mode === 'oauth' ? (
-        paste ? (
-          <PasswordInput
-            size="xs"
-            aria-label="Pasted token"
-            placeholder="Paste the token from the provider"
-            value={secret}
-            onChange={(event) => setSecret(event.currentTarget.value)}
-            className={styles.addSecret}
-            autoComplete="off"
-            required
-          />
-        ) : (
-          <Text size="xs" className={styles.addNote}>
-            {flow?.failed
-              ? flow.failed.title
-              : flow
-                ? 'Opens the provider sign-in in a new window.'
-                : 'Checking the sign-in method…'}
-          </Text>
-        )
-      ) : null}
-      {entry && !needsConnections && mode === 'oauth' && !paste ? (
-        <>
-          <TextInput
-            size="xs"
-            aria-label="Account label"
-            placeholder="Label (optional)"
+            placeholder="Name"
             value={label}
             onChange={(event) => setLabel(event.currentTarget.value)}
             className={styles.addName}
@@ -348,44 +348,129 @@ export function AddAccountRow({ onClose, onAdded }) {
             maxLength={280}
           />
         </>
-      ) : null}
-      {manual ? (
+      ) : (
         <>
-          <Text size="xs" className={styles.addNote} role="status">
-            The sign-in window finished, but this app never received the callback. Copy the whole
-            address from that window&rsquo;s browser bar and paste it here to finish.
-          </Text>
-          <TextInput
+          <Select
             size="xs"
-            aria-label="Pasted callback URL"
-            placeholder="http://localhost:1455/auth/callback?code=…&state=…"
-            value={pastedUrl}
-            onChange={(event) => setPastedUrl(event.currentTarget.value)}
-            className={styles.addSecret}
-            autoComplete="off"
+            aria-label="Provider"
+            placeholder="Provider"
+            searchable
+            data={choices}
+            value={selection}
+            onChange={(value) => value && pick(value)}
+            className={styles.addProvider}
+            nothingFoundMessage="No provider matches"
+            allowDeselect={false}
           />
-          <Button
-            size="xs"
-            variant="light"
-            loading={busy}
-            disabled={busy || !pastedUrl.trim()}
-            onClick={finishManual}
-            leftSection={<Icon name="i-check" />}
-          >
-            Finish sign-in
-          </Button>
+          {modes.length > 1 ? (
+            <Select
+              size="xs"
+              aria-label="Credential type"
+              data={modes.map((value) => ({ value, label: MODE_WORD[value] || value }))}
+              value={mode}
+              onChange={(value) => value && setMode(value)}
+              className={styles.addMode}
+              allowDeselect={false}
+            />
+          ) : null}
+          {entry && needsConnections ? (
+            <Text size="xs" className={styles.addNote}>
+              {entry.name || entry.id} needs extra settings.{' '}
+              <Link href="/dashboard/connections">Continue in Connections</Link>.
+            </Text>
+          ) : null}
+          {entry && !needsConnections && mode === 'apikey' ? (
+            <>
+              <TextInput
+                size="xs"
+                aria-label="Account name"
+                placeholder="Name (optional)"
+                value={name}
+                onChange={(event) => setName(event.currentTarget.value)}
+                className={styles.addName}
+                maxLength={120}
+              />
+              <PasswordInput
+                size="xs"
+                aria-label="API key"
+                placeholder="API key"
+                value={secret}
+                onChange={(event) => setSecret(event.currentTarget.value)}
+                className={styles.addSecret}
+                autoComplete="off"
+                required
+              />
+            </>
+          ) : null}
+          {entry && !needsConnections && mode === 'oauth' ? (
+            paste ? (
+              <PasswordInput
+                size="xs"
+                aria-label="Pasted token"
+                placeholder="Paste the token from the provider"
+                value={secret}
+                onChange={(event) => setSecret(event.currentTarget.value)}
+                className={styles.addSecret}
+                autoComplete="off"
+                required
+              />
+            ) : (
+              <Text size="xs" className={styles.addNote}>
+                {flow?.failed
+                  ? flow.failed.title
+                  : flow
+                    ? 'Opens the provider sign-in in a new window.'
+                    : 'Checking the sign-in method…'}
+              </Text>
+            )
+          ) : null}
+          {manual ? (
+            <>
+              <Text size="xs" className={styles.addNote} role="status">
+                If the sign-in window finishes and this row does not, copy the whole address out of
+                that window&rsquo;s browser bar and paste it here.
+              </Text>
+              <TextInput
+                size="xs"
+                aria-label="Pasted callback URL"
+                placeholder="http://localhost:1455/auth/callback?code=…&state=…"
+                value={pastedUrl}
+                onChange={(event) => setPastedUrl(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  // Enter in a text input submits the form it sits in, which
+                  // here started a SECOND sign-in and threw the pasted address
+                  // away. The key that means "finish" has to finish.
+                  if (event.key !== 'Enter') return;
+                  event.preventDefault();
+                  finishManual();
+                }}
+                className={styles.addSecret}
+                autoComplete="off"
+              />
+              <Button
+                size="xs"
+                variant="light"
+                loading={manualBusy}
+                disabled={manualBusy || !pastedUrl.trim()}
+                onClick={finishManual}
+                leftSection={<Icon name="i-check" />}
+              >
+                Finish sign-in
+              </Button>
+            </>
+          ) : null}
+          {device ? (
+            <Text size="xs" className={styles.addNote}>
+              Enter <code>{device.userCode}</code> at <bdi>{device.verificationUri}</bdi>
+            </Text>
+          ) : null}
+          {step ? (
+            <Text size="xs" className={styles.addNote} role="status">
+              {step}
+            </Text>
+          ) : null}
         </>
-      ) : null}
-      {device ? (
-        <Text size="xs" className={styles.addNote}>
-          Enter <code>{device.userCode}</code> at <bdi>{device.verificationUri}</bdi>
-        </Text>
-      ) : null}
-      {step ? (
-        <Text size="xs" className={styles.addNote} role="status">
-          {step}
-        </Text>
-      ) : null}
+      )}
       {error ? (
         <Text size="xs" c="orange.8" className={styles.addNote} role="alert">
           {error.title}
@@ -394,21 +479,33 @@ export function AddAccountRow({ onClose, onAdded }) {
         </Text>
       ) : null}
       <span className={styles.spacer} />
-      <Button
-        type="submit"
-        size="xs"
-        loading={busy}
-        disabled={!canSubmit}
-        leftSection={<Icon name={mode === 'oauth' && !paste ? 'i-open' : 'i-check'} />}
-      >
-        {mode === 'oauth' && !paste ? 'Sign in' : 'Add'}
-      </Button>
-      <Tooltip label="Cancel">
+      {saved ? (
+        <Button
+          size="xs"
+          loading={busy}
+          disabled={busy}
+          onClick={saveMetadata}
+          leftSection={<Icon name="i-check" />}
+        >
+          Save
+        </Button>
+      ) : (
+        <Button
+          type="submit"
+          size="xs"
+          loading={busy}
+          disabled={!canSubmit}
+          leftSection={<Icon name={mode === 'oauth' && !paste ? 'i-open' : 'i-check'} />}
+        >
+          {mode === 'oauth' && !paste ? 'Sign in' : 'Add'}
+        </Button>
+      )}
+      <Tooltip label={saved ? 'Done' : 'Cancel'}>
         <ActionIcon
           variant="subtle"
           color="gray"
-          aria-label="Cancel adding an account"
-          onClick={cancel}
+          aria-label={saved ? 'Close the account panel' : 'Cancel adding an account'}
+          onClick={saved ? () => onClose?.() : cancel}
         >
           <Icon name="i-close" />
         </ActionIcon>

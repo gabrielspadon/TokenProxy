@@ -519,9 +519,13 @@ describe('handleNonStreamingResponse post-processing gates', () => {
     const res = await handleNonStreamingResponse(params);
     expect(res.status).toBe(502);
     expect(res.error).toMatch(/Empty response content/);
-    // No forced deadline: an empty body is the request's failure, not the
-    // account's, so nothing here may bench a seat that still has headroom.
-    expect(res.resetsAtMs ?? null).toBeNull();
+    // 35784e11 removed the forced EMPTY_CONTENT_COOLDOWN_MS here: a 200 carrying
+    // no content block is a property of THAT response, not evidence the account
+    // is broken, and the lock was measured concentrating on the seats still
+    // serving. No forced deadline goes back, so classifyAccountFailure decides.
+    // The case above it, an upstream error framed AS content, still carries one,
+    // and that difference is the whole point of the pair.
+    expect(res.resetsAtMs).toBeNull();
   });
 });
 
