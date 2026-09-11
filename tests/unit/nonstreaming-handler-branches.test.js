@@ -512,14 +512,20 @@ describe('handleNonStreamingResponse post-processing gates', () => {
     expect(res.resetsAtMs).toBeGreaterThan(Date.now());
   });
 
-  it('HTTP 200 with empty content fails 502 and locks with a cooldown', async () => {
+  it('HTTP 200 with empty content fails 502 and leaves the account in rotation', async () => {
     const params = handlerParams({
       providerResponse: jsonProviderResponse(completion({ role: 'assistant', content: '   ' })),
     });
     const res = await handleNonStreamingResponse(params);
     expect(res.status).toBe(502);
     expect(res.error).toMatch(/Empty response content/);
-    expect(res.resetsAtMs).toBeGreaterThan(Date.now());
+    // 35784e11 removed the forced EMPTY_CONTENT_COOLDOWN_MS here: a 200 carrying
+    // no content block is a property of THAT response, not evidence the account
+    // is broken, and the lock was measured concentrating on the seats still
+    // serving. No forced deadline goes back, so classifyAccountFailure decides.
+    // The case above it, an upstream error framed AS content, still carries one,
+    // and that difference is the whole point of the pair.
+    expect(res.resetsAtMs).toBeNull();
   });
 });
 
