@@ -32,6 +32,7 @@ parentPort?.on("message", async ({ id, query }) => {
     phase = "snapshot";
     db.exec("BEGIN");
     phase = "query";
+    const queryStarted = performance.now();
     const result = validated.operation === "evidence" ? readEvidence(db,validated)
       : validated.operation === "quota-workbench" ? readQuotaWorkbench(db,validated)
       : validated.operation === "key-usage" ? readKeyUsage(db)
@@ -44,9 +45,11 @@ parentPort?.on("message", async ({ id, query }) => {
       : validated.operation === "events" ? readContextEvents(db, validated.filter)
       : validated.operation === "overview" ? readContextOverview(db, validated.filter, validated.retainedDays)
         : readContextSession(db, validated.sessionId, validated.filter);
+    const queryDurationMs = performance.now() - queryStarted;
     phase = "release";
     db.exec("ROLLBACK");
     if (result) result.freshness = { source: db.source, snapshotStartedAt,
+      queryDurationMs,
       snapshotCompletedAt: new Date().toISOString(), persistedAt: db.persistedAt };
     parentPort.postMessage({ id, result });
   } catch (error) {

@@ -28,6 +28,10 @@ export async function GET(request) {
       computedAt: body.freshness?.snapshotCompletedAt || body.freshness?.observedAt || null } });
     response.headers.set('x-tokenproxy-refresh-after-ms', String(refresh.refreshAfterMs));
     response.headers.set('x-tokenproxy-refresh-reason', refresh.reason);
+    for (const [header,field] of [['x-tokenproxy-analytics-queue-ms','queueDurationMs'],['x-tokenproxy-analytics-execution-ms','executionDurationMs'],['x-tokenproxy-analytics-query-ms','queryDurationMs']]) {
+      const value=body.freshness?.[field];
+      if(Number.isFinite(value))response.headers.set(header,String(value));
+    }
     return response;
   } catch (error) {
     if (error instanceof ActivityQueryError) return adminError(400,'invalid_request',error.message);

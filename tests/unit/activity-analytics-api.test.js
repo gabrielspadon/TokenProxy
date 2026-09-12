@@ -33,8 +33,22 @@ describe('operator analytics boundary and actual worker',()=>{
       expect(JSON.stringify(value)).not.toContain('analytics-synthetic-inference-key');
     }
   });
+  it('returns only requested facets and reports bounded worker timing',async()=>{
+    const response=await GET(request('/api/analytics?view=economics&facets=items&pageSize=1',{operator:true}));
+    expect(response.status).toBe(200);
+    const value=await response.json();
+    expect(value.items).toHaveLength(1);
+    expect(value).toHaveProperty('pagination');
+    for(const omitted of ['summary','groups','groupPagination','series'])expect(value).not.toHaveProperty(omitted);
+    expect(value.freshness).toMatchObject({source:'committed-sqlite'});
+    expect(value.freshness.queueDurationMs).toBeGreaterThanOrEqual(0);
+    expect(value.freshness.executionDurationMs).toBeGreaterThanOrEqual(0);
+    expect(value.freshness.queryDurationMs).toBeGreaterThanOrEqual(0);
+    for(const header of ['x-tokenproxy-analytics-queue-ms','x-tokenproxy-analytics-execution-ms','x-tokenproxy-analytics-query-ms'])
+      expect(Number(response.headers.get(header))).toBeGreaterThanOrEqual(0);
+  });
   it('validates unknown, duplicate and reserved parameters before querying',async()=>{
-    for(const query of ['sql=SELECT','operation=overview','view=activity&view=economics','pageSize=1000','groupBy=apiKey','provider=%00','__proto__=unknown']){
+    for(const query of ['sql=SELECT','operation=overview','view=activity&view=economics','pageSize=1000','groupBy=apiKey','provider=%00','facets=summary%2Csummary','facets=records','__proto__=unknown']){
       expect((await GET(request(`/api/analytics?${query}`,{operator:true}))).status).toBe(400);
     }
   });

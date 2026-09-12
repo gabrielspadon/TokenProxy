@@ -90,6 +90,14 @@ it('worker queue serves a second scope ahead of a saturated scope and bounds eac
   worker.respond(0);expect(worker.messages[1].query.n).toBe(5);
   worker.respond(1);worker.respond(2);worker.respond(3);await Promise.all(requests);await client.close();
 });
+it('reports queue and execution time separately while retaining one total deadline',async()=>{
+  let clock=0;const worker=new Worker();const client=createContextAnalyticsClient({workerFactory:()=>worker,version:()=>1,monotonic:()=>clock,timeoutMs:100});
+  const first=client.run({n:1});clock=5;const second=client.run({n:2});
+  clock=10;worker.respond(0);await first;
+  clock=25;worker.respond(1);const result=await second;
+  expect(result.freshness).toMatchObject({queueDurationMs:5,executionDurationMs:15,serviceDeadlineMs:100});
+  await client.close();
+});
 it('explicit invalidation during computation cannot repopulate old cache, and TTL preserves bounded reuse',async()=>{
   let now=0;const worker=new Worker();const client=createContextAnalyticsClient({workerFactory:()=>worker,version:()=>1,now:()=>now,maxCacheEntries:1,cacheTtlMs:100});
   const first=client.run({n:1});client.invalidate();worker.respond();await first;expect(client.status().cached).toBe(0);

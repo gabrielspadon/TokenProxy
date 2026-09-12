@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { ActivityQueryError, readActivityAnalytics, validateActivityQuery } from '../../src/lib/db/analytics/activityQueries.mjs';
+import { TABLES, buildCreateTableSql } from '../../src/lib/db/schema.js';
+import { ECONOMICS_ORACLE, ECONOMICS_WINDOW, seedEconomicsCorrectness } from '../fixtures/economics-analytics-scale.mjs';
 
 let native, db;
 beforeEach(() => {
@@ -25,6 +27,26 @@ afterEach(() => native.close());
 const read = (overrides={}) => readActivityAnalytics(db,{operation:'activity',...overrides});
 
 describe('analytical workspace read contract', () => {
+  it('matches an independent mixed-provenance oracle across every facet and end boundary', () => {
+    const fixture = new Database(':memory:');
+    try {
+      for (const [name,table] of Object.entries(TABLES)) fixture.exec(buildCreateTableSql(name,table));
+      seedEconomicsCorrectness(fixture);
+      const adapter={get:(sql,args=[])=>fixture.prepare(sql).get(...args),all:(sql,args=[])=>fixture.prepare(sql).all(...args)};
+      const query={operation:'activity',view:'economics',...ECONOMICS_WINDOW,pageSize:10};
+      const result=readActivityAnalytics(adapter,query);
+      expect(result.summary).toMatchObject(ECONOMICS_ORACLE.summary);
+      expect(result.summary.estimatedCostUsd).toBeCloseTo(0.35,12);
+      expect(Object.fromEntries(result.groups.map(row=>[row.provider,row.records]))).toEqual(ECONOMICS_ORACLE.providers);
+      expect(result.series.points.map(row=>row.records)).toEqual(ECONOMICS_ORACLE.seriesRecords);
+      expect(result.items.map(row=>row.requestId)).toEqual(ECONOMICS_ORACLE.itemRequestIds);
+      for(const facet of ['summary','groups','series','items']){
+        const projected=readActivityAnalytics(adapter,{...query,facets:facet});
+        const fields=facet==='groups'?['groups','groupPagination']:facet==='items'?['items','pagination']:[facet];
+        for(const field of fields)expect(projected[field]).toEqual(result[field]);
+      }
+    } finally { fixture.close(); }
+  });
   it('keeps attempts, completion ledger and estimated costs separate', () => {
     const traffic = read(), money = read({view:'economics'});
     expect(traffic.source).toBe('requestStats');
@@ -61,6 +83,27 @@ describe('analytical workspace read contract', () => {
       expect(result.groups.reduce((n,p)=>n+p.inputTokens,0)).toBe(result.summary.inputTokens);
       expect(read({view,pageSize:1,page:2}).items[0].id).not.toBe(result.items[0].id);
     }
+  });
+  it('projects explicit canonical facets from one materialized filtered population', () => {
+    const statements = [];
+    const traced = {
+      get: (sql,args=[]) => { statements.push(sql); return db.get(sql,args); },
+      all: (sql,args=[]) => { statements.push(sql); return db.all(sql,args); },
+    };
+    const result = readActivityAnalytics(traced, {
+      operation:'activity', view:'economics', facets:'groups,summary', groupBy:'account',
+    });
+    expect(result.filters.facets).toEqual(['summary','groups']);
+    expect(result).toHaveProperty('summary');
+    expect(result).toHaveProperty('groups');
+    for (const omitted of ['series','items','pagination']) expect(result).not.toHaveProperty(omitted);
+    expect(statements.filter(sql=>sql.includes('records AS MATERIALIZED'))).toHaveLength(1);
+  });
+  it('keeps the compatibility projection while rejecting ambiguous facet requests', () => {
+    expect(validateActivityQuery({operation:'activity'}).facets).toEqual(['summary','groups','series','items']);
+    expect(validateActivityQuery({operation:'activity',facets:'items,summary'}).facets).toEqual(['summary','items']);
+    for (const facets of ['', 'summary,summary', 'records', {summary:true}])
+      expect(()=>validateActivityQuery({operation:'activity',facets})).toThrow(ActivityQueryError);
   });
   it('retains extreme measured latency and distinguishes missing samples', () => {
     const result = read({provider:'claude'});

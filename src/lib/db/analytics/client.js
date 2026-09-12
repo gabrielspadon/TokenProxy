@@ -31,7 +31,7 @@ function workerPath() {
   throw new ContextAnalyticsError("Context analytics runtime is missing.");
 }
 
-export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_TIMEOUT_MS, maxQueued = MAX_QUEUED, workerFactory, version = () => analyticsDataVersion(file), now = Date.now, cacheTtlMs = 1000, maxCacheBytes = 8 * 1024 * 1024, maxCacheEntries = 32 } = {}) {
+export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_TIMEOUT_MS, maxQueued = MAX_QUEUED, workerFactory, version = () => analyticsDataVersion(file), now = Date.now, monotonic = () => performance.now(), cacheTtlMs = 1000, maxCacheBytes = 8 * 1024 * 1024, maxCacheEntries = 32 } = {}) {
   const jobs = new Map(), queue = [], cache = new Map();
   let cacheBytes = 0, lastScope = null, cacheEpoch = 0;
   const dropCache = key => { const entry = cache.get(key); if (entry) { cacheBytes -= entry.bytes; cache.delete(key); } };
@@ -41,6 +41,12 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
   function finish(job, error, result) {
     clearTimeout(job.timer);
     jobs.delete(job.key);
+    if (!error && result && typeof result === 'object') result.freshness = {
+      ...result.freshness,
+      queueDurationMs: Math.max(0, (job.startedAt ?? monotonic()) - job.enqueuedAt),
+      executionDurationMs: Math.max(0, monotonic() - (job.startedAt ?? job.enqueuedAt)),
+      serviceDeadlineMs: timeoutMs,
+    };
     if (!error && job.subscribers.size && job.epoch === cacheEpoch && job.version !== null && job.version === version()) {
       const bytes = Buffer.byteLength(JSON.stringify(result));
       if (bytes <= maxCacheBytes) {
@@ -71,7 +77,7 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
     if (closed || active || terminating || !queue.length) return;
     let index = queue.findIndex(job => job.scope !== lastScope);
     if (index < 0) index = 0;
-    active = queue.splice(index, 1)[0]; lastScope = active.scope;
+    active = queue.splice(index, 1)[0]; lastScope = active.scope; active.startedAt = monotonic();
     try {
       if (!worker) {
         worker = workerFactory ? workerFactory() : new Worker(workerPath(), {
@@ -108,7 +114,7 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
     if (!job && (queue.length >= maxQueued || queue.filter(item => item.scope === scope).length >= Math.max(1, Math.ceil(maxQueued / 2)))) return Promise.reject(unavailable());
     if (job?.subscribers.size >= MAX_SUBSCRIBERS) return Promise.reject(unavailable());
     if (!job) {
-      job = { id: ++sequence, key, query, scope, version: dataVersion, epoch: cacheEpoch, subscribers: new Set() };
+      job = { id: ++sequence, key, query, scope, version: dataVersion, epoch: cacheEpoch, subscribers: new Set(), enqueuedAt: monotonic() };
       jobs.set(key, job); queue.push(job);
       job.timer = setTimeout(() => {
         if (active === job) failWorker();
@@ -120,11 +126,13 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
       const subscriber = { resolve: resolveResult, reject, cleanup: () => signal?.removeEventListener("abort", abort) };
       function abort() {
         subscriber.cleanup(); job.subscribers.delete(subscriber); reject(unavailable());
-        if (!job.subscribers.size && active !== job) {
-          queue.splice(queue.indexOf(job), 1); finish(job, unavailable());
+        if (!job.subscribers.size) {
+          if (active === job) failWorker();
+          else {
+            const index=queue.indexOf(job); if(index>=0)queue.splice(index,1);
+            finish(job, unavailable());
+          }
         }
-        // A running synchronous SQLite query finishes off-thread or is stopped
-        // by its deadline. Its abandoned result is discarded, never cached.
       }
       job.subscribers.add(subscriber);
       signal?.addEventListener("abort", abort, { once: true });

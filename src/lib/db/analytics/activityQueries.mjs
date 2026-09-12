@@ -8,7 +8,9 @@ const IDENTITY_FILTERS = ['clientKeyId',...CLIENT_REFERENCE_FIELDS];
 const MISSING_FILTERS = ['provider','model','connectionId','sessionId','logicalRequestId',...IDENTITY_FILTERS];
 const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
 const GROUP_SORTS = new Set(['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens']);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'start', 'end', 'provider', 'model', 'connectionId', 'bucketMs', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
+const FACETS = ['summary','groups','series','items'];
+const FACET_SET = new Set(FACETS);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'facets', 'start', 'end', 'provider', 'model', 'connectionId', 'bucketMs', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
 
 export class ActivityQueryError extends Error {}
 
@@ -41,13 +43,22 @@ function integer(value, fallback, max, field) {
   return parsed;
 }
 
+function facets(value) {
+  if (value == null) return [...FACETS];
+  const requested = typeof value === 'string' ? value.split(',') : value;
+  if (!Array.isArray(requested) || !requested.length || requested.some(name => typeof name !== 'string' || !FACET_SET.has(name)) || new Set(requested).size !== requested.length) {
+    throw new ActivityQueryError('Invalid analytics facets.');
+  }
+  return FACETS.filter(name => requested.includes(name));
+}
+
 export function validateActivityQuery(query) {
   if (!query || typeof query !== 'object' || Array.isArray(query)) throw new ActivityQueryError('Invalid analytics query.');
   for (const key of Object.keys(query)) if (!FIELDS.has(key)) throw new ActivityQueryError('Unknown analytics field.');
   if (query.operation !== 'activity') throw new ActivityQueryError('Invalid analytics operation.');
   const view = query.view ?? 'activity', groupBy = query.groupBy ?? 'provider';
   if (!['activity', 'economics'].includes(view) || !GROUPS.has(groupBy)) throw new ActivityQueryError('Invalid analytics view or grouping.');
-  const result = { operation: 'activity', view, groupBy, start: date(query.start, 'start'), end: date(query.end, 'end') };
+  const result = { operation: 'activity', view, groupBy, facets: facets(query.facets), start: date(query.start, 'start'), end: date(query.end, 'end') };
   if (result.start && result.end && result.start >= result.end) throw new ActivityQueryError('The end must be after the start.');
   for (const key of ['provider', 'model', 'connectionId']) {
     const value = query[key];
@@ -133,7 +144,7 @@ const quantity = (field) => `CASE WHEN ${validToken(field)} THEN ${field} END`;
 const jsonQuantity = (field) => quantity(`json_extract(safeTokens,'$.${field}')`);
 
 const ATTRIBUTION = ['dispatchCoverage','requestId','logicalRequestId','attempt','projectId','rateSnapshotId','pricingCapturedAt','costSource','costEvidence','usageSource','estimatedCostUsd','reportedCostUsd'];
-function baseQuery(db, query) {
+function baseQuery(db, query, { materialize = false } = {}) {
   const table = query.view === 'economics' ? 'usageHistory' : 'requestStats';
   const columns = new Set(db.all(`PRAGMA table_info(${table})`, []).map((row) => row.name));
   const { sql, params } = filterFor(query, columns);
@@ -146,7 +157,7 @@ function baseQuery(db, query) {
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN tokens ELSE '{}' END ELSE '{}' END AS safeTokens,
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN 0 ELSE 1 END ELSE 1 END AS invalidTokenDetail
       FROM ledger ${sql}
-    ), quantities AS MATERIALIZED (
+    ), quantities AS ${materialize ? '' : 'MATERIALIZED '}(
       SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,${ECONOMICS_LINK_FIELDS.join(',')},
         CASE WHEN json_extract(safeTokens,'$.input_tokens_present')=0 THEN NULL ELSE ${quantity('promptTokens')} END AS prompt,
         CASE WHEN json_extract(safeTokens,'$.output_tokens_present')=0 THEN NULL ELSE ${quantity('completionTokens')} END AS output,
@@ -162,7 +173,7 @@ function baseQuery(db, query) {
         CASE WHEN ${validNumber('linkedLatency')} AND linkedLatency>0 THEN linkedLatency END AS latencyMs,
         CASE WHEN ${validNumber('linkedTtft')} AND linkedTtft>0 THEN linkedTtft END AS ttftMs
       FROM filtered
-    ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
+    ), records AS ${materialize ? 'MATERIALIZED ' : ''}(SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
       CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
   }
   return { params, sql: `WITH quantities AS (
@@ -176,7 +187,7 @@ function baseQuery(db, query) {
       0 AS missingTokenDetail,CASE WHEN ${validNumber('latencyTotal')} AND latencyTotal>0 THEN latencyTotal END AS latencyMs,
       CASE WHEN ${validNumber('latencyTtft')} AND latencyTtft>0 THEN latencyTtft END AS ttftMs,${contextId}
     FROM requestStats ${sql}
-  ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
+  ), records AS ${materialize ? 'MATERIALIZED ' : ''}(SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
     CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
 }
 
@@ -224,6 +235,21 @@ COALESCE(SUM(prompt),0) AS inputTokens,
   MIN(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS firstSeenAt,
   MAX(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS lastSeenAt`;
 
+const TOTAL_FIELDS = ['records','attempts','linkedRequestRows','conflictingRequestRows','unavailableRequestRows','explicitSessionRows',
+  'clientProjectRows','taskRows','clientRows','initialAttemptRows','additionalAttemptRows','additionalAttemptCostUsd','pairedCostUsd',
+  'pairedAverageLatencyMs','costLatencySamples','physicalDispatchRows','executorInvocationRows','unknownDispatchRows','logicalRequests',
+  'unattributedAttempts','estimatedCostUsd','reportedCostUsd','estimatedCostSamples','reportedCostSamples','confirmedCostRows',
+  'providerReportedCostRows','unknownCostSourceRows','rateSnapshotRows','inputTokens','uncachedInputTokens','cacheReadTokens',
+  'cacheWriteTokens','outputTokens','inputSamples','outputSamples','cacheReadSamples','cacheWriteSamples','uncachedInputSamples',
+  'cacheEligibleInputTokens','cacheEligibleReadTokens','succeeded','failed','recordedPending','invalidTokenRows','inconsistentCacheRows',
+  'missingTokenDetailRows','invalidTimestampRows','recordedCostUsd','costSamples','zeroCostRows','averageLatencyMs','minimumLatencyMs',
+  'maximumLatencyMs','latencySamples','averageTtftMs','ttftSamples','firstSeenAt','lastSeenAt'];
+const ITEM_FIELDS = ['id','timestamp','provider','model','connectionId','status',...ATTRIBUTION,...ECONOMICS_LINK_FIELDS,'reasoningTokens',
+  'inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs',
+  'contextSessionId','invalidTokens','inconsistentCache','missingTokenDetail'];
+const jsonObject = fields => `json_object(${fields.map(field => `'${field}',${field}`).join(',')})`;
+const projection = (kind, payload) => `SELECT '${kind}' AS kind,${payload} AS payload`;
+
 function parseObject(value) {
   try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null; } catch { return null; }
 }
@@ -240,45 +266,51 @@ function groupColumns(groupBy) {
   return economicsGroupFields(groupBy);
 }
 
-function series(db, base, query, summary) {
-  if (!summary.records || !Number.isFinite(Date.parse(summary.firstSeenAt)) || !Number.isFinite(Date.parse(summary.lastSeenAt))) {
-    return { bucketMs: null, points: [] };
-  }
-  const first = Date.parse(query.start || summary.firstSeenAt), last = Date.parse(query.end || summary.lastSeenAt);
-  const floor = Math.max(MINUTE, Math.ceil((Math.max(MINUTE, last-first) + MINUTE) / (MAX_POINTS-1) / MINUTE) * MINUTE);
-  const bucketMs = Math.max(floor, query.bucketMs || 0);
-  const bucket = `CAST((CAST(strftime('%s',timestamp) AS INTEGER)*1000)/${bucketMs} AS INTEGER)*${bucketMs}`;
-  const rows = db.all(`${base.sql} SELECT ${bucket} AS bucketStartMs,${TOTALS} FROM records
-    WHERE strftime('%s',timestamp) IS NOT NULL GROUP BY bucketStartMs ORDER BY bucketStartMs`, base.params);
-  return { bucketMs, points: rows.map((row) => ({ ...enrich(row), bucketStart: new Date(row.bucketStartMs).toISOString(),
-    bucketEnd: new Date(row.bucketStartMs+bucketMs).toISOString() })) };
-}
-
 export function readActivityAnalytics(db, input) {
   const query = validateActivityQuery(input);
-  const base = baseQuery(db, query);
-  const summary = enrich(db.get(`${base.sql} SELECT ${TOTALS} FROM records`, base.params));
-  summary.p50LatencyMs = null;
-  summary.p95LatencyMs = null;
-  if (summary.latencySamples) {
-    const ranks = db.get(`${base.sql}, latencies AS (
-      SELECT latencyMs,ROW_NUMBER() OVER (ORDER BY latencyMs) AS rank FROM records WHERE latencyMs IS NOT NULL)
-      SELECT MAX(CASE WHEN rank=? THEN latencyMs END) AS p50,MAX(CASE WHEN rank=? THEN latencyMs END) AS p95 FROM latencies`,
-      [...base.params,Math.ceil(summary.latencySamples*0.5),Math.ceil(summary.latencySamples*0.95)]);
-    summary.p50LatencyMs = ranks.p50; summary.p95LatencyMs = ranks.p95;
-  }
+  const requested = new Set(query.facets);
+  const base = baseQuery(db, query, { materialize: true });
   const columns = groupColumns(query.groupBy);
-  const groupTotal=db.get(`${base.sql} SELECT COUNT(*) AS n FROM (SELECT 1 FROM records GROUP BY ${columns.join(',')})`,base.params).n;
-  const groups = db.all(`${base.sql} SELECT ${columns.join(',')},${TOTALS} FROM records
-    GROUP BY ${columns.join(',')} ORDER BY ${query.groupSortBy} ${query.groupSortDirection.toUpperCase()} NULLS LAST,${columns.join(',')} LIMIT ? OFFSET ?`,
-    [...base.params,query.groupPageSize,(query.groupPage-1)*query.groupPageSize]);
-  const rows = readActivityItems(db,query,base,query.pageSize,(query.page-1)*query.pageSize);
-  return {
+  const ctes = [], selects = [];
+  const needsSummary = requested.has('summary') || requested.has('series');
+  if (needsSummary) ctes.push(`summary AS (SELECT ${TOTALS} FROM records)`);
+  if (requested.has('summary')) {
+    ctes.push(`latencies AS (SELECT latencyMs,ROW_NUMBER() OVER (ORDER BY latencyMs) AS rank FROM records WHERE latencyMs IS NOT NULL)`,
+      `percentiles AS (SELECT MAX(CASE WHEN rank=CAST((summary.latencySamples+1)/2 AS INTEGER) THEN latencyMs END) AS p50LatencyMs,
+        MAX(CASE WHEN rank=CAST((summary.latencySamples*95+99)/100 AS INTEGER) THEN latencyMs END) AS p95LatencyMs FROM latencies,summary)`);
+    selects.push(`${projection('summary',jsonObject([...TOTAL_FIELDS,'p50LatencyMs','p95LatencyMs']))} FROM summary,percentiles`);
+  }
+  if (requested.has('groups')) {
+    ctes.push(`grouped AS MATERIALIZED (SELECT ${columns.join(',')},${TOTALS} FROM records GROUP BY ${columns.join(',')})`,
+      `group_rows AS (SELECT * FROM grouped ORDER BY ${query.groupSortBy} ${query.groupSortDirection.toUpperCase()} NULLS LAST,${columns.join(',')}
+        LIMIT ${query.groupPageSize} OFFSET ${(query.groupPage-1)*query.groupPageSize})`);
+    selects.push(`${projection('group-meta',"json_object('totalItems',COUNT(*))")} FROM grouped`,
+      `${projection('group',jsonObject([...columns,...TOTAL_FIELDS]))} FROM group_rows`);
+  }
+  if (requested.has('series')) {
+    const rangeStart = query.start ? Date.parse(query.start) : 'NULL';
+    const rangeEnd = query.end ? Date.parse(query.end) : 'NULL';
+    const denominator = (MAX_POINTS-1)*MINUTE;
+    const span = `MAX(${MINUTE},COALESCE(${rangeEnd},CAST(strftime('%s',summary.lastSeenAt) AS INTEGER)*1000)-COALESCE(${rangeStart},CAST(strftime('%s',summary.firstSeenAt) AS INTEGER)*1000))`;
+    const floor = `MAX(${MINUTE},CAST(((${span}+${MINUTE})+${denominator}-1)/${denominator} AS INTEGER)*${MINUTE})`;
+    ctes.push(`series_settings AS (SELECT CASE WHEN records=0 OR firstSeenAt IS NULL OR lastSeenAt IS NULL THEN NULL ELSE MAX(${floor},${query.bucketMs || 0}) END AS bucketMs FROM summary)`,
+      `series_rows AS (SELECT CAST((CAST(strftime('%s',timestamp) AS INTEGER)*1000)/bucketMs AS INTEGER)*bucketMs AS bucketStartMs,${TOTALS}
+        FROM records,series_settings WHERE bucketMs IS NOT NULL AND strftime('%s',timestamp) IS NOT NULL GROUP BY bucketStartMs ORDER BY bucketStartMs)`);
+    selects.push(`${projection('series-meta',"json_object('bucketMs',bucketMs)")} FROM series_settings`,
+      `${projection('series',jsonObject(['bucketStartMs',...TOTAL_FIELDS]))} FROM series_rows`);
+  }
+  if (requested.has('items')) {
+    ctes.push(`item_rows AS MATERIALIZED (SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},${ECONOMICS_LINK_FIELDS.join(',')},reasoningTokens,prompt AS inputTokens,
+      uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
+      recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
+      FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC
+      LIMIT ${query.pageSize} OFFSET ${(query.page-1)*query.pageSize})`);
+    selects.push(`${projection('item-meta',"json_object('totalItems',COUNT(*))")} FROM records`,
+      `${projection('item',jsonObject(ITEM_FIELDS))} FROM item_rows`);
+  }
+  const projected = db.all(`${base.sql}${ctes.length ? `,${ctes.join(',')}` : ''} ${selects.join(' UNION ALL ')}`, base.params);
+  const result = {
     source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query,
-    summary, series: series(db,base,query,summary), groups: groups.map(enrich), groupsTruncated: groupTotal>query.groupPageSize,
-    groupPagination:{page:query.groupPage,pageSize:query.groupPageSize,totalItems:groupTotal,totalPages:Math.ceil(groupTotal/query.groupPageSize),hasNext:query.groupPage*query.groupPageSize<groupTotal,hasPrev:query.groupPage>1},
-    items: rows, pagination: { page: query.page, pageSize: query.pageSize, totalItems: summary.records,
-      totalPages: Math.ceil(summary.records/query.pageSize), hasNext: query.page*query.pageSize < summary.records, hasPrev: query.page > 1 },
     units: { tokens: 'tokens', cost: 'USD', latency: 'ms', time: 'UTC' },
     definitions: {
       inputTokens: 'Recorded cache-inclusive input. Historical token provenance was not retained; these are not invoice quantities.',
@@ -298,6 +330,23 @@ export function readActivityAnalytics(db, input) {
       range: 'Start inclusive and end exclusive. Series buckets aggregate recorded events, not continuous utilization.',
     },
   };
+  const byKind = kind => projected.filter(row => row.kind===kind).map(row => JSON.parse(row.payload));
+  if (requested.has('summary')) result.summary = enrich(byKind('summary')[0]);
+  if (requested.has('groups')) {
+    const totalItems=byKind('group-meta')[0].totalItems;
+    result.groups=byKind('group').map(enrich); result.groupsTruncated=totalItems>query.groupPageSize;
+    result.groupPagination={page:query.groupPage,pageSize:query.groupPageSize,totalItems,totalPages:Math.ceil(totalItems/query.groupPageSize),hasNext:query.groupPage*query.groupPageSize<totalItems,hasPrev:query.groupPage>1};
+  }
+  if (requested.has('series')) {
+    const bucketMs=byKind('series-meta')[0].bucketMs;
+    result.series={bucketMs,points:byKind('series').map(row=>({...enrich(row),bucketStart:new Date(row.bucketStartMs).toISOString(),bucketEnd:new Date(row.bucketStartMs+bucketMs).toISOString()}))};
+  }
+  if (requested.has('items')) {
+    const totalItems=byKind('item-meta')[0].totalItems;
+    result.items=enrichActivityItems(db,query,byKind('item'));
+    result.pagination={page:query.page,pageSize:query.pageSize,totalItems,totalPages:Math.ceil(totalItems/query.pageSize),hasNext:query.page*query.pageSize<totalItems,hasPrev:query.page>1};
+  }
+  return result;
 }
 
 function readActivityItems(db,query,base,limit,offset=0) {
@@ -306,6 +355,10 @@ function readActivityItems(db,query,base,limit,offset=0) {
     recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
     FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC LIMIT ? OFFSET ?`,
     [...base.params,limit,offset]);
+  return enrichActivityItems(db,query,rows);
+}
+
+function enrichActivityItems(db,query,rows) {
   const snapshotIds = [...new Set(rows.map((row) => row.rateSnapshotId).filter(Boolean))];
   const snapshots = snapshotIds.length ? db.all(`SELECT * FROM usageRateSnapshots WHERE id IN (${snapshotIds.map(() => '?').join(',')})`, snapshotIds) : [];
   const snapshotMap = new Map(snapshots.map((r) => [r.id, { ...r, rates: parseObject(r.rates) }]));

@@ -38,7 +38,7 @@ export default function EconomicsPage() {
   try { evidenceFilters=mergeEconomicsFilters(scope,economicsView); } catch(error){filterError=error.message;}
   const groupKeyScope=analyticsUrl(scope,'economics',{groupBy,...evidenceFilters,groupSortBy:groupSorting.id,groupSortDirection:groupSorting.desc?'desc':'asc'});
   const groupPage=groupPageState.key===groupKeyScope?groupPageState.page:1;
-  const scopeKey = analyticsUrl(scope, 'economics', { groupBy,...evidenceFilters,groupPage,groupPageSize:12,groupSortBy:groupSorting.id,groupSortDirection:groupSorting.desc?'desc':'asc' });
+  const scopeKey = analyticsUrl(scope, 'economics', { groupBy,...evidenceFilters,facets:'summary,groups,series,items',pageSize:25,sortBy:'timestamp',sortDirection:'desc',groupPage,groupPageSize:12,groupSortBy:groupSorting.id,groupSortDirection:groupSorting.desc?'desc':'asc' });
   const population = useResource(filterError?null:scopeKey, { onSnapshot: observeSnapshot });
   const retainedGroup = selected?.groupBy === groupBy ? selected.group : null;
   const groupScope = groupFilters(retainedGroup, groupBy) || {};
@@ -50,11 +50,11 @@ export default function EconomicsPage() {
       (group) => groupKey(group, groupBy) === groupKey(retainedGroup, groupBy)
     );
   const selectedGroup = compatible ? currentGroup || retainedGroup : null;
-  const exactRecord=useResource(selectedRecord?.kind==='economics-record' ? analyticsUrl({},'economics',{recordId:selectedRecord.id}) : null,{onSnapshot:observeSnapshot});
+  const exactRecord=useResource(selectedRecord?.kind==='economics-record' ? analyticsUrl({},'economics',{facets:'items',recordId:selectedRecord.id}) : null,{onSnapshot:observeSnapshot});
   const inspectedFilters=selectedRecord?.kind==='economics-group' ? groupFilters(selectedRecord,selectedRecord.groupBy) : null;
   let inspectionCompatible=inspectedFilters && !filterError;
   try {mergeEconomicsFilters(scope,economicsView,inspectedFilters);}catch{inspectionCompatible=false;}
-  const exactGroup=useResource(inspectionCompatible ? analyticsUrl({...scope,...inspectedFilters},'economics',{groupBy:selectedRecord.groupBy,...evidenceFilters}) : null,{onSnapshot:observeSnapshot});
+  const exactGroup=useResource(inspectionCompatible ? analyticsUrl({...scope,...inspectedFilters},'economics',{facets:'groups',groupBy:selectedRecord.groupBy,...evidenceFilters}) : null,{onSnapshot:observeSnapshot});
   const inspectedGroup=exactGroup.data?.groups?.find(group=>groupKey(group,selectedRecord?.groupBy)===selectedRecord?.id);
   const inspected=selectedRecord?.kind==='economics-record' && exactRecord.data?.items?.[0]
     ? {kind:'economics-record',record:exactRecord.data.items[0]}
@@ -73,10 +73,12 @@ export default function EconomicsPage() {
   const ledgerScope = { ...scope, ...(groupFilters(selectedGroup, groupBy) || {}) };
   const ledgerKey = `${analyticsUrl(ledgerScope, 'economics', { groupBy,...evidenceFilters })}:${sorting.id}:${sorting.desc}:${status}`;
   const page = pageState.key === ledgerKey ? pageState.page : 1;
+  const reusePopulation = !selectedGroup && page===1 && sorting.id==='timestamp' && sorting.desc && status==='all';
   const ledger = useResource(
-    filterError?null:analyticsUrl(ledgerScope, 'economics', {
+    filterError || reusePopulation?null:analyticsUrl(ledgerScope, 'economics', {
       groupBy,
       ...evidenceFilters,
+      facets:'items',
       page,
       pageSize: 25,
       sortBy: sorting.id,
@@ -85,6 +87,7 @@ export default function EconomicsPage() {
     }),
     { onSnapshot: observeSnapshot }
   );
+  const ledgerResource=reusePopulation?population:ledger;
   const title =
     inspected?.kind === 'economics-record'
       ? `Completion record ${inspected.record.id}`
@@ -140,9 +143,9 @@ export default function EconomicsPage() {
               onCostSourceChange={value=>setEconomicsView({costSource:value})}
               attemptKind={attemptKind}
               onAttemptKindChange={value=>setEconomicsView({attemptKind:value})}
-              ledgerData={ledger.data}
-              ledgerLoading={ledger.loading}
-              ledgerError={ledger.error}
+              ledgerData={ledgerResource.data}
+              ledgerLoading={ledgerResource.loading}
+              ledgerError={ledgerResource.error}
               selectedGroup={selectedGroup}
               onGroupSelect={(group) => setSelected(group ? { groupBy, group } : null)}
               onPageChange={(next) => setPageState({ key: ledgerKey, page: next })}

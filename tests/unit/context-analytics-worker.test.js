@@ -157,7 +157,7 @@ describe("bounded analytics admission", () => {
     const first = client.run(query("first")), shared = client.run(query("first")), second = client.run(query("second"));
     await expect(client.run(query("third"))).rejects.toBeInstanceOf(ContextAnalyticsError);
     expect(worker.messages).toHaveLength(1);
-    worker.respond(); await expect(first).resolves.toEqual({ ready: true }); await shared;
+    worker.respond(); await expect(first).resolves.toMatchObject({ ready: true }); await shared;
     expect(worker.messages).toHaveLength(2); worker.respond(1); await second;
     await client.close();
   });
@@ -181,5 +181,18 @@ describe("bounded analytics admission", () => {
     const pending = client.run(query("shutdown")); await client.close();
     await expect(pending).rejects.toBeInstanceOf(ContextAnalyticsError);
     await expect(client.run(query("closed"))).rejects.toBeInstanceOf(ContextAnalyticsError);
+  });
+  it("terminates an abandoned active read before serving the next job", async () => {
+    const workers = [], abort = new AbortController();
+    const client = createContextAnalyticsClient({ workerFactory: () => { const worker = new HeldWorker(); workers.push(worker); return worker; } });
+    const abandoned = client.run(query("abandoned"), { signal: abort.signal });
+    abort.abort();
+    await expect(abandoned).rejects.toBeInstanceOf(ContextAnalyticsError);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(workers[0].terminated).toBe(true);
+    const next = client.run(query("next"));
+    workers[1].respond();
+    await expect(next).resolves.toMatchObject({ ready: true, freshness: expect.objectContaining({ queueDurationMs: expect.any(Number), executionDurationMs: expect.any(Number) }) });
+    await client.close();
   });
 });
