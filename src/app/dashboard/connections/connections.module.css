@@ -142,6 +142,9 @@
 }
 .priority {
   width: 52px;
+  /* A flex child with only `width` still shrinks below it, which collapsed this
+     field to a vertical sliver at 420px while keeping its 24px height. */
+  flex-shrink: 0;
   margin-inline-end: 6px;
 }
 .priority :global(.mantine-Input-input) {

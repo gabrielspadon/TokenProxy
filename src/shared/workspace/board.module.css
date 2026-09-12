@@ -417,7 +417,7 @@
 .activity { display: grid; gap: 1px; font-size: var(--type-dense); color: var(--ink); font-variant-numeric: tabular-nums; min-width: 0; }
 .activity small { color: var(--slate); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.priority { width: 48px; margin-inline-end: 6px; }
+.priority { width: 48px; flex-shrink: 0; margin-inline-end: 6px; }
 .priority :global(.mantine-Input-input) { min-height: 24px; height: 24px; padding-inline: 4px; text-align: center; font-size: var(--type-dense); }
 .actions :global(.mantine-ActionIcon-root) { width: 26px; height: 26px; min-width: 26px; min-height: 26px; }
 
