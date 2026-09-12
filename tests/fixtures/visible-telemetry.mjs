@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 // Public analytics intentionally excludes test-origin writes. These fixtures
 // first verify the real producer's trusted origin, then expose only the rows
 // created by their own operation as an explicitly identified synthetic import.
-export function createVisibleTelemetryFixture(db, label) {
+export function createVisibleTelemetryFixture(db, label, { allowPending = false } = {}) {
   assert.equal(process.env.NODE_ENV, 'test', 'fixture visibility is confined to a test process');
   const tables = ['requestStats', 'usageHistory'];
   const snapshots = () => Object.fromEntries(tables.map(table => [table, new Set(db.all(`SELECT id FROM ${table}`).map(row => String(row.id)))]));
@@ -17,7 +17,7 @@ export function createVisibleTelemetryFixture(db, label) {
     for (let attempt = 0; attempt < 100; attempt++) {
       owned = Object.fromEntries(tables.map(table => [table, db.all(`SELECT id,status,dataOrigin,originReceiptId FROM ${table}`)
         .filter(row => !before[table].has(String(row.id)))]));
-      if (owned.requestStats.length + owned.usageHistory.length > 0 && owned.requestStats.every(row => row.status !== 'pending')) break;
+      if (owned.requestStats.length + owned.usageHistory.length > 0 && (allowPending || owned.requestStats.every(row => row.status !== 'pending'))) break;
       if (attempt === 99) throw new Error('Owned fixture telemetry did not reach durable terminal state');
       await delay();
     }
