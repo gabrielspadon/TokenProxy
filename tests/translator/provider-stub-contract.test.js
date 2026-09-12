@@ -1,10 +1,58 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { startProviderStub } from "../contracts/provider-stub.mjs";
-import { startCapabilityGateway } from "../contracts/capability-gateway-fixture.mjs";
+import {
+  captureGatewayOwnership,
+  startCapabilityGateway,
+  stopOwnedGateway,
+} from "../contracts/capability-gateway-fixture.mjs";
+
+function startOwnedHttpProcess(name) {
+  const script = [
+    'const http = require("node:http");',
+    'const server = http.createServer((_request, response) => response.end("fixture"));',
+    'server.listen(0, "127.0.0.1", () => process.stdout.write(`${server.address().port}\\n`));',
+    'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
+  ].join("\n");
+  const child = spawn(process.execPath, ["-e", script, name], {
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return new Promise((resolve, reject) => {
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      const port = Number(output.trim());
+      if (Number.isInteger(port) && port > 0) resolve({ child, port });
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => reject(new Error(`${name} exited before ready: ${code}`)));
+  });
+}
+
+async function stopExactChild(child) {
+  if (child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+}
 
 describe("capability matrix runner", () => {
+  it("cleanup targets only its captured child group when an unrelated next-server exists", async () => {
+    const owned = await startOwnedHttpProcess("capability-owned-gateway");
+    const unrelated = await startOwnedHttpProcess("next-server");
+    try {
+      const ownership = await captureGatewayOwnership(owned.child, owned.port);
+      await stopOwnedGateway(owned.child, ownership);
+      expect(owned.child.exitCode).toBe(0);
+      expect(unrelated.child.exitCode).toBeNull();
+    } finally {
+      await stopExactChild(owned.child);
+      await stopExactChild(unrelated.child);
+    }
+  });
+
   it("runs all fixtures through a started TokenProxy gateway with env-provided fake auth", async () => {
     const stub = await startProviderStub({ port: 20210 });
     let gateway;
