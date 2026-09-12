@@ -41,13 +41,20 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
   function finish(job, error, result) {
     clearTimeout(job.timer);
     jobs.delete(job.key);
-    if (!error && result && typeof result === 'object') result.freshness = {
-      ...result.freshness,
-      queueDurationMs: Math.max(0, (job.startedAt ?? monotonic()) - job.enqueuedAt),
-      executionDurationMs: Math.max(0, monotonic() - (job.startedAt ?? job.enqueuedAt)),
-      serviceDeadlineMs: timeoutMs,
-      delivery: 'computed',
-    };
+    if (!error && result && typeof result === 'object') {
+      const queueDurationMs = Math.max(0, (job.startedAt ?? monotonic()) - job.enqueuedAt);
+      const executionDurationMs = Math.max(0, monotonic() - (job.startedAt ?? job.enqueuedAt));
+      result.freshness = {
+        ...result.freshness,
+        cacheHit: false,
+        queueDurationMs,
+        executionDurationMs,
+        computationQueueDurationMs: queueDurationMs,
+        computationExecutionDurationMs: executionDurationMs,
+        serviceDeadlineMs: timeoutMs,
+        delivery: 'computed',
+      };
+    }
     if (!error && job.subscribers.size && job.epoch === cacheEpoch && job.version !== null && job.version === version()) {
       const bytes = Buffer.byteLength(JSON.stringify(result));
       if (bytes <= maxCacheBytes) {
@@ -105,6 +112,7 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
   }
   function run(query, { signal, authorizedScope = 'server' } = {}) {
     if (closed || signal?.aborted) return Promise.reject(unavailable());
+    const deliveryStartedAt = monotonic();
     const dataVersion = version();
     const scope = String(authorizedScope);
     const key = JSON.stringify([scope, canonical(query), dataVersion, cacheEpoch]);
@@ -112,7 +120,8 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
     for (const [id, entry] of cache) if (now() - entry.at >= cacheTtlMs) dropCache(id);
     if (cached && now() - cached.at < cacheTtlMs) {
       const result=structuredClone(cached.result);
-      result.freshness={...result.freshness,delivery:'cache-hit',cacheAgeMs:Math.max(0,now()-cached.at)};
+      result.freshness={...result.freshness,cacheHit:true,delivery:'cache-hit',cacheAgeMs:Math.max(0,now()-cached.at),
+        queueDurationMs:0,executionDurationMs:Math.max(0,monotonic()-deliveryStartedAt)};
       return Promise.resolve(result);
     }
     let job = jobs.get(key);

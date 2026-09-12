@@ -96,7 +96,17 @@ it('reports queue and execution time separately while retaining one total deadli
   const first=client.run({n:1});clock=5;const second=client.run({n:2});
   clock=10;worker.respond(0);await first;
   clock=25;worker.respond(1);const result=await second;
-  expect(result.freshness).toMatchObject({queueDurationMs:5,executionDurationMs:15,serviceDeadlineMs:100});
+  expect(result.freshness).toMatchObject({cacheHit:false,delivery:'computed',queueDurationMs:5,executionDurationMs:15,
+    computationQueueDurationMs:5,computationExecutionDurationMs:15,serviceDeadlineMs:100});
+  await client.close();
+});
+it('reports cache-hit delivery timing without relabeling the original computation',async()=>{
+  let clock=0,now=0;const worker=new Worker();const client=createContextAnalyticsClient({workerFactory:()=>worker,version:()=>1,monotonic:()=>clock,now:()=>now});
+  const computed=client.run({n:1});clock=12;worker.respond();const first=await computed;
+  clock=40;now=25;const hit=await client.run({n:1});
+  expect(first.freshness).toMatchObject({cacheHit:false,queueDurationMs:0,executionDurationMs:12,computationExecutionDurationMs:12});
+  expect(hit.freshness).toMatchObject({cacheHit:true,delivery:'cache-hit',queueDurationMs:0,executionDurationMs:0,
+    computationQueueDurationMs:0,computationExecutionDurationMs:12,cacheAgeMs:25});
   await client.close();
 });
 it('explicit invalidation during computation cannot repopulate old cache, and TTL preserves bounded reuse',async()=>{
