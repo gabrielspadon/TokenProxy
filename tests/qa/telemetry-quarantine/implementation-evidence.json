@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "taskId": "tokenproxy-reliability-delivery-20260912",
+  "packet": "T06-quarantine",
+  "baseRevision": "76d49315",
+  "nodeVersion": "v24.15.0",
+  "focusedTests": {
+    "passed": 32,
+    "failed": 0,
+    "filesPassed": 1,
+    "reportPath": "/tmp/tokenproxy-t06-quarantine-vitest.json",
+    "reportSha256": "e26f6af83a318a4d342b32f9d1b03773550a4eff1494a8f364a1b71573c17c73"
+  },
+  "eslint": "passed",
+  "productionDatabaseAccessed": false,
+  "productionMutated": false,
+  "consumerIntegrationComplete": false,
+  "historicalCandidateBound": false
+}

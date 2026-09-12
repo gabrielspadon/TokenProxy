@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": "76d49315",
+  "method": "Static FROM/JOIN source lookup; dynamic SQL and caller caches require separate review",
+  "totalOccurrences": 68,
+  "files": [
+    {"path":"src/lib/db/analytics/activityQueries.mjs","lines":[208],"tables":["requestStats"]},
+    {"path":"src/lib/db/analytics/contextEvents.mjs","lines":[37],"tables":["requestStats"]},
+    {"path":"src/lib/db/analytics/contextEvidenceExport.mjs","lines":[25,26,29],"tables":["requestStats"]},
+    {"path":"src/lib/db/analytics/contextQueries.mjs","lines":[69,79,130],"tables":["requestStats","usageHistory"]},
+    {"path":"src/lib/db/analytics/contextRelated.mjs","lines":[26,27,41],"tables":["requestStats","usageHistory"]},
+    {"path":"src/lib/db/analytics/counterfactualEvidence.mjs","lines":[56],"tables":["usageHistory"]},
+    {"path":"src/lib/db/analytics/economicsLinks.mjs","lines":[35],"tables":["requestStats","usageHistory"]},
+    {"path":"src/lib/db/analytics/keyUsageQueries.mjs","lines":[19],"tables":["usageHistory"]},
+    {"path":"src/lib/db/analytics/notificationRuleQueries.mjs","lines":[246],"tables":["requestStats"]},
+    {"path":"src/lib/db/analytics/sessionPinTimelineQueries.mjs","lines":[160],"tables":["requestStats"]},
+    {"path":"src/lib/db/index.js","lines":[155],"tables":["usageHistory"]},
+    {"path":"src/lib/db/projectBudgetEvidence.js","lines":[9],"tables":["usageHistory"]},
+    {"path":"src/lib/db/projectIdentity.js","lines":[25],"tables":["requestStats"]},
+    {"path":"src/lib/db/repos/apiKeysRepo.js","lines":[166,187,298],"tables":["usageHistory"]},
+    {"path":"src/lib/db/repos/budgetRepo.js","lines":[54],"tables":["usageHistory"]},
+    {"path":"src/lib/db/repos/contextClientEventsRepo.js","lines":[66],"tables":["requestStats"]},
+    {"path":"src/lib/db/repos/contextRepo.js","lines":[50,140,142,143,144],"tables":["requestStats"]},
+    {"path":"src/lib/db/repos/keyAttributionRepo.js","lines":[33,41],"tables":["requestStats"]},
+    {"path":"src/lib/db/repos/projectsRepo.js","lines":[98,99,177,178],"tables":["requestStats","usageHistory"]},
+    {"path":"src/lib/db/repos/requestStatsRepo.js","lines":[104,188,201,217,275,319,377,389,444,450,462],"tables":["requestStats","usageHistory"]},
+    {"path":"src/lib/db/repos/sessionPinsRepo.js","lines":[87],"tables":["requestStats"]},
+    {"path":"src/lib/db/repos/shapingHandoffsRepo.js","lines":[14,91],"tables":["requestStats"]},
+    {"path":"src/lib/db/repos/usageRepo.js","lines":[277,551,561,648,650,663,718,741,857,920,1038,1042,1074,1212,1241,1315,1357,1406],"tables":["requestStats","usageHistory"]},
+    {"path":"src/lib/notifications/remediation.mjs","lines":[82],"tables":["requestStats"]}
+  ]
+}
