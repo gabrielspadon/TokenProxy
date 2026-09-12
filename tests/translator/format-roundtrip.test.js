@@ -2,7 +2,7 @@
 // core parts (text, tool, system) survive. Exposes bridge data loss.
 import { describe, it, expect } from "vitest";
 import "./registerAll.js";
-import { translateRequest } from "../../open-sse/translator/index.js";
+import { translateRequest, translateResponse } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 
 const T = (src, tgt, body, provider = null) =>
@@ -72,5 +72,46 @@ describe("roundtrip: parallel tool calls keep distinct ids", () => {
   it("each tool_call has a matching tool result", () => {
     const toolMsgs = out.messages.filter((m) => m.role === "tool");
     expect(toolMsgs.length).toBe(2);
+  });
+});
+
+describe("translation route completeness", () => {
+  it("rejects a missing request edge before mutating the source body", () => {
+    const body = Object.freeze({
+      model: "m",
+      messages: Object.freeze([{ role: "user", content: "hello" }]),
+    });
+
+    expect(() => T(FORMATS.KIRO, FORMATS.CLAUDE, body)).toThrow(
+      expect.objectContaining({
+        name: "TranslationRouteError",
+        code: "translation_route_unavailable",
+        kind: "request",
+        sourceFormat: FORMATS.KIRO,
+        targetFormat: FORMATS.CLAUDE,
+      }),
+    );
+    expect(body).toEqual({ model: "m", messages: [{ role: "user", content: "hello" }] });
+  });
+
+  it("rejects a missing response edge instead of interpreting the wire chunk as OpenAI", () => {
+    const chunk = Object.freeze({ candidates: Object.freeze([]) });
+
+    expect(() => translateResponse(FORMATS.KIRO, FORMATS.CURSOR, chunk, {})).toThrow(
+      expect.objectContaining({
+        name: "TranslationRouteError",
+        code: "translation_route_unavailable",
+        kind: "response",
+        sourceFormat: FORMATS.KIRO,
+        targetFormat: FORMATS.CURSOR,
+      }),
+    );
+    expect(chunk).toEqual({ candidates: [] });
+  });
+
+  it("keeps same-format identity valid without a registered conversion edge", () => {
+    const body = { model: "m", messages: [{ role: "user", content: "hello" }] };
+    expect(translateRequest(FORMATS.KIRO, FORMATS.KIRO, "m", body)).toBe(body);
+    expect(translateResponse(FORMATS.VERTEX, FORMATS.VERTEX, null, {})).toEqual([]);
   });
 });

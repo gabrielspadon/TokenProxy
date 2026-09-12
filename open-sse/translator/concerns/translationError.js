@@ -13,6 +13,22 @@ export class TranslationInputError extends Error {
   }
 }
 
+// A selected wire format must have a complete direct or OpenAI-pivot route.
+// This error is intentionally payload-free so callers can expose it as a stable
+// local 400 without leaking any part of the request or upstream response.
+export class TranslationRouteError extends Error {
+  constructor(kind, sourceFormat, targetFormat, missing = []) {
+    super(`Cannot translate ${kind} from ${sourceFormat} to ${targetFormat}: required conversion edge is unavailable`);
+    this.name = "TranslationRouteError";
+    this.code = "translation_route_unavailable";
+    this.status = 400;
+    this.kind = kind;
+    this.sourceFormat = sourceFormat;
+    this.targetFormat = targetFormat;
+    this.missing = missing.map(({ from, to }) => ({ from, to }));
+  }
+}
+
 // Check before normalization can discard a block or repair a tool transaction.
 // These are limitations of the implemented transport, not model capability claims.
 export function assertTranslationContent(sourceFormat, targetFormat, body) {
