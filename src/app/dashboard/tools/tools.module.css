@@ -16,6 +16,14 @@
      not stretch the text. */
   align-items: stretch;
 }
+/* globals.css carries `section + section { margin-block-start: 32px }` for
+   stacked prose sections. These two are grid items side by side, not stacked,
+   so that vertical rhythm lands on the second panel alone and pushes its top
+   edge 32px below its peer. Measured at 1440px: tops 413 vs 445. The grid gap
+   owns the spacing between them. */
+.sections > .panel + .panel {
+  margin-block-start: 0;
+}
 .panel {
   min-width: 0;
   border: 1px solid var(--rule);

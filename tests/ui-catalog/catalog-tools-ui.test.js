@@ -52,6 +52,13 @@ describe('catalog and tools page-local UI', () => {
     expect(toolsCss).toMatch(/\.panel\s*\{[^}]*align-content:\s*start/);
   });
 
+  it('neutralises the global stacked-section rhythm between side-by-side panels', () => {
+    // globals.css sets `section + section { margin-block-start: 32px }`. These
+    // panels are grid items, not a stack, so the second one inherited a 32px
+    // offset its peer did not have. Measured before the fix: tops 413 vs 445.
+    expect(toolsCss).toMatch(/\.sections\s*>\s*\.panel\s*\+\s*\.panel\s*\{[^}]*margin-block-start:\s*0/);
+  });
+
   it('gives the folded summary a visible keyboard focus state', () => {
     expect(toolsCss).toMatch(/\.note\s*>\s*summary:focus-visible/);
   });
