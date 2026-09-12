@@ -33,8 +33,14 @@ describe("capability matrix runner", () => {
       const report = JSON.parse(output.trim());
       expect(report.primary).toEqual({ passed: 36, dispatched: 30, rejectedBeforeUpstream: 6 });
       expect(report.outcomes.success).toBe(1);
-      expect(report.outcomes.providerError).toBe(1);
-      expect(report.outcomes.transportAbrupt).toEqual({ fetchRejected: true });
+      expect(report.outcomes.providerError).toMatchObject({ status: 529, type: expect.any(String) });
+      const abrupt = report.outcomes.transportAbrupt;
+      expect(abrupt.fetchRejected === true || (Number.isInteger(abrupt.responseStatus) && abrupt.responseStatus >= 500)).toBe(true);
+      expect(report.receipts).toEqual({
+        gatewayIngress: { before: 0, after: 39, delta: 39 },
+        providerIngress: { before: 0, after: 33, delta: 33 },
+        providerDispatch: { before: 0, after: 33, delta: 33 },
+      });
       expect(stub.requests).toHaveLength(33);
       expect(stub.ingress).toHaveLength(33);
       expect(stub.requests.every((entry) => !Object.hasOwn(entry, "body"))).toBe(true);

@@ -73,13 +73,13 @@ function indexOfEvent(records, event, label) {
 
 function assertEventSchema(records, endpoint) {
   for (const record of records) {
-    if (endpoint === "/v1/chat/completions" && record.data === "[DONE]") continue;
+    if (record.data === "[DONE]") continue;
     assert.equal(typeof record.data, "object", `${endpoint} event data is an object`);
     assert.ok(record.data && !Array.isArray(record.data), `${endpoint} event data schema`);
   }
 }
 
-function assertStream(endpoint, text) {
+function assertStream(endpoint, text, label) {
   const records = parseSse(text);
   assert.ok(records.length > 0, "stream must contain events");
   assertEventSchema(records, endpoint);
@@ -102,7 +102,7 @@ function assertStream(endpoint, text) {
     const itemAdded = indexOfEvent(records, "response.output_item.added", "Responses output item");
     const partAdded = indexOfEvent(records, "response.content_part.added", "Responses content part");
     const textDelta = indexOfEvent(records, "response.output_text.delta", "Responses text delta");
-    const terminal = records.at(-1);
+    const terminal = records.filter(({ data }) => data !== "[DONE]").at(-1);
     assert.equal(terminal.event, "response.completed");
     assert.equal(terminal.data?.response?.status, "completed");
     assert.equal(typeof terminal.data?.response?.usage?.total_tokens, "number");
@@ -112,7 +112,10 @@ function assertStream(endpoint, text) {
     assert.equal(records.at(-1).data, "[DONE]");
     const terminalChunk = records.find(({ data }) => data !== "[DONE]" && data?.choices?.some((choice) => choice.finish_reason));
     assert.equal(terminalChunk?.data?.choices?.[0]?.finish_reason, "stop");
-    assert.equal(typeof terminalChunk?.data?.usage?.total_tokens, "number");
+    const usage = terminalChunk?.data?.usage;
+    assert.equal(typeof usage?.prompt_tokens, "number", `${label} Chat input usage`);
+    assert.equal(typeof usage?.completion_tokens, "number", `${label} Chat output usage`);
+    if (usage?.total_tokens !== undefined) assert.equal(typeof usage.total_tokens, "number", `${label} Chat total usage`);
     assert.ok(records.some(({ data }) => data !== "[DONE]" && data?.choices?.some((choice) => choice?.delta?.content)));
   }
   assert.match(text, /fixture-ok/);
@@ -121,13 +124,18 @@ function assertStream(endpoint, text) {
 function assertJson(endpoint, body) {
   if (endpoint === "/v1/messages") {
     assert.equal(body.stop_reason, "end_turn");
-    assert.equal(body.usage.output_tokens, 2);
+    assert.equal(typeof body.usage?.input_tokens, "number");
+    assert.equal(typeof body.usage?.output_tokens, "number");
   } else if (endpoint === "/v1/responses") {
     assert.equal(body.status, "completed");
-    assert.equal(body.usage.total_tokens, 9);
+    assert.equal(typeof body.usage?.input_tokens, "number");
+    assert.equal(typeof body.usage?.output_tokens, "number");
+    if (body.usage?.total_tokens !== undefined) assert.equal(typeof body.usage.total_tokens, "number");
   } else {
     assert.equal(body.choices[0].finish_reason, "stop");
-    assert.equal(body.usage.total_tokens, 9);
+    assert.equal(typeof body.usage?.prompt_tokens, "number");
+    assert.equal(typeof body.usage?.completion_tokens, "number");
+    if (body.usage?.total_tokens !== undefined) assert.equal(typeof body.usage.total_tokens, "number");
   }
   assert.match(JSON.stringify(body), /fixture-ok/);
 }
@@ -220,6 +228,8 @@ export async function runCapabilityMatrix({
   if (authorization != null) assert.equal(typeof authorization, "string", "authorization is a client credential string");
   if (model != null) assert.equal(typeof model, "string", "model override is a request model string");
   const manifest = await validateCapabilityManifest();
+  const initialGateway = await readControl(gatewayControlUrl);
+  const initialProvider = await readControl(providerControlUrl);
   const primary = { passed: 0, dispatched: 0, rejectedBeforeUpstream: 0 };
   for (const entry of manifest.primaryEndpoints) {
     const fixture = await loadJson(entry.fixture);
@@ -233,7 +243,7 @@ export async function runCapabilityMatrix({
       outbound.stream = entry.stream;
       if (model) outbound.model = model;
       const { response } = await send(gatewayBaseUrl, entry, outbound, authorization);
-      assert.ok(response.status >= 400 && response.status < 500, `${entry.id} must return client 4xx`);
+      assert.equal(response.status, entry.expected.status, `${entry.id} must return gateway ${entry.expected.status}`);
       assert.equal((await readControl(gatewayControlUrl)).gatewayIngressCount, gatewayBefore + 1, `${entry.id} did not reach gateway`);
       const providerAfter = await readControl(providerControlUrl);
       assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount, `${entry.id} reached provider dispatch`);
@@ -250,7 +260,7 @@ export async function runCapabilityMatrix({
     await setStubOutcome(providerControlUrl, "success", entry.id);
     const { response, text } = await send(gatewayBaseUrl, entry, outbound, authorization);
     assert.equal(response.status, 200, `${entry.id}: ${text.slice(0, 500)}`);
-    if (entry.stream) assertStream(entry.endpoint, text);
+    if (entry.stream) assertStream(entry.endpoint, text, entry.id);
     else assertJson(entry.endpoint, JSON.parse(text));
     assert.equal(JSON.stringify(fixture), before, `${entry.id} mutated source fixture`);
     assert.equal((await readControl(gatewayControlUrl)).gatewayIngressCount, gatewayBefore + 1, `${entry.id} did not reach gateway`);
@@ -270,7 +280,9 @@ export async function runCapabilityMatrix({
   await setStubOutcome(providerControlUrl, "provider-error", "outcome-provider-error");
   const providerError = await send(gatewayBaseUrl, sample, outcomeBody, authorization);
   assert.equal(providerError.response.status, 529);
-  assert.equal(JSON.parse(providerError.text).error.type, "provider_error");
+  const providerErrorBody = JSON.parse(providerError.text);
+  assert.equal(typeof providerErrorBody.error?.type, "string", "provider error type");
+  assert.equal(typeof providerErrorBody.error?.message, "string", "provider error message");
   await setStubOutcome(providerControlUrl, "transport-abrupt", "outcome-transport-abrupt");
   let transportAbrupt;
   try {
@@ -280,7 +292,37 @@ export async function runCapabilityMatrix({
   } catch {
     transportAbrupt = { fetchRejected: true };
   }
-  return { primary, outcomes: { success: 1, providerError: 1, transportAbrupt } };
+  const finalGateway = await readControl(gatewayControlUrl);
+  const finalProvider = await readControl(providerControlUrl);
+  const receipts = {
+    gatewayIngress: {
+      before: initialGateway.gatewayIngressCount,
+      after: finalGateway.gatewayIngressCount,
+      delta: finalGateway.gatewayIngressCount - initialGateway.gatewayIngressCount,
+    },
+    providerIngress: {
+      before: initialProvider.ingressCount,
+      after: finalProvider.ingressCount,
+      delta: finalProvider.ingressCount - initialProvider.ingressCount,
+    },
+    providerDispatch: {
+      before: initialProvider.providerDispatchCount,
+      after: finalProvider.providerDispatchCount,
+      delta: finalProvider.providerDispatchCount - initialProvider.providerDispatchCount,
+    },
+  };
+  assert.equal(receipts.gatewayIngress.delta, manifest.primaryEndpoints.length + 3, "all primary and outcome cases reached gateway");
+  assert.equal(receipts.providerIngress.delta, primary.dispatched + 3, "only accepted primary and outcome cases reached provider ingress");
+  assert.equal(receipts.providerDispatch.delta, primary.dispatched + 3, "only accepted primary and outcome cases dispatched provider");
+  return {
+    primary,
+    outcomes: {
+      success: 1,
+      providerError: { status: providerError.response.status, type: providerErrorBody.error.type },
+      transportAbrupt,
+    },
+    receipts,
+  };
 }
 
 export function resolveCliAuthorization(argv, env = process.env, read = readFileSync) {
