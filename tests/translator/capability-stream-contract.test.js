@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assertJson, assertStream } from "../contracts/run-capability-matrix.mjs";
+import { FORMATS } from "../../open-sse/translator/formats.js";
+import { filterUsageForFormat } from "../../open-sse/utils/usageTracking.js";
 
 const responseEvent = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
@@ -23,5 +25,17 @@ describe("capability stream contract", () => {
       choices: [{ finish_reason: "stop", message: { content: "fixture-ok" } }],
       usage: { prompt_tokens: 6, completion_tokens: 2, total_tokens: 8 },
     })).toThrow(/Chat input usage/);
+  });
+
+  it("preserves the controlled Responses total through client usage filtering", () => {
+    expect(filterUsageForFormat({
+      input_tokens: 7,
+      output_tokens: 2,
+      total_tokens: 9,
+    }, FORMATS.OPENAI_RESPONSES)).toEqual({
+      input_tokens: 7,
+      output_tokens: 2,
+      total_tokens: 9,
+    });
   });
 });

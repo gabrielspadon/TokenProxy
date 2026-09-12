@@ -12,6 +12,16 @@
         "input_tokens": 7,
         "output_tokens": 2
       },
+      "messagesStream": {
+        "initial": {
+          "input_tokens": 0,
+          "output_tokens": 0
+        },
+        "terminal": {
+          "input_tokens": 7,
+          "output_tokens": 2
+        }
+      },
       "responses": {
         "input_tokens": 7,
         "output_tokens": 2,

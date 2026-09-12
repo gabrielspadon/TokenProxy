@@ -13,6 +13,10 @@ const loadJson = async (path) => JSON.parse(await readFile(path.startsWith("/") 
 const CONTROLLED_USAGE = Object.freeze({
   chat: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 },
   messages: { input_tokens: 7, output_tokens: 2 },
+  messagesStream: {
+    initial: { input_tokens: 0, output_tokens: 0 },
+    terminal: { input_tokens: 7, output_tokens: 2 },
+  },
   responses: { input_tokens: 7, output_tokens: 2, total_tokens: 9 },
 });
 
@@ -111,7 +115,7 @@ export function assertStream(endpoint, text, label, usage = CONTROLLED_USAGE) {
     assert.equal(records[0].event, "message_start");
     assertSingleTerminal(records, ({ event }) => event === "message_stop", "Claude");
     assert.equal(records.at(-1).event, "message_stop");
-    assert.deepEqual(records[0].data?.message?.usage, { input_tokens: usage.messages.input_tokens, output_tokens: 0 }, `${label} Messages initial usage`);
+    assert.deepEqual(records[0].data?.message?.usage, usage.messagesStream.initial, `${label} Messages initial usage`);
     const start = indexOfEvent(records, "content_block_start", "Claude content start");
     const delta = records[indexOfEvent(records, "content_block_delta", "Claude content delta")];
     const stop = indexOfEvent(records, "content_block_stop", "Claude content stop");
@@ -119,7 +123,7 @@ export function assertStream(endpoint, text, label, usage = CONTROLLED_USAGE) {
     const terminalDelta = records[terminalIndex];
     assert.equal(delta?.data?.type, "content_block_delta");
     assert.equal(terminalDelta?.data?.delta?.stop_reason, "end_turn");
-    assert.deepEqual(terminalDelta?.data?.usage, { output_tokens: usage.messages.output_tokens }, `${label} Messages terminal usage`);
+    assert.deepEqual(terminalDelta?.data?.usage, usage.messagesStream.terminal, `${label} Messages terminal usage`);
     assert.ok(start < records.indexOf(delta) && records.indexOf(delta) < stop && stop < terminalIndex);
   } else if (endpoint === "/v1/responses") {
     assert.equal(records[0].event, "response.created");
@@ -195,7 +199,11 @@ async function send(gatewayBaseUrl, entry, body, authorization, gatewayReceipt) 
     },
     body: JSON.stringify(body),
   });
-  assert.equal(response.headers.get("x-powered-by"), "Next.js", `${entry.id} must be served by Next`);
+  assert.match(
+    response.headers.get("vary") || "",
+    /next-router-state-tree/,
+    `${entry.id} must receive a Next rewrite response`,
+  );
   gatewayReceipt.responses += 1;
   const text = await response.text();
   return { response, text };
