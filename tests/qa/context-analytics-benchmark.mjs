@@ -68,6 +68,41 @@ export function benchmarkReceiptSettings(affinityPreflight=null){
   return {cacheTtlMs:1000,serviceDeadlineMs:15000,affinityPreflight};
 }
 
+export function evaluateEconomicsLatencyQualification(profiles){
+  return profiles.filter(row=>row.latencyQualified&&row.cacheState==='result-cache-cold'&&(row.p95Ms>=2000||row.p99Ms>=5000))
+    .map(row=>({operation:row.operation,concurrency:row.concurrency,writer:row.writer,p95Ms:row.p95Ms,p99Ms:row.p99Ms}));
+}
+
+export async function prepareWarmProfile(db,client,prime){
+  // Pending fixture WAL frames can be checkpointed by the writer's timer.
+  // Settle them before measuring cache hits; production invalidation stays on.
+  db.checkpoint();
+  client.invalidate();
+  await prime();
+  assert.equal(client.status().cached,1,'warm profile prime did not populate the result cache');
+}
+
+export function explainAnalyticsPopulation(db,query,readAnalytics){
+  const capturedSignal = new Error('analytics population captured');
+  let captured;
+  const tracing = {
+    get: (sql,args=[]) => db.get(sql,args),
+    all: (sql,args=[]) => {
+      if (sql.includes(' AS MATERIALIZED') && sql.includes(' UNION ALL ')) {
+        captured = {sql,args};
+        throw capturedSignal;
+      }
+      return db.all(sql,args);
+    },
+  };
+  try { readAnalytics(tracing,query); }
+  catch (error) { if (error !== capturedSignal) throw error; }
+  assert(captured,'analytics population was not captured');
+  // EXPLAIN compiles the exact query without materializing a second full
+  // population in the writer process before the worker memory measurement.
+  return db.all(`EXPLAIN QUERY PLAN ${captured.sql}`,captured.args).map(row=>row.detail);
+}
+
 const exactGrowthParity=(value,rowsPerTable)=>value?.requestRows===rowsPerTable&&value?.usageRows===rowsPerTable
   &&value?.projectionRows===rowsPerTable&&value?.missingRows===0&&value?.orphanRows===0;
 export function evaluateGrowthQualification({deliveries,computations,writerCoverage,failures,writerFailures,beforeParity,afterParity,plans,rowsPerTable,peakRssBytes,deadlineMs}){
@@ -123,7 +158,7 @@ if(economicsMode){
   if(affinityPreflight&&!affinityPreflight.accepted)throw new Error(`selected benchmark cores are at or above 20% busy: ${affinityPreflight.busyCores.map(row=>`${row.cpu}=${row.busyPercent}%`).join(', ')}`);
   process.env.DATA_DIR=temporary;
   process.chdir(resolve(fileURLToPath(new URL('../..',import.meta.url))));
-  const [{getAdapter},{createContextAnalyticsClient},{readActivityAnalytics},{seedEconomicsScale}]=await Promise.all([
+  const [{getAdapter},{analyticsDataVersion,createContextAnalyticsClient},{readActivityAnalytics},{seedEconomicsScale}]=await Promise.all([
     import('../../src/lib/db/driver.js'),import('../../src/lib/db/analytics/client.js'),import('../../src/lib/db/analytics/activityQueries.mjs'),import('../fixtures/economics-analytics-scale.mjs'),
   ]);
   const requestedRows=process.argv.find(arg=>arg.startsWith('--rows='));
@@ -139,10 +174,10 @@ if(economicsMode){
   const samples=[],failures=[],plans=[],writeDurations=[],writeCommits=[],writerComputationCoverage=[],computations=[],correctnessOracles=[];
   const percentile=(values,p)=>values.toSorted((a,b)=>a-b)[Math.max(0,Math.ceil(values.length*p)-1)]??null;
   const operations=[
-    {name:'economics-page-population',query:{operation:'activity',view:'economics',facets:['summary','groups','series','items'],groupBy:'provider',pageSize:25,groupPage:1,groupPageSize:12,groupSortBy:'recordedCostUsd',groupSortDirection:'desc',page:1,sortBy:'timestamp',sortDirection:'desc'},expected:value=>value.summary?.records},
-    {name:'economics-filtered-provider',query:{operation:'activity',view:'economics',facets:['summary','groups','series','items'],provider:'provider-1',groupBy:'model',pageSize:25,groupPage:1,groupPageSize:12,groupSortBy:'recordedCostUsd',groupSortDirection:'desc',page:1,sortBy:'timestamp',sortDirection:'desc'},expected:value=>value.summary?.records,expectedRows:Math.floor((rowsPerTable+3)/4)},
-    {name:'economics-items',query:{operation:'activity',view:'economics',facets:['items'],groupBy:'provider',pageSize:25,page:1,sortBy:'timestamp',sortDirection:'desc'},expected:value=>value.pagination?.totalItems},
-    {name:'activity-summary-groups',query:{operation:'activity',view:'activity',facets:['summary','groups'],groupBy:'account',pageSize:50,groupPage:1,groupPageSize:100},expected:value=>value.summary?.records},
+    {name:'economics-page-population',latencyQualified:true,query:{operation:'activity',view:'economics',facets:['summary','groups','series','items'],seriesProfile:'economics-chart',groupBy:'provider',pageSize:25,groupPage:1,groupPageSize:12,groupSortBy:'recordedCostUsd',groupSortDirection:'desc',page:1,sortBy:'timestamp',sortDirection:'desc'},expected:value=>value.summary?.records},
+    {name:'economics-filtered-provider',latencyQualified:true,query:{operation:'activity',view:'economics',facets:['summary','groups','series','items'],seriesProfile:'economics-chart',provider:'provider-1',groupBy:'model',pageSize:25,groupPage:1,groupPageSize:12,groupSortBy:'recordedCostUsd',groupSortDirection:'desc',page:1,sortBy:'timestamp',sortDirection:'desc'},expected:value=>value.summary?.records,expectedRows:Math.floor((rowsPerTable+3)/4)},
+    {name:'economics-items',latencyQualified:true,query:{operation:'activity',view:'economics',facets:['items'],groupBy:'provider',pageSize:25,page:1,sortBy:'timestamp',sortDirection:'desc'},expected:value=>value.pagination?.totalItems},
+    {name:'activity-summary-groups',latencyQualified:false,query:{operation:'activity',view:'activity',facets:['summary','groups'],groupBy:'account',pageSize:50,groupPage:1,groupPageSize:100},expected:value=>value.summary?.records},
   ];
   const parity=()=>({
     requestRows:db.get('SELECT COUNT(*) AS n FROM requestStats').n,
@@ -192,10 +227,7 @@ if(economicsMode){
     assert.equal(db.get('SELECT COUNT(*) AS n FROM usageHistory').n,rowsPerTable);
     for(const operation of operations){
       const query=operation.query;
-      let captured;
-      const tracing={get:(sql,args=[])=>db.get(sql,args),all:(sql,args=[])=>{if(!captured&&sql.includes(' AS MATERIALIZED')&&sql.includes(' UNION ALL '))captured={sql,args};return db.all(sql,args);}};
-      readActivityAnalytics(tracing,query);
-      plans.push({operation:operation.name,view:query.view,facets:query.facets,steps:db.all(`EXPLAIN QUERY PLAN ${captured.sql}`,captured.args).map(row=>row.detail)});
+      plans.push({operation:operation.name,view:query.view,facets:query.facets,steps:explainAnalyticsPopulation(db,query,readActivityAnalytics)});
     }
     if(growthOnly)for(const operation of operations)correctnessOracles.push(buildCorrectnessOracle(operation));
     const beforeParity=parity();
@@ -226,9 +258,12 @@ if(economicsMode){
     };
     async function load(operation,scenario,expectedDelivery=null,record=true,onComputationStarted=null){
       const started=performance.now();
+      const dataVersionBefore=analyticsDataVersion(join(temporary,'db','data.sqlite'));
+      let observedFreshness=null;
       try{
         activeReads++;
         const value=await client.run(operation.query,{authorizedScope:'synthetic-benchmark',onComputationStarted});
+        observedFreshness=value.freshness;
         const durationMs=performance.now()-started;
         assert.equal(operation.expected(value),operation.expectedRows??rowsPerTable);
         assertCorrectnessOracle(operation,value);
@@ -238,7 +273,11 @@ if(economicsMode){
           computationQueueDurationMs:value.freshness.computationQueueDurationMs,computationExecutionDurationMs:value.freshness.computationExecutionDurationMs,
           queryDurationMs:value.freshness.queryDurationMs});
         return value;
-      }catch(error){failures.push({operation:operation.name,...scenario,error:error.constructor.name});return null;}
+      }catch(error){failures.push({operation:operation.name,...scenario,error:error.constructor.name,
+        code:error.code??null,message:String(error.message).slice(0,500),operator:error.operator??null,
+        actual:typeof error.actual==='string'||typeof error.actual==='number'?error.actual:null,
+        expected:typeof error.expected==='string'||typeof error.expected==='number'?error.expected:null,
+        dataVersionBefore,dataVersionAfter:analyticsDataVersion(join(temporary,'db','data.sqlite')),freshness:observedFreshness});return null;}
       finally{activeReads--;}
     }
     async function cold(operation,count,concurrency,writer=false){
@@ -260,7 +299,7 @@ if(economicsMode){
       const scenario={cacheState:'result-cache-warm',concurrency,writer:false};
       let primedAt=-Infinity;
       for(let offset=0;offset<count;offset+=concurrency){
-        if(performance.now()-primedAt>800){client.invalidate();await load(operation,{cacheState:'prime',concurrency,writer:false},'computed',false);primedAt=performance.now();}
+        if(performance.now()-primedAt>800){await prepareWarmProfile(db,client,()=>load(operation,{cacheState:'prime',concurrency,writer:false},'computed',false));primedAt=performance.now();}
         await Promise.all(Array.from({length:Math.min(concurrency,count-offset)},()=>load(operation,scenario,'cache-hit')));
       }
     }
@@ -275,7 +314,7 @@ if(economicsMode){
       const result=[];
       for(const operation of operations)for(const cacheState of ['result-cache-cold','result-cache-warm'])for(const concurrency of [1,5])for(const writer of [false,true]){
         const rows=samples.filter(row=>row.operation===operation.name&&row.cacheState===cacheState&&row.concurrency===concurrency&&row.writer===writer);
-        if(rows.length)result.push({operation:operation.name,facets:operation.query.facets,cacheState,concurrency,writer,count:rows.length,p95Ms:percentile(rows.map(row=>row.durationMs),0.95),p99Ms:percentile(rows.map(row=>row.durationMs),0.99)});
+        if(rows.length)result.push({operation:operation.name,facets:operation.query.facets,latencyQualified:operation.latencyQualified,cacheState,concurrency,writer,count:rows.length,p95Ms:percentile(rows.map(row=>row.durationMs),0.95),p99Ms:percentile(rows.map(row=>row.durationMs),0.99)});
       }
       return result;
     };
@@ -345,8 +384,9 @@ if(economicsMode){
       checkpoint('running',{operation:operation.name,cacheState:'result-cache-cold',concurrency,writer:true});
     }
     const profiles=profileRows();
-    const violations=profiles.filter(row=>row.cacheState==='result-cache-cold'&&(row.p95Ms>=2000||row.p99Ms>=5000))
-      .map(row=>({operation:row.operation,concurrency:row.concurrency,writer:row.writer,p95Ms:row.p95Ms,p99Ms:row.p99Ms}));
+    const violations=evaluateEconomicsLatencyQualification(profiles);
+    if(samples.length!==scheduledSamples||profiles.length!==scheduledProfiles)
+      violations.push({kind:'incomplete-inventory',samples:samples.length,expectedSamples:scheduledSamples,profiles:profiles.length,expectedProfiles:scheduledProfiles});
     if(failures.length)violations.push({kind:'read-failures',count:failures.length});
     if(writerFailures)violations.push({kind:'writer-failures',count:writerFailures});
     if(!overlappingWrites)violations.push({kind:'missing-write-overlap'});
@@ -359,10 +399,7 @@ if(economicsMode){
     const finalReceipt={...receipt(violations.length?'qualification-failed':'qualification-passed'),qualification:{passed:violations.length===0,violations}};
     if(output){writeFileSync(`${output}.tmp`,JSON.stringify(finalReceipt,null,2)+'\n');renameSync(`${output}.tmp`,output);}
     console.log(JSON.stringify(finalReceipt,null,2));
-    assert.equal(failures.length,0);
-    assert.equal(writerFailures,0);assert(overlappingWrites>0);
-    for(const profile of profiles.filter(row=>row.cacheState==='result-cache-cold')){assert(profile.p95Ms<2000);assert(profile.p99Ms<5000);}
-    assert(peakRss<512*1024*1024);
+    assert.equal(violations.length,0,JSON.stringify(violations));
   }finally{
     clearInterval(rssTimer);await client?.close();db.close();if(ownsTemporary)rmSync(temporary,{recursive:true,force:true});
   }

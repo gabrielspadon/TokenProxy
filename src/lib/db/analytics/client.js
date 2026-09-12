@@ -31,7 +31,7 @@ function workerPath() {
   throw new ContextAnalyticsError("Context analytics runtime is missing.");
 }
 
-export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_TIMEOUT_MS, maxQueued = MAX_QUEUED, workerFactory, version = () => analyticsDataVersion(file), now = Date.now, monotonic = () => performance.now(), cacheTtlMs = 1000, maxCacheBytes = 8 * 1024 * 1024, maxCacheEntries = 32 } = {}) {
+export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_TIMEOUT_MS, maxQueued = MAX_QUEUED, workerFactory, version = () => analyticsDataVersion(file), now = Date.now, monotonic = () => performance.now(), cacheTtlMs = 1000, maxCacheBytes = 8 * 1024 * 1024, maxCacheEntries = 32, traceLifecycle = false } = {}) {
   const jobs = new Map(), queue = [], cache = new Map();
   let cacheBytes = 0, lastScope = null, cacheEpoch = 0;
   const dropCache = key => { const entry = cache.get(key); if (entry) { cacheBytes -= entry.bytes; cache.delete(key); } };
@@ -89,12 +89,19 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
     try {
       if (!worker) {
         worker = workerFactory ? workerFactory() : new Worker(workerPath(), {
-          workerData: { file, driver }, env: {}, execArgv: process.execArgv.filter((arg) => arg === "--experimental-sqlite"),
+          workerData: { file, driver, traceLifecycle }, env: {}, execArgv: process.execArgv.filter((arg) => arg === "--experimental-sqlite"),
           resourceLimits: { maxOldGenerationSizeMb: 192 },
         });
         const current = worker;
-        worker.on("message", ({ id, error, result }) => {
+        worker.on("message", ({ id, error, result, lifecycle, snapshotStartedAt }) => {
           if (worker !== current || !active || active.id !== id) return;
+          if (lifecycle === 'snapshot-started') {
+            for (const subscriber of active.subscribers) {
+              try { subscriber.onComputationStarted?.({ snapshotStartedAt }); } catch {}
+            }
+            current.postMessage({ id, lifecycle: 'snapshot-continue' });
+            return;
+          }
           finish(active, error ? unavailable() : null, result);
           active = null;
           current.unref();
@@ -110,7 +117,7 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
       if (worker) failWorker(); else queueMicrotask(pump);
     }
   }
-  function run(query, { signal, authorizedScope = 'server' } = {}) {
+  function run(query, { signal, authorizedScope = 'server', onComputationStarted } = {}) {
     if (closed || signal?.aborted) return Promise.reject(unavailable());
     const deliveryStartedAt = monotonic();
     const dataVersion = version();
@@ -137,7 +144,8 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
       job.timer.unref?.();
     }
     const result = new Promise((resolveResult, reject) => {
-      const subscriber = { resolve: resolveResult, reject, cleanup: () => signal?.removeEventListener("abort", abort) };
+      const subscriber = { resolve: resolveResult, reject, onComputationStarted,
+        cleanup: () => signal?.removeEventListener("abort", abort) };
       function abort() {
         subscriber.cleanup(); job.subscribers.delete(subscriber); reject(unavailable());
         if (!job.subscribers.size) {

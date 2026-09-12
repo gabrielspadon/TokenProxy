@@ -40,6 +40,20 @@ function legacyUsage() {
 }
 
 describe('complete pre-schema backup', () => {
+  it.each(['node:sqlite', 'better-sqlite3'])('retains committed WAL data when serialization cannot allocate with %s', async driver => {
+    await open(driver);
+    db.exec('PRAGMA wal_autocheckpoint=0; CREATE TABLE acknowledged(id TEXT PRIMARY KEY,value TEXT)');
+    db.run('INSERT INTO acknowledged(id,value) VALUES(?,?)', ['committed-wal', 'retained']);
+    const serialize = vi.fn(() => { throw new Error('Out of memory'); });
+    const file = backupDbLite({ ...db, raw: { serialize } }, makeBackupDir('bounded-memory'));
+    const restored = new DatabaseSync(file);
+    try {
+      expect(restored.prepare('SELECT * FROM acknowledged').all()).toEqual([{ id: 'committed-wal', value: 'retained' }]);
+      expect(restored.prepare('PRAGMA integrity_check').get().integrity_check).toBe('ok');
+      expect(serialize).not.toHaveBeenCalled();
+    } finally { restored.close(); }
+  });
+
   it.each(['node:sqlite', 'better-sqlite3', 'sql.js', 'native-without-serialize'])('publishes all data and schema independently with %s', async driver => {
     await open(driver === 'native-without-serialize' ? 'node:sqlite' : driver);
     const backupAdapter = driver === 'native-without-serialize' ? { ...db, raw: {} } : db;

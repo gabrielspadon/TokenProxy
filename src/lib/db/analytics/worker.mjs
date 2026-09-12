@@ -12,9 +12,35 @@ import { validateOperationEventsQuery, readOperationEvents } from "./operationEv
 import { validateSessionPinTimelineQuery, readSessionPinTimeline } from "./sessionPinTimelineQueries.mjs";
 import { validateNotificationEvidenceQuery, readNotificationEvidence } from "./notificationRuleQueries.mjs";
 
+let persistentDb;
+const lifecycleWaiters = new Map();
+function configure(db, persistent) {
+  db.exec(persistent
+    ? "PRAGMA temp_store=MEMORY; PRAGMA cache_size=-8192; PRAGMA mmap_size=0;"
+    : "PRAGMA temp_store=MEMORY; PRAGMA cache_size=-64000; PRAGMA mmap_size=30000000;");
+  return db;
+}
+async function acquireDatabase() {
+  if (workerData.driver === 'sql.js') return { db: configure(await openAnalyticsReadOnly(workerData.file, workerData.driver), false), transient: true };
+  persistentDb ||= configure(await openAnalyticsReadOnly(workerData.file, workerData.driver), true);
+  return { db: persistentDb, transient: false };
+}
+function discardPersistentDatabase() {
+  try { persistentDb?.close(); } catch {}
+  persistentDb = undefined;
+}
+parentPort?.on('close', discardPersistentDatabase);
+
 // The message boundary accepts named projections only, never SQL or a DB path.
-parentPort?.on("message", async ({ id, query }) => {
+parentPort?.on("message", async ({ id, query, lifecycle }) => {
+  if (lifecycle === 'snapshot-continue') {
+    lifecycleWaiters.get(id)?.();
+    return;
+  }
   let db;
+  let transient = false;
+  let acquired = false;
+  let failed = false;
   let phase = "validate";
   try {
     const validated = query?.operation === "evidence" ? validateEvidenceQuery(query)
@@ -27,14 +53,17 @@ parentPort?.on("message", async ({ id, query }) => {
       : query?.operation === "events" ? validateContextEventQuery(query)
       : query?.operation?.startsWith("quota-history") ? validateQuotaHistoryQuery(query) : validateAnalyticsQuery(query);
     phase = "open";
-    db = await openAnalyticsReadOnly(workerData.file, workerData.driver);
-    // Match the database's analytical scratch settings on this
-    // short-lived read-only connection. Grouping and percentile sorts stay in
-    // process instead of repeatedly spilling their temporary b-trees to disk.
-    db.exec("PRAGMA temp_store=MEMORY; PRAGMA cache_size=-64000; PRAGMA mmap_size=30000000;");
+    ({ db, transient } = await acquireDatabase());
+    acquired = true;
     const snapshotStartedAt = new Date().toISOString();
     phase = "snapshot";
     db.exec("BEGIN");
+    if (workerData.traceLifecycle) {
+      db.get('SELECT schema_version FROM pragma_schema_version');
+      parentPort.postMessage({ id, lifecycle: 'snapshot-started', snapshotStartedAt });
+      await new Promise(resolve => lifecycleWaiters.set(id, resolve));
+      lifecycleWaiters.delete(id);
+    }
     phase = "query";
     const queryStarted = performance.now();
     const result = validated.operation === "evidence" ? readEvidence(db,validated)
@@ -57,10 +86,14 @@ parentPort?.on("message", async ({ id, query }) => {
       snapshotCompletedAt: new Date().toISOString(), persistedAt: db.persistedAt };
     parentPort.postMessage({ id, result });
   } catch (error) {
+    failed = true;
+    try { db?.exec('ROLLBACK'); } catch {}
     console.warn("[analytics] Read failed", analyticsDiagnostic(error, { operation: query?.operation, phase }));
     parentPort.postMessage({ id, error: "Context analytics is temporarily unavailable." });
   } finally {
-    try { db?.close(); }
-    catch (error) { console.warn("[analytics] Read failed", analyticsDiagnostic(error,{operation:query?.operation,phase:"close"})); }
+    if (transient) {
+      try { db?.close(); }
+      catch (error) { console.warn("[analytics] Read failed", analyticsDiagnostic(error,{operation:query?.operation,phase:"close"})); }
+    } else if (failed && acquired) discardPersistentDatabase();
   }
 });

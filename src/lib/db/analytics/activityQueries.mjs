@@ -1,6 +1,7 @@
 import { CLIENT_REFERENCE_FIELDS, ECONOMICS_LINK_FIELDS, economicsLedgerSource, costComponents } from './economicsLinks.mjs';
 import { ECONOMICS_GROUP_VALUES, economicsGroupFields } from './economicsDimensions.mjs';
 import { attachCounterfactualEvidence } from './counterfactualEvidence.mjs';
+import { ECONOMICS_FLAGS, economicsProjectionReady } from '../economicsProjectionSchema.js';
 const MAX_POINTS = 720;
 const MINUTE = 60000;
 const GROUPS = new Set(ECONOMICS_GROUP_VALUES);
@@ -12,7 +13,7 @@ const POPULATION_SORT = {inputTokens:'prompt',uncachedInputTokens:'uncachedInput
 const GROUP_SORTS = new Set(['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens']);
 const FACETS = ['summary','groups','series','items'];
 const FACET_SET = new Set(FACETS);
-const FIELDS = new Set(['operation', 'view', 'groupBy', 'facets', 'start', 'end', 'provider', 'model', 'connectionId', 'bucketMs', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
+const FIELDS = new Set(['operation', 'view', 'groupBy', 'facets', 'seriesProfile', 'start', 'end', 'provider', 'model', 'connectionId', 'bucketMs', 'page', 'pageSize','sortBy','sortDirection','status','requestId','logicalRequestId','sessionId','projectId','recordId',...IDENTITY_FILTERS,'missing','requestLink','costSource','attemptKind','groupPage','groupPageSize','groupSortBy','groupSortDirection']);
 
 export class ActivityQueryError extends Error {}
 
@@ -61,6 +62,10 @@ export function validateActivityQuery(query) {
   const view = query.view ?? 'activity', groupBy = query.groupBy ?? 'provider';
   if (!['activity', 'economics'].includes(view) || !GROUPS.has(groupBy)) throw new ActivityQueryError('Invalid analytics view or grouping.');
   const result = { operation: 'activity', view, groupBy, facets: facets(query.facets), start: date(query.start, 'start'), end: date(query.end, 'end') };
+  result.seriesProfile=query.seriesProfile ?? 'full';
+  if (!['full','economics-chart'].includes(result.seriesProfile) || (result.seriesProfile==='economics-chart' && view!=='economics')) {
+    throw new ActivityQueryError('Invalid analytics series profile.');
+  }
   if (result.start && result.end && result.start >= result.end) throw new ActivityQueryError('The end must be after the start.');
   for (const key of ['provider', 'model', 'connectionId']) {
     const value = query[key];
@@ -157,6 +162,16 @@ const computedPopulationFields = `MAX(0,prompt-cacheRead-cacheWrite) AS uncached
 function baseQuery(db, query, { materialize = false, materializeNormalized = false, projection = null, selectedIds = null } = {}) {
   const table = query.view === 'economics' ? 'usageHistory' : 'requestStats';
   const columns = new Set(db.all(`PRAGMA table_info(${table})`, []).map((row) => row.name));
+  if (query.view === 'economics' && materializeNormalized && economicsProjectionReady(db)) {
+    const projectionColumns = new Set(db.all('PRAGMA table_info(usageEconomicsProjection)', []).map(row => row.name));
+    const filtered = filterFor(query, projectionColumns), params = [...filtered.params];
+    const sourceFields = [...new Set(['id', 'timestamp', 'logicalRequestId', ...economicsGroupFields(query.groupBy)])].join(',');
+    return { params, sql: `WITH records AS NOT MATERIALIZED (
+      SELECT ${sourceFields},timestampMs,prompt,output,cacheRead,cacheWrite,recordedCost,invalidTokens,missingTokenDetail,
+        latencyMs,ttftMs,uncachedInput,inconsistentCache,economicsFlags,aggregateEstimatedCost,aggregateReportedCost
+      FROM usageEconomicsProjection ${filtered.sql}
+    )`, normalizedProjection: true };
+  }
   const filtered = filterFor(query, columns), params=[...filtered.params];
   let filterSql=filtered.sql;
   if (selectedIds?.length) {
@@ -209,49 +224,119 @@ function baseQuery(db, query, { materialize = false, materializeNormalized = fal
   ), records AS ${materialize && !materializeNormalized ? 'MATERIALIZED ' : ''}(SELECT ${projection || `*,${computedPopulationFields}`} FROM quantities)` };
 }
 
-const TOTALS = `COUNT(*) AS records,COUNT(*) AS attempts,
-  COALESCE(SUM(requestLink='linked'),0) AS linkedRequestRows,
-  COALESCE(SUM(requestLink='conflict'),0) AS conflictingRequestRows,
-  COALESCE(SUM(requestLink='unavailable'),0) AS unavailableRequestRows,
-  COUNT(contextSessionId) AS explicitSessionRows,COUNT(projectRef) AS clientProjectRows,COUNT(taskRef) AS taskRows,COUNT(clientRef) AS clientRows,
-  COALESCE(SUM(logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt=1),0) AS initialAttemptRows,
-  COALESCE(SUM(logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>1),0) AS additionalAttemptRows,
-  SUM(CASE WHEN logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>1 THEN recordedCost END) AS additionalAttemptCostUsd,
-  SUM(CASE WHEN latencyMs IS NOT NULL AND recordedCost IS NOT NULL THEN recordedCost END) AS pairedCostUsd,
-  AVG(CASE WHEN recordedCost IS NOT NULL THEN latencyMs END) AS pairedAverageLatencyMs,
+function readProjectedTimestampItemIds(db, query) {
+  const columns = new Set(db.all('PRAGMA table_info(usageEconomicsProjection)', []).map(row => row.name));
+  const filtered = filterFor(query, columns);
+  return db.all(`SELECT id FROM usageEconomicsProjection ${filtered.sql}
+    ORDER BY timestamp ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC
+    LIMIT ${query.pageSize} OFFSET ${(query.page-1)*query.pageSize}`, filtered.params).map(row => row.id);
+}
+
+function readProjectedSeriesLogicalCounts(db, query, bucketMs) {
+  if (!bucketMs) return new Map();
+  const columns = new Set(db.all('PRAGMA table_info(usageEconomicsProjection)', []).map(row => row.name));
+  const filtered = filterFor(query, columns);
+  const where = `${filtered.sql}${filtered.sql ? ' AND' : ' WHERE'} timestampMs IS NOT NULL`;
+  const rows = db.all(`SELECT CAST(timestampMs/${bucketMs} AS INTEGER)*${bucketMs} AS bucketStartMs,
+      COUNT(DISTINCT logicalRequestId) AS logicalRequests
+    FROM usageEconomicsProjection ${where} GROUP BY bucketStartMs`, filtered.params);
+  return new Map(rows.map(row => [row.bucketStartMs, row.logicalRequests]));
+}
+
+function readProjectedSummaryLogicalCount(db, query) {
+  const columns = new Set(db.all('PRAGMA table_info(usageEconomicsProjection)', []).map(row => row.name));
+  const filtered = filterFor(query, columns);
+  return db.get(`SELECT COUNT(DISTINCT logicalRequestId) AS logicalRequests
+    FROM usageEconomicsProjection ${filtered.sql}`, filtered.params).logicalRequests;
+}
+
+function readProjectedLatencyPercentiles(db, query, samples) {
+  if (!samples) return { p50LatencyMs: null, p95LatencyMs: null };
+  const columns = new Set(db.all('PRAGMA table_info(usageEconomicsProjection)', []).map(row => row.name));
+  const filtered = filterFor(query, columns);
+  const where = `${filtered.sql}${filtered.sql ? ' AND' : ' WHERE'} latencyMs IS NOT NULL`;
+  const valueAt = rank => db.get(`SELECT latencyMs FROM usageEconomicsProjection ${where}
+    ORDER BY latencyMs LIMIT 1 OFFSET ?`, [...filtered.params,rank-1])?.latencyMs ?? null;
+  return { p50LatencyMs: valueAt(Math.floor((samples+1)/2)), p95LatencyMs: valueAt(Math.ceil(samples*0.95)) };
+}
+
+const INDEXED_LOGICAL_GROUPS = new Set(['provider','model','account']);
+const logicalGroupKey = (row, columns) => JSON.stringify(columns.map(column => row[column] ?? null));
+function readProjectedGroupLogicalCounts(db, query, columns) {
+  const projectionColumns = new Set(db.all('PRAGMA table_info(usageEconomicsProjection)', []).map(row => row.name));
+  const filtered = filterFor(query, projectionColumns);
+  const rows = db.all(`SELECT ${columns.join(',')},COUNT(DISTINCT logicalRequestId) AS logicalRequests
+    FROM usageEconomicsProjection ${filtered.sql} GROUP BY ${columns.join(',')}`, filtered.params);
+  return new Map(rows.map(row => [logicalGroupKey(row,columns),row.logicalRequests]));
+}
+
+const compactPredicate = (compact, raw, flagValue) => compact ? `(economicsFlags&${flagValue})!=0` : raw;
+const numericTotalsFor = compact => ({
+  additionalAttemptCostUsd: `SUM(CASE WHEN ${compactPredicate(compact, "logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>1", ECONOMICS_FLAGS.additionalAttempt)} THEN recordedCost END)`,
+  pairedCostUsd: 'SUM(CASE WHEN latencyMs IS NOT NULL AND recordedCost IS NOT NULL THEN recordedCost END)',
+  pairedAverageLatencyMs: 'AVG(CASE WHEN recordedCost IS NOT NULL THEN latencyMs END)',
+  estimatedCostUsd: `SUM(${compact ? 'aggregateEstimatedCost' : `CASE WHEN ${validNumber('estimatedCostUsd')} THEN estimatedCostUsd END`})`,
+  reportedCostUsd: `SUM(${compact ? 'aggregateReportedCost' : `CASE WHEN ${validNumber('reportedCostUsd')} THEN reportedCostUsd END`})`,
+  inputTokens: 'COALESCE(SUM(prompt),0)',
+  uncachedInputTokens: 'SUM(uncachedInput)',
+  cacheReadTokens: 'SUM(cacheRead)',
+  cacheWriteTokens: 'SUM(cacheWrite)',
+  outputTokens: 'COALESCE(SUM(output),0)',
+  cacheEligibleInputTokens: 'SUM(CASE WHEN cacheRead IS NOT NULL THEN prompt END)',
+  cacheEligibleReadTokens: 'SUM(CASE WHEN prompt IS NOT NULL THEN cacheRead END)',
+  recordedCostUsd: 'SUM(recordedCost)',
+  averageLatencyMs: 'AVG(latencyMs)',
+  averageTtftMs: 'AVG(ttftMs)',
+});
+const totalsFor = (compact = false, { logicalRequests = true } = {}) => {
+  const numeric = numericTotalsFor(compact);
+  return `COUNT(*) AS records,COUNT(*) AS attempts,
+  COALESCE(SUM(${compactPredicate(compact, "requestLink='linked'", ECONOMICS_FLAGS.linked)}),0) AS linkedRequestRows,
+  COALESCE(SUM(${compactPredicate(compact, "requestLink='conflict'", ECONOMICS_FLAGS.conflict)}),0) AS conflictingRequestRows,
+  COALESCE(SUM(${compactPredicate(compact, "requestLink='unavailable'", ECONOMICS_FLAGS.unavailable)}),0) AS unavailableRequestRows,
+  COALESCE(SUM(${compactPredicate(compact, 'contextSessionId IS NOT NULL', ECONOMICS_FLAGS.explicitSession)}),0) AS explicitSessionRows,
+  COALESCE(SUM(${compactPredicate(compact, 'projectRef IS NOT NULL', ECONOMICS_FLAGS.clientProject)}),0) AS clientProjectRows,
+  COALESCE(SUM(${compactPredicate(compact, 'taskRef IS NOT NULL', ECONOMICS_FLAGS.task)}),0) AS taskRows,
+  COALESCE(SUM(${compactPredicate(compact, 'clientRef IS NOT NULL', ECONOMICS_FLAGS.client)}),0) AS clientRows,
+  COALESCE(SUM(${compactPredicate(compact, "logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt=1", ECONOMICS_FLAGS.initialAttempt)}),0) AS initialAttemptRows,
+  COALESCE(SUM(${compactPredicate(compact, "logicalRequestId IS NOT NULL AND dispatchCoverage='physical-dispatch' AND typeof(attempt)='integer' AND attempt>1", ECONOMICS_FLAGS.additionalAttempt)}),0) AS additionalAttemptRows,
+  ${numeric.additionalAttemptCostUsd} AS additionalAttemptCostUsd,
+  ${numeric.pairedCostUsd} AS pairedCostUsd,
+  ${numeric.pairedAverageLatencyMs} AS pairedAverageLatencyMs,
   COALESCE(SUM(latencyMs IS NOT NULL AND recordedCost IS NOT NULL),0) AS costLatencySamples,
-  COALESCE(SUM(CASE WHEN dispatchCoverage='physical-dispatch' THEN 1 ELSE 0 END),0) AS physicalDispatchRows,
-  COALESCE(SUM(CASE WHEN dispatchCoverage='executor-invocation' THEN 1 ELSE 0 END),0) AS executorInvocationRows,
-  COALESCE(SUM(CASE WHEN dispatchCoverage IS NULL THEN 1 ELSE 0 END),0) AS unknownDispatchRows,
-  COUNT(DISTINCT logicalRequestId) AS logicalRequests,
+  COALESCE(SUM(${compactPredicate(compact, "dispatchCoverage='physical-dispatch'", ECONOMICS_FLAGS.physicalDispatch)}),0) AS physicalDispatchRows,
+  COALESCE(SUM(${compactPredicate(compact, "dispatchCoverage='executor-invocation'", ECONOMICS_FLAGS.executorInvocation)}),0) AS executorInvocationRows,
+  COALESCE(SUM(${compactPredicate(compact, 'dispatchCoverage IS NULL', ECONOMICS_FLAGS.unknownDispatch)}),0) AS unknownDispatchRows,
+  ${logicalRequests ? 'COUNT(DISTINCT logicalRequestId)' : '0'} AS logicalRequests,
   COALESCE(SUM(CASE WHEN logicalRequestId IS NULL THEN 1 ELSE 0 END),0) AS unattributedAttempts,
-  SUM(CASE WHEN ${validNumber('estimatedCostUsd')} THEN estimatedCostUsd END) AS estimatedCostUsd,
-  SUM(CASE WHEN ${validNumber('reportedCostUsd')} THEN reportedCostUsd END) AS reportedCostUsd,
-  COALESCE(SUM(CASE WHEN ${validNumber('estimatedCostUsd')} THEN 1 ELSE 0 END),0) AS estimatedCostSamples,
-  COALESCE(SUM(CASE WHEN ${validNumber('reportedCostUsd')} THEN 1 ELSE 0 END),0) AS reportedCostSamples,
-  COALESCE(SUM(CASE WHEN costSource='provider-confirmed' THEN 1 ELSE 0 END),0) AS confirmedCostRows,
-  COALESCE(SUM(CASE WHEN costSource='provider-reported' THEN 1 ELSE 0 END),0) AS providerReportedCostRows,
-  COALESCE(SUM(CASE WHEN costSource IS NULL OR costSource='unknown' THEN 1 ELSE 0 END),0) AS unknownCostSourceRows,
-  COALESCE(SUM(CASE WHEN rateSnapshotId IS NOT NULL THEN 1 ELSE 0 END),0) AS rateSnapshotRows,
-COALESCE(SUM(prompt),0) AS inputTokens,
-  SUM(uncachedInput) AS uncachedInputTokens,SUM(cacheRead) AS cacheReadTokens,
-  SUM(cacheWrite) AS cacheWriteTokens,COALESCE(SUM(output),0) AS outputTokens,
+  ${numeric.estimatedCostUsd} AS estimatedCostUsd,
+  ${numeric.reportedCostUsd} AS reportedCostUsd,
+  COUNT(${compact ? 'aggregateEstimatedCost' : `CASE WHEN ${validNumber('estimatedCostUsd')} THEN estimatedCostUsd END`}) AS estimatedCostSamples,
+  COUNT(${compact ? 'aggregateReportedCost' : `CASE WHEN ${validNumber('reportedCostUsd')} THEN reportedCostUsd END`}) AS reportedCostSamples,
+  COALESCE(SUM(${compactPredicate(compact, "costSource='provider-confirmed'", ECONOMICS_FLAGS.confirmedCost)}),0) AS confirmedCostRows,
+  COALESCE(SUM(${compactPredicate(compact, "costSource='provider-reported'", ECONOMICS_FLAGS.providerReportedCost)}),0) AS providerReportedCostRows,
+  COALESCE(SUM(${compactPredicate(compact, "costSource IS NULL OR costSource='unknown'", ECONOMICS_FLAGS.unknownCostSource)}),0) AS unknownCostSourceRows,
+  COALESCE(SUM(${compactPredicate(compact, 'rateSnapshotId IS NOT NULL', ECONOMICS_FLAGS.rateSnapshot)}),0) AS rateSnapshotRows,
+  ${numeric.inputTokens} AS inputTokens,
+  ${numeric.uncachedInputTokens} AS uncachedInputTokens,${numeric.cacheReadTokens} AS cacheReadTokens,
+  ${numeric.cacheWriteTokens} AS cacheWriteTokens,${numeric.outputTokens} AS outputTokens,
   COUNT(prompt) AS inputSamples,COUNT(output) AS outputSamples,COUNT(cacheRead) AS cacheReadSamples,
   COUNT(cacheWrite) AS cacheWriteSamples,COUNT(uncachedInput) AS uncachedInputSamples,
-  SUM(CASE WHEN cacheRead IS NOT NULL THEN prompt END) AS cacheEligibleInputTokens,
-  SUM(CASE WHEN prompt IS NOT NULL THEN cacheRead END) AS cacheEligibleReadTokens,
-  COALESCE(SUM(CASE WHEN status IN ('success','ok') THEN 1 ELSE 0 END),0) AS succeeded,
-  COALESCE(SUM(CASE WHEN status IN ('error','aborted','cancelled') THEN 1 ELSE 0 END),0) AS failed,
-  COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0) AS recordedPending,
+  ${numeric.cacheEligibleInputTokens} AS cacheEligibleInputTokens,
+  ${numeric.cacheEligibleReadTokens} AS cacheEligibleReadTokens,
+  COALESCE(SUM(${compactPredicate(compact, "status IN ('success','ok')", ECONOMICS_FLAGS.succeeded)}),0) AS succeeded,
+  COALESCE(SUM(${compactPredicate(compact, "status IN ('error','aborted','cancelled')", ECONOMICS_FLAGS.failed)}),0) AS failed,
+  COALESCE(SUM(${compactPredicate(compact, "status='pending'", ECONOMICS_FLAGS.pending)}),0) AS recordedPending,
   COALESCE(SUM(invalidTokens),0) AS invalidTokenRows,COALESCE(SUM(inconsistentCache),0) AS inconsistentCacheRows,
   COALESCE(SUM(missingTokenDetail),0) AS missingTokenDetailRows,
   COALESCE(SUM(timestampMs IS NULL),0) AS invalidTimestampRows,
-  SUM(recordedCost) AS recordedCostUsd,COUNT(recordedCost) AS costSamples,
+  ${numeric.recordedCostUsd} AS recordedCostUsd,COUNT(recordedCost) AS costSamples,
   COALESCE(SUM(CASE WHEN recordedCost=0 THEN 1 ELSE 0 END),0) AS zeroCostRows,
-  AVG(latencyMs) AS averageLatencyMs,MIN(latencyMs) AS minimumLatencyMs,MAX(latencyMs) AS maximumLatencyMs,
-  COUNT(latencyMs) AS latencySamples,AVG(ttftMs) AS averageTtftMs,COUNT(ttftMs) AS ttftSamples,
+  ${numeric.averageLatencyMs} AS averageLatencyMs,MIN(latencyMs) AS minimumLatencyMs,MAX(latencyMs) AS maximumLatencyMs,
+  COUNT(latencyMs) AS latencySamples,${numeric.averageTtftMs} AS averageTtftMs,COUNT(ttftMs) AS ttftSamples,
   MIN(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS firstSeenAt,
   MAX(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS lastSeenAt`;
+};
 
 const TOTAL_FIELDS = ['records','attempts','linkedRequestRows','conflictingRequestRows','unavailableRequestRows','explicitSessionRows',
   'clientProjectRows','taskRows','clientRows','initialAttemptRows','additionalAttemptRows','additionalAttemptCostUsd','pairedCostUsd',
@@ -262,6 +347,26 @@ const TOTAL_FIELDS = ['records','attempts','linkedRequestRows','conflictingReque
   'cacheEligibleInputTokens','cacheEligibleReadTokens','succeeded','failed','recordedPending','invalidTokenRows','inconsistentCacheRows',
   'missingTokenDetailRows','invalidTimestampRows','recordedCostUsd','costSamples','zeroCostRows','averageLatencyMs','minimumLatencyMs',
   'maximumLatencyMs','latencySamples','averageTtftMs','ttftSamples','firstSeenAt','lastSeenAt'];
+const SUMMARY_NUMERIC = numericTotalsFor(true);
+const SUMMARY_MINIMUMS = new Set(['minimumLatencyMs','firstSeenAt']);
+const SUMMARY_MAXIMUMS = new Set(['maximumLatencyMs','lastSeenAt']);
+const SUMMARY_ZERO_SUMS = new Set(['records','attempts','unattributedAttempts','succeeded','failed','recordedPending','inputTokens','outputTokens']);
+const groupedSummaryTotals = TOTAL_FIELDS.map(field => {
+  const expression = Object.hasOwn(SUMMARY_NUMERIC,field) ? `(SELECT ${field} FROM summary_numeric)`
+    : SUMMARY_MINIMUMS.has(field) ? `MIN(${field})`
+      : SUMMARY_MAXIMUMS.has(field) ? `MAX(${field})`
+        : field==='logicalRequests' ? '0'
+          : SUMMARY_ZERO_SUMS.has(field)||field.endsWith('Rows')||field.endsWith('Samples') ? `COALESCE(SUM(${field}),0)`
+            : `SUM(${field})`;
+  return `${expression} AS ${field}`;
+}).join(',');
+const ECONOMICS_CHART_FIELDS = ['records','recordedCostUsd','costSamples','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens',
+  'uncachedInputSamples','cacheReadSamples','cacheWriteSamples','outputSamples','inconsistentCacheRows','firstSeenAt','lastSeenAt'];
+const ECONOMICS_CHART_TOTALS = `COUNT(*) AS records,SUM(recordedCost) AS recordedCostUsd,COUNT(recordedCost) AS costSamples,
+  SUM(uncachedInput) AS uncachedInputTokens,SUM(cacheRead) AS cacheReadTokens,SUM(cacheWrite) AS cacheWriteTokens,COALESCE(SUM(output),0) AS outputTokens,
+  COUNT(uncachedInput) AS uncachedInputSamples,COUNT(cacheRead) AS cacheReadSamples,COUNT(cacheWrite) AS cacheWriteSamples,COUNT(output) AS outputSamples,
+  COALESCE(SUM(inconsistentCache),0) AS inconsistentCacheRows,
+  MIN(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS firstSeenAt,MAX(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS lastSeenAt`;
 const jsonObject = fields => `json_object(${fields.map(field => `'${field}',${field}`).join(',')})`;
 const projection = (kind, payload) => `SELECT '${kind}' AS kind,${payload} AS payload`;
 
@@ -272,9 +377,10 @@ function parseObject(value) {
 function enrich(row) {
   const overflowFields = Object.keys(row).filter((key) => typeof row[key] === 'number' && !Number.isFinite(row[key]));
   for (const key of overflowFields) row[key] = null;
+  const statusFields=['records','succeeded','failed','recordedPending'];
   return { ...row, numericOverflowFields: overflowFields,
     cacheReadFraction: row.cacheEligibleInputTokens > 0 ? row.cacheEligibleReadTokens / row.cacheEligibleInputTokens : null,
-    otherStatusRows: row.records - row.succeeded - row.failed - row.recordedPending };
+    otherStatusRows: statusFields.every(field=>Number.isFinite(row[field])) ? row.records-row.succeeded-row.failed-row.recordedPending : null };
 }
 
 function groupColumns(groupBy) {
@@ -291,18 +397,39 @@ export function readActivityAnalytics(db, input) {
   const base = baseQuery(db, query, { materialize: true,
     materializeNormalized: aggregatePopulation,
     projection: aggregatePopulation ? null : itemProjection });
+  const projectedItemIds = requested.has('items') && base.normalizedProjection === true && query.sortBy === 'timestamp'
+    ? readProjectedTimestampItemIds(db, query) : null;
+  const splitSummaryLogical = base.normalizedProjection === true && requested.has('summary');
+  const splitGroupLogical = base.normalizedProjection === true && requested.has('groups') && INDEXED_LOGICAL_GROUPS.has(query.groupBy);
+  const summaryTotals = totalsFor(base.normalizedProjection === true, { logicalRequests: !splitSummaryLogical });
+  const groupTotals = totalsFor(base.normalizedProjection === true, { logicalRequests: !splitGroupLogical });
+  const compactSeries = base.normalizedProjection === true && query.seriesProfile==='full';
+  const seriesTotals = query.seriesProfile==='economics-chart' ? ECONOMICS_CHART_TOTALS
+    : compactSeries ? totalsFor(true, { logicalRequests: false }) : summaryTotals;
+  const seriesFields = query.seriesProfile==='economics-chart' ? ECONOMICS_CHART_FIELDS : TOTAL_FIELDS;
   const columns = groupColumns(query.groupBy);
   const ctes = [], selects = [];
   const needsSummary = requested.has('summary') || requested.has('series');
-  if (needsSummary) ctes.push(`summary AS (SELECT ${TOTALS} FROM records)`);
+  const reuseGroupedSummary = base.normalizedProjection===true && requested.has('summary') && requested.has('groups');
+  if (reuseGroupedSummary) {
+    // Reuse complete, unpaginated group counts. Aggregate numeric quantities
+    // directly to preserve floating-point sums and avoid weighted-mean overflow.
+    ctes.push(`summary_numeric AS MATERIALIZED (SELECT ${Object.entries(SUMMARY_NUMERIC).map(([field,sql])=>`${sql} AS ${field}`).join(',')} FROM records)`,
+    `summary AS (SELECT ${groupedSummaryTotals} FROM grouped)`);
+  } else if (needsSummary) ctes.push(requested.has('summary') ? `summary AS (SELECT ${summaryTotals} FROM records)`
+      : `summary AS (SELECT COUNT(*) AS records,MIN(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS firstSeenAt,
+        MAX(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS lastSeenAt FROM records)`);
   if (requested.has('summary')) {
-    ctes.push(`latencies AS (SELECT latencyMs,ROW_NUMBER() OVER (ORDER BY latencyMs) AS rank FROM records WHERE latencyMs IS NOT NULL)`,
-      `percentiles AS (SELECT MAX(CASE WHEN rank=CAST((summary.latencySamples+1)/2 AS INTEGER) THEN latencyMs END) AS p50LatencyMs,
-        MAX(CASE WHEN rank=CAST((summary.latencySamples*95+99)/100 AS INTEGER) THEN latencyMs END) AS p95LatencyMs FROM latencies,summary)`);
-    selects.push(`${projection('summary',jsonObject([...TOTAL_FIELDS,'p50LatencyMs','p95LatencyMs']))} FROM summary,percentiles`);
+    if (base.normalizedProjection === true) selects.push(`${projection('summary',jsonObject(TOTAL_FIELDS))} FROM summary`);
+    else {
+      ctes.push(`latencies AS (SELECT latencyMs,ROW_NUMBER() OVER (ORDER BY latencyMs) AS rank FROM records WHERE latencyMs IS NOT NULL)`,
+        `percentiles AS (SELECT MAX(CASE WHEN rank=CAST((summary.latencySamples+1)/2 AS INTEGER) THEN latencyMs END) AS p50LatencyMs,
+          MAX(CASE WHEN rank=CAST((summary.latencySamples*95+99)/100 AS INTEGER) THEN latencyMs END) AS p95LatencyMs FROM latencies,summary)`);
+      selects.push(`${projection('summary',jsonObject([...TOTAL_FIELDS,'p50LatencyMs','p95LatencyMs']))} FROM summary,percentiles`);
+    }
   }
   if (requested.has('groups')) {
-    ctes.push(`grouped AS MATERIALIZED (SELECT ${columns.join(',')},${TOTALS} FROM records GROUP BY ${columns.join(',')})`,
+    ctes.push(`grouped AS MATERIALIZED (SELECT ${columns.join(',')},${groupTotals} FROM records GROUP BY ${columns.join(',')})`,
       `group_rows AS (SELECT * FROM grouped ORDER BY ${query.groupSortBy} ${query.groupSortDirection.toUpperCase()} NULLS LAST,${columns.join(',')}
         LIMIT ${query.groupPageSize} OFFSET ${(query.groupPage-1)*query.groupPageSize})`);
     selects.push(`${projection('group-meta',"json_object('totalItems',COUNT(*))")} FROM grouped`,
@@ -315,16 +442,22 @@ export function readActivityAnalytics(db, input) {
     const span = `MAX(${MINUTE},COALESCE(${rangeEnd},CAST(strftime('%s',summary.lastSeenAt) AS INTEGER)*1000)-COALESCE(${rangeStart},CAST(strftime('%s',summary.firstSeenAt) AS INTEGER)*1000))`;
     const floor = `MAX(${MINUTE},CAST(((${span}+${MINUTE})+${denominator}-1)/${denominator} AS INTEGER)*${MINUTE})`;
     ctes.push(`series_settings AS (SELECT CASE WHEN records=0 OR firstSeenAt IS NULL OR lastSeenAt IS NULL THEN NULL ELSE MAX(${floor},${query.bucketMs || 0}) END AS bucketMs FROM summary)`,
-      `series_rows AS (SELECT CAST(timestampMs/bucketMs AS INTEGER)*bucketMs AS bucketStartMs,${TOTALS}
+      `series_rows AS (SELECT CAST(timestampMs/bucketMs AS INTEGER)*bucketMs AS bucketStartMs,${seriesTotals}
         FROM records,series_settings WHERE bucketMs IS NOT NULL AND timestampMs IS NOT NULL GROUP BY bucketStartMs ORDER BY bucketStartMs)`);
     selects.push(`${projection('series-meta',"json_object('bucketMs',bucketMs)")} FROM series_settings`,
-      `${projection('series',jsonObject(['bucketStartMs',...TOTAL_FIELDS]))} FROM series_rows`);
+      `${projection('series',jsonObject(['bucketStartMs',...seriesFields]))} FROM series_rows`);
   }
   if (requested.has('items')) {
-    ctes.push(`item_rows AS MATERIALIZED (SELECT id FROM records ORDER BY ${POPULATION_SORT[query.sortBy] || query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC
-      LIMIT ${query.pageSize} OFFSET ${(query.page-1)*query.pageSize})`);
-    selects.push(`${projection('item-meta',"json_object('totalItems',COUNT(*))")} FROM records`,
-      `${projection('item',jsonObject(['id']))} FROM item_rows`);
+    if (projectedItemIds) {
+      selects.push(needsSummary
+        ? `${projection('item-meta',"json_object('totalItems',records)")} FROM summary`
+        : `${projection('item-meta',"json_object('totalItems',COUNT(*))")} FROM records`);
+    } else {
+      ctes.push(`item_rows AS MATERIALIZED (SELECT id FROM records ORDER BY ${POPULATION_SORT[query.sortBy] || query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC
+        LIMIT ${query.pageSize} OFFSET ${(query.page-1)*query.pageSize})`);
+      selects.push(`${projection('item-meta',"json_object('totalItems',COUNT(*))")} FROM records`,
+        `${projection('item',jsonObject(['id']))} FROM item_rows`);
+    }
   }
   const projected = db.all(`${base.sql}${ctes.length ? `,${ctes.join(',')}` : ''} ${selects.join(' UNION ALL ')}`, base.params);
   const result = {
@@ -349,19 +482,30 @@ export function readActivityAnalytics(db, input) {
     },
   };
   const byKind = kind => projected.filter(row => row.kind===kind).map(row => JSON.parse(row.payload));
-  if (requested.has('summary')) result.summary = enrich(byKind('summary')[0]);
+  if (requested.has('summary')) {
+    const summary=byKind('summary')[0];
+    if (splitSummaryLogical) {
+      summary.logicalRequests=readProjectedSummaryLogicalCount(db,query);
+      Object.assign(summary,readProjectedLatencyPercentiles(db,query,summary.latencySamples));
+    }
+    result.summary=enrich(summary);
+  }
   if (requested.has('groups')) {
     const totalItems=byKind('group-meta')[0].totalItems;
-    result.groups=byKind('group').map(enrich); result.groupsTruncated=totalItems>query.groupPageSize;
+    const logicalCounts=splitGroupLogical ? readProjectedGroupLogicalCounts(db,query,columns) : null;
+    result.groups=byKind('group').map(row=>enrich(logicalCounts ? {...row,logicalRequests:logicalCounts.get(logicalGroupKey(row,columns)) ?? 0} : row));
+    result.groupsTruncated=totalItems>query.groupPageSize;
     result.groupPagination={page:query.groupPage,pageSize:query.groupPageSize,totalItems,totalPages:Math.ceil(totalItems/query.groupPageSize),hasNext:query.groupPage*query.groupPageSize<totalItems,hasPrev:query.groupPage>1};
   }
   if (requested.has('series')) {
     const bucketMs=byKind('series-meta')[0].bucketMs;
-    result.series={bucketMs,points:byKind('series').map(row=>({...enrich(row),bucketStart:new Date(row.bucketStartMs).toISOString(),bucketEnd:new Date(row.bucketStartMs+bucketMs).toISOString()}))};
+    const logicalCounts=compactSeries ? readProjectedSeriesLogicalCounts(db,query,bucketMs) : null;
+    result.series={bucketMs,points:byKind('series').map(row=>({...enrich(logicalCounts ? {...row,logicalRequests:logicalCounts.get(row.bucketStartMs) ?? 0} : row),
+      bucketStart:new Date(row.bucketStartMs).toISOString(),bucketEnd:new Date(row.bucketStartMs+bucketMs).toISOString()}))};
   }
   if (requested.has('items')) {
     const totalItems=byKind('item-meta')[0].totalItems;
-    result.items=readActivityItemsByIds(db,query,byKind('item').map(row=>row.id));
+    result.items=readActivityItemsByIds(db,query,projectedItemIds || byKind('item').map(row=>row.id));
     result.pagination={page:query.page,pageSize:query.pageSize,totalItems,totalPages:Math.ceil(totalItems/query.pageSize),hasNext:query.page*query.pageSize<totalItems,hasPrev:query.page>1};
   }
   return result;
@@ -403,7 +547,7 @@ function enrichActivityItems(db,query,rows) {
 export function readActivityEvidence(db,input,maxRecords=5000) {
   const query = validateActivityQuery(input);
   const base = baseQuery(db,query);
-  const coverage = enrich(db.get(`${base.sql} SELECT ${TOTALS} FROM records`,base.params));
+  const coverage = enrich(db.get(`${base.sql} SELECT ${totalsFor(base.normalizedProjection === true)} FROM records`,base.params));
   if (coverage.records > maxRecords) return { exceeded: true, totalRecords: coverage.records, coverage };
   return { source: query.view === 'economics' ? 'usageHistory' : 'requestStats', filters: query, coverage, totalRecords: coverage.records, items: readActivityItems(db,query,base,maxRecords) };
 }

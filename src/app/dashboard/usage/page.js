@@ -38,7 +38,7 @@ export default function EconomicsPage() {
   try { evidenceFilters=mergeEconomicsFilters(scope,economicsView); } catch(error){filterError=error.message;}
   const groupKeyScope=analyticsUrl(scope,'economics',{groupBy,...evidenceFilters,groupSortBy:groupSorting.id,groupSortDirection:groupSorting.desc?'desc':'asc'});
   const groupPage=groupPageState.key===groupKeyScope?groupPageState.page:1;
-  const scopeKey = analyticsUrl(scope, 'economics', { groupBy,...evidenceFilters,facets:'summary,groups,series,items',pageSize:25,sortBy:'timestamp',sortDirection:'desc',groupPage,groupPageSize:12,groupSortBy:groupSorting.id,groupSortDirection:groupSorting.desc?'desc':'asc' });
+  const scopeKey = analyticsUrl(scope, 'economics', { groupBy,...evidenceFilters,facets:'summary,groups,series,items',seriesProfile:'economics-chart',pageSize:25,sortBy:'timestamp',sortDirection:'desc',groupPage,groupPageSize:12,groupSortBy:groupSorting.id,groupSortDirection:groupSorting.desc?'desc':'asc' });
   const population = useResource(filterError?null:scopeKey, { onSnapshot: observeSnapshot });
   const retainedGroup = selected?.groupBy === groupBy ? selected.group : null;
   const groupScope = groupFilters(retainedGroup, groupBy) || {};

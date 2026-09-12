@@ -2,18 +2,42 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   assessBenchmarkAffinity,
   benchmarkReceiptSettings,
+  evaluateEconomicsLatencyQualification,
   evaluateGrowthQualification,
+  explainAnalyticsPopulation,
   parseCpuList,
+  prepareWarmProfile,
   validateGrowthMarker,
 } from "../qa/context-analytics-benchmark.mjs";
 
 const benchmark = join(process.cwd(), "tests/qa/context-analytics-benchmark.mjs");
 
 describe("context analytics growth benchmark", () => {
+  it("compiles the population plan without executing an unmeasured population query", () => {
+    const query = { facets: ["summary", "groups"] };
+    const sql = "WITH population AS MATERIALIZED (SELECT id FROM requestStats WHERE id=?) SELECT id FROM population UNION ALL SELECT id FROM population";
+    const db = {
+      get: vi.fn(),
+      all: vi.fn((statement, args) => {
+        expect(statement).toBe(`EXPLAIN QUERY PLAN ${sql}`);
+        expect(args).toEqual(["example"]);
+        return [{ detail: "SCAN requestStats" }];
+      }),
+    };
+    expect(explainAnalyticsPopulation(db, query, (connection, input) => {
+      expect(input).toBe(query);
+      connection.all(sql, ["example"]);
+      throw new Error("population execution must stop before result hydration");
+    })).toEqual(["SCAN requestStats"]);
+    expect(db.all).toHaveBeenCalledTimes(1);
+    expect(() => explainAnalyticsPopulation(db, query, () => {})).toThrow("not captured");
+    const failure = new Error("query construction failed");
+    expect(() => explainAnalyticsPopulation(db, query, () => { throw failure; })).toThrow(failure);
+  });
   const operations = ["economics-page-population", "economics-filtered-provider", "economics-items", "activity-summary-groups"];
   const deliveries = operations.flatMap(operation => [
     ...Array.from({ length: 3 }, (_, index) => ({ operation, concurrency: 1, writer: false, iteration: index + 1, durationMs: 1000 })),
@@ -93,6 +117,30 @@ describe("context analytics growth benchmark", () => {
   it("retains affinity evidence in standard benchmark receipt settings", () => {
     const affinityPreflight = { accepted: true, allowedCores: [4, 5], selectedCores: [4, 5], busyCores: [] };
     expect(benchmarkReceiptSettings(affinityPreflight)).toEqual({ cacheTtlMs: 1000, serviceDeadlineMs: 15000, affinityPreflight });
+  });
+
+  it("checkpoints pending fixture writes before priming and refuses an uncached prime", async () => {
+    const order = [];
+    const db = { checkpoint: () => order.push("checkpoint") };
+    const client = { invalidate: () => order.push("invalidate"), status: () => ({ cached: 1 }) };
+    await prepareWarmProfile(db, client, async () => order.push("prime"));
+    expect(order).toEqual(["checkpoint", "invalidate", "prime"]);
+    await expect(prepareWarmProfile(db, { ...client, status: () => ({ cached: 0 }) }, vi.fn()))
+      .rejects.toThrow("warm profile prime did not populate the result cache");
+  });
+
+  it("qualifies Economics latency profiles while retaining Activity as a reported control", () => {
+    const profiles = [
+      { operation: "economics-page-population", cacheState: "result-cache-cold", concurrency: 1, writer: false, latencyQualified: true, p95Ms: 1999, p99Ms: 4999 },
+      { operation: "activity-summary-groups", cacheState: "result-cache-cold", concurrency: 1, writer: false, latencyQualified: false, p95Ms: 9000, p99Ms: 12000 },
+      { operation: "economics-items", cacheState: "result-cache-warm", concurrency: 1, writer: false, latencyQualified: true, p95Ms: 9000, p99Ms: 12000 },
+    ];
+
+    expect(evaluateEconomicsLatencyQualification(profiles)).toEqual([]);
+    expect(evaluateEconomicsLatencyQualification([
+      ...profiles,
+      { operation: "economics-filtered-provider", cacheState: "result-cache-cold", concurrency: 5, writer: true, latencyQualified: true, p95Ms: 2000, p99Ms: 4000 },
+    ])).toEqual([{ operation: "economics-filtered-provider", concurrency: 5, writer: true, p95Ms: 2000, p99Ms: 4000 }]);
   });
 
   it("qualifies exactly thirty-two deliveries and sixteen bounded computations", () => {

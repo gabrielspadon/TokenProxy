@@ -23,9 +23,8 @@ export function makeBackupDir(label) {
 }
 
 // Keep the exported name for callers, but the snapshot is now complete.
-// Serializing the open connection includes committed WAL data. Older native
-// node:sqlite releases have no serialize method, so use SQLite's snapshot API
-// VACUUM INTO there. sql.js attachments live in its virtual filesystem; export
+// Native snapshots use VACUUM INTO, including committed WAL data without a
+// database-sized JavaScript buffer. sql.js lives in its virtual filesystem; export
 // must explicitly publish their bytes to the host filesystem instead.
 export function backupDbLite(adapter, destDir, destName = "data.sqlite") {
   const dest = path.join(destDir, destName);
@@ -38,8 +37,6 @@ export function backupDbLite(adapter, destDir, destName = "data.sqlite") {
       try { data = adapter.raw.export(); }
       finally { adapter.raw.exec(PRAGMA_SQL); }
       fs.writeFileSync(fd, data);
-    } else if (typeof adapter.raw?.serialize === "function") {
-      fs.writeFileSync(fd, adapter.raw.serialize());
     } else {
       adapter.run("VACUUM main INTO ?", [pending]);
     }

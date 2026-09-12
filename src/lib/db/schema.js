@@ -24,6 +24,7 @@ import { NOTIFICATION_DELIVERY_TABLES, PROJECT_NOTIFICATION_COLUMNS } from './no
 import { NOTIFICATION_AUTOMATION_TABLES } from './notificationAutomationSchema.js';
 import { CONTEXT_STAGE_OUTCOME_COLUMNS } from './contextStageOutcomeSchema.js';
 import { TELEMETRY_ORIGIN_COLUMNS, TELEMETRY_OUTCOME_TABLES } from './telemetryOutcomeSchema.js';
+import { ECONOMICS_PROJECTION_TABLES } from './economicsProjectionSchema.js';
 import {
   PROJECT_TABLES,
   USAGE_PROJECT_COLUMNS,
@@ -50,14 +51,16 @@ import {
 // 34 = queryable non-secret connection identity (accountId, plan,
 // organizationId) captured at OAuth sign-in; secrets stay in the blob.
 // 35 = trusted telemetry origins, logical/client outcomes, timing and reversible quarantine.
-export const SCHEMA_VERSION = 35;
+// 36 = transactionally maintained normalized economics analytics projection.
+// 37 = preserve integer/real token storage classes in the economics projection.
+export const SCHEMA_VERSION = 37;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
-PRAGMA mmap_size = 30000000;
-PRAGMA cache_size = -64000;
+PRAGMA mmap_size = 0;
+PRAGMA cache_size = -32768;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 `;
@@ -101,6 +104,7 @@ export const TABLES = {
   ...KEY_ROTATION_TABLES,
   ...COST_LEDGER_TABLES,
   ...TELEMETRY_OUTCOME_TABLES,
+  ...ECONOMICS_PROJECTION_TABLES,
   _meta: {
     columns: {
       key: 'TEXT PRIMARY KEY',
