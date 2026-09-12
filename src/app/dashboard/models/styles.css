@@ -18,6 +18,38 @@
     unicode-bidi: isolate;
   }
 
+  .models-alias {
+    min-width: 0;
+  }
+  .models-alias input {
+    min-height: 24px;
+    height: 24px;
+    padding-inline: 6px;
+    font-size: var(--type-dense);
+    font-family: var(--mono);
+  }
+
+  .models-plan {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.7fr) minmax(0, 2fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 10px;
+    min-height: 40px;
+  }
+  .models-plan-members {
+    min-width: 0;
+  }
+  @media (max-width: 760px) {
+    .models-plan {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .models-plan-members {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+
   .models-section {
     border: 1px solid var(--rule);
     background: var(--raised);
@@ -99,18 +131,7 @@
   }
 }
 
-/* Catalog presentation, keyed to attributes this page sets on its own markup.
-   Generated class names are never an API, and these rules sit outside
-   @layer components because the shared board's module rules are unlayered and
-   would otherwise win regardless of specificity. board.module.css is another
-   owner's file and is not edited.
-
-   A model id is the value an operator matches against and pastes into a client,
-   so it has to be readable, not merely present. The shared board clips identity
-   text to one ellipsised line, which leaves the tail of a long id unreachable
-   without a pointer: a title needs hover and the element is not focusable.
-   Wrapping costs one line on the longest rows and reaches keyboard and touch
-   users with no new tab stop. */
+/* Owned hooks override shared unlayered board rules and keep model IDs readable. */
 [data-catalog-identity] {
   min-width: 0;
 }
@@ -133,21 +154,9 @@
   align-items: start;
 }
 
-/* The shared advanced row gives the alias column nearly as much width as the
-   identifier beside it, for a value that is usually empty and always short.
-   Rebalancing hands that width to the identifier. Track count and order are
-   unchanged, so the header still lines up with its cells.
-
-   Minimums matter: the shared row's floor is 24+20+180+100+300+170+142 plus six
-   10px gaps = 1056px. The shared sheet does not switch on viewport width at all,
-   it switches on a CONTAINER query at 900px (board.module.css:402), below which
-   the row collapses into stacked grid-template-areas and this seven-track
-   template no longer applies. So these tracks are declared inside the same
-   container query that governs them, never a viewport media query, and they
-   cannot overflow the narrower container because they do not apply there.
-   Measured: 0px horizontal document overflow at 1440, 1100, 900 and 420. */
+/* Keep all seven tracks within the board at its row-layout breakpoint. */
 @container board (min-width: 901px) {
   [data-catalog-columns] {
-    grid-template-columns: 24px 20px minmax(260px, 1.7fr) 100px minmax(280px, 1.5fr) minmax(120px, 0.5fr) 142px;
+    grid-template-columns: 24px 20px minmax(160px, 1.7fr) 80px minmax(160px, 1.5fr) minmax(80px, 0.5fr) 142px;
   }
 }
