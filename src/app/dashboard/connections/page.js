@@ -1150,12 +1150,6 @@ export default function ConnectionsPage() {
       return {
         ...account,
         windows: snapshot?.windows || EMPTY,
-        // accountWindows() prefers a stored lastQuotaSnapshot over the admin
-        // projection whenever its fetchedAt is newer, which on this page meant
-        // a stale fixture snapshot greyed every meter while Capacity, reading
-        // the same account, drew it green. Where the shared quota read has an
-        // answer, that answer is the one both pages use.
-        lastQuotaSnapshot: snapshot ? null : account.lastQuotaSnapshot,
         drain: !drain.error
           ? drain.data?.connections?.find((item) => item.connectionId === id)
           : null,
@@ -1346,7 +1340,7 @@ export default function ConnectionsPage() {
         <div className={shared.lensTitle}>
           <h1>Connections</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · stored accounts, their qualification and their
+            stored accounts, their qualification and their
             credentials
           </p>
         </div>
