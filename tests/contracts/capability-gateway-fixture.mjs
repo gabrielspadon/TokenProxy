@@ -115,10 +115,13 @@ async function assertOwnedGateway(ownership, { requireChild = true } = {}) {
  * lookup participates in this receipt. The gateway lead must own a fresh
  * process group and the listener must be in that group and cgroup.
  */
-export async function captureGatewayOwnership(child, port) {
+export async function captureGatewayOwnership(child, port, expectedChild = null) {
   if (!child?.pid) throw new Error("gateway child PID is required");
   const identity = await readProcessIdentity(child.pid);
   if (!identity) throw new Error("gateway child exited before ownership capture");
+  if (expectedChild && !sameIdentity(identity, expectedChild)) {
+    throw new Error("gateway child identity changed before ownership capture");
+  }
   if (identity.pgid !== identity.pid) throw new Error("gateway child must lead its own process group");
   const listeners = await listeningProcessIdentities(port);
   const listener = listeners.find((candidate) => candidate.pgid === identity.pgid && candidate.cgroup === identity.cgroup);
@@ -147,12 +150,22 @@ export async function stopOwnedGateway(child, ownership) {
   return exitCode;
 }
 
-async function waitForReady(url, child, output) {
+async function waitForChildIdentity(child) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const identity = await readProcessIdentity(child.pid);
+    if (identity) return identity;
+    if (child.exitCode !== null) break;
+    await sleep(25);
+  }
+  throw new Error("gateway child exited before identity capture");
+}
+
+async function waitForReady(url, child, expectedChild, port, output) {
   for (let attempt = 0; attempt < 100; attempt++) {
     if (child.exitCode !== null) throw new Error(`capability gateway exited ${child.exitCode}: ${output()}`);
     try {
       const response = await fetch(url);
-      if (response.status === 200) return;
+      if (response.status === 200) return captureGatewayOwnership(child, port, expectedChild);
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -203,17 +216,18 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
   });
   child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-8000); });
   const baseUrl = `http://127.0.0.1:${port}`;
+  const spawnedChild = await waitForChildIdentity(child);
   try {
-    await waitForReady(`${baseUrl}/api/version`, child, () => stderr);
-    const ownership = await captureGatewayOwnership(child, port);
+    const ownership = await waitForReady(`${baseUrl}/api/version`, child, spawnedChild, port, () => stderr);
     const authorization = (await readFile(authFile, "utf8")).trim();
     return {
       baseUrl,
       authorization,
+      ownership,
       async close() {
         const processExitCode = child.exitCode === null ? await stopOwnedGateway(child, ownership) : child.exitCode;
         await rm(dataDir, { recursive: true, force: true });
-        return { processExitCode, dataDirRemoved: !existsSync(dataDir) };
+        return { processExitCode, dataDirRemoved: !existsSync(dataDir), ownership };
       },
     };
   } catch (error) {

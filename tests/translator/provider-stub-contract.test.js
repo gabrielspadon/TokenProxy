@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { startProviderStub } from "../contracts/provider-stub.mjs";
@@ -38,6 +39,17 @@ async function stopExactChild(child) {
   await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
 }
 
+async function reserveLoopbackPort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return port;
+}
+
 describe("capability matrix runner", () => {
   it("cleanup targets only its captured child group when an unrelated next-server exists", async () => {
     const owned = await startOwnedHttpProcess("capability-owned-gateway");
@@ -55,10 +67,11 @@ describe("capability matrix runner", () => {
 
   it("runs all fixtures through a started TokenProxy gateway with env-provided fake auth", async () => {
     const stub = await startProviderStub({ port: 20210 });
+    const gatewayPort = await reserveLoopbackPort();
     let gateway;
     let cleanup;
     try {
-      gateway = await startCapabilityGateway({ providerBaseUrl: `${stub.baseUrl}/v1`, port: 20211 });
+      gateway = await startCapabilityGateway({ providerBaseUrl: `${stub.baseUrl}/v1`, port: gatewayPort });
       const runner = fileURLToPath(new URL("../contracts/run-capability-matrix.mjs", import.meta.url));
       const output = await new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [
@@ -95,7 +108,15 @@ describe("capability matrix runner", () => {
       expect(stub.requests.every((entry) => entry.model === "fixture-model")).toBe(true);
       cleanup = await gateway.close();
       gateway = null;
-      expect(cleanup).toEqual({ processExitCode: 0, dataDirRemoved: true });
+      expect(cleanup).toMatchObject({
+        processExitCode: 0,
+        dataDirRemoved: true,
+        ownership: {
+          child: { pid: expect.any(Number), startTime: expect.any(String), pgid: expect.any(Number), cgroup: expect.any(String) },
+          listener: { pid: expect.any(Number), startTime: expect.any(String), pgid: expect.any(Number), cgroup: expect.any(String) },
+          port: gatewayPort,
+        },
+      });
     } finally {
       await gateway?.close();
       await stub.close();
