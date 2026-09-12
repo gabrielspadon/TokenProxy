@@ -64,6 +64,37 @@ export function readAttemptCeiling(request) {
   return Number.isSafeInteger(raw) && raw > 0 ? raw : null;
 }
 
+export function validateClientRequestShape(pathname, body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return "Invalid request body";
+  }
+  if (pathname.includes("/v1/chat/completions")) {
+    if (!Array.isArray(body.messages) && !Array.isArray(body.input)) {
+      return "Invalid request body: messages must be an array";
+    }
+    return null;
+  }
+  if (pathname.includes("/v1/messages")) {
+    return Array.isArray(body.messages)
+      ? null
+      : "Invalid request body: messages must be an array";
+  }
+  if (pathname.includes("/v1/responses")) {
+    if (typeof body.input !== "string" && !Array.isArray(body.input)) {
+      return "Invalid request body: input must be a string or array";
+    }
+    if (Array.isArray(body.input)) {
+      const malformedCall = body.input.some((item) => item?.type === "function_call" && (
+        typeof item.name !== "string" || !item.name.trim() ||
+        typeof item.call_id !== "string" || !item.call_id.trim() ||
+        typeof item.arguments !== "string"
+      ));
+      if (malformedCall) return "Invalid request body: malformed function call";
+    }
+  }
+  return null;
+}
+
 function terminalAttemptResponse(response, cooldownMs = 0, clientRetrySafe = false) {
   const headers = new Headers(response.headers);
   headers.set("x-tokenproxy-replay-safe", "false");
@@ -455,6 +486,14 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
       log.warn("CHAT", "Invalid JSON body");
       return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
     }
+  }
+
+  const pathname = new URL(request.url).pathname;
+  const requestShapeError = validateClientRequestShape(pathname, body);
+  if (requestShapeError) {
+    log.warn("CHAT", requestShapeError);
+    reqSummary("refused", { rid, why: "invalid-request-shape" });
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, requestShapeError);
   }
 
   // Build clientRawRequest for logging (if not provided)

@@ -99,8 +99,8 @@ const { handleChat: rawHandleChat, providerConcurrencyOverflow, readAttemptCeili
   await import('@/sse/handlers/chat.js');
 const handleChat = trackResponseLifetime(rawHandleChat);
 
-function request(body = { model: 'prov/m', messages: [] }, headers = {}) {
-  return new Request('http://localhost/v1/chat/completions', {
+function request(body = { model: 'prov/m', messages: [] }, headers = {}, endpoint = '/v1/chat/completions') {
+  return new Request(`http://localhost${endpoint}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -232,6 +232,20 @@ describe('body and model validation', () => {
     const res = await handleChat(request({ messages: [] }));
     expect(res.status).toBe(400);
     expect((await res.json()).error.message).toContain('Missing model');
+  });
+
+  it.each([
+    ['/v1/chat/completions', { model: 'prov/m', messages: { role: 'user', content: 'not-an-array' } }],
+    ['/v1/messages', { model: 'prov/m', max_tokens: 32, messages: 'not-an-array' }],
+    ['/v1/responses', { model: 'prov/m', input: [{ type: 'function_call', call_id: 'call_1', name: '', arguments: '{}' }] }],
+    ['/v1/responses', { model: 'prov/m', input: [{ type: 'function_call', call_id: '', name: 'tool', arguments: '{}' }] }],
+  ])('rejects malformed %s input before provider selection', async (endpoint, body) => {
+    const res = await handleChat(request(body, {}, endpoint));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toContain('Invalid request body');
+    expect(settingsMocks.getSettings).not.toHaveBeenCalled();
+    expect(authMocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
   });
 
   it('tolerates a clientRawRequest with no headers field', async () => {
