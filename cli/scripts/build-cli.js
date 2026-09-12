@@ -250,7 +250,27 @@ function buildCliPackage() {
   console.log("✅ Copied standalone build\n");
 
   // Worker entrypoints are loaded by path, outside the Next server bundle.
-  copyRecursive(path.join(appDir, "src/lib/db/analytics"), path.join(cliAppDir, "src/lib/db/analytics"));
+  // The analytics worker is loaded by path, so nothing traces its imports. This
+  // copied the analytics directory alone, which carries the .mjs query modules
+  // but not the sibling .js schema files they import, and the worker then threw
+  // ERR_MODULE_NOT_FOUND before its first message. Copy its exact closure, the
+  // same list next.config.mjs traces into the standalone output.
+  const analyticsClosure = JSON.parse(execSync(
+    `${JSON.stringify(process.execPath)} --input-type=module -e ${JSON.stringify(
+      "const { ANALYTICS_WORKER_FILES } = await import(process.argv[1]); console.log(JSON.stringify(ANALYTICS_WORKER_FILES));",
+    )} ${JSON.stringify(path.join(appDir, "src/lib/db/analytics/runtimeFiles.mjs"))}`,
+    { encoding: "utf8" },
+  ));
+  for (const entry of [...analyticsClosure, "./src/lib/db/analytics/runtimeFiles.mjs"]) {
+    // node_modules entries are already bundled by the Next trace; this list also
+    // covers source outside src/, so copy by relative path rather than by tree.
+    if (entry.startsWith("./node_modules/")) continue;
+    const source = path.join(appDir, entry);
+    const destination = path.join(cliAppDir, entry);
+    if (!fs.existsSync(source)) throw new Error(`analytics worker closure names a missing file: ${entry}`);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination);
+  }
   fs.mkdirSync(path.join(cliAppDir, "src/lib/pxpipe"), { recursive: true });
   fs.copyFileSync(path.join(appDir, "src/lib/pxpipe/worker.mjs"), path.join(cliAppDir, "src/lib/pxpipe/worker.mjs"));
 

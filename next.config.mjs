@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import proxyBodyLimit from "./open-sse/config/proxyBodyLimit.cjs";
 import { SHAPING_WORKER_FILES } from "./src/lib/shaping/runtimeFiles.mjs";
 import { COMPATIBILITY_WORKER_FILES } from "./src/lib/compatibility/runtimeFiles.mjs";
+import { ANALYTICS_WORKER_FILES } from "./src/lib/db/analytics/runtimeFiles.mjs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 
@@ -92,7 +93,13 @@ const nextConfig = {
     // src/lib/notifications and counterfactual evidence imports the shared
     // completion identity helper. A miss kills the whole worker, which
     // also serves Capacity, Context and Economics.
-    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", "./src/lib/db/analytics/*.mjs", "./src/lib/db/completionIdentity.mjs", "./src/lib/notifications/*.mjs", "./src/lib/pxpipe/worker.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES, ...COMPATIBILITY_WORKER_FILES],
+    // ANALYTICS_WORKER_FILES is the worker entrypoints exact transitive local
+    // closure. It replaces an "analytics/*.mjs" glob that shipped the .mjs query
+    // modules without the sibling .js schema files they import, so the worker
+    // threw ERR_MODULE_NOT_FOUND before its first message and /api/analytics
+    // answered 503. Keep the notifications glob: those are reached through the
+    // same closure and listed in it.
+    "**": ["./node_modules/sql.js/dist/sql-wasm.wasm", ...ANALYTICS_WORKER_FILES, "./src/lib/db/completionIdentity.mjs", "./src/lib/notifications/*.mjs", "./src/lib/pxpipe/worker.mjs", "./open-sse/config/proxyBodyLimit.cjs", "./node_modules/next/dist/compiled/bytes/**", ...SHAPING_WORKER_FILES, ...COMPATIBILITY_WORKER_FILES],
     // /api/changelog reads CHANGELOG.md from the product tree at runtime.
     "/api/changelog": ["./CHANGELOG.md"],
     // The local tokenizer worker (open-sse/utils/localTokenizer.js) requires the
