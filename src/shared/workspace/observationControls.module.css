@@ -1,0 +1,10 @@
+/* One line under the update control saying what the chosen behavior does. It
+   sits on the navy rail, so it takes the rail's muted foreground rather than
+   the page's. Local to this control; the rail's own layout stays in
+   workspace.module.css, which this job does not own. */
+.behavior {
+  margin: 0;
+  font-size: var(--type-dense);
+  line-height: 1.35;
+  color: var(--nav-muted);
+}
