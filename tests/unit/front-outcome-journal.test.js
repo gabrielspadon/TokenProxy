@@ -197,6 +197,48 @@ it('preserves segment order for a clock domain when wall-clock timestamps move b
   expect(db.get('SELECT state FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toMatchObject({ state: 'succeeded' });
 });
 
+it('uses one total group order without splitting same-clock records around another clock', async () => {
+  const otherClock = '44444444-4444-4444-8444-444444444444';
+  const directory = journal([
+    { schemaVersion: 2, kind: 'start', clockDomain: CLOCK, recordedAt: '2026-09-12T12:00:00.020Z', frontIngressId: INGRESS,
+      logicalRequestId: LOGICAL, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+    { ...terminal(), recordedAt: '2026-09-12T12:00:00.010Z', terminalAt: '2026-09-12T12:00:00.010Z' },
+  ]);
+  const keyring = JSON.parse(fs.readFileSync(keyringPath(directory), 'utf8'));
+  fs.writeFileSync(path.join(directory, `private-${otherClock}-00000000.jsonl`), `${JSON.stringify(signed({ schemaVersion: 2, kind: 'process-start', clockDomain: otherClock, recordedAt: '2026-09-12T12:00:00.015Z' }, keyring))}\n`, { mode: 0o600 });
+
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 3, segments: 2 });
+  expect(db.get('SELECT state FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toMatchObject({ state: 'succeeded' });
+});
+
+it('retries when active-clock changes during a segment read before it can interrupt old work', async () => {
+  const nextClock = '44444444-4444-4444-8444-444444444444';
+  const directory = journal([
+    { schemaVersion: 2, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: null, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+  ]);
+  const keyring = JSON.parse(fs.readFileSync(keyringPath(directory), 'utf8'));
+  const activeClock = path.join(directory, 'active-clock.json');
+  fs.writeFileSync(activeClock, JSON.stringify(signed({ schemaVersion: 2, clockDomain: nextClock, recordedAt: '2026-09-12T12:01:00.000Z' }, keyring)), { mode: 0o600 });
+  const originalOpen = fs.openSync;
+  let changed = false;
+  const open = vi.spyOn(fs, 'openSync').mockImplementation((file, ...args) => {
+    const fd = originalOpen(file, ...args);
+    if (file === segment(directory) && !changed) {
+      changed = true;
+      fs.writeFileSync(activeClock, JSON.stringify(signed({ schemaVersion: 2, clockDomain: CLOCK, recordedAt: AT }, keyring)), { mode: 0o600 });
+    }
+    return fd;
+  });
+  try {
+    await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ activeClockDomain: CLOCK, interrupted: 0 });
+  } finally {
+    open.mockRestore();
+  }
+  expect(changed).toBe(true);
+  expect(db.get('SELECT state FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toEqual({ state: 'pending' });
+});
+
 it('caches authenticated completed segments and invalidates them when the keyring changes', async () => {
   const nextClock = '44444444-4444-4444-8444-444444444444';
   const directory = journal([

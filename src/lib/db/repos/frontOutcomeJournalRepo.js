@@ -10,6 +10,7 @@ const MAX_LINE_BYTES = 8 * 1024;
 const DEFAULT_IMPORT_INTERVAL_MS = 5_000;
 const MIN_IMPORT_INTERVAL_MS = 1_000;
 const MAX_IMPORT_INTERVAL_MS = 60_000;
+const MAX_ACTIVE_CLOCK_RETRIES = 3;
 // Match the front writer's UUID grammar.  The backend owns logical IDs and
 // can move to a newer UUID version without making valid front evidence unreadable.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -259,10 +260,16 @@ function collectOperations(db, active, segmentData) {
   const logical = new Map(db.all('SELECT frontIngressId,logicalRequestId FROM frontRequestOutcomes WHERE logicalRequestId IS NOT NULL')
     .map((row) => [row.logicalRequestId, row.frontIngressId]));
   const operations = [];
-  const ordered = segmentData.flatMap(({ name, events }) => events.map((event, ordinal) => ({ event, name, ordinal })))
-    .sort((a, b) => a.event.record.clockDomain === b.event.record.clockDomain
-      ? a.name.localeCompare(b.name) || a.ordinal - b.ordinal
-      : a.event.record.recordedAt.localeCompare(b.event.record.recordedAt) || a.name.localeCompare(b.name) || a.ordinal - b.ordinal);
+  const groups = new Map();
+  for (const { name, events } of segmentData) for (const [ordinal, event] of events.entries()) {
+    const clockDomain = event.record.clockDomain;
+    const group = groups.get(clockDomain) || { clockDomain, firstRecordedAt: event.record.recordedAt, events: [] };
+    group.events.push({ event, name, ordinal });
+    groups.set(clockDomain, group);
+  }
+  const ordered = [...groups.values()]
+    .sort((a, b) => a.firstRecordedAt.localeCompare(b.firstRecordedAt) || a.clockDomain.localeCompare(b.clockDomain))
+    .flatMap((group) => group.events);
   for (const { event } of ordered) {
     const record = event.record;
     if (event.type === 'process-start') continue;
@@ -396,37 +403,43 @@ export async function ingestFrontOutcomeJournal({
   const resolvedDirectory = fs.realpathSync(journalDirectory);
   const resolvedKeyring = keyringPath || process.env.TOKENPROXY_FRONT_TELEMETRY_KEYRING
     || path.join(path.dirname(resolvedDirectory), 'front-telemetry-auth', 'keyring.json');
-  const { keyring, fingerprint: keyringFingerprint } = readKeyring(resolvedKeyring);
-  const active = parseActiveClock(resolvedDirectory, keyring);
   const db = await getAdapter();
-  const names = fs.readdirSync(resolvedDirectory).filter((name) => SEGMENT.test(name)).sort();
-  const activePrefix = `private-${active.clockDomain}-`;
-  const activeTail = names.filter((name) => name.startsWith(activePrefix)).at(-1) || names.at(-1);
-  const cacheCandidates = [];
-  const segmentData = names.map((name) => {
-    const previous = db.get('SELECT value FROM _meta WHERE key=?', [checkpointKey(resolvedDirectory, name)]);
-    let checkpoint = null;
-    if (previous) {
-      try { checkpoint = JSON.parse(previous.value); } catch { fail(`checkpoint ${name}`); }
-      if (!Number.isInteger(checkpoint.offset) || checkpoint.offset < 0 || !Number.isInteger(checkpoint.dev) || !Number.isInteger(checkpoint.ino)
-        || !RECEIPT.test(checkpoint.prefixSha256 || '')) fail(`checkpoint ${name}`);
-    }
-    const cached = name === activeTail ? null : cachedCompletedSegment(resolvedDirectory, name, checkpoint, keyringFingerprint);
-    if (cached) return { name, ...cached };
-    const data = readSegment(resolvedDirectory, name, checkpoint, keyring);
-    if (name !== activeTail && !data.pendingBytes && data.nextOffset === data.stat.size) cacheCandidates.push({ name, data });
-    return { name, ...data };
-  });
-  const operations = collectOperations(db, active, segmentData);
-  let interrupted = 0;
-  db.transaction(() => {
-    interrupted = writeOperations(db, active, operations);
-    for (const data of segmentData) if (!data.cached && data.nextOffset > 0) db.run('INSERT INTO _meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      [checkpointKey(resolvedDirectory, data.name), JSON.stringify({ dev: data.stat.dev, ino: data.stat.ino, offset: data.nextOffset,
-        prefixSha256: data.prefixSha256 })]);
-  });
-  for (const { name, data } of cacheCandidates) cacheCompletedSegment(resolvedDirectory, name, data, keyringFingerprint);
-  const events = segmentData.reduce((total, data) => total + data.events.length, 0);
-  return { enabled: true, events, segments: segmentData.filter((data) => data.events.length).length,
-    pendingBytes: segmentData.reduce((total, data) => total + data.pendingBytes, 0), activeClockDomain: active.clockDomain, interrupted };
+  for (let attempt = 0; attempt < MAX_ACTIVE_CLOCK_RETRIES; attempt += 1) {
+    const { keyring, fingerprint: keyringFingerprint } = readKeyring(resolvedKeyring);
+    const active = parseActiveClock(resolvedDirectory, keyring);
+    const names = fs.readdirSync(resolvedDirectory).filter((name) => SEGMENT.test(name)).sort();
+    const activePrefix = `private-${active.clockDomain}-`;
+    const activeTail = names.filter((name) => name.startsWith(activePrefix)).at(-1) || names.at(-1);
+    const cacheCandidates = [];
+    const segmentData = names.map((name) => {
+      const previous = db.get('SELECT value FROM _meta WHERE key=?', [checkpointKey(resolvedDirectory, name)]);
+      let checkpoint = null;
+      if (previous) {
+        try { checkpoint = JSON.parse(previous.value); } catch { fail(`checkpoint ${name}`); }
+        if (!Number.isInteger(checkpoint.offset) || checkpoint.offset < 0 || !Number.isInteger(checkpoint.dev) || !Number.isInteger(checkpoint.ino)
+          || !RECEIPT.test(checkpoint.prefixSha256 || '')) fail(`checkpoint ${name}`);
+      }
+      const cached = name === activeTail ? null : cachedCompletedSegment(resolvedDirectory, name, checkpoint, keyringFingerprint);
+      if (cached) return { name, ...cached };
+      const data = readSegment(resolvedDirectory, name, checkpoint, keyring);
+      if (name !== activeTail && !data.pendingBytes && data.nextOffset === data.stat.size) cacheCandidates.push({ name, data });
+      return { name, ...data };
+    });
+    const operations = collectOperations(db, active, segmentData);
+    // A front restart publishes a new active clock independently from its next
+    // segment. Never turn that transient view into interrupted rows.
+    if (parseActiveClock(resolvedDirectory, keyring).receiptId !== active.receiptId) continue;
+    let interrupted = 0;
+    db.transaction(() => {
+      interrupted = writeOperations(db, active, operations);
+      for (const data of segmentData) if (!data.cached && data.nextOffset > 0) db.run('INSERT INTO _meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+        [checkpointKey(resolvedDirectory, data.name), JSON.stringify({ dev: data.stat.dev, ino: data.stat.ino, offset: data.nextOffset,
+          prefixSha256: data.prefixSha256 })]);
+    });
+    for (const { name, data } of cacheCandidates) cacheCompletedSegment(resolvedDirectory, name, data, keyringFingerprint);
+    const events = segmentData.reduce((total, data) => total + data.events.length, 0);
+    return { enabled: true, events, segments: segmentData.filter((data) => data.events.length).length,
+      pendingBytes: segmentData.reduce((total, data) => total + data.pendingBytes, 0), activeClockDomain: active.clockDomain, interrupted };
+  }
+  fail('active clock changed during import');
 }
