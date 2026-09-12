@@ -517,8 +517,10 @@ export function CatalogControls({ density, onDensity }) {
                         <>
                           <ProviderMark provider={entry.provider} size="small" />
                           <div className={styles.identityText}>
-                            <span className="models-name">{entry.name}</span>
-                            <small className="models-id">{entry.id}</small>
+                            <span className="models-name" title={entry.name}>{entry.name}</span>
+                            <small className="models-id" title={entry.id} dir="ltr">
+                              <bdi dir="ltr">{entry.id}</bdi>
+                            </small>
                           </div>
                           <CatalogActions entry={entry} {...rowProps(entry)} />
                         </>
@@ -559,8 +561,10 @@ export function CatalogControls({ density, onDensity }) {
                       <div className={styles.identity}>
                         <ProviderMark provider={entry.provider} size="small" />
                         <div className={styles.identityText}>
-                          <span className="models-name">{entry.name}</span>
-                          <small className="models-id">{entry.id}</small>
+                          <span className="models-name" title={entry.name}>{entry.name}</span>
+                          <small className="models-id" title={entry.id} dir="ltr">
+                            <bdi dir="ltr">{entry.id}</bdi>
+                          </small>
                         </div>
                       </div>
                       <div className={styles.state}>
@@ -761,7 +765,9 @@ function PlansBoard({ advanced, density, combos, settings }) {
           >
             <div className="models-plan">
               <div className={styles.identityText}>
-                <span className="models-id">{plan.name}</span>
+                <span className="models-id" title={plan.name} dir="ltr">
+                  <bdi dir="ltr">{plan.name}</bdi>
+                </span>
                 <small>
                   {override ? `Override ${override}` : `Uses the default strategy (${fallback})`}
                 </small>

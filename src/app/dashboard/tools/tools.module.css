@@ -11,7 +11,10 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
   gap: 12px;
-  align-items: start;
+  /* Peers, so they share a top and a bottom edge. Each panel keeps its own
+     content top-aligned through its align-content, so stretching the box does
+     not stretch the text. */
+  align-items: stretch;
 }
 .panel {
   min-width: 0;
@@ -39,15 +42,44 @@
 }
 .copy {
   display: grid;
-  grid-template-columns: minmax(90px, auto) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   font-size: var(--type-dense);
   color: var(--slate);
 }
+.copy > span:first-child {
+  white-space: nowrap;
+}
+/* The value is the thing being read and pasted, so it reads at the body size
+   and left to right regardless of document direction. */
 .copy :global(.mantine-Input-input) {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: var(--type-ui);
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-overflow: ellipsis;
+}
+
+/* Scope and caveat text, folded so it stops competing with the instruction
+   above it. Open state keeps every sentence. */
+.note {
   font-size: var(--type-dense);
+  color: var(--slate);
+}
+.note > summary {
+  cursor: pointer;
+  color: var(--signal-deep);
+  padding-block: 2px;
+}
+.note > summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.note > p {
+  margin-block: 6px 0;
+  line-height: 1.45;
 }
 .links {
   display: flex;

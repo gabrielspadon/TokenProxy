@@ -16,6 +16,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* An identifier reads left to right whatever the document direction, and
+       its exact value is carried on the element's title. */
+    direction: ltr;
+    unicode-bidi: isolate;
   }
   .models-alias {
     min-width: 0;
