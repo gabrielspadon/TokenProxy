@@ -11,15 +11,23 @@ const DEFAULT_PASSWORD = "123456";
 const DASHBOARD_SESSION_GENERATION_KEY = "dashboardSessionGeneration";
 const INITIAL_SESSION_GENERATION = "initial";
 
+// Read the secret where it is USED, never at module scope. Encoding it into a
+// module-level const turned "import this module" into "require a JWT secret", so
+// once the settings route began importing this module, importing that route threw
+// for every caller without a secret, the offline test runner sanitized child
+// environment among them. The documented startup contract is unaffected:
+// custom-server.js refuses to boot without JWT_SECRET, before any of this loads.
+//
+// Deliberately not memoised. The encode costs far less than the HMAC it feeds,
+// and a cache is exactly what would let a rotated secret keep signing with the
+// old value, or let an unset one keep verifying tokens it should now reject.
 function loadJwtSecret() {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
     throw new Error("JWT_SECRET environment variable is required. Set a strong random secret (min 32 chars) in your .env file.");
   }
-  return secret;
+  return new TextEncoder().encode(secret);
 }
-
-const SECRET = new TextEncoder().encode(loadJwtSecret());
 
 async function readDashboardSessionGeneration() {
   const db = await getAdapter();
@@ -50,7 +58,7 @@ export async function createDashboardAuthToken(claims = {}) {
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("24h")
-    .sign(SECRET);
+    .sign(loadJwtSecret());
 }
 
 export async function verifyDashboardAuthToken(token) {
@@ -60,7 +68,7 @@ export async function verifyDashboardAuthToken(token) {
 export async function getDashboardAuthSession(token) {
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, SECRET);
+    const { payload } = await jwtVerify(token, loadJwtSecret());
     const generation = await readDashboardSessionGeneration();
     const issuedGeneration = payload.sessionGeneration;
     if (generation === null) {

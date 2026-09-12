@@ -21,6 +21,20 @@ let PATCH;
 
 const signals = ["beforeExit", "SIGINT", "SIGTERM", "exit"];
 
+// These cases call the route handler as a function, outside any Next request
+// scope, so the real cookies() throws. One case here flips requireLogin, which
+// is an auth-mode key, so the PATCH takes the session-revocation branch added by
+// ac8c1668 and reaches for the cookie store on its way out. The revocation
+// behaviour itself is asserted against a real generation row in
+// session-revocation-routes.test.js; this file only needs the call to resolve.
+vi.mock("next/headers", () => ({
+  cookies: vi.fn(async () => ({
+    get: () => undefined,
+    set: () => {},
+    delete: () => {},
+  })),
+}));
+
 function settingsRequest(payload) {
   return new Request("http://localhost/api/settings", {
     method: "PATCH",

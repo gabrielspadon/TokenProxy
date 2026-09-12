@@ -91,6 +91,11 @@ describe("GET /api/auth/status", () => {
     expect(response.body.requireLogin).toBe(true);
   });
 
+  // The secret is read when a session is signed or verified, not when the module
+  // is imported, so importing the route no longer requires one. What must stay
+  // true is the direction of failure: issuing a session without a secret raises,
+  // and verifying one answers "not a session" rather than throwing past the
+  // caller. Asserting the import threw only ever proved where the read happened.
   it.each([undefined, ""])("fails during session initialization without a JWT secret (%j)", async (jwtSecret) => {
     const savedJwtSecret = process.env.JWT_SECRET;
     if (jwtSecret === undefined) delete process.env.JWT_SECRET;
@@ -98,8 +103,11 @@ describe("GET /api/auth/status", () => {
 
     try {
       vi.resetModules();
-      await expect(vi.importActual("../../src/lib/auth/dashboardSession.js"))
+      const session = await vi.importActual("../../src/lib/auth/dashboardSession.js");
+      await expect(session.createDashboardAuthToken({ sub: "no-secret" }))
         .rejects.toThrow("JWT_SECRET environment variable is required");
+      await expect(session.getDashboardAuthSession("any.token.value")).resolves.toBeNull();
+      await expect(session.verifyDashboardAuthToken("any.token.value")).resolves.toBe(false);
     } finally {
       if (savedJwtSecret === undefined) delete process.env.JWT_SECRET;
       else process.env.JWT_SECRET = savedJwtSecret;
