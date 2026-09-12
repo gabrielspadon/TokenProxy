@@ -192,3 +192,54 @@ describe("Codex permanently invalid OAuth state (#3194)", () => {
     expect(persisted).toEqual(restored);
   });
 });
+
+describe("Claude organization OAuth rejection", () => {
+  it("quarantines the account-wide 403 instead of repeatedly dispatching it", async () => {
+    const result = await markAccountUnavailable(
+      "claude-a",
+      403,
+      "OAuth authentication is currently not allowed for this organization.",
+      "claude",
+      "claude-opus-5",
+    );
+
+    expect(result).toEqual({ shouldFallback: true, cooldownMs: 0, failureClass: "credential", retrySameAccount: false, mustWait: false });
+    expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
+      "claude-a",
+      expect.objectContaining({
+        isActive: false,
+        testStatus: "reauth_required",
+        errorCode: 403,
+        backoffLevel: 0,
+        lastError: "OAuth authentication is currently not allowed for this organization.",
+      }),
+    );
+    expect(Object.keys(dbMocks.updateProviderConnection.mock.calls[0][1]).some((key) => key.startsWith("modelLock_"))).toBe(false);
+  });
+
+  it("keeps an unrelated organization-scoped model refusal model-local", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T14:00:00.000Z"));
+
+    try {
+      await markAccountUnavailable(
+        "claude-a",
+        403,
+        "This model is not available to your organization",
+        "claude",
+        "claude-opus-5",
+      );
+
+      expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
+        "claude-a",
+        expect.objectContaining({
+          "modelLock_claude-opus-5": "2026-09-12T14:02:00.000Z",
+          testStatus: "unavailable",
+        }),
+      );
+      expect(dbMocks.updateProviderConnection.mock.calls[0][1].isActive).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

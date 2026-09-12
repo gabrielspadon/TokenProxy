@@ -284,6 +284,8 @@ const CODEX_PERMANENT_OAUTH_MARKERS = [
   'refresh_token_reused',
   'refresh token already used',
 ];
+const CLAUDE_ORGANIZATION_OAUTH_REJECTION =
+  'oauth authentication is currently not allowed for this organization';
 
 function githubMonthlyResetMs(status, errorText, provider) {
   if (resolveProviderId(provider) !== 'github' || Number(status) !== 402) return null;
@@ -297,10 +299,15 @@ function githubMonthlyResetMs(status, errorText, provider) {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
 }
 
-function isCodexPermanentOAuthFailure(status, errorText, provider) {
-  if (resolveProviderId(provider) !== 'codex' || Number(status) !== 401) return false;
+function isPermanentOAuthFailure(status, errorText, provider) {
+  const resolvedProvider = resolveProviderId(provider);
+  const numericStatus = Number(status);
   const reason = describeProviderError(errorText).toLowerCase();
-  return CODEX_PERMANENT_OAUTH_MARKERS.some((marker) => reason.includes(marker));
+  if (resolvedProvider === 'codex' && numericStatus === 401) {
+    return CODEX_PERMANENT_OAUTH_MARKERS.some((marker) => reason.includes(marker));
+  }
+  return resolvedProvider === 'claude' && numericStatus === 403
+    && reason.includes(CLAUDE_ORGANIZATION_OAUTH_REJECTION);
 }
 
 /**
@@ -1115,13 +1122,13 @@ export async function markAccountUnavailable(
     lockClass = 'quota';
   }
 
-  if (isCodexPermanentOAuthFailure(status, errorText, provider)) {
+  if (isPermanentOAuthFailure(status, errorText, provider)) {
     const reason = describeProviderError(errorText);
     await updateProviderConnection(connectionId, {
       isActive: false,
       testStatus: 'reauth_required',
       lastError: reason,
-      errorCode: 401,
+      errorCode: numStatus,
       lastErrorAt: new Date().toISOString(),
       backoffLevel: 0,
     });
