@@ -3,8 +3,10 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
-import { delimiter, dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { isolatedToolchainEnvironment } from "./isolated-toolchain.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const testsDir = join(repoRoot, "tests");
@@ -57,24 +59,10 @@ function prepareArtifacts(path) {
   writeFileSync(join(path, "fake-production-home", ".tokenproxy", "data.sqlite"), "production-canary\n", { mode: 0o600 });
 }
 
-// The runner gates the interpreter it RUNS UNDER, but a test that re-enters
-// through `npm test` spawns a bare `npm`, which resolves `node` from PATH and
-// gets whatever a host version manager points at rather than the interpreter
-// this process is already running. On a host whose default is outside the
-// supported range, the nested run therefore refuses itself while the outer one
-// is fine. Putting this process own binary directory first makes the child
-// inherit the interpreter rather than re-electing one; the rest of PATH is left
-// alone, since narrowing it is a separate isolation question and this is not the
-// change to settle it in.
-function interpreterFirstPath() {
-  const host = process.env.PATH || "/usr/bin:/bin";
-  const own = dirname(process.execPath);
-  return host.split(delimiter)[0] === own ? host : `${own}${delimiter}${host}`;
-}
 
 function sanitizedEnvironment(artifacts) {
   return {
-    PATH: interpreterFirstPath(),
+    ...isolatedToolchainEnvironment(),
     LANG: "C.UTF-8",
     LC_ALL: "C.UTF-8",
     USER: "tokenproxy-test",
