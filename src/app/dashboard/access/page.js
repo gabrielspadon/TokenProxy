@@ -644,7 +644,7 @@ export default function AccessPage() {
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>Access</h1>
-          <p>{advanced ? 'Advanced' : 'Everyday'} · who may sign in, how, and what stays protected</p>
+          <p>who may sign in, how, and what stays protected</p>
         </div>
         <Freshness status={pollFresh(auth)} lastDataAt={auth.goodAt} />
       </div>

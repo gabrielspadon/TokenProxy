@@ -99,7 +99,7 @@ export default function EconomicsPage() {
       <div className={styles.lensHeading}>
         <div className={styles.lensTitle}>
           <h1>Economics</h1>
-          <p>{advanced ? 'Advanced' : 'Everyday'} · exact cost records, captured rates and attributed work</p>
+          <p>exact cost records, captured rates and attributed work</p>
         </div>
       </div>
       <ScopeBar />

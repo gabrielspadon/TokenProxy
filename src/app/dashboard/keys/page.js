@@ -678,7 +678,7 @@ export default function KeysPage() {
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>Keys</h1>
-          <p>{advanced ? 'Advanced' : 'Everyday'} · connect a client, then set its limits</p>
+          <p>connect a client, then set its limits</p>
         </div>
         <Freshness status={pollFresh(keys)} lastDataAt={keys.goodAt} />
       </div>

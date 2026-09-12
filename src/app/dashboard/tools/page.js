@@ -284,7 +284,7 @@ export default function ToolsPage() {
         <div className={shared.lensTitle}>
           <h1>Tools</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · the local extensions connected to your gateway
+            the local extensions connected to your gateway
           </p>
         </div>
       </div>

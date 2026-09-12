@@ -587,7 +587,7 @@ export default function ShapingPage() {
         <div className={shared.lensTitle}>
           <h1>Token savings</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · every saver, its saved state and what it measured
+            every saver, its saved state and what it measured
           </p>
         </div>
         <SegmentedControl

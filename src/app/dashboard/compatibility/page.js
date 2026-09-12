@@ -670,7 +670,7 @@ export default function CompatibilityPage() {
         <div className={shared.lensTitle}>
           <h1>Compatibility</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · versioned translation fixtures and their retained
+            versioned translation fixtures and their retained
             local evidence
           </p>
         </div>
