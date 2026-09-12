@@ -160,6 +160,25 @@ describe('aggregation over the saved rows', () => {
     expect(f.modelsByAccount['conn-b']).toEqual(['model-b']);
   });
 
+  it('getStatsFilters applies time bounds and caps distinct facet tuples', async () => {
+    const bounded = await getStatsFilters({ startDate: iso(30), endDate: iso(0) });
+    expect(bounded.providers.map((provider) => provider.id)).toEqual(['prov-a']);
+    expect(bounded.models).toEqual(['model-a']);
+
+    db.exec(`WITH RECURSIVE seq(n) AS (
+      SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < 5000
+    )
+    INSERT INTO requestStats(id, timestamp, provider, model, connectionId)
+    SELECT 'facet-cap-' || n, '${iso(1)}', 'facet-provider', printf('facet-%04d', n), NULL FROM seq`);
+    try {
+      const capped = await getStatsFilters({ startDate: iso(2), endDate: iso(0) });
+      expect(capped.models).toHaveLength(5000);
+      expect(capped.models).not.toContain('facet-5000');
+    } finally {
+      db.run(`DELETE FROM requestStats WHERE id LIKE 'facet-cap-%'`);
+    }
+  });
+
   it('getStatsSeries returns [] with no matching rows and conserves totals when bucketing', async () => {
     expect(await getStatsSeries({ provider: 'no-such' })).toEqual([]);
     const series = await getStatsSeries({});

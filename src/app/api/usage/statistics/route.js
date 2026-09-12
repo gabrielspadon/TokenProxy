@@ -122,7 +122,7 @@ export async function GET(request) {
     };
 
     const [filters, summary, series, itemsResult] = await Promise.all([
-      getStatsFilters(),
+      getStatsFilters({ startDate, endDate }),
       getStatsSummary(filter),
       getBoundedLegacySeries(filter, span),
       getStatsItems({ ...filter, page, pageSize }),

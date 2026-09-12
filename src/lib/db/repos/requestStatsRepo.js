@@ -27,6 +27,7 @@ const SERIES_BUCKET_MS = [
   MIN_MS,
 ];
 const MIN_SERIES_POINTS = 30;
+const MAX_STATS_FILTER_ROWS = 5000;
 
 let lastCleanup = 0;
 let backfillStarted = false;
@@ -207,15 +208,27 @@ export async function ensureStatsBackfilled() {
   }
 }
 
-export async function getStatsFilters() {
+export async function getStatsFilters(filter = {}) {
   await ensureStatsBackfilled();
   const db = await getAdapter();
   const connMap = await getConnectionMap();
   const providerNameMap = await getProviderNameMap();
+  // Facets intentionally ignore the currently selected dimensions so the UI
+  // can offer alternate values, but they must share the route's validated
+  // time window. A stable hard cap bounds both SQLite work and response size.
+  const { where, params } = buildStatsWhere({
+    startDate: filter.startDate,
+    endDate: filter.endDate,
+  });
+  const nonEmptyFacet = "(provider IS NOT NULL OR model IS NOT NULL OR connectionId IS NOT NULL)";
+  const boundedWhere = where ? `${where} AND ${nonEmptyFacet}` : `WHERE ${nonEmptyFacet}`;
 
   const rows = db.all(
     `SELECT DISTINCT provider, model, connectionId FROM requestStats
-     WHERE provider IS NOT NULL OR model IS NOT NULL OR connectionId IS NOT NULL`
+     ${boundedWhere}
+     ORDER BY provider, model, connectionId
+     LIMIT ?`,
+    [...params, MAX_STATS_FILTER_ROWS],
   );
 
   const providerSet = new Map();

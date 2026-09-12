@@ -58,6 +58,10 @@ describe("legacy statistics route bounds", () => {
 
   it("defines the API interval as start-inclusive and end-exclusive", async () => {
     await call("startDate=2026-09-10T00%3A00%3A00Z&endDate=2026-09-11T00%3A00%3A00Z");
+    expect(mocks.filters).toHaveBeenCalledWith({
+      startDate: "2026-09-10T00:00:00.000Z",
+      endDate: "2026-09-10T23:59:59.999Z",
+    });
     expect(mocks.items).toHaveBeenCalledWith(expect.objectContaining({
       startDate: "2026-09-10T00:00:00.000Z",
       endDate: "2026-09-10T23:59:59.999Z",
