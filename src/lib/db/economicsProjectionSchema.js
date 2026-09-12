@@ -1,6 +1,7 @@
 import { setMetaSync } from './helpers/metaStore.js';
+import { telemetryFilterSql } from './analytics/telemetryFilter.mjs';
 
-export const ECONOMICS_PROJECTION_VERSION = 2;
+export const ECONOMICS_PROJECTION_VERSION = 3;
 export const ECONOMICS_PROJECTION_META_KEY = 'economicsProjectionVersion';
 export const ECONOMICS_FLAGS = Object.freeze({
   linked: 1,
@@ -28,6 +29,7 @@ export const ECONOMICS_PROJECTION_TABLES = {
   usageEconomicsProjection: {
     columns: {
       id: 'INTEGER PRIMARY KEY REFERENCES usageHistory(id) ON DELETE CASCADE',
+      dataOrigin: "TEXT DEFAULT 'unknown'",
       timestamp: 'TEXT NOT NULL',
       timestampMs: 'INTEGER',
       provider: 'TEXT',
@@ -100,12 +102,18 @@ const TRIGGERS = [
   'request_economics_after_insert',
   'request_economics_after_update',
   'request_economics_after_delete',
+  'quarantine_row_economics_after_insert',
+  'quarantine_row_economics_after_update',
+  'quarantine_row_economics_after_delete',
+  'quarantine_receipt_economics_after_insert',
+  'quarantine_receipt_economics_after_update',
+  'quarantine_receipt_economics_after_delete',
 ];
 const COLUMNS = Object.keys(ECONOMICS_PROJECTION_TABLES[TABLE].columns);
 const STORAGE_CLASS_COLUMNS = ['cacheRead', 'cacheWrite', 'uncachedInput'];
 const storageClassesPreserved = db => {
   const types = new Map(db.all(`PRAGMA table_info(${TABLE})`).map(row => [row.name, row.type.toUpperCase()]));
-  return STORAGE_CLASS_COLUMNS.every(name => types.get(name) === 'BLOB');
+  return COLUMNS.every(name => types.has(name)) && STORAGE_CLASS_COLUMNS.every(name => types.get(name) === 'BLOB');
 };
 const validNumber = field => `(typeof(${field}) IN ('integer','real') AND ${field}>=0 AND ${field}<=1.7976931348623157e308)`;
 const validToken = field => `(${validNumber(field)} AND ${field}<=9007199254740991)`;
@@ -130,7 +138,8 @@ const invalidTokens = `CASE WHEN ${invalidTokenDetail} OR NOT ${validToken('u.pr
   OR (json_type(${safeTokens},'$.cache_creation_input_tokens') IS NOT NULL AND NOT ${validToken(token('cache_creation_input_tokens'))}) THEN 1 ELSE 0 END`;
 const missingTokenDetail = `CASE WHEN NOT ${validToken(token('cached_tokens'))} OR NOT ${validToken(token('cache_creation_input_tokens'))} THEN 1 ELSE 0 END`;
 const requestLink = `CASE WHEN u.requestId IS NULL THEN 'unattributed' WHEN ${exact} THEN 'linked'
-  WHEN EXISTS(SELECT 1 FROM requestStats request_match WHERE request_match.id=u.requestId) THEN 'conflict' ELSE 'unavailable' END`;
+  WHEN EXISTS(SELECT 1 FROM requestStats request_match WHERE request_match.id=u.requestId
+    AND ${telemetryFilterSql('requestStats', 'request_match')}) THEN 'conflict' ELSE 'unavailable' END`;
 const flag = (condition, bit) => `CASE WHEN ${condition} THEN ${bit} ELSE 0 END`;
 const economicsFlags = [
   `CASE ${requestLink} WHEN 'linked' THEN ${ECONOMICS_FLAGS.linked} WHEN 'conflict' THEN ${ECONOMICS_FLAGS.conflict}
@@ -155,7 +164,7 @@ const economicsFlags = [
 ].join('+');
 
 function projectionSelect(where = '') {
-  return `SELECT u.id,u.timestamp,CAST(strftime('%s',u.timestamp) AS INTEGER)*1000,u.provider,u.model,u.connectionId,u.status,
+  return `SELECT u.id,u.dataOrigin,u.timestamp,CAST(strftime('%s',u.timestamp) AS INTEGER)*1000,u.provider,u.model,u.connectionId,u.status,
     u.requestId,u.logicalRequestId,u.attempt,u.contextSessionId,u.projectId,u.rateSnapshotId,u.costSource,u.estimatedCostUsd,u.reportedCostUsd,u.dispatchCoverage,
     ${requestLink},
     COALESCE(u.clientKeyId,CASE WHEN ${exact} THEN r.clientKeyId END),
@@ -168,24 +177,59 @@ function projectionSelect(where = '') {
     MAX(0,${prompt}-${cacheRead}-${cacheWrite}),CASE WHEN ${cacheRead}+${cacheWrite}>${prompt} THEN 1 ELSE 0 END,
     ${economicsFlags},CASE WHEN ${validNumber('u.estimatedCostUsd')} THEN u.estimatedCostUsd END,
     CASE WHEN ${validNumber('u.reportedCostUsd')} THEN u.reportedCostUsd END
-    FROM usageHistory u LEFT JOIN requestStats r ON r.id=u.requestId AND ${exactAgreement} ${where}`;
+    FROM usageHistory u LEFT JOIN requestStats r ON r.id=u.requestId AND ${exactAgreement}
+      AND ${telemetryFilterSql('requestStats', 'r')} ${where}`;
 }
 
 const replaceProjection = where => `INSERT OR REPLACE INTO ${TABLE}(${COLUMNS.join(',')}) ${projectionSelect(where)};`;
 
+// Refresh exact dependent identities through the existing request/source indexes.
+// Every source usage row remains projected, including excluded rows. Visibility
+// belongs to reads; these refreshes only change linked request evidence.
+const usageDependents = reference => `SELECT linked.id FROM requestStats source JOIN usageHistory linked ON linked.requestId=source.id
+  WHERE source.sourceUsageId=${reference}.id`;
+const quarantineIdentity = reference => `WHERE u.id IN (
+    SELECT id FROM usageHistory WHERE ${reference}.sourceTable='usageHistory' AND id=${reference}.rowId
+    UNION SELECT linked.id FROM requestStats source JOIN usageHistory linked ON linked.requestId=source.id
+      WHERE ${reference}.sourceTable='usageHistory' AND source.sourceUsageId=${reference}.rowId
+    UNION SELECT id FROM usageHistory WHERE ${reference}.sourceTable='requestStats' AND requestId=${reference}.rowId)`;
+const quarantineReceipt = receiptIds => `WHERE u.id IN (
+    SELECT linked.id FROM telemetryQuarantineRows q JOIN usageHistory linked ON linked.id=q.rowId
+      WHERE q.receiptId IN (${receiptIds}) AND q.sourceTable='usageHistory'
+    UNION SELECT linked.id FROM telemetryQuarantineRows q JOIN usageHistory linked ON linked.requestId=q.rowId
+      WHERE q.receiptId IN (${receiptIds}) AND q.sourceTable='requestStats'
+    UNION SELECT linked.id FROM telemetryQuarantineRows q JOIN requestStats source ON source.sourceUsageId=q.rowId
+      JOIN usageHistory linked ON linked.requestId=source.id
+      WHERE q.receiptId IN (${receiptIds}) AND q.sourceTable='usageHistory')`;
+
 const triggerDefinitions = () => ({
   usage_economics_after_insert: `CREATE TRIGGER usage_economics_after_insert AFTER INSERT ON usageHistory BEGIN
-    ${replaceProjection('WHERE u.id=NEW.id')} END`,
+    ${replaceProjection(`WHERE u.id IN (SELECT NEW.id UNION ${usageDependents('NEW')})`)} END`,
   usage_economics_after_update: `CREATE TRIGGER usage_economics_after_update AFTER UPDATE ON usageHistory BEGIN
-    ${replaceProjection('WHERE u.id=NEW.id')} END`,
+    DELETE FROM ${TABLE} WHERE id=OLD.id AND OLD.id<>NEW.id;
+    ${replaceProjection(`WHERE u.id IN (SELECT NEW.id UNION ${usageDependents('NEW')} UNION ${usageDependents('OLD')})`)} END`,
   usage_economics_after_delete: `CREATE TRIGGER usage_economics_after_delete AFTER DELETE ON usageHistory BEGIN
-    DELETE FROM ${TABLE} WHERE id=OLD.id; END`,
+    DELETE FROM ${TABLE} WHERE id=OLD.id;
+    ${replaceProjection(`WHERE u.id IN (${usageDependents('OLD')})`)} END`,
   request_economics_after_insert: `CREATE TRIGGER request_economics_after_insert AFTER INSERT ON requestStats BEGIN
     ${replaceProjection('WHERE u.requestId=NEW.id')} END`,
   request_economics_after_update: `CREATE TRIGGER request_economics_after_update AFTER UPDATE ON requestStats BEGIN
     ${replaceProjection('WHERE u.requestId=NEW.id OR u.requestId=OLD.id')} END`,
   request_economics_after_delete: `CREATE TRIGGER request_economics_after_delete AFTER DELETE ON requestStats BEGIN
     ${replaceProjection('WHERE u.requestId=OLD.id')} END`,
+  quarantine_row_economics_after_insert: `CREATE TRIGGER quarantine_row_economics_after_insert AFTER INSERT ON telemetryQuarantineRows BEGIN
+    ${replaceProjection(quarantineIdentity('NEW'))} END`,
+  quarantine_row_economics_after_update: `CREATE TRIGGER quarantine_row_economics_after_update AFTER UPDATE ON telemetryQuarantineRows BEGIN
+    ${replaceProjection(quarantineIdentity('OLD'))}
+    ${replaceProjection(quarantineIdentity('NEW'))} END`,
+  quarantine_row_economics_after_delete: `CREATE TRIGGER quarantine_row_economics_after_delete AFTER DELETE ON telemetryQuarantineRows BEGIN
+    ${replaceProjection(quarantineIdentity('OLD'))} END`,
+  quarantine_receipt_economics_after_insert: `CREATE TRIGGER quarantine_receipt_economics_after_insert AFTER INSERT ON telemetryQuarantineReceipts BEGIN
+    ${replaceProjection(quarantineReceipt('NEW.id'))} END`,
+  quarantine_receipt_economics_after_update: `CREATE TRIGGER quarantine_receipt_economics_after_update AFTER UPDATE OF state,id ON telemetryQuarantineReceipts BEGIN
+    ${replaceProjection(quarantineReceipt('OLD.id,NEW.id'))} END`,
+  quarantine_receipt_economics_after_delete: `CREATE TRIGGER quarantine_receipt_economics_after_delete AFTER DELETE ON telemetryQuarantineReceipts BEGIN
+    ${replaceProjection(quarantineReceipt('OLD.id'))} END`,
 });
 const canonicalSql = sql => sql.replace(/\s+/g, ' ').replace(/;\s*$/, '').trim();
 
@@ -212,8 +256,10 @@ export function economicsProjectionReady(db, { verifyIntegrity = false } = {}) {
     && !db.get(`SELECT 1 FROM ${TABLE} p LEFT JOIN usageHistory u ON u.id=p.id WHERE u.id IS NULL LIMIT 1`);
 }
 
-export function ensureEconomicsProjection(db, { verifiedReady = false } = {}) {
-  if (verifiedReady || economicsProjectionReady(db, { verifyIntegrity: true })) return false;
+export function ensureEconomicsProjection(db, { verifiedReady } = {}) {
+  // A failed pre-sync check must force rebuilding. Additive schema repair can
+  // supply default origins, but those defaults are not source provenance.
+  if (verifiedReady === true || (verifiedReady === undefined && economicsProjectionReady(db, { verifyIntegrity: true }))) return false;
   for (const trigger of TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
   if (!storageClassesPreserved(db)) {
     db.exec(`DROP TABLE ${TABLE}`);

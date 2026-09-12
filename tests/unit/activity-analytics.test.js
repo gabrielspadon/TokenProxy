@@ -22,6 +22,8 @@ beforeEach(() => {
   usage.run(1,'2026-09-06T10:00:00.000Z','claude','same-model','personal','ok',1000,100,0.004,'{"cached_tokens":600,"cache_creation_input_tokens":100,"secret":"must-not-escape"}');
   usage.run(2,'2026-09-06T11:00:00.000Z','claude','same-model','work','error',500,20,0,'{"cached_tokens":0,"cache_creation_input_tokens":50}');
   usage.run(3,'2026-09-06T12:00:00.000Z','codex','same-model','third','ok',300,10,null,'invalid-json');
+  native.exec("ALTER TABLE requestStats ADD COLUMN dataOrigin TEXT DEFAULT 'unknown'; ALTER TABLE requestStats ADD COLUMN sourceUsageId INTEGER; ALTER TABLE usageHistory ADD COLUMN dataOrigin TEXT DEFAULT 'unknown'");
+  for (const name of ['telemetryQuarantineRows', 'telemetryQuarantineReceipts']) native.exec(buildCreateTableSql(name, TABLES[name]));
 });
 afterEach(() => native.close());
 const read = (overrides={}) => readActivityAnalytics(db,{operation:'activity',...overrides});
@@ -138,9 +140,10 @@ describe('analytical workspace read contract', () => {
     expect(result.summary.cacheReadFraction).toBe(1.5);
   });
   it('works before context instrumentation exists and never backfills', () => {
+    const tables = db.all("SELECT name FROM sqlite_master WHERE type='table'").map(row => row.name).sort();
     native.exec('ALTER TABLE requestStats DROP COLUMN contextSessionId');
     expect(read().items.every(row=>row.contextSessionId===null)).toBe(true);
-    expect(db.all("SELECT name FROM sqlite_master WHERE type='table'").map(row=>row.name).sort()).toEqual(['requestStats','usageHistory']);
+    expect(db.all("SELECT name FROM sqlite_master WHERE type='table'").map(row=>row.name).sort()).toEqual(tables);
   });
   it('does not invent continuous utilization for gaps', () => {
     native.prepare('UPDATE requestStats SET timestamp=? WHERE id=?').run('2023-01-01T00:00:00.000Z','r1');

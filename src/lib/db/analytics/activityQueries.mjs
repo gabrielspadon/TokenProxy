@@ -2,6 +2,7 @@ import { CLIENT_REFERENCE_FIELDS, ECONOMICS_LINK_FIELDS, economicsLedgerSource, 
 import { ECONOMICS_GROUP_VALUES, economicsGroupFields } from './economicsDimensions.mjs';
 import { attachCounterfactualEvidence } from './counterfactualEvidence.mjs';
 import { ECONOMICS_FLAGS, economicsProjectionReady } from '../economicsProjectionSchema.js';
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 const MAX_POINTS = 720;
 const MINUTE = 60000;
 const GROUPS = new Set(ECONOMICS_GROUP_VALUES);
@@ -110,8 +111,8 @@ export function validateActivityQuery(query) {
   return result;
 }
 
-function filterFor(query, columns) {
-  const clauses = [], params = [];
+function filterFor(query, columns, alias = 'usageEconomicsProjection') {
+  const clauses = [telemetryFilterSql(query.view === 'economics' ? 'usageHistory' : 'requestStats', alias)], params = [];
   if (query.recordId != null) { clauses.push('id=?'); params.push(query.recordId); }
   for (const column of ['provider', 'model', 'connectionId']) {
     if (query[column] !== null) { clauses.push(`${column}=?`); params.push(query[column]); }
@@ -172,7 +173,7 @@ function baseQuery(db, query, { materialize = false, materializeNormalized = fal
       FROM usageEconomicsProjection ${filtered.sql}
     )`, normalizedProjection: true };
   }
-  const filtered = filterFor(query, columns), params=[...filtered.params];
+  const filtered = filterFor(query, columns, query.view === 'economics' ? 'ledger' : 'requestStats'), params=[...filtered.params];
   let filterSql=filtered.sql;
   if (selectedIds?.length) {
     filterSql += filterSql ? ` AND id IN (${selectedIds.map(()=>'?').join(',')})` : `WHERE id IN (${selectedIds.map(()=>'?').join(',')})`;

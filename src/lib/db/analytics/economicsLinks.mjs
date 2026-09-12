@@ -1,3 +1,5 @@
+import { telemetryFilterSql } from './telemetryFilter.mjs';
+
 export const CLIENT_REFERENCE_FIELDS = ['clientRef','clientSessionRef','taskRef','projectRef'];
 export const ECONOMICS_LINK_FIELDS = ['requestLink','requestedModel','completionId','clientKeyId','clientIdentitySource',...CLIENT_REFERENCE_FIELDS];
 
@@ -32,7 +34,7 @@ export function economicsLedgerSource(db, columns) {
     ${fields.join(',')},
     ${linked && requestColumns.has('latencyTotal') ? `CASE WHEN ${exact} THEN r.latencyTotal END` : 'NULL'} AS linkedLatency,
     ${linked && requestColumns.has('latencyTtft') ? `CASE WHEN ${exact} THEN r.latencyTtft END` : 'NULL'} AS linkedTtft
-    FROM usageHistory u ${linked ? 'LEFT JOIN requestStats r ON r.id=u.requestId' : ''})`;
+    FROM usageHistory u ${linked ? `LEFT JOIN requestStats r ON r.id=u.requestId AND ${telemetryFilterSql('requestStats', 'r')}` : ''})`;
 }
 
 const amount = n => typeof n==='number' && Number.isFinite(n) && n>=0 ? n : null;

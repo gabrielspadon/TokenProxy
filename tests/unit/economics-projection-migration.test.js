@@ -107,7 +107,7 @@ describe('migration-governed economics projection', () => {
   });
   it('backfills and transactionally maintains exact economics semantics', () => {
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(36);
-    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'")?.value).toBe('2');
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'")?.value).toBe('3');
     seedEconomicsCorrectness(db);
     const result = query();
     expect(result.summary).toMatchObject(ECONOMICS_ORACLE.summary);
@@ -130,7 +130,7 @@ describe('migration-governed economics projection', () => {
     expect(projectionCount()).toBe(5);
     db.run("UPDATE _meta SET value='0' WHERE key='economicsProjectionVersion'");
     expect(query()).toEqual(result);
-    db.run("UPDATE _meta SET value='2' WHERE key='economicsProjectionVersion'");
+    db.run("UPDATE _meta SET value='3' WHERE key='economicsProjectionVersion'");
 
     db.run("UPDATE requestStats SET model='conflicting-model' WHERE id=?", ['oracle-linked-initial']);
     expect(query().summary).toMatchObject({ linkedRequestRows: 1, conflictingRequestRows: 2 });
@@ -185,8 +185,8 @@ describe('migration-governed economics projection', () => {
     expect(query()).toEqual(expected);
     const types = Object.fromEntries(db.all('PRAGMA table_info(usageEconomicsProjection)').map(row => [row.name, row.type]));
     expect(types).toMatchObject({ cacheRead: 'BLOB', cacheWrite: 'BLOB', uncachedInput: 'BLOB' });
-    expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('5');
-    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('2');
+    expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('6');
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('3');
   });
 
   it('repairs an equal-count orphan projection row independently', async () => {
@@ -258,6 +258,6 @@ describe('migration-governed economics projection', () => {
     expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('0');
     await rerunMigration();
     expect(projectionCount()).toBe(5);
-    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('2');
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('3');
   });
 });
