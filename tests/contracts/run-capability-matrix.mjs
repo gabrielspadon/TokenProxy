@@ -10,6 +10,11 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 const manifestPath = `${root}/tests/contracts/capabilities.json`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const loadJson = async (path) => JSON.parse(await readFile(path.startsWith("/") ? path : `${root}/${path}`, "utf8"));
+const CONTROLLED_USAGE = Object.freeze({
+  chat: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 },
+  messages: { input_tokens: 7, output_tokens: 2 },
+  responses: { input_tokens: 7, output_tokens: 2, total_tokens: 9 },
+});
 
 function toolTransactions(endpoint, body) {
   if (endpoint === "/v1/messages") {
@@ -79,7 +84,26 @@ function assertEventSchema(records, endpoint) {
   }
 }
 
-function assertStream(endpoint, text, label) {
+function assertChatUsage(usage, expected, label) {
+  assert.equal(usage?.prompt_tokens, expected.prompt_tokens, `${label} Chat input usage`);
+  assert.equal(usage?.completion_tokens, expected.completion_tokens, `${label} Chat output usage`);
+  assert.equal(
+    usage?.total_tokens ?? (usage?.prompt_tokens + usage?.completion_tokens),
+    expected.total_tokens,
+    `${label} Chat total usage`,
+  );
+}
+
+function assertMessagesUsage(usage, expected, label) {
+  assert.equal(usage?.input_tokens, expected.input_tokens, `${label} Messages input usage`);
+  assert.equal(usage?.output_tokens, expected.output_tokens, `${label} Messages output usage`);
+}
+
+function assertResponsesUsage(usage, expected, label) {
+  assert.deepEqual(usage, expected, `${label} Responses usage`);
+}
+
+export function assertStream(endpoint, text, label, usage = CONTROLLED_USAGE) {
   const records = parseSse(text);
   assert.ok(records.length > 0, "stream must contain events");
   assertEventSchema(records, endpoint);
@@ -87,6 +111,7 @@ function assertStream(endpoint, text, label) {
     assert.equal(records[0].event, "message_start");
     assertSingleTerminal(records, ({ event }) => event === "message_stop", "Claude");
     assert.equal(records.at(-1).event, "message_stop");
+    assert.deepEqual(records[0].data?.message?.usage, { input_tokens: usage.messages.input_tokens, output_tokens: 0 }, `${label} Messages initial usage`);
     const start = indexOfEvent(records, "content_block_start", "Claude content start");
     const delta = records[indexOfEvent(records, "content_block_delta", "Claude content delta")];
     const stop = indexOfEvent(records, "content_block_stop", "Claude content stop");
@@ -94,7 +119,7 @@ function assertStream(endpoint, text, label) {
     const terminalDelta = records[terminalIndex];
     assert.equal(delta?.data?.type, "content_block_delta");
     assert.equal(terminalDelta?.data?.delta?.stop_reason, "end_turn");
-    assert.equal(typeof terminalDelta?.data?.usage?.output_tokens, "number");
+    assert.deepEqual(terminalDelta?.data?.usage, { output_tokens: usage.messages.output_tokens }, `${label} Messages terminal usage`);
     assert.ok(start < records.indexOf(delta) && records.indexOf(delta) < stop && stop < terminalIndex);
   } else if (endpoint === "/v1/responses") {
     assert.equal(records[0].event, "response.created");
@@ -102,46 +127,45 @@ function assertStream(endpoint, text, label) {
     const itemAdded = indexOfEvent(records, "response.output_item.added", "Responses output item");
     const partAdded = indexOfEvent(records, "response.content_part.added", "Responses content part");
     const textDelta = indexOfEvent(records, "response.output_text.delta", "Responses text delta");
-    const terminal = records.filter(({ data }) => data !== "[DONE]").at(-1);
+    const terminalIndex = indexOfEvent(records, "response.completed", "Responses terminal");
+    const terminal = records[terminalIndex];
     assert.equal(terminal.event, "response.completed");
     assert.equal(terminal.data?.response?.status, "completed");
-    assert.equal(typeof terminal.data?.response?.usage?.total_tokens, "number");
-    assert.ok(itemAdded < partAdded && partAdded < textDelta && textDelta < records.length - 1);
+    assertResponsesUsage(terminal.data?.response?.usage, usage.responses, label);
+    assert.ok(itemAdded < partAdded && partAdded < textDelta && textDelta < terminalIndex);
+    assert.deepEqual(records.slice(terminalIndex + 1), [{ event: null, data: "[DONE]" }], `${label} permits only [DONE] framing after response.completed`);
   } else {
     assertSingleTerminal(records, ({ data }) => data === "[DONE]", "Chat Completions");
     assert.equal(records.at(-1).data, "[DONE]");
     const terminalChunk = records.find(({ data }) => data !== "[DONE]" && data?.choices?.some((choice) => choice.finish_reason));
     assert.equal(terminalChunk?.data?.choices?.[0]?.finish_reason, "stop");
-    const usage = terminalChunk?.data?.usage;
-    assert.equal(typeof usage?.prompt_tokens, "number", `${label} Chat input usage`);
-    assert.equal(typeof usage?.completion_tokens, "number", `${label} Chat output usage`);
-    if (usage?.total_tokens !== undefined) assert.equal(typeof usage.total_tokens, "number", `${label} Chat total usage`);
+    assertChatUsage(terminalChunk?.data?.usage, usage.chat, label);
     assert.ok(records.some(({ data }) => data !== "[DONE]" && data?.choices?.some((choice) => choice?.delta?.content)));
   }
   assert.match(text, /fixture-ok/);
 }
 
-function assertJson(endpoint, body) {
+export function assertJson(endpoint, body, usage = CONTROLLED_USAGE) {
   if (endpoint === "/v1/messages") {
     assert.equal(body.stop_reason, "end_turn");
-    assert.equal(typeof body.usage?.input_tokens, "number");
-    assert.equal(typeof body.usage?.output_tokens, "number");
+    assertMessagesUsage(body.usage, usage.messages, "Messages JSON");
   } else if (endpoint === "/v1/responses") {
     assert.equal(body.status, "completed");
-    assert.equal(typeof body.usage?.input_tokens, "number");
-    assert.equal(typeof body.usage?.output_tokens, "number");
-    if (body.usage?.total_tokens !== undefined) assert.equal(typeof body.usage.total_tokens, "number");
+    assertResponsesUsage(body.usage, usage.responses, "Responses JSON");
   } else {
     assert.equal(body.choices[0].finish_reason, "stop");
-    assert.equal(typeof body.usage?.prompt_tokens, "number");
-    assert.equal(typeof body.usage?.completion_tokens, "number");
-    if (body.usage?.total_tokens !== undefined) assert.equal(typeof body.usage.total_tokens, "number");
+    assertChatUsage(body.usage, usage.chat, "Chat JSON");
   }
   assert.match(JSON.stringify(body), /fixture-ok/);
 }
 
 export async function validateCapabilityManifest() {
   const manifest = await loadJson(manifestPath);
+  assert.deepEqual(manifest.fixtureExpectations.usage, CONTROLLED_USAGE);
+  assert.deepEqual(manifest.fixtureExpectations.outcomes, {
+    "provider-error": { status: 529, error: { type: "server_error", code: "internal_server_error" } },
+    "transport-abrupt": { status: 502, error: { type: "server_error", code: "bad_gateway" } },
+  });
   assert.deepEqual(manifest.formats, Object.values(FORMATS));
   assert.equal(manifest.cells.length, 121);
   assert.equal(new Set(manifest.cells.map(({ source, target }) => `${source}>${target}`)).size, 121);
@@ -159,7 +183,7 @@ export async function validateCapabilityManifest() {
   return manifest;
 }
 
-async function send(gatewayBaseUrl, entry, body, authorization) {
+async function send(gatewayBaseUrl, entry, body, authorization, gatewayReceipt) {
   const response = await fetch(`${gatewayBaseUrl}${entry.endpoint}`, {
     method: "POST",
     // Client authorization is forwarded as an ordinary client credential. The
@@ -171,6 +195,8 @@ async function send(gatewayBaseUrl, entry, body, authorization) {
     },
     body: JSON.stringify(body),
   });
+  assert.equal(response.headers.get("x-powered-by"), "Next.js", `${entry.id} must be served by Next`);
+  gatewayReceipt.responses += 1;
   const text = await response.text();
   return { response, text };
 }
@@ -181,12 +207,7 @@ async function readControl(controlUrl) {
   return response.json();
 }
 
-function assertDistinctOrigins(gatewayBaseUrl, gatewayControlUrl, providerControlUrl) {
-  assert.equal(
-    new URL(gatewayBaseUrl).origin,
-    new URL(gatewayControlUrl).origin,
-    "gateway control must belong to the gateway origin",
-  );
+function assertDistinctOrigins(gatewayBaseUrl, providerControlUrl) {
   assert.notEqual(
     new URL(gatewayBaseUrl).origin,
     new URL(providerControlUrl).origin,
@@ -213,38 +234,33 @@ async function setStubOutcome(controlUrl, outcome, label) {
  */
 export async function runCapabilityMatrix({
   gatewayBaseUrl,
-  gatewayControlUrl,
   providerControlUrl,
   authorization = null,
   model = null,
 }) {
   assert.equal(typeof gatewayBaseUrl, "string", "gatewayBaseUrl is required");
-  assert.equal(typeof gatewayControlUrl, "string", "gatewayControlUrl is required");
   assert.equal(typeof providerControlUrl, "string", "providerControlUrl is required");
   assert.ok(gatewayBaseUrl.length > 0, "gatewayBaseUrl is required");
-  assert.ok(gatewayControlUrl.length > 0, "gatewayControlUrl is required");
   assert.ok(providerControlUrl.length > 0, "providerControlUrl is required");
-  assertDistinctOrigins(gatewayBaseUrl, gatewayControlUrl, providerControlUrl);
+  assertDistinctOrigins(gatewayBaseUrl, providerControlUrl);
   if (authorization != null) assert.equal(typeof authorization, "string", "authorization is a client credential string");
   if (model != null) assert.equal(typeof model, "string", "model override is a request model string");
   const manifest = await validateCapabilityManifest();
-  const initialGateway = await readControl(gatewayControlUrl);
   const initialProvider = await readControl(providerControlUrl);
+  const gatewayReceipt = { responses: 0 };
   const primary = { passed: 0, dispatched: 0, rejectedBeforeUpstream: 0 };
   for (const entry of manifest.primaryEndpoints) {
     const fixture = await loadJson(entry.fixture);
     const before = JSON.stringify(fixture);
     const validation = validatePrimaryFixture(entry, fixture);
-    const gatewayBefore = (await readControl(gatewayControlUrl)).gatewayIngressCount;
     const providerBefore = await readControl(providerControlUrl);
     if (!entry.expected.upstreamDispatch) {
       assert.equal(validation.valid, false, `${entry.id} must reject locally`);
       const outbound = clone(fixture);
       outbound.stream = entry.stream;
       if (model) outbound.model = model;
-      const { response } = await send(gatewayBaseUrl, entry, outbound, authorization);
+      const { response } = await send(gatewayBaseUrl, entry, outbound, authorization, gatewayReceipt);
       assert.equal(response.status, entry.expected.status, `${entry.id} must return gateway ${entry.expected.status}`);
-      assert.equal((await readControl(gatewayControlUrl)).gatewayIngressCount, gatewayBefore + 1, `${entry.id} did not reach gateway`);
       const providerAfter = await readControl(providerControlUrl);
       assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount, `${entry.id} reached provider dispatch`);
       assert.equal(providerAfter.ingressCount, providerBefore.ingressCount, `${entry.id} reached provider ingress`);
@@ -258,12 +274,11 @@ export async function runCapabilityMatrix({
     outbound.stream = entry.stream;
     if (model) outbound.model = model;
     await setStubOutcome(providerControlUrl, "success", entry.id);
-    const { response, text } = await send(gatewayBaseUrl, entry, outbound, authorization);
+    const { response, text } = await send(gatewayBaseUrl, entry, outbound, authorization, gatewayReceipt);
     assert.equal(response.status, 200, `${entry.id}: ${text.slice(0, 500)}`);
-    if (entry.stream) assertStream(entry.endpoint, text, entry.id);
-    else assertJson(entry.endpoint, JSON.parse(text));
+    if (entry.stream) assertStream(entry.endpoint, text, entry.id, manifest.fixtureExpectations.usage);
+    else assertJson(entry.endpoint, JSON.parse(text), manifest.fixtureExpectations.usage);
     assert.equal(JSON.stringify(fixture), before, `${entry.id} mutated source fixture`);
-    assert.equal((await readControl(gatewayControlUrl)).gatewayIngressCount, gatewayBefore + 1, `${entry.id} did not reach gateway`);
     const providerAfter = await readControl(providerControlUrl);
     assert.equal(providerAfter.ingressCount, providerBefore.ingressCount + 1, `${entry.id} did not reach provider ingress exactly once`);
     assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount + 1, `${entry.id} did not reach provider exactly once`);
@@ -275,31 +290,31 @@ export async function runCapabilityMatrix({
   const body = await loadJson(sample.fixture);
   const outcomeBody = { ...body, ...(model ? { model } : {}), stream: false };
   await setStubOutcome(providerControlUrl, "success", "outcome-success");
-  const success = await send(gatewayBaseUrl, sample, outcomeBody, authorization);
+  const success = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   assert.equal(success.response.status, 200);
   await setStubOutcome(providerControlUrl, "provider-error", "outcome-provider-error");
-  const providerError = await send(gatewayBaseUrl, sample, outcomeBody, authorization);
-  assert.equal(providerError.response.status, 529);
+  const providerError = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
+  const providerErrorExpected = manifest.fixtureExpectations.outcomes["provider-error"];
+  assert.equal(providerError.response.status, providerErrorExpected.status);
   const providerErrorBody = JSON.parse(providerError.text);
-  assert.equal(typeof providerErrorBody.error?.type, "string", "provider error type");
-  assert.equal(typeof providerErrorBody.error?.message, "string", "provider error message");
+  assert.deepEqual(
+    { type: providerErrorBody.error?.type, code: providerErrorBody.error?.code },
+    providerErrorExpected.error,
+    "provider error classification",
+  );
   await setStubOutcome(providerControlUrl, "transport-abrupt", "outcome-transport-abrupt");
-  let transportAbrupt;
-  try {
-    const abrupt = await send(gatewayBaseUrl, sample, outcomeBody, authorization);
-    assert.ok(abrupt.response.status >= 500, "abrupt transport must not succeed");
-    transportAbrupt = { responseStatus: abrupt.response.status };
-  } catch {
-    transportAbrupt = { fetchRejected: true };
-  }
-  const finalGateway = await readControl(gatewayControlUrl);
+  const abrupt = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
+  const transportAbruptExpected = manifest.fixtureExpectations.outcomes["transport-abrupt"];
+  assert.equal(abrupt.response.status, transportAbruptExpected.status, "abrupt transport status");
+  const abruptBody = JSON.parse(abrupt.text);
+  assert.deepEqual(
+    { type: abruptBody.error?.type, code: abruptBody.error?.code },
+    transportAbruptExpected.error,
+    "abrupt transport classification",
+  );
   const finalProvider = await readControl(providerControlUrl);
   const receipts = {
-    gatewayIngress: {
-      before: initialGateway.gatewayIngressCount,
-      after: finalGateway.gatewayIngressCount,
-      delta: finalGateway.gatewayIngressCount - initialGateway.gatewayIngressCount,
-    },
+    nextGatewayResponses: gatewayReceipt.responses,
     providerIngress: {
       before: initialProvider.ingressCount,
       after: finalProvider.ingressCount,
@@ -311,15 +326,15 @@ export async function runCapabilityMatrix({
       delta: finalProvider.providerDispatchCount - initialProvider.providerDispatchCount,
     },
   };
-  assert.equal(receipts.gatewayIngress.delta, manifest.primaryEndpoints.length + 3, "all primary and outcome cases reached gateway");
+  assert.equal(receipts.nextGatewayResponses, manifest.primaryEndpoints.length + 3, "all primary and outcome cases reached Next gateway");
   assert.equal(receipts.providerIngress.delta, primary.dispatched + 3, "only accepted primary and outcome cases reached provider ingress");
   assert.equal(receipts.providerDispatch.delta, primary.dispatched + 3, "only accepted primary and outcome cases dispatched provider");
   return {
     primary,
     outcomes: {
       success: 1,
-      providerError: { status: providerError.response.status, type: providerErrorBody.error.type },
-      transportAbrupt,
+      providerError: { status: providerError.response.status, ...providerErrorExpected.error },
+      transportAbrupt: { status: abrupt.response.status, ...transportAbruptExpected.error },
     },
     receipts,
   };
@@ -345,16 +360,13 @@ export function resolveCliAuthorization(argv, env = process.env, read = readFile
 
 async function main() {
   const gatewayArg = process.argv.find((value) => value.startsWith("--gateway-base-url="));
-  const gatewayControlArg = process.argv.find((value) => value.startsWith("--gateway-control-url="));
   const controlArg = process.argv.find((value) => value.startsWith("--provider-control-url="));
   const modelArg = process.argv.find((value) => value.startsWith("--model="));
   assert.ok(gatewayArg, "pass --gateway-base-url for the started TokenProxy gateway");
-  assert.ok(gatewayControlArg, "pass --gateway-control-url for the started TokenProxy gateway");
   assert.ok(controlArg, "pass --provider-control-url for the started provider stub");
   const authorization = resolveCliAuthorization(process.argv);
   const report = await runCapabilityMatrix({
     gatewayBaseUrl: gatewayArg.slice("--gateway-base-url=".length),
-    gatewayControlUrl: gatewayControlArg.slice("--gateway-control-url=".length),
     providerControlUrl: controlArg.slice("--provider-control-url=".length),
     model: modelArg?.slice("--model=".length) || null,
     authorization,

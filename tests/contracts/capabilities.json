@@ -1,6 +1,40 @@
 {
   "schemaVersion": 1,
   "contract": "tokenproxy-offline-capabilities",
+  "fixtureExpectations": {
+    "usage": {
+      "chat": {
+        "prompt_tokens": 7,
+        "completion_tokens": 2,
+        "total_tokens": 9
+      },
+      "messages": {
+        "input_tokens": 7,
+        "output_tokens": 2
+      },
+      "responses": {
+        "input_tokens": 7,
+        "output_tokens": 2,
+        "total_tokens": 9
+      }
+    },
+    "outcomes": {
+      "provider-error": {
+        "status": 529,
+        "error": {
+          "type": "server_error",
+          "code": "internal_server_error"
+        }
+      },
+      "transport-abrupt": {
+        "status": 502,
+        "error": {
+          "type": "server_error",
+          "code": "bad_gateway"
+        }
+      }
+    }
+  },
   "formats": [
     "openai",
     "openai-responses",

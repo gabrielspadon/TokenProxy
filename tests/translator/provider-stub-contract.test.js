@@ -8,6 +8,7 @@ describe("capability matrix runner", () => {
   it("runs all fixtures through a started TokenProxy gateway with env-provided fake auth", async () => {
     const stub = await startProviderStub({ port: 20210 });
     let gateway;
+    let cleanup;
     try {
       gateway = await startCapabilityGateway({ providerBaseUrl: `${stub.baseUrl}/v1`, port: 20211 });
       const runner = fileURLToPath(new URL("../contracts/run-capability-matrix.mjs", import.meta.url));
@@ -15,7 +16,6 @@ describe("capability matrix runner", () => {
         const child = spawn(process.execPath, [
           runner,
           `--gateway-base-url=${gateway.baseUrl}`,
-          `--gateway-control-url=${gateway.controlUrl}`,
           `--provider-control-url=${stub.controlUrl}`,
           "--authorization-env=CAPABILITY_GATEWAY_AUTH",
           "--model=fixture/fixture-model",
@@ -33,11 +33,10 @@ describe("capability matrix runner", () => {
       const report = JSON.parse(output.trim());
       expect(report.primary).toEqual({ passed: 36, dispatched: 30, rejectedBeforeUpstream: 6 });
       expect(report.outcomes.success).toBe(1);
-      expect(report.outcomes.providerError).toMatchObject({ status: 529, type: expect.any(String) });
-      const abrupt = report.outcomes.transportAbrupt;
-      expect(abrupt.fetchRejected === true || (Number.isInteger(abrupt.responseStatus) && abrupt.responseStatus >= 500)).toBe(true);
+      expect(report.outcomes.providerError).toEqual({ status: 529, type: "server_error", code: "internal_server_error" });
+      expect(report.outcomes.transportAbrupt).toEqual({ status: 502, type: "server_error", code: "bad_gateway" });
       expect(report.receipts).toEqual({
-        gatewayIngress: { before: 0, after: 39, delta: 39 },
+        nextGatewayResponses: 39,
         providerIngress: { before: 0, after: 33, delta: 33 },
         providerDispatch: { before: 0, after: 33, delta: 33 },
       });
@@ -46,6 +45,9 @@ describe("capability matrix runner", () => {
       expect(stub.requests.every((entry) => !Object.hasOwn(entry, "body"))).toBe(true);
       expect(stub.requests.every((entry) => entry.label !== "unspecified")).toBe(true);
       expect(stub.requests.every((entry) => entry.model === "fixture-model")).toBe(true);
+      cleanup = await gateway.close();
+      gateway = null;
+      expect(cleanup).toEqual({ processExitCode: 0, dataDirRemoved: true });
     } finally {
       await gateway?.close();
       await stub.close();
