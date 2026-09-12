@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getAdapter } from '../../src/lib/db/driver.js';
-import { ingestFrontOutcomeJournal } from '../../src/lib/db/repos/frontOutcomeJournalRepo.js';
+import { ingestFrontOutcomeJournal, startFrontOutcomeJournalIngestion, stopFrontOutcomeJournalIngestion } from '../../src/lib/db/repos/frontOutcomeJournalRepo.js';
 
 const CLOCK = '11111111-1111-4111-8111-111111111111';
 const INGRESS = '22222222-2222-4222-8222-222222222222';
@@ -45,8 +45,10 @@ beforeEach(() => {
   db.run("DELETE FROM _meta WHERE key LIKE 'frontOutcomeJournal:%'");
 });
 
-afterEach(() => {
+afterEach(async () => {
   for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+  await stopFrontOutcomeJournalIngestion();
+  vi.useRealTimers();
 });
 
 it('is disabled when an operator explicitly selects the null journal seam', async () => {
@@ -131,12 +133,54 @@ it('marks pending front work interrupted as soon as the active clock changes', a
   expect(db.get('SELECT state,terminalAt FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toEqual({ state: 'interrupted', terminalAt: '2026-09-12T12:01:00.000Z' });
 });
 
+it('interrupts an old-clock start ingested in the same transaction as the active clock', async () => {
+  const nextClock = '44444444-4444-4444-8444-444444444444';
+  const directory = journal([
+    { schemaVersion: 1, kind: 'process-start', clockDomain: CLOCK, recordedAt: AT },
+    { schemaVersion: 1, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: null, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+  ], nextClock);
+
+  expect(await ingestFrontOutcomeJournal({ directory })).toMatchObject({ events: 2, interrupted: 1, activeClockDomain: nextClock });
+  expect(db.get('SELECT state,terminalAt FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toEqual({ state: 'interrupted', terminalAt: AT });
+});
+
+it('allows the producer rounding envelope but rejects material timing drift', async () => {
+  const directory = journal([
+    { schemaVersion: 1, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: LOGICAL, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+    { ...terminal({ total: 17 }), queueDurationMs: 6, preheadersDurationMs: 7, streamDurationMs: 7 },
+  ]);
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 2 });
+
+  const inconsistent = journal([
+    { schemaVersion: 1, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: LOGICAL, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+    { ...terminal({ total: 16 }), queueDurationMs: 6, preheadersDurationMs: 7, streamDurationMs: 7 },
+  ]);
+  await expect(ingestFrontOutcomeJournal({ directory: inconsistent })).rejects.toThrow('timing total');
+});
+
+it('runs an initial and recurring journal import without overlapping a stalled import', async () => {
+  vi.useFakeTimers();
+  let resolve;
+  const first = new Promise((done) => { resolve = done; });
+  const ingest = vi.fn().mockReturnValueOnce(first).mockResolvedValue(undefined);
+  expect(startFrontOutcomeJournalIngestion({ intervalMs: 1000, ingest })).toBe(true);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(ingest).toHaveBeenCalledTimes(1);
+  resolve();
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(ingest).toHaveBeenCalledTimes(2);
+});
+
 it('rejects malformed or conflicting complete input before it mutates rows or checkpoints', async () => {
   const directory = journal([
     { schemaVersion: 1, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
-      logicalRequestId: null, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+      logicalRequestId: LOGICAL, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
   ]);
-  fs.appendFileSync(segment(directory), `${JSON.stringify(signed(terminal({ total: 19 })))}\n`);
+  fs.appendFileSync(segment(directory), `${JSON.stringify(signed(terminal({ total: 15 })))}\n`);
 
   await expect(ingestFrontOutcomeJournal({ directory })).rejects.toThrow('timing total');
   expect(db.get('SELECT * FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toBeUndefined();

@@ -42,6 +42,16 @@ export async function register() {
       console.warn("[model-list] background refresh start failed class=initialization");
     }
 
+    // The front persists admission-only outcomes outside the backend process.
+    // Import from the shared private data root before request traffic and then
+    // keep its incremental reader alive for terminal records.
+    try {
+      const { startFrontOutcomeJournalIngestion } = await import("@/lib/db/repos/frontOutcomeJournalRepo.js");
+      startFrontOutcomeJournalIngestion();
+    } catch {
+      console.warn("[frontOutcomeJournal] boot start failed class=initialization");
+    }
+
     // Webhook delivery watches signals the router already emits; it has to be
     // subscribed before the first request produces one.
     try {

@@ -3,9 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from '../../dataDir.js';
 import { getAdapter } from '../driver.js';
+import { registerShutdownFlusher } from '../../shutdown.js';
 
 const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
 const MAX_LINE_BYTES = 8 * 1024;
+const DEFAULT_IMPORT_INTERVAL_MS = 5_000;
+const MIN_IMPORT_INTERVAL_MS = 1_000;
+const MAX_IMPORT_INTERVAL_MS = 60_000;
 // Match the front writer's UUID grammar.  The backend owns logical IDs and
 // can move to a newer UUID version without making valid front evidence unreadable.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,7 +86,10 @@ function validateEvent(record, label) {
     const queue = duration(record.queueDurationMs, `${label} queue duration`);
     const headers = duration(record.preheadersDurationMs, `${label} response header duration`);
     const stream = duration(record.streamDurationMs, `${label} stream duration`);
-    if (queue + headers + stream !== total) fail(`${label} timing total`);
+    // Every producer value is independently rounded from a monotonic clock.
+    // Three adjacent rounded spans may differ from the rounded wall total by
+    // at most 3 ms without changing their non-overlap meaning.
+    if (Math.abs(queue + headers + stream - total) > 3) fail(`${label} timing total`);
     return { type: 'terminal', record: { ...record, dataOrigin: record.dataOrigin ?? 'unknown' } };
   }
   fail(`${label} kind`);
@@ -213,8 +220,6 @@ function collectOperations(db, active, segmentData) {
 }
 
 function writeOperations(db, active, operations) {
-  const interrupted = db.run(`UPDATE frontRequestOutcomes SET state='interrupted',terminalAt=?,updatedAt=?
-    WHERE state='pending' AND clockDomain<>?`, [active.recordedAt, active.recordedAt, active.clockDomain]).changes;
   for (const operation of operations) {
     const row = operation.row;
     if (operation.type === 'start') db.run(`INSERT INTO frontRequestOutcomes(frontIngressId,logicalRequestId,state,firstObservedAt,terminalAt,queueDurationMs,endToEndDurationMs,terminalStatus,clockDomain,receiptId,dataOrigin,originReceiptId,updatedAt)
@@ -228,7 +233,59 @@ function writeOperations(db, active, operations) {
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, [createHash('sha256').update(`${row.receiptId}:${stage}`).digest('hex'), row.logicalRequestId, null, row.frontIngressId, 'front', stage, ordinal, 'sequential', row.clockDomain, durationMs, row.state, row.terminalAt, row.dataOrigin, row.originReceiptId]);
     }
   }
-  return interrupted;
+  return db.run(`UPDATE frontRequestOutcomes SET state='interrupted',terminalAt=?,updatedAt=?
+    WHERE state='pending' AND clockDomain<>?`, [active.recordedAt, active.recordedAt, active.clockDomain]).changes;
+}
+
+const scheduler = globalThis.__tokenproxyFrontOutcomeJournalScheduler ??= {
+  generation: 0,
+  timer: null,
+  inFlight: null,
+  unregisterShutdown: null,
+};
+
+function boundedInterval(intervalMs) {
+  const parsed = Number(intervalMs);
+  return Number.isFinite(parsed) ? Math.min(MAX_IMPORT_INTERVAL_MS, Math.max(MIN_IMPORT_INTERVAL_MS, Math.round(parsed))) : DEFAULT_IMPORT_INTERVAL_MS;
+}
+
+async function importOnce(state, ingest) {
+  if (state.inFlight) return false;
+  const job = Promise.resolve().then(ingest);
+  state.inFlight = job;
+  try {
+    await job;
+  } catch (error) {
+    console.warn('[frontOutcomeJournal] import failed class=journal-read', error?.message || 'unknown');
+  } finally {
+    if (state.inFlight === job) state.inFlight = null;
+  }
+  return true;
+}
+
+// Process-wide boot owner. Each cadence is bounded and a stalled import holds
+// the single-flight lease instead of allowing another importer to overlap it.
+export function startFrontOutcomeJournalIngestion({ intervalMs = DEFAULT_IMPORT_INTERVAL_MS, ingest = ingestFrontOutcomeJournal } = {}) {
+  if (scheduler.timer) return false;
+  const generation = ++scheduler.generation;
+  const tick = () => {
+    if (scheduler.generation !== generation) return;
+    void importOnce(scheduler, ingest);
+  };
+  tick();
+  scheduler.timer = setInterval(tick, boundedInterval(intervalMs));
+  scheduler.timer.unref?.();
+  scheduler.unregisterShutdown = registerShutdownFlusher(() => stopFrontOutcomeJournalIngestion(), -80);
+  return true;
+}
+
+export async function stopFrontOutcomeJournalIngestion() {
+  scheduler.generation += 1;
+  if (scheduler.timer) clearInterval(scheduler.timer);
+  scheduler.timer = null;
+  scheduler.unregisterShutdown?.();
+  scheduler.unregisterShutdown = null;
+  await scheduler.inFlight?.catch(() => {});
 }
 
 export async function ingestFrontOutcomeJournal({
