@@ -24,14 +24,15 @@ function run(name, {
   const evidence = join(dir, "evidence.json");
   const manifest = join(fixtures, `${name}.manifest.json`);
   const baseline = join(fixtures, `${name}.baseline.json`);
-  const result = spawnSync(process.execPath, [
+  const args = [
     verifier,
     join(fixtures, `${name}.json`),
-    "--runner-exit", String(runnerExit),
     "--manifest", existsSync(manifest) ? manifest : join(fixtures, "manifest.json"),
     "--baseline", existsSync(baseline) ? baseline : join(fixtures, "baseline.json"),
     "--evidence", evidence,
-  ], { cwd: repoDir, encoding: "utf8" });
+  ];
+  if (runnerExit !== null) args.splice(2, 0, "--runner-exit", String(runnerExit));
+  const result = spawnSync(process.execPath, args, { cwd: repoDir, encoding: "utf8" });
   let parsed = null;
   try { parsed = JSON.parse(readFileSync(evidence, "utf8")); } catch {}
   return { ...result, evidence: parsed };
@@ -82,5 +83,23 @@ describe("canonical regression gate", () => {
     const result = run("clean", { runnerExit: 9 });
     expect(result.status).toBe(1);
     expect(result.evidence?.reasons.map((reason) => reason.code)).toContain("RUNNER_EXIT_UNEXPLAINED");
+  });
+
+  it("requires the raw runner exit instead of reconstructing it from the report", () => {
+    const result = run("clean", { runnerExit: null });
+    expect(result.status).toBe(2);
+    expect(result.evidence?.reasons.map((reason) => reason.code)).toContain("RUNNER_EXIT_MISSING");
+  });
+
+  it("rejects assertion statuses outside the Vitest report contract", () => {
+    const result = run("unknown-status", { runnerExit: 0 });
+    expect(result.status).toBe(2);
+    expect(result.evidence?.reasons.map((reason) => reason.code)).toContain("CONFIG_OR_REPORT_INVALID");
+  });
+
+  it("compares every declared assertion-status count with the inventory", () => {
+    const result = run("status-count-mismatch", { runnerExit: 0 });
+    expect(result.status).toBe(1);
+    expect(result.evidence?.reasons.map((reason) => reason.code)).toContain("REPORT_COUNT_MISMATCH");
   });
 });

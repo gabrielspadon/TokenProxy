@@ -12579,7 +12579,9 @@
       "canonical regression gate classifies invalid input empty-report",
       "canonical regression gate classifies invalid input malformed-report",
       "canonical regression gate classifies invalid input missing-report",
+      "canonical regression gate compares every declared assertion-status count with the inventory",
       "canonical regression gate does not let zero failed assertions override a failed suite",
+      "canonical regression gate rejects assertion statuses outside the Vitest report contract",
       "canonical regression gate rejects an unexplained nonzero runner exit even when the report is green",
       "canonical regression gate rejects expired-exemption independently",
       "canonical regression gate rejects formerly-fixed-recurrence independently",
@@ -12589,7 +12591,8 @@
       "canonical regression gate rejects removed-file independently",
       "canonical regression gate rejects setup-failure independently",
       "canonical regression gate rejects unclassified-skip independently",
-      "canonical regression gate rejects unknown-failed-assertion independently"
+      "canonical regression gate rejects unknown-failed-assertion independently",
+      "canonical regression gate requires the raw runner exit instead of reconstructing it from the report"
     ],
     "tests/unit/replay-rejection-boundary.test.js": [
       "bounded final diagnostic inspection cancels the source and keeps unknown content unknown",

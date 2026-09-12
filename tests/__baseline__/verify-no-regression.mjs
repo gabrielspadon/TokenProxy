@@ -9,6 +9,7 @@ const defaults = {
   baseline: resolve(here, "regression-baseline.json"),
   manifest: resolve(here, "test-manifest.json"),
 };
+const assertionStatuses = new Set(["passed", "failed", "skipped", "pending", "todo"]);
 
 function parseArguments(argv) {
   const args = [...argv];
@@ -96,7 +97,9 @@ function validateReport(report) {
     if (!Array.isArray(file.assertionResults)) throw new Error(`test result ${file.name} has no assertionResults array`);
     for (const assertion of file.assertionResults) {
       if (typeof assertion?.fullName !== "string" || !assertion.fullName) throw new Error(`test result ${file.name} has an assertion without fullName`);
-      if (typeof assertion.status !== "string") throw new Error(`assertion ${assertion.fullName} has no status`);
+      if (!assertionStatuses.has(assertion.status)) {
+        throw new Error(`assertion ${assertion.fullName} has unsupported status ${JSON.stringify(assertion.status)}`);
+      }
     }
   }
 }
@@ -244,6 +247,10 @@ function evaluate(report, runnerExit, manifest, baseline) {
   }
 
   const assertionFailures = [...inventory.assertions.values()].filter((entry) => entry.status === "failed").length;
+  const assertionPasses = [...inventory.assertions.values()].filter((entry) => entry.status === "passed").length;
+  const assertionPending = [...inventory.assertions.values()]
+    .filter((entry) => entry.status === "skipped" || entry.status === "pending").length;
+  const assertionTodos = [...inventory.assertions.values()].filter((entry) => entry.status === "todo").length;
   for (const result of report.testResults) {
     const fileFailures = result.assertionResults.filter((entry) => entry.status === "failed").length;
     const classifiedSnapshotTeardown = result.status === "failed"
@@ -268,6 +275,15 @@ function evaluate(report, runnerExit, manifest, baseline) {
   }
   if (report.numFailedTests !== assertionFailures) {
     reasons.push(reason("REPORT_COUNT_MISMATCH", "numFailedTests differs from failed assertion inventory", { declared: report.numFailedTests, actual: assertionFailures }));
+  }
+  for (const [field, actual] of [
+    ["numPassedTests", assertionPasses],
+    ["numPendingTests", assertionPending],
+    ["numTodoTests", assertionTodos],
+  ]) {
+    if (report[field] !== actual) {
+      reasons.push(reason("REPORT_COUNT_MISMATCH", `${field} differs from assertion inventory`, { declared: report[field], actual }));
+    }
   }
   const declaredTestTotal = report.numPassedTests + report.numFailedTests
     + report.numPendingTests + report.numTodoTests;
@@ -312,6 +328,11 @@ try {
     error.code = "REPORT_MISSING";
     throw error;
   }
+  if (options.runnerExit === null) {
+    const error = new Error("Missing required --runner-exit evidence");
+    error.code = "RUNNER_EXIT_MISSING";
+    throw error;
+  }
   options.report = resolve(options.report);
   const report = readJson(options.report, "report");
   let manifest;
@@ -326,7 +347,7 @@ try {
     if (!error.code) error.code = "CONFIG_OR_REPORT_INVALID";
     throw error;
   }
-  const runnerExit = options.runnerExit ?? (report.success ? 0 : 1);
+  const runnerExit = options.runnerExit;
   evidence = { ...evaluate(report, runnerExit, manifest, baseline), runnerExit, report: options.report };
   exitCode = evidence.state === "passed" ? 0 : 1;
 } catch (error) {
