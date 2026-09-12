@@ -96,21 +96,25 @@ describe("capability matrix runner", () => {
       expect(report.outcomes.success).toBe(1);
       expect(report.outcomes.providerError).toEqual({ status: 529, type: "server_error", code: "internal_server_error" });
       expect(report.outcomes.transportAbrupt).toEqual({ status: 502, type: "server_error", code: "bad_gateway" });
-      expect(report.receipts).toEqual({
+      expect(report.receipts).toMatchObject({
         nextGatewayResponses: 39,
         providerIngress: { before: 0, after: 33, delta: 33 },
         providerDispatch: { before: 0, after: 33, delta: 33 },
       });
+      expect(Object.keys(report.receipts.providerSemantic)).toHaveLength(33);
+      expect(Object.values(report.receipts.providerSemantic).every((digest) => /^[a-f0-9]{64}$/.test(digest))).toBe(true);
       expect(stub.requests).toHaveLength(33);
       expect(stub.ingress).toHaveLength(33);
       expect(stub.requests.every((entry) => !Object.hasOwn(entry, "body"))).toBe(true);
       expect(stub.requests.every((entry) => entry.label !== "unspecified")).toBe(true);
       expect(stub.requests.every((entry) => entry.model === "fixture-model")).toBe(true);
+      expect(stub.requests.every((entry) => entry.semantic?.digest && entry.semantic?.shape)).toBe(true);
       cleanup = await gateway.close();
       gateway = null;
       expect(cleanup).toMatchObject({
         processExitCode: 0,
         dataDirRemoved: true,
+        buildOutputRemoved: true,
         ownership: {
           child: { pid: expect.any(Number), startTime: expect.any(String), pgid: expect.any(Number), cgroup: expect.any(String) },
           listener: { pid: expect.any(Number), startTime: expect.any(String), pgid: expect.any(Number), cgroup: expect.any(String) },

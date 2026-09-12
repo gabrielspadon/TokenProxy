@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, readdir, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -176,13 +176,22 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
   if (!providerBaseUrl) throw new Error("providerBaseUrl is required");
   const dataDir = await mkdtemp(join(tmpdir(), "tokenproxy-capability-gateway-"));
   const authFile = join(dataDir, "fixture-authorization");
-  const nextDistDir = join(dataDir, "next-dist");
+  // Next resolves `distDir` relative to the project, even when the environment
+  // value looks absolute. Create the fixture build root under this checkout,
+  // pass its relative spelling, and retain its resolved path for exact cleanup.
+  const nextDistDir = await mkdtemp(join(root, ".tokenproxy-capability-next-"));
+  const nextDistDirSetting = relative(root, nextDistDir);
+  if (!nextDistDirSetting || isAbsolute(nextDistDirSetting) || nextDistDirSetting.startsWith("..")) {
+    await Promise.all([rm(dataDir, { recursive: true, force: true }), rm(nextDistDir, { recursive: true, force: true })]);
+    throw new Error("fixture Next distDir must resolve beneath the checkout");
+  }
+  const resolvedBuildOutput = join(root, nextDistDirSetting);
   const env = {
     PATH: process.env.PATH,
     LANG: "C.UTF-8",
     NODE_ENV: "development",
     DATA_DIR: dataDir,
-    NEXT_DIST_DIR: nextDistDir,
+    NEXT_DIST_DIR: nextDistDirSetting,
     CAPABILITY_PROVIDER_BASE_URL: providerBaseUrl,
     CAPABILITY_AUTH_FILE: authFile,
     BENCH_RUN_ID: "capability-gateway-fixture",
@@ -190,6 +199,7 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
     DB_ENCRYPTION_KEY: "capability-gateway-fixture-db-key",
     JWT_SECRET: "capability-fixture-jwt-secret",
     INITIAL_PASSWORD: "capability-fixture-password",
+    MODEL_CAPABILITY_OVERRIDES: JSON.stringify({ "fixture-model": { vision: true } }),
     NEXT_TELEMETRY_DISABLED: "1",
   };
   const seed = spawn(process.execPath, ["--require", guardPath, seedPath], {
@@ -204,7 +214,7 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
     seed.once("exit", resolve);
   });
   if (seedExit !== 0) {
-    await rm(dataDir, { recursive: true, force: true });
+    await Promise.all([rm(dataDir, { recursive: true, force: true }), rm(resolvedBuildOutput, { recursive: true, force: true })]);
     throw new Error(`capability gateway seed exited ${seedExit}: ${seedStderr}`);
   }
   let stderr = "";
@@ -224,17 +234,28 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
       baseUrl,
       authorization,
       ownership,
+      buildOutput: resolvedBuildOutput,
       async close() {
         const processExitCode = child.exitCode === null ? await stopOwnedGateway(child, ownership) : child.exitCode;
-        await rm(dataDir, { recursive: true, force: true });
-        return { processExitCode, dataDirRemoved: !existsSync(dataDir), ownership };
+        await Promise.all([rm(dataDir, { recursive: true, force: true }), rm(resolvedBuildOutput, { recursive: true, force: true })]);
+        const cleanup = {
+          processExitCode,
+          dataDirRemoved: !existsSync(dataDir),
+          buildOutputRemoved: !existsSync(resolvedBuildOutput),
+          buildOutput: resolvedBuildOutput,
+          ownership,
+        };
+        if (!cleanup.dataDirRemoved || !cleanup.buildOutputRemoved) throw new Error("fixture cleanup left an owned path behind");
+        return cleanup;
       },
     };
   } catch (error) {
     // Before ownership capture, do not guess from a process name or a port.
     // A child that has already exited is safe to clean up; a still-running
     // unverified child is deliberately left untouched for diagnosis.
-    if (child.exitCode !== null) await rm(dataDir, { recursive: true, force: true });
+    if (child.exitCode !== null) {
+      await Promise.all([rm(dataDir, { recursive: true, force: true }), rm(resolvedBuildOutput, { recursive: true, force: true })]);
+    }
     throw error;
   }
 }

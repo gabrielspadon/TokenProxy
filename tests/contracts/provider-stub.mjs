@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import http from "node:http";
 import { pathToFileURL } from "node:url";
+import { semanticReceipt } from "./provider-semantic.mjs";
 
 const ALLOWED_PORTS = new Set(Array.from({ length: 10 }, (_, index) => 20210 + index));
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
@@ -117,6 +118,7 @@ export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxR
           // provider-dispatch counter so a malformed ingress is not mistaken
           // for an upstream call.
           requestCount: requests.length,
+          semanticReceipts: requests.map(({ label, semantic }) => ({ label, semantic })),
           next,
         });
         return;
@@ -166,6 +168,7 @@ export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxR
         stream: body?.stream === true,
         outcome,
         bytes: Number(request.headers["content-length"] || 0),
+        semantic: semanticReceipt(body),
       });
       if (outcome === "transport-abrupt") {
         response.socket?.destroy();

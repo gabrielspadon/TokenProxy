@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describeTranslationRoute } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
+import { assertSemanticPreserved } from "./provider-semantic.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const manifestPath = `${root}/tests/contracts/capabilities.json`;
@@ -233,6 +234,12 @@ async function setStubOutcome(controlUrl, outcome, label) {
   assert.equal(response.status, 200, "provider stub control write");
 }
 
+function assertLatestSemanticReceipt(control, label, fixture) {
+  const receipt = control.semanticReceipts?.at(-1);
+  assert.equal(receipt?.label, label, `${label} provider semantic receipt label`);
+  assertSemanticPreserved(fixture, receipt.semantic, label);
+}
+
 /**
  * Exercise a started gateway against its separately controlled upstream stub.
  *
@@ -290,6 +297,7 @@ export async function runCapabilityMatrix({
     const providerAfter = await readControl(providerControlUrl);
     assert.equal(providerAfter.ingressCount, providerBefore.ingressCount + 1, `${entry.id} did not reach provider ingress exactly once`);
     assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount + 1, `${entry.id} did not reach provider exactly once`);
+    assertLatestSemanticReceipt(providerAfter, entry.id, fixture);
     primary.dispatched += 1;
     primary.passed += 1;
   }
@@ -300,6 +308,7 @@ export async function runCapabilityMatrix({
   await setStubOutcome(providerControlUrl, "success", "outcome-success");
   const success = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   assert.equal(success.response.status, 200);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-success", body);
   await setStubOutcome(providerControlUrl, "provider-error", "outcome-provider-error");
   const providerError = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   const providerErrorExpected = manifest.fixtureExpectations.outcomes["provider-error"];
@@ -310,6 +319,7 @@ export async function runCapabilityMatrix({
     providerErrorExpected.error,
     "provider error classification",
   );
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-provider-error", body);
   await setStubOutcome(providerControlUrl, "transport-abrupt", "outcome-transport-abrupt");
   const abrupt = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   const transportAbruptExpected = manifest.fixtureExpectations.outcomes["transport-abrupt"];
@@ -320,7 +330,20 @@ export async function runCapabilityMatrix({
     transportAbruptExpected.error,
     "abrupt transport classification",
   );
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-transport-abrupt", body);
   const finalProvider = await readControl(providerControlUrl);
+  const expectedSemanticLabels = [
+    ...manifest.primaryEndpoints.filter((entry) => entry.expected.upstreamDispatch).map((entry) => entry.id),
+    "outcome-success",
+    "outcome-provider-error",
+    "outcome-transport-abrupt",
+  ].sort();
+  const semanticReceipts = finalProvider.semanticReceipts || [];
+  assert.deepEqual(
+    semanticReceipts.map(({ label }) => label).sort(),
+    expectedSemanticLabels,
+    "provider recorded one redacted semantic receipt for every dispatch label",
+  );
   const receipts = {
     nextGatewayResponses: gatewayReceipt.responses,
     providerIngress: {
@@ -333,6 +356,7 @@ export async function runCapabilityMatrix({
       after: finalProvider.providerDispatchCount,
       delta: finalProvider.providerDispatchCount - initialProvider.providerDispatchCount,
     },
+    providerSemantic: Object.fromEntries(semanticReceipts.map(({ label, semantic }) => [label, semantic.digest])),
   };
   assert.equal(receipts.nextGatewayResponses, manifest.primaryEndpoints.length + 3, "all primary and outcome cases reached Next gateway");
   assert.equal(receipts.providerIngress.delta, primary.dispatched + 3, "only accepted primary and outcome cases reached provider ingress");
