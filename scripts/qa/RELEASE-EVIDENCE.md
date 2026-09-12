@@ -12,6 +12,10 @@ Freeze the approved audit baseline and exact candidate. This derives all changed
 admission, retry, credential, auth, storage/migration, startup and gate JavaScript
 files. It records source hashes and every changed Git line range. Renamed files
 remain included. Deletion-only hunks select the adjacent surviving line.
+The inventory includes provider verification, network connectors, all changed
+engine services/executors/translators/stream utilities, Next production config,
+version/readiness handlers and CLI startup. Test assertions are not mutation
+targets. Python source bytes are checked alongside JavaScript before execution.
 
 ```bash
 node scripts/qa/risk-scope.mjs \
@@ -115,10 +119,20 @@ nonempty `dependencies` version mapping, UTC `startedAt`/`finishedAt`, `commands
 `artifacts`, `fixtures`, `checks`, `skips`, and relevant `metrics`.
 
 Every command records its literal argument array, exitCode 0, signal null, UTC
-interval and hashed stdout/stderr references. Keep native harness receipts in
-`artifacts`; never replace a failed native receipt with a passing envelope.
-Failed native states, wrong revisions and incomplete native standalone/CLI
-restart/cleanup evidence fail. `fixtures` records fixture and profile hashes.
+interval contained within the gate interval and hashed stdout/stderr references.
+For offline-suite, analytics, protocol-matrix, standalone, CLI, browser, container,
+failure-matrix, soak and production-observation, `native` references the exact
+producer receipt and must also occur in `artifacts`. A generic green object is
+insufficient. Failed native states, running progress, failed qualification,
+wrong revisions and incomplete execution inventories fail. `fixtures` records
+fixture and profile hashes. `validateGate` and `assembleRelease` are async.
+
+Standalone and CLI migration checks require an actual older schema fixture,
+changed DDL hash, ordered/layout version advancement and `migrationExercised`.
+Current-source seeds establish reopen only. Browser proof includes both tracked
+Playwright specs and direct executable scripts, every case, and owned cleanup.
+Container proof retains both starts, actual capability dispatch accounting,
+healthy Docker state, immutable image identity and removal of owned resources.
 
 Risk coverage gates also reference their raw `report`; mutation gates reference
 `report` and `reviews`. The assembler recomputes both application and front risk
@@ -130,6 +144,8 @@ and exact assertion `fullName`. Every named assertion must appear once and pass.
 Packages must contain exactly one `kind: "standalone"` and one `kind: "cli"`,
 each carrying the application SHA and retained artifact reference. The hashed
 capability manifest must contain all 11 formats, 121 pairs and 36 primary cases.
+Its bytes must match the candidate's tracked `tests/contracts/capabilities.json`;
+repeated primary endpoint IDs and same-size substitute manifests are rejected.
 Qualification entries must cover every `format:source->target`, `endpoint:id`,
 `binary:id` and `modality:id:variant`, with `state: "qualified"`, `required: true`,
 an owner and passing `protocol-matrix` gate linkage. Platform and live inference
@@ -142,13 +158,60 @@ node scripts/qa/assemble-release-evidence.mjs \
   --output /tmp/tokenproxy-qualification/release.json
 ```
 
-Analytics metrics preserve separate cold/warm and concurrency-1/5 populations,
-sample counts, p95/p99, HTTP503/failure counts, synthetic writes, row counts and
-worker RSS. One-million-row growth does not invent percentile claims. The soak
-requires >=60 minutes, requests, repeated cutovers and recorded resource slopes.
-Delivery requires admission pause <4000 ms. Natural observation requires >=24
-hours, >=1000 logical requests, no synthetic generation, and proxy-attributable
-unexpected failures strictly below 0.1%, alongside all named zero-loss checks.
+Analytics consumes the native `economics-analytics-v1` fixture receipt. The fixed
+operation inventory is `economics-page-population`, `economics-filtered-provider`,
+`economics-items`, and the `activity-summary-groups` control. Each operation has
+50 cold, 200 warm and 50 cold-with-writer deliveries at concurrency 1 and 5.
+All 24 profiles, 2,400 samples, 240 worker snapshot write receipts and four plans
+are mandatory. Cold Economics p95/p99 are recomputed from samples and must stay
+below 2,000/5,000 ms. Warm cache hits remain separate from writes. Activity is
+checked for completion, parity, writes and memory; it has no Economics latency
+claim. Peak RSS must stay below 512 MiB. Affinity preflight must cover the actual
+selected cores below the producer's 20% busy threshold.
+
+The one-million-row growth receipt requires 32 deliveries, 16 computations,
+four worker snapshots with committed writes, four independent correctness
+oracles, before/after projection parity and the native passing qualification.
+Its computation deadline is 15,000 ms; it carries no percentile claim. Envelopes
+may omit derived metrics. Any supplied headline must equal native evidence.
+
+Both failure-matrix and soak consume `tokenproxy-reliability-soak-v1` in full
+mode, with 10,000 deterministic requests, all nine scenarios, >=60 minutes of
+mixed traffic, sustained streams >=30 seconds, at least six quiet restarts,
+dashboard reads, terminal reconciliation, exact application/front/artifact
+identity and owned cleanup. Resource slopes are recomputed from retained mixed
+quiescent samples. Smoke success and total wall time cannot satisfy these gates.
+
+Production observation requires `observation.begin`, `.end` and `.keyring`
+artifact references. The assembler verifies the candidate source checkout and
+calls its `assembleObservation` to authenticate and rederive the native result.
+The unsigned summary alone never establishes observation. The authenticated
+window must span >=24 hours and >=1,000 natural logical requests, with no unknown
+outcomes and proxy-attributable unexpected failures strictly below 0.1%.
+
+The outcome sampler deliberately leaves four safety invariants open. A separate
+`safetyClosure` artifact must have schema `tokenproxy-live-safety-closure-v1`,
+state `passed`, the three exact source SHAs, matching `releaseId` and the exact
+native `window` object. Its `audits` contains one `{scope, source}` per scope
+below. Each source is a hashed JSON artifact with schema
+`tokenproxy-live-${scope}-audit-v1`, the same state/identities/window, nonempty
+hashed raw `inputs`, and `unobservable: []`. Required scope-specific fields are
+
+- `replay` has `logicalRequests` covering the natural denominator,
+  `physicalAttempts`, `unsafeReplays: []`, and `unresolvedAttempts: []`.
+- `secret-scan` has `scannedFiles`/`scannedBytes` matching the retained input
+  inventory, `sinks` containing api/exception/log/trace, `findings: []`, and
+  `omittedSources: []`.
+- `acknowledged-writes` has a positive `acknowledged` count, equal `reconciled`,
+  `missing: []`, and `unreadable: []`.
+- `front-evictions` has one `counterEpoch`, equal nonnegative `beginCounter` and
+  `endCounter`, and `delta: 0`; the source inputs retain both counter captures.
+
+These collectors must establish their measurements from the actual window.
+An unavailable invariant belongs in `unobservable` and prevents qualification.
+The contract does not imply the live collectors or observation have run. Local
+soak receipts cannot substitute for any natural-traffic safety audit. Delivery
+also independently requires admission pause below 4,000 ms.
 
 Configuration references were checked against the installed Vitest 4.1.11 and
 Stryker 10.0.0 source and current primary documentation.

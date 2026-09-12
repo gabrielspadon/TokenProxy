@@ -17,14 +17,19 @@ function git(root, args) {
   requireThat(result.status === 0, `git ${args[0]} failed`);
   return result.stdout;
 }
+export function candidateFileHash(root, candidateSha, path) {
+  requireThat(SHA.test(candidateSha), "candidate source hash requires a full revision");
+  return hash(git(root, ["show", `${candidateSha}:${path}`]));
+}
 
 export function riskCategory(path) {
+  if (/\.(?:test|spec)\.[cm]?js$/u.test(path)) return null;
   if (/^services\/tokenproxy\//u.test(path)) return "admission-front";
   if (/^scripts\/deploy\//u.test(path)) return "deployment";
-  if (/^(scripts\/qa\/|tests\/__baseline__\/.*\.[cm]?js$|tests\/qa\/regression-gate|tests\/setup-|tests\/vitest|stryker)/u.test(path)) return "gate";
-  if (/^(src\/lib\/db\/|src\/lib\/(auth|oidc|saml|encryption|secret)|src\/app\/api\/(auth|settings)\/)/u.test(path)) return "auth-storage-migration";
-  if (/^(src\/sse\/|open-sse\/(handlers\/|services\/(combo|tokenRefresh|oauth|usage)|utils\/(fallbackDeadline|replaySafety|responseHeaderTimeout|streamContent|proxyFetch)|executors\/base|config\/connectTimeout))/u.test(path)) return "admission-retry-credentials";
-  if (/^(custom-server\.js|src\/instrumentation\.js|src\/app\/api\/(ready|v1)\/|cli\/hooks\/)/u.test(path)) return "admission-startup";
+  if (/^(scripts\/qa\/|scripts\/(redesign-preview|dev-test-server)|tests\/__baseline__\/.*\.[cm]?js$|tests\/qa\/|tests\/contracts\/|tests\/setup-|tests\/vitest|stryker)/u.test(path)) return "gate";
+  if (/^(src\/lib\/db\/|src\/lib\/(auth|oidc|saml|encryption|secret|antigravityVerification|network\/)|src\/app\/api\/(auth|settings)\/)/u.test(path)) return "auth-storage-migration";
+  if (/^(src\/sse\/|open-sse\/(handlers\/|services\/|utils\/|executors\/|translator\/|config\/(connectTimeout|runtimeConfig)))/u.test(path)) return "admission-retry-credentials";
+  if (/^(custom-server\.js|next\.config\.mjs|src\/instrumentation\.js|src\/app\/api\/(ready|health|version|v1)\/|cli\/(hooks|src)\/)/u.test(path)) return "admission-startup";
   return null;
 }
 
@@ -64,9 +69,14 @@ export function loadRiskScope(path, root = ROOT, { verifyWorktree = true } = {})
   requireThat(JSON.stringify(scope) === JSON.stringify(expected), "risk scope differs from Git-derived inventory");
   if (verifyWorktree) {
     requireThat(git(root, ["rev-parse", "HEAD"]).trim() === scope.candidateSha, "risk candidate differs from checkout HEAD");
-    for (const file of scope.files) requireThat(hash(readFileSync(resolve(root, file.path))) === file.sha256, `risk source differs from candidate: ${file.path}`);
+    for (const file of [...scope.files, ...scope.pythonFiles]) requireThat(hash(readFileSync(resolve(root, file.path))) === file.sha256, `risk source differs from candidate: ${file.path}`);
   }
   return scope;
+}
+
+export function verifyCandidateSource(root, candidateSha) {
+  requireThat(git(root, ["rev-parse", "HEAD"]).trim() === candidateSha, "native verifier checkout does not match candidate");
+  requireThat(!git(root, ["status", "--porcelain", "--untracked-files=all", "--", "src", "scripts", "open-sse", "package.json", "package-lock.json"]).trim(), "native verifier source has uncommitted changes");
 }
 
 function reportFiles(report, root) {
