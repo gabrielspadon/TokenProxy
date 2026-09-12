@@ -18,78 +18,6 @@
     unicode-bidi: isolate;
   }
 
-  /* A model id is the value an operator matches against and pastes into a
-     client, so it has to be READABLE, not merely present. The shared board
-     clips identity text to one ellipsised line (board.module.css .identityText
-     small), which leaves the tail of a long id unreachable without a pointer:
-     a title tooltip needs hover, and the span is not focusable. Wrapping the
-     id costs one line on the longest rows and reaches keyboard and touch users
-     with no new tab stop. Scoped to the catalog board so the plans board and
-     every other board keep the shared single-line geometry. */
-  [data-models-catalog] small.models-id,
-  [data-models-catalog] .models-id {
-    overflow-wrap: anywhere;
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    line-height: 1.3;
-  }
-  [data-models-catalog] .models-name {
-    white-space: normal;
-    overflow: visible;
-    text-overflow: clip;
-    overflow-wrap: anywhere;
-  }
-  /* Rows are no longer uniform height once an id wraps, so the row's own
-     content decides it and the cells align to their tops rather than floating
-     on a centre line. */
-  /* The shared advanced row gives the identity column minmax(180px, 1fr) and
-     the alias column minmax(170px, 0.9fr), so an empty alias input held nearly
-     as much width as the identifier it sat beside. Rebalancing hands that width
-     to the identifier, which shortens how often a wrap is needed at all. Track
-     count and order are unchanged, so the header still lines up with its cells. */
-  /* The alias input held a wide track for a value that is usually empty and is
-     always short. Narrowing it returns that width to the identifier column. */
-  [data-models-catalog] .models-alias {
-    max-width: 168px;
-  }
-  @media (max-width: 760px) {
-    [data-models-catalog] .models-alias {
-      max-width: none;
-    }
-  }
-  .models-alias {
-    min-width: 0;
-  }
-  .models-alias input {
-    min-height: 24px;
-    height: 24px;
-    padding-inline: 6px;
-    font-size: var(--type-dense);
-    font-family: var(--mono);
-  }
-
-  .models-plan {
-    display: grid;
-    grid-template-columns: minmax(140px, 0.7fr) minmax(0, 2fr) auto;
-    gap: 10px;
-    align-items: center;
-    padding: 6px 10px;
-    min-height: 40px;
-  }
-  .models-plan-members {
-    min-width: 0;
-  }
-  @media (max-width: 760px) {
-    .models-plan {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-    .models-plan-members {
-      grid-column: 1 / -1;
-      grid-row: 2;
-    }
-  }
-
   .models-section {
     border: 1px solid var(--rule);
     background: var(--raised);
@@ -171,42 +99,59 @@
   }
 }
 
+/* Catalog presentation, keyed to attributes this page sets on its own markup.
+   Generated class names are never an API, and these rules sit outside
+   @layer components because the shared board's module rules are unlayered and
+   would otherwise win regardless of specificity. board.module.css is another
+   owner's file and is not edited.
 
-/* board.module.css hashes its class names, so the grid and row rules cannot be
-   reached by their source names, and @layer components would lose to unlayered
-   module rules anyway. These selectors key off markup this page owns and sit
-   outside the layer so they actually apply. Scoped to the catalog board: the
-   plans board keeps the shared geometry. */
-[data-models-catalog] [class*='identityText'] {
+   A model id is the value an operator matches against and pastes into a client,
+   so it has to be readable, not merely present. The shared board clips identity
+   text to one ellipsised line, which leaves the tail of a long id unreachable
+   without a pointer: a title needs hover and the element is not focusable.
+   Wrapping costs one line on the longest rows and reaches keyboard and touch
+   users with no new tab stop. */
+[data-catalog-identity] {
   min-width: 0;
 }
-[data-models-catalog] [class*='identityText'] > small.models-id {
+[data-catalog-identity] > .models-id {
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
   overflow-wrap: anywhere;
   line-height: 1.3;
 }
-[data-models-catalog] [class*='identityText'] > .models-name {
+[data-catalog-identity] > .models-name {
   white-space: normal;
   overflow: visible;
   text-overflow: clip;
   overflow-wrap: anywhere;
 }
+
 /* An id that wraps makes rows unequal, so cells align to their tops. */
-[data-models-catalog] [class*='main'] {
+[data-catalog-columns] {
   align-items: start;
 }
-/* The shared advanced row gave the alias column nearly as much width as the
+
+/* The shared advanced row gives the alias column nearly as much width as the
    identifier beside it, for a value that is usually empty and always short.
-   Same track count and order, so the header still lines up with its cells. */
-[data-models-catalog] [class*='head'],
-[data-models-catalog] [class*='main'] {
-  grid-template-columns: 24px 20px minmax(260px, 1.7fr) 100px minmax(280px, 1.5fr) minmax(120px, 0.5fr) 142px;
+   Rebalancing hands that width to the identifier. Track count and order are
+   unchanged, so the header still lines up with its cells.
+
+   Minimums matter: the shared row's floor is 24+20+180+100+300+170+142 plus six
+   10px gaps = 996px, and the rail takes 208px until the 992px breakpoint. Below
+   the 760px card breakpoint the shared sheet drops this grid entirely, but
+   between 760px and ~1200px a fixed seven-track floor overflows the document.
+   So the rebalanced tracks apply only where there is room for them, and the
+   intermediate range gets a narrower floor rather than a horizontal scrollbar. */
+@media (min-width: 1200px) {
+  [data-catalog-columns] {
+    grid-template-columns: 24px 20px minmax(260px, 1.7fr) 100px minmax(280px, 1.5fr) minmax(120px, 0.5fr) 142px;
+  }
 }
-@media (max-width: 760px) {
-  [data-models-catalog] [class*='head'],
-  [data-models-catalog] [class*='main'] {
-    grid-template-columns: none;
+@media (min-width: 761px) and (max-width: 1199.98px) {
+  [data-catalog-columns] {
+    grid-template-columns: 24px 20px minmax(150px, 1.4fr) 84px minmax(180px, 1.2fr) minmax(96px, 0.5fr) 120px;
+    column-gap: 8px;
   }
 }

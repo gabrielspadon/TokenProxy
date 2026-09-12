@@ -492,7 +492,7 @@ export function CatalogControls({ density, onDensity }) {
           </Text>
         ) : null}
         {advanced ? (
-          <div className={styles.head} aria-hidden="true">
+          <div className={styles.head} data-catalog-columns="" aria-hidden="true">
             <span />
             <span>Model</span>
             <span>State</span>
@@ -516,7 +516,7 @@ export function CatalogControls({ density, onDensity }) {
                       head={
                         <>
                           <ProviderMark provider={entry.provider} size="small" />
-                          <div className={styles.identityText}>
+                          <div className={styles.identityText} data-catalog-identity="">
                             <span className="models-name" title={entry.name}>{entry.name}</span>
                             <small className="models-id" title={entry.id} dir="ltr">
                               <bdi dir="ltr">{entry.id}</bdi>
@@ -556,11 +556,11 @@ export function CatalogControls({ density, onDensity }) {
                     data-bucket={state}
                     aria-label={entry.id}
                   >
-                    <div className={styles.main}>
+                    <div className={styles.main} data-catalog-columns="">
                       <span />
                       <div className={styles.identity}>
                         <ProviderMark provider={entry.provider} size="small" />
-                        <div className={styles.identityText}>
+                        <div className={styles.identityText} data-catalog-identity="">
                           <span className="models-name" title={entry.name}>{entry.name}</span>
                           <small className="models-id" title={entry.id} dir="ltr">
                             <bdi dir="ltr">{entry.id}</bdi>
