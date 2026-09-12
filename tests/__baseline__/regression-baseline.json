@@ -551,6 +551,15 @@
       "owner": "T11 provider qualification",
       "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
       "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/critical-ack-journal.test.js :: sqljs critical acknowledgments never replays a mutation after a lost native COMMIT result :: occurrence 1",
+      "state": "unsupported-by-contract",
+      "scope": "sql.js pure-JS database backend",
+      "reason": "The case asserts non-replay after a lost native COMMIT result observed through raw.exec. The sql.js fallback adapter has no native COMMIT acknowledgement to lose, so the scenario cannot be constructed on that backend; the equivalent guarantee is covered by the native node:sqlite and better-sqlite3 variants in the same file.",
+      "owner": "database backend / persistence",
+      "externalPrerequisite": "None. Inapplicable by backend contract, not blocked on any external resource; revisit only if sql.js gains a native commit-acknowledgement path.",
+      "reviewAfter": "2026-12-31"
     }
   ]
 }
