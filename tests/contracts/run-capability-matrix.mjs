@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describeTranslationRoute } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
@@ -172,6 +173,19 @@ async function readControl(controlUrl) {
   return response.json();
 }
 
+function assertDistinctOrigins(gatewayBaseUrl, gatewayControlUrl, providerControlUrl) {
+  assert.equal(
+    new URL(gatewayBaseUrl).origin,
+    new URL(gatewayControlUrl).origin,
+    "gateway control must belong to the gateway origin",
+  );
+  assert.notEqual(
+    new URL(gatewayBaseUrl).origin,
+    new URL(providerControlUrl).origin,
+    "gateway and provider stub must use distinct origins",
+  );
+}
+
 async function setStubOutcome(controlUrl, outcome, label) {
   if (!controlUrl) return;
   const response = await fetch(controlUrl, {
@@ -191,14 +205,18 @@ async function setStubOutcome(controlUrl, outcome, label) {
  */
 export async function runCapabilityMatrix({
   gatewayBaseUrl,
+  gatewayControlUrl,
   providerControlUrl,
   authorization = null,
   model = null,
 }) {
   assert.equal(typeof gatewayBaseUrl, "string", "gatewayBaseUrl is required");
+  assert.equal(typeof gatewayControlUrl, "string", "gatewayControlUrl is required");
   assert.equal(typeof providerControlUrl, "string", "providerControlUrl is required");
   assert.ok(gatewayBaseUrl.length > 0, "gatewayBaseUrl is required");
+  assert.ok(gatewayControlUrl.length > 0, "gatewayControlUrl is required");
   assert.ok(providerControlUrl.length > 0, "providerControlUrl is required");
+  assertDistinctOrigins(gatewayBaseUrl, gatewayControlUrl, providerControlUrl);
   if (authorization != null) assert.equal(typeof authorization, "string", "authorization is a client credential string");
   if (model != null) assert.equal(typeof model, "string", "model override is a request model string");
   const manifest = await validateCapabilityManifest();
@@ -207,7 +225,8 @@ export async function runCapabilityMatrix({
     const fixture = await loadJson(entry.fixture);
     const before = JSON.stringify(fixture);
     const validation = validatePrimaryFixture(entry, fixture);
-    const upstreamBefore = (await readControl(providerControlUrl)).requestCount;
+    const gatewayBefore = (await readControl(gatewayControlUrl)).gatewayIngressCount;
+    const providerBefore = await readControl(providerControlUrl);
     if (!entry.expected.upstreamDispatch) {
       assert.equal(validation.valid, false, `${entry.id} must reject locally`);
       const outbound = clone(fixture);
@@ -215,7 +234,10 @@ export async function runCapabilityMatrix({
       if (model) outbound.model = model;
       const { response } = await send(gatewayBaseUrl, entry, outbound, authorization);
       assert.ok(response.status >= 400 && response.status < 500, `${entry.id} must return client 4xx`);
-      assert.equal((await readControl(providerControlUrl)).requestCount, upstreamBefore, `${entry.id} reached provider`);
+      assert.equal((await readControl(gatewayControlUrl)).gatewayIngressCount, gatewayBefore + 1, `${entry.id} did not reach gateway`);
+      const providerAfter = await readControl(providerControlUrl);
+      assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount, `${entry.id} reached provider dispatch`);
+      assert.equal(providerAfter.ingressCount, providerBefore.ingressCount, `${entry.id} reached provider ingress`);
       assert.equal(JSON.stringify(fixture), before, `${entry.id} mutated source fixture`);
       primary.rejectedBeforeUpstream += 1;
       primary.passed += 1;
@@ -227,11 +249,14 @@ export async function runCapabilityMatrix({
     if (model) outbound.model = model;
     await setStubOutcome(providerControlUrl, "success", entry.id);
     const { response, text } = await send(gatewayBaseUrl, entry, outbound, authorization);
-    assert.equal(response.status, 200, entry.id);
+    assert.equal(response.status, 200, `${entry.id}: ${text.slice(0, 500)}`);
     if (entry.stream) assertStream(entry.endpoint, text);
     else assertJson(entry.endpoint, JSON.parse(text));
     assert.equal(JSON.stringify(fixture), before, `${entry.id} mutated source fixture`);
-    assert.equal((await readControl(providerControlUrl)).requestCount, upstreamBefore + 1, `${entry.id} did not reach provider exactly once`);
+    assert.equal((await readControl(gatewayControlUrl)).gatewayIngressCount, gatewayBefore + 1, `${entry.id} did not reach gateway`);
+    const providerAfter = await readControl(providerControlUrl);
+    assert.equal(providerAfter.ingressCount, providerBefore.ingressCount + 1, `${entry.id} did not reach provider ingress exactly once`);
+    assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount + 1, `${entry.id} did not reach provider exactly once`);
     primary.dispatched += 1;
     primary.passed += 1;
   }
@@ -258,18 +283,39 @@ export async function runCapabilityMatrix({
   return { primary, outcomes: { success: 1, providerError: 1, transportAbrupt } };
 }
 
+export function resolveCliAuthorization(argv, env = process.env, read = readFileSync) {
+  const authorizationEnvArg = argv.find((value) => value.startsWith("--authorization-env="));
+  const authorizationFdArg = argv.find((value) => value.startsWith("--authorization-fd="));
+  assert.equal(argv.some((value) => value.startsWith("--authorization=")), false, "authorization values must not be passed on argv");
+  assert.ok(!(authorizationEnvArg && authorizationFdArg), "use one authorization source");
+  let authorization = null;
+  if (authorizationEnvArg) {
+    const name = authorizationEnvArg.slice("--authorization-env=".length);
+    assert.match(name, /^[A-Z][A-Z0-9_]*$/, "authorization environment variable name");
+    authorization = env[name] || null;
+  } else if (authorizationFdArg) {
+    const fd = Number(authorizationFdArg.slice("--authorization-fd=".length));
+    assert.ok(Number.isSafeInteger(fd) && fd >= 0, "authorization file descriptor");
+    authorization = read(fd, "utf8");
+  }
+  return authorization == null ? null : authorization.trim() || null;
+}
+
 async function main() {
   const gatewayArg = process.argv.find((value) => value.startsWith("--gateway-base-url="));
+  const gatewayControlArg = process.argv.find((value) => value.startsWith("--gateway-control-url="));
   const controlArg = process.argv.find((value) => value.startsWith("--provider-control-url="));
   const modelArg = process.argv.find((value) => value.startsWith("--model="));
-  const authorizationArg = process.argv.find((value) => value.startsWith("--authorization="));
   assert.ok(gatewayArg, "pass --gateway-base-url for the started TokenProxy gateway");
+  assert.ok(gatewayControlArg, "pass --gateway-control-url for the started TokenProxy gateway");
   assert.ok(controlArg, "pass --provider-control-url for the started provider stub");
+  const authorization = resolveCliAuthorization(process.argv);
   const report = await runCapabilityMatrix({
     gatewayBaseUrl: gatewayArg.slice("--gateway-base-url=".length),
+    gatewayControlUrl: gatewayControlArg.slice("--gateway-control-url=".length),
     providerControlUrl: controlArg.slice("--provider-control-url=".length),
     model: modelArg?.slice("--model=".length) || null,
-    authorization: authorizationArg?.slice("--authorization=".length) || null,
+    authorization,
   });
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }

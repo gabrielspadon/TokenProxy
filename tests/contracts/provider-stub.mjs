@@ -103,13 +103,22 @@ function completion(pathname) {
 
 export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxRequestBytes = MAX_REQUEST_BYTES } = {}) {
   if (!ALLOWED_PORTS.has(port)) throw new Error(`provider stub port must be in 20210-20219, got ${port}`);
+  const ingress = [];
   const requests = [];
   let next = { outcome: "success", label: "unspecified" };
   const server = http.createServer(async (request, response) => {
     const pathname = new URL(request.url, `http://${host}`).pathname;
     if (pathname === CONTROL_PATH) {
       if (request.method === "GET") {
-        writeJson(response, 200, { requestCount: requests.length, next });
+        writeJson(response, 200, {
+          ingressCount: ingress.length,
+          providerDispatchCount: requests.length,
+          // Retained for existing consumers. New contracts must name the
+          // provider-dispatch counter so a malformed ingress is not mistaken
+          // for an upstream call.
+          requestCount: requests.length,
+          next,
+        });
         return;
       }
       if (request.method === "POST") {
@@ -135,6 +144,14 @@ export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxR
       return;
     }
     try {
+      // This receipt is intentionally before body parsing. A malformed body
+      // reached this server even though it must never become a provider
+      // dispatch, so one counter cannot prove both facts.
+      ingress.push({
+        pathname,
+        bytes: Number(request.headers["content-length"] || 0),
+        hasAuthorization: typeof request.headers.authorization === "string",
+      });
       const body = await readJson(request, maxRequestBytes);
       if (isMalformedClientRequest(pathname, body)) {
         writeJson(response, 400, { error: { type: "invalid_request" } });
@@ -171,6 +188,7 @@ export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxR
   return {
     baseUrl: `http://${host}:${port}`,
     controlUrl: `http://${host}:${port}${CONTROL_PATH}`,
+    ingress,
     requests,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
