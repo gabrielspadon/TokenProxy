@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { registerShutdownFlusher, runShutdownFlushers } from '../../src/lib/shutdown.js';
 import { createSqlJsAdapter } from '../../src/lib/db/adapters/sqljsAdapter.js';
+import { createNodeSqliteAdapter } from '../../src/lib/db/adapters/nodeSqliteAdapter.js';
 
 const SIGNALS = ['SIGINT', 'SIGTERM'];
 
@@ -82,5 +83,18 @@ describe('sql.js adapter shutdown', () => {
 
   it('registerShutdownFlusher rejects non-functions', () => {
     expect(() => registerShutdownFlusher('nope')).toThrow(TypeError);
+  });
+});
+
+describe('node:sqlite adapter process isolation', () => {
+  it.runIf(Number(process.versions.node.split('.')[0]) >= 22)('does not replace the process-wide event emitter', async () => {
+    const originalEmit = process.emit;
+    const native = await createNodeSqliteAdapter(path.join(tempDir, 'native.sqlite'));
+    try {
+      expect(process.emit).toBe(originalEmit);
+    } finally {
+      native.close();
+    }
+    expect(process.emit).toBe(originalEmit);
   });
 });
