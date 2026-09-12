@@ -37,7 +37,7 @@ describe("a combo's token-saver overrides reach the handler (#2289, #2037)", () 
   it("the expensive lazy load follows the resolved flag, not the global one", () => {
     // Warming that module for a combo that has the saver off would pay a cost
     // the override exists to avoid.
-    expect(chat).toContain("comboTokenSaver.pxpipeEnabled ? await getPxpipeTransform() : null");
+    expect(chat).toContain("comboTokenSaver.pxpipeEnabled ? await prepare(() => getPxpipeTransform()) : null");
   });
 
   it("a request outside a combo resolves to the global settings unchanged", () => {

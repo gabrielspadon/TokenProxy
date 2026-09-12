@@ -190,8 +190,8 @@ describe('A disallowed lane or a malformed identity fails closed before capacity
       fileURLToPath(new URL('../../../src/sse/handlers/chat.js', import.meta.url)),
       'utf8'
     );
-    const refusalAt = chat.indexOf('await refuseDisallowedModel(');
-    const selectionAt = chat.indexOf('await getProviderCredentials(');
+    const refusalAt = chat.indexOf('await prepare(() => refuseDisallowedModel(');
+    const selectionAt = chat.indexOf('() => getProviderCredentials(');
 
     expect(refusalAt, 'refuseDisallowedModel call site not found').toBeGreaterThan(-1);
     expect(selectionAt, 'getProviderCredentials call site not found').toBeGreaterThan(-1);

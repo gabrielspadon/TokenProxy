@@ -58,10 +58,13 @@ describe("the chat handler enforces it (#577)", () => {
   it("checks before combo expansion and returns a 404", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../../src/sse/handlers/chat.js", import.meta.url), "utf8");
-    expect(src).toContain("await isModelDisabled(modelStr)");
+    const disabledCheck = "await prepare(() => isModelDisabled(modelStr))";
+    const comboExpansion = "await prepare(() => getComboModels(modelStr))";
+    expect(src).toContain(disabledCheck);
+    expect(src).toContain(comboExpansion);
     expect(src).toContain("HTTP_STATUS.NOT_FOUND");
     // Must sit ahead of getComboModels, so a disabled direct model never
     // reaches account selection or a rotation slot.
-    expect(src.indexOf("await isModelDisabled(modelStr)")).toBeLessThan(src.indexOf("await getComboModels(modelStr)"));
+    expect(src.indexOf(disabledCheck)).toBeLessThan(src.indexOf(comboExpansion));
   });
 });

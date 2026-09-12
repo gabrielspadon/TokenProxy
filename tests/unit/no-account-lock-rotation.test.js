@@ -130,12 +130,18 @@ describe('rotation is bounded by wall clock, not by benching accounts', () => {
   const chat = readFileSync(fileURLToPath(new URL('../../src/sse/handlers/chat.js', import.meta.url)), 'utf8');
 
   it('declares a rotation time budget', () => {
-    expect(chat).toMatch(/const ROTATION_BUDGET_MS = [\d_]+;/);
+    expect(chat).toContain('const fallbackDeadline = getRequestFallbackDeadline(request);');
+    const deadline = readFileSync(new URL('../../open-sse/utils/fallbackDeadline.js', import.meta.url), 'utf8');
+    expect(deadline).toContain('timeoutMs = FALLBACK_BUDGET_MS');
+    expect(deadline).toContain('now = () => performance.now()');
   });
 
   it('stops rotating once the budget is spent, on the failover path', () => {
-    expect(chat).toContain('const elapsedMs = Date.now() - rotationStartedAt;');
-    expect(chat).toContain('if (elapsedMs >= ROTATION_BUDGET_MS) {');
+    const ceilingAt = chat.indexOf('if (maxAttempts && excludeConnectionIds.size + 1 >= maxAttempts)');
+    const retryAt = chat.indexOf('if (retrySameAccount === true');
+    expect(ceilingAt).toBeGreaterThan(-1);
+    expect(retryAt).toBeGreaterThan(ceilingAt);
+    expect(chat.slice(ceilingAt, retryAt)).toContain('fallbackDeadline.throwIfExpired(callerSignal);');
   });
 
   it('no longer bypasses a lock for the just-failed account, because none binds', () => {
