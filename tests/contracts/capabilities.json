@@ -3914,5 +3914,47 @@
       "responseFormat": "ollama",
       "protocol": "ndjson"
     }
-  }
+  },
+  "providerTransforms": [
+    {
+      "id": "vertex-function-call-id-stripped",
+      "source": "openai",
+      "target": "vertex",
+      "kind": "request",
+      "transform": "tool-call-identity-dropped",
+      "detail": "Vertex rejects functionCall.id and functionResponse.id, so both are removed.",
+      "owner": "open-sse/translator/request/openai-to-vertex.js",
+      "consequence": "Parallel calls to one tool name are distinguishable only by array order at the provider."
+    },
+    {
+      "id": "ollama-tool-result-keyed-by-name",
+      "source": "openai",
+      "target": "ollama",
+      "kind": "request",
+      "transform": "tool-call-identity-dropped",
+      "detail": "Ollama carries no tool_call_id; each result is re-keyed to tool_name.",
+      "owner": "open-sse/translator/request/openai-to-ollama.js",
+      "consequence": "Parallel calls to one tool name collapse onto one key at the provider."
+    },
+    {
+      "id": "claude-tool-cycle-output-budget-raised",
+      "source": "claude",
+      "target": "openai",
+      "kind": "request",
+      "transform": "output-budget-raised",
+      "detail": "adjustMaxTokens raises max_tokens to DEFAULT_MIN_TOKENS when tools are present, so the fixture 32 becomes 32000.",
+      "owner": "open-sse/translator/formats/maxTokens.js",
+      "consequence": "The client-declared output budget is not the budget the provider receives."
+    },
+    {
+      "id": "responses-instructions-become-system-message",
+      "source": "openai-responses",
+      "target": "openai",
+      "kind": "request",
+      "transform": "responses-only-field-removed",
+      "detail": "instructions becomes one leading system message; the Responses-only property is removed after translation.",
+      "owner": "open-sse/translator/request/openai-responses.js",
+      "consequence": "None; the system text is carried exactly once and the Responses-only field is not forwarded."
+    }
+  ]
 }
