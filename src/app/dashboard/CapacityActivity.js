@@ -548,6 +548,10 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
           Not reported
         </span>
       </div>
+      <p className={styles.calendarHint}>
+        {month.label}. Daily token totals in UTC. Darker shades show more tokens within each metric.
+        Use arrow keys to move; select a day to focus the page.
+      </p>
       <div
         className={styles.calendarScroll}
         role="region"
@@ -555,7 +559,7 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
         tabIndex={0}
       >
         <table className={styles.month} ref={grid}>
-          <caption>
+          <caption className={styles.only}>
             {month.label}. Daily token totals in UTC, four metrics per day. Move with the arrow
             keys; select a day to focus the page on it. Darker shades show more tokens relative to
             each metric’s maximum across the selected period.

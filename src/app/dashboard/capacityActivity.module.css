@@ -19,6 +19,7 @@
 .period b { font-size: var(--type-ui); font-weight: 600; min-width: 9.5ch; text-align: center; }
 
 .calendar { display: grid; gap: 8px; min-width: 0; }
+.calendarHint { margin: 0; max-width: none; color: var(--slate); font-size: var(--type-dense); line-height: 1.4; }
 .calendarScroll { overflow-x: auto; min-width: 0; padding: 2px; }
 .calendarScroll:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
 /* One visible key for the fixed quadrant order plus the two non-colours that
