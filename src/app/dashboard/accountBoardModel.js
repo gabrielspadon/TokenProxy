@@ -351,20 +351,13 @@ export function accountSeat(account) {
 /**
  * The word beside the dot on a card.
  *
- * Read from the BUCKET, never decided again. The chip and the health strip used
- * to be computed by separate code, so the same account could be counted under
- * one word in the strip and show another on its card. One function answers
- * both; the word only adds the specific gate, which the coarse bucket drops.
+ * One vocabulary, the four categories, so the word on a card and the chip it is
+ * counted under can never disagree. The specific gate a card is held by is not
+ * lost: it stays in the tooltip, which already carries the health line, the
+ * gates and the provider's own `lastError`, and in `accountStateReason`.
  */
 export function accountStateWord(account, now) {
-  const state = accountControlState(account, now);
-  const bucket = accountBucket(account, now);
-  if (bucket === 'paused' || bucket === 'attention' || bucket === 'quotaHold')
-    return state === 'Needs attention' ? 'Attention' : state;
-  if (bucket === 'depleted') return 'Out of quota';
-  if (bucket === 'low') return 'Low quota';
-  if (bucket === 'unknown') return 'Unknown';
-  return state === 'Enabled' || state === 'Not checked' ? 'Ready' : state;
+  return CATEGORIES.find((item) => item.id === accountCategory(account, now)).label;
 }
 
 // The provider's own words, trimmed to a card line. `lastError` is written by

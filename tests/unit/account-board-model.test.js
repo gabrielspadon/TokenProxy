@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CATEGORIES,
   accountBucket,
+  accountCategory,
   accountSeat,
   accountStateWord,
   credentialModes,
@@ -36,8 +38,8 @@ const account = (
 describe('account buckets', () => {
   it('reads an enabled healthy account with headroom as ready', () => {
     expect(accountBucket(account(), NOW)).toBe('ready');
-    expect(accountStateWord(account(), NOW)).toBe('Ready');
-    expect(accountStateWord(account({ status: 'unqualified' }), NOW)).toBe('Ready');
+    expect(accountStateWord(account(), NOW)).toBe('Active');
+    expect(accountStateWord(account({ status: 'unqualified' }), NOW)).toBe('Active');
   });
   // These two shared a bucket, which put the operator's own hold and a hold
   // nobody chose behind one chip and one colour. The words already differed;
@@ -48,12 +50,12 @@ describe('account buckets', () => {
     expect(accountStateWord(account({ isActive: false }), NOW)).toBe('Paused');
     const quotaPaused = account({ quotaPauseThresholds: { session: 70 } });
     expect(accountBucket(quotaPaused, NOW)).toBe('quotaHold');
-    expect(accountStateWord(quotaPaused, NOW)).toBe('Quota pause');
+    expect(accountStateWord(quotaPaused, NOW)).toBe('Cooldown');
   });
   it('flags low quota only from fresh known windows', () => {
     const low = account({}, [{ key: 'session', remainingPercentage: 8, resetAt: minutes(90) }]);
     expect(accountBucket(low, NOW)).toBe('low');
-    expect(accountStateWord(low, NOW)).toBe('Low quota');
+    expect(accountStateWord(low, NOW)).toBe('Active');
     const stale = account({
       lastQuotaSnapshot: {
         fetchedAt: minutes(-30),
@@ -85,9 +87,9 @@ describe('account buckets', () => {
     expect(accountBucket(near, NOW)).toBe('quotaHold');
   });
   it('keeps the specific gate word for attention states', () => {
-    expect(accountStateWord(account({ isDraining: true }), NOW)).toBe('Draining');
+    expect(accountStateWord(account({ isDraining: true }), NOW)).toBe('Paused');
     expect(accountStateWord(account({ status: 'cooldown' }), NOW)).toBe('Cooldown');
-    expect(accountStateWord(account({ status: 'degraded' }), NOW)).toBe('Attention');
+    expect(accountStateWord(account({ status: 'degraded' }), NOW)).toBe('Unknown');
     expect(accountBucket(account({ status: 'degraded' }), NOW)).toBe('attention');
     expect(accountBucket(account({ isActive: undefined, status: 'unknown' }), NOW)).toBe('unknown');
   });
@@ -95,10 +97,10 @@ describe('account buckets', () => {
     // Both used to read 'low', so 0% and 19% carried the same word.
     const empty = account({}, [{ key: 'session', remainingPercentage: 0, resetAt: minutes(90) }]);
     expect(accountBucket(empty, NOW)).toBe('depleted');
-    expect(accountStateWord(empty, NOW)).toBe('Out of quota');
+    expect(accountStateWord(empty, NOW)).toBe('Cooldown');
     const nearly = account({}, [{ key: 'session', remainingPercentage: 19, resetAt: minutes(90) }]);
     expect(accountBucket(nearly, NOW)).toBe('low');
-    expect(accountStateWord(nearly, NOW)).toBe('Low quota');
+    expect(accountStateWord(nearly, NOW)).toBe('Active');
     // A window past its reset is full, so it is neither depleted nor low.
     const rolled = account({}, [{ key: 'session', remainingPercentage: 0, resetAt: minutes(-10) }]);
     expect(accountBucket(rolled, NOW)).toBe('ready');
@@ -123,10 +125,15 @@ describe('account buckets', () => {
       ]),
     ];
     const summary = fleetSummary(fleet, NOW);
+    // fleetSummary still counts the detailed evidence buckets, which is what the
+    // health strip reads. The card word is the four-category label, so the two
+    // are compared through the category rather than by string equality.
     const words = fleet.map((item) => accountStateWord(item, NOW));
-    expect(summary.unknown).toBe(words.filter((word) => word === 'Unknown').length);
-    expect(summary.depleted).toBe(words.filter((word) => word === 'Out of quota').length);
-    expect(summary.ready).toBe(words.filter((word) => word === 'Ready').length);
+    const categories = fleet.map((item) => accountCategory(item, NOW));
+    expect(words).toEqual(categories.map((id) => CATEGORIES.find((c) => c.id === id).label));
+    expect(summary.unknown).toBe(fleet.filter((item) => accountBucket(item, NOW) === 'unknown').length);
+    expect(summary.depleted).toBe(fleet.filter((item) => accountBucket(item, NOW) === 'depleted').length);
+    expect(summary.ready).toBe(fleet.filter((item) => accountBucket(item, NOW) === 'ready').length);
   });
   it('sums every bucket over the given population', () => {
     const summary = fleetSummary(

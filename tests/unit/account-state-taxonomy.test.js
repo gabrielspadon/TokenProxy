@@ -53,6 +53,12 @@ const account = (overrides = {}) => ({
 // The state, the section and the chip word, read together. Each is a separate
 // surface an operator scans, and the defect was that all three agreed on the
 // wrong answer, so pinning one of them would not have caught it.
+//
+// `word` is now one of the four categories the board offers, because a card
+// showing a word no filter chip carries is the thing that made this board hard
+// to read. The distinction this file exists to protect is unchanged: it lives
+// in `state`, which still separates an operator hold from a 401, a 403 and a
+// missing credential, and in `accountStateReason` asserted beside each case.
 const reads = (row) => ({
   state: accountControlState(row, NOW),
   section: accountSection(row, NOW),
@@ -85,7 +91,7 @@ describe('one word per state, and only one of them is "Paused"', () => {
       state: 'Quota pause',
       section: 'resting',
       bucket: 'quotaHold',
-      word: 'Quota pause',
+      word: 'Cooldown',
     });
     // The operator configured this one, so the card names both numbers.
     expect(accountStateReason(row, NOW)).toBe(
@@ -108,7 +114,7 @@ describe('one word per state, and only one of them is "Paused"', () => {
       state: 'Needs sign-in',
       section: 'action',
       bucket: 'attention',
-      word: 'Needs sign-in',
+      word: 'Unknown',
     });
     expect(accountControlState(row, NOW)).not.toBe('Paused');
     // "Cooling down" promises a return nobody is coming back from.
@@ -139,7 +145,7 @@ describe('one word per state, and only one of them is "Paused"', () => {
       state: 'Disabled by error',
       section: 'action',
       bucket: 'attention',
-      word: 'Disabled by error',
+      word: 'Unknown',
     });
     expect(accountStateReason(row, NOW)).toBe('Qoder quota exhausted (code 112)');
   });
@@ -150,7 +156,7 @@ describe('one word per state, and only one of them is "Paused"', () => {
       state: 'No credential',
       section: 'action',
       bucket: 'attention',
-      word: 'No credential',
+      word: 'Unknown',
     });
     expect(accountControlState(off, NOW)).not.toBe('Paused');
     // Still true of a row nobody switched off: it cannot answer either way.
@@ -163,7 +169,7 @@ describe('one word per state, and only one of them is "Paused"', () => {
       state: 'Enabled',
       section: 'serving',
       bucket: 'ready',
-      word: 'Ready',
+      word: 'Active',
     });
     expect(accountStateReason(account(), NOW)).toBeNull();
   });
