@@ -3,6 +3,7 @@
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 import { createTransactionController } from "./criticalTransaction.js";
+import { createCriticalAckJournal } from './criticalAckJournal.js';
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
@@ -25,6 +26,12 @@ export async function createBunSqliteAdapter(filePath) {
   const transactions = createTransactionController({
     exec: (sql) => db.exec(sql),
     readSynchronous: () => db.query("PRAGMA synchronous").get()?.synchronous,
+    isInTransaction: () => db.inTransaction,
+    acknowledgments: createCriticalAckJournal({ databaseFile: filePath, driver: 'bun:sqlite', db: {
+      exec: (sql) => db.exec(sql),
+      get: (sql, params = []) => prepare(sql).get(...params),
+      run: (sql, params = []) => prepare(sql).run(...params),
+    } }),
   });
 
   const checkpointTimer = setInterval(() => {

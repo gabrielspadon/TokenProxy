@@ -125,13 +125,25 @@ describe("sqljs atomic persist", () => {
     adapter.exec("CREATE TABLE t (v TEXT)");
     adapter.flush();
     const syncs = [];
-    const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => { syncs.push(fd); });
+    const files = new Map();
+    const realOpen = fs.openSync.bind(fs);
+    const open = vi.spyOn(fs, 'openSync').mockImplementation((file, ...args) => {
+      const fd = realOpen(file, ...args); files.set(fd, file); return fd;
+    });
+    const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => { syncs.push(files.get(fd)); });
     try {
       adapter.criticalTransaction(() => adapter.run("INSERT INTO t VALUES (?)", ["synced"]));
     } finally {
       fsync.mockRestore();
+      open.mockRestore();
     }
-    expect(syncs).toHaveLength(process.platform === "win32" ? 1 : 2);
+    const publication = syncs.indexOf(dbPath + '.tmp');
+    expect(publication).toBeGreaterThan(0);
+    expect(syncs.slice(publication + 1).some(file => file.startsWith(dbPath + '.critical-acks/'))).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(syncs[publication + 1]).toBe(tempDir);
+      expect(syncs.at(-1)).toBe(dbPath + '.critical-acks');
+    }
     adapter.close();
   });
 
@@ -141,11 +153,16 @@ describe("sqljs atomic persist", () => {
     adapter.run("INSERT INTO t VALUES (?)", ["before"]);
     adapter.flush();
 
-    let syncCall = 0;
+    let published = false;
+    const realRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation((source, target) => {
+      realRename(source, target);
+      if (target === dbPath) published = true;
+    });
+    const parentInode = fs.statSync(tempDir).ino;
     const realFsyncSync = fs.fsyncSync.bind(fs);
     const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
-      syncCall += 1;
-      if (syncCall === 2) {
+      if (published && fs.fstatSync(fd).ino === parentInode) {
         throw Object.assign(new Error("fixture directory fsync failure"), { code: "EIO" });
       }
       return realFsyncSync(fd);
@@ -153,9 +170,11 @@ describe("sqljs atomic persist", () => {
     try {
       expect(() => adapter.criticalTransaction(() => {
         adapter.run("INSERT INTO t VALUES (?)", ["published-before-error"]);
-      })).toThrow(expect.objectContaining({ code: "EIO" }));
+      })).toThrow(expect.objectContaining({ code: "CRITICAL_TRANSACTION_ACK_UNCONFIRMED", commitState: 'uncertain', retryable: false,
+        cause: expect.objectContaining({ code: 'EIO' }) }));
     } finally {
       fsync.mockRestore();
+      rename.mockRestore();
     }
 
     const expected = [{ v: "before" }, { v: "published-before-error" }];

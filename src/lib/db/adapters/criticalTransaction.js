@@ -1,3 +1,5 @@
+import { criticalAckFailure } from './criticalAckJournal.js';
+
 const FULL_SYNCHRONOUS = 2;
 
 function criticalError(code, message, details = {}) {
@@ -31,7 +33,7 @@ function isNativeAsyncFunction(fn) {
  * SQLite does not allow changing `synchronous` inside a transaction, so the
  * critical boundary rejects nesting in either direction.
  */
-export function createTransactionController({ exec, readSynchronous, isInTransaction }) {
+export function createTransactionController({ exec, readSynchronous, isInTransaction, acknowledgments }) {
   let transactionDepth = 0;
   let criticalActive = false;
 
@@ -72,6 +74,7 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
     let commitState = "not-started";
     let result;
     let failure = null;
+    let acknowledgment;
 
     criticalActive = true;
     try {
@@ -89,6 +92,7 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
       exec("BEGIN IMMEDIATE");
       transactionOpen = true;
       commitState = "open";
+      acknowledgment = acknowledgments?.prepare();
       result = fn();
       if (isThenable(result)) {
         throw criticalError(
@@ -96,6 +100,7 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
           "A critical SQLite transaction callback must be synchronous",
         );
       }
+      acknowledgments?.mark(acknowledgment);
       exec("COMMIT");
       transactionOpen = false;
       commitState = "committed";
@@ -107,6 +112,7 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
           transactionOpen = false;
           commitState = "rolled-back";
         } catch (rollbackError) {
+          commitState = "uncertain";
           failure = criticalError(
             "CRITICAL_TRANSACTION_ROLLBACK_FAILED",
             "Critical SQLite transaction rollback could not be confirmed",
@@ -114,6 +120,7 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
           );
         }
       } else if (commitState === "open") {
+        commitState = "uncertain";
         failure = criticalError(
           "CRITICAL_TRANSACTION_COMMIT_UNCERTAIN",
           "Critical SQLite transaction outcome could not be confirmed",
@@ -121,7 +128,6 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
         );
       }
     } finally {
-      criticalActive = false;
       if (modeChanged) {
         try {
           exec(`PRAGMA synchronous=${previousMode}`);
@@ -140,8 +146,22 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
       }
     }
 
-    if (failure) throw failure;
-    return result;
+    try {
+      // A committed write remains committed if the external receipt fails.
+      // Publication is outside the rollback path and never invokes fn again.
+      if (!failure) {
+        try { acknowledgments?.acknowledge(acknowledgment); }
+        catch (error) { failure = criticalAckFailure(error, acknowledgment, commitState); }
+      }
+      if (failure) {
+        acknowledgments?.failed(acknowledgment, commitState);
+        if (['committed', 'uncertain'].includes(commitState) && acknowledgments && failure.acknowledgmentState !== 'unknown') {
+          failure = criticalAckFailure(failure, acknowledgment, commitState);
+        }
+        throw failure;
+      }
+      return result;
+    } finally { criticalActive = false; }
   }
 
   return { transaction, criticalTransaction };

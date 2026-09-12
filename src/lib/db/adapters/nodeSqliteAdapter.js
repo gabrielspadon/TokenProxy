@@ -3,6 +3,7 @@
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 import { createTransactionController } from "./criticalTransaction.js";
+import { createCriticalAckJournal } from './criticalAckJournal.js';
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
@@ -28,6 +29,11 @@ export async function createNodeSqliteAdapter(filePath) {
     exec: (sql) => db.exec(sql),
     readSynchronous: () => db.prepare("PRAGMA synchronous").get()?.synchronous,
     isInTransaction: () => db.isTransaction,
+    acknowledgments: createCriticalAckJournal({ databaseFile: filePath, driver: 'node:sqlite', db: {
+      exec: (sql) => db.exec(sql),
+      get: (sql, params = []) => prepare(sql).get(...params),
+      run: (sql, params = []) => prepare(sql).run(...params),
+    } }),
   });
 
   // Periodic WAL checkpoint to keep -wal/-shm small

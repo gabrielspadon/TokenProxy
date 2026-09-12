@@ -137,6 +137,9 @@ function persistenceFailure(error, { reauthRequired = false } = {}) {
       code: "CREDENTIAL_PERSISTENCE_UNCONFIRMED",
       cause: error,
       reauthRequired,
+      ...(error?.retryable === false ? { retryable: false } : {}),
+      ...(error?.commitState ? { commitState: error.commitState, committed: error.committed === undefined ? error.commitState === 'committed' : error.committed } : {}),
+      ...(error?.acknowledgmentState ? { acknowledgmentState: error.acknowledgmentState, transactionId: error.transactionId ?? null } : {}),
     },
   );
 }
@@ -149,7 +152,8 @@ function persistenceReason(error) {
 
 function isUncertainCriticalWrite(error) {
   return String(error?.code || "").startsWith("CRITICAL_TRANSACTION_")
-    && error?.commitState === "committed";
+    && error?.commitState === "committed"
+    && error?.acknowledgmentState !== "unknown";
 }
 
 function credentialSelectionChanged() {

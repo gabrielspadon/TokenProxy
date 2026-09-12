@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import initSqlJs from "sql.js";
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
+import { createCriticalAckJournal, criticalAckFailure } from './criticalAckJournal.js';
 
 let SQL = null;
 const POST_RENAME_PUBLICATION = Symbol("sqljs.postRenamePublication");
@@ -149,6 +150,7 @@ export async function createSqlJsAdapter(filePath) {
 
   let transactionDepth = 0;
   let criticalActive = false;
+  const acknowledgments = createCriticalAckJournal({ databaseFile: filePath, driver: 'sql.js', db: { exec, get, run } });
 
   function criticalError(code, message) {
     return Object.assign(new Error(message), { code });
@@ -199,7 +201,7 @@ export async function createSqlJsAdapter(filePath) {
 
   function criticalTransaction(fn) {
     if (typeof fn !== "function") throw new TypeError("criticalTransaction requires a function");
-    if (Object.prototype.toString.call(fn) === "[object AsyncFunction]") {
+    if (["[object AsyncFunction]", "[object AsyncGeneratorFunction]"].includes(Object.prototype.toString.call(fn))) {
       throw criticalError("CRITICAL_TRANSACTION_ASYNC", "A critical sql.js transaction callback must be synchronous");
     }
     if (criticalActive || transactionDepth > 0) {
@@ -216,31 +218,40 @@ export async function createSqlJsAdapter(filePath) {
     saveTimer = null;
     const sp = `critical_${Math.random().toString(36).slice(2)}`;
     let open = false;
+    let committed = false;
+    let acknowledgment;
     criticalActive = true;
     try {
       db.exec(`SAVEPOINT ${sp}`);
       open = true;
+      acknowledgment = acknowledgments.prepare();
       const result = fn();
       if (isThenable(result)) {
         throw criticalError("CRITICAL_TRANSACTION_ASYNC", "A critical sql.js transaction callback must be synchronous");
       }
+      acknowledgments.mark(acknowledgment);
       db.exec(`RELEASE ${sp}`);
       open = false;
       dirty = true;
       persist({ syncDirectory: true });
+      committed = true;
+      acknowledgments.acknowledge(acknowledgment);
       return result;
     } catch (error) {
       if (open) {
         try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
       }
-      if (error?.[POST_RENAME_PUBLICATION]) {
+      if (committed || error?.[POST_RENAME_PUBLICATION]) {
         dirty = false;
-        throw error;
+        const commitState = committed ? 'committed' : 'uncertain';
+        acknowledgments.failed(acknowledgment, commitState);
+        throw criticalAckFailure(error, acknowledgment, commitState);
       }
       try { db.close(); } catch {}
       db = new SQLLib.Database(before);
       db.exec(PRAGMA_SQL);
       dirty = dirtyBefore;
+      acknowledgments.failed(acknowledgment, 'rolled-back');
       throw error;
     } finally {
       criticalActive = false;

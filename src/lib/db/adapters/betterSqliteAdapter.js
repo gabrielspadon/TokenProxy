@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 import { createTransactionController } from "./criticalTransaction.js";
+import { createCriticalAckJournal } from './criticalAckJournal.js';
 
 // Periodic checkpoint to keep WAL file small (avoid huge -wal/-shm growth)
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
@@ -26,6 +27,11 @@ export function createBetterSqliteAdapter(filePath) {
     exec: (sql) => db.exec(sql),
     readSynchronous: () => db.pragma("synchronous", { simple: true }),
     isInTransaction: () => db.inTransaction,
+    acknowledgments: createCriticalAckJournal({ databaseFile: filePath, driver: 'better-sqlite3', db: {
+      exec: (sql) => db.exec(sql),
+      get: (sql, params = []) => prepare(sql).get(...params),
+      run: (sql, params = []) => prepare(sql).run(...params),
+    } }),
   });
 
   // Checkpoint committed WAL frames without waiting for readers.

@@ -133,6 +133,43 @@ describe('refresh persistence revision and stop boundary',()=>{
   });
   expect(visible.accessToken).toBe('visible-but-unacknowledged');
  });
+ it('does not recover or repeat a committed credential write whose ACK receipt failed',async()=>{
+  let visible=original;
+  getProviderConnectionById.mockImplementation(async()=>visible);
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed(
+   {accessToken:'committed',refreshToken:'rotated'},
+   {expectedCredentials:options.expectedCredentials},
+  ));
+  updateProviderConnection.mockImplementation(async(_id,updates)=>{
+   visible={...original,...updates,credentialRevisionId:'committed-revision'};
+   throw Object.assign(new Error('external receipt failed'),{
+    code:'CRITICAL_TRANSACTION_ACK_UNCONFIRMED',commitState:'committed',committed:true,
+    acknowledgmentState:'unknown',retryable:false,transactionId:'synthetic-transaction',
+   });
+  });
+  await expect(checkAndRefreshToken('codex',original,{force:true})).rejects.toMatchObject({
+   code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED',commitState:'committed',committed:true,
+   acknowledgmentState:'unknown',retryable:false,transactionId:'synthetic-transaction',
+  });
+  expect(visible.accessToken).toBe('committed');
+  expect(refreshProviderCredentials).toHaveBeenCalledTimes(1);
+  expect(updateProviderConnection).toHaveBeenCalledTimes(1);
+ });
+ it('retains verified committed recovery when no acknowledgment is unknown',async()=>{
+  let visible=original;
+  getProviderConnectionById.mockImplementation(async()=>visible);
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed(
+   {accessToken:'stored',refreshToken:'rotated'},
+   {expectedCredentials:options.expectedCredentials},
+  ));
+  updateProviderConnection.mockImplementation(async(_id,updates)=>{
+   visible={...original,...updates,credentialRevisionId:'stored-revision'};
+   throw Object.assign(new Error('restore failed'),{code:'CRITICAL_TRANSACTION_RESTORE_FAILED',commitState:'committed'});
+  });
+  await expect(checkAndRefreshToken('codex',original,{force:true})).resolves.toMatchObject({accessToken:'stored'});
+  expect(refreshProviderCredentials).toHaveBeenCalledTimes(1);
+  expect(updateProviderConnection).toHaveBeenCalledTimes(1);
+ });
  it('persists a refresh completing after consumer cancellation',async()=>{
   const controller=new AbortController(),d=deferred();refreshProviderCredentials.mockImplementation((_provider,_credentials,_log,options)=>waitForRefresh(d.promise.then(value=>options.onCredentialsRefreshed(value,{expectedCredentials:options.expectedCredentials})),options.signal));
   const call=checkAndRefreshToken('codex',original,{force:true,signal:controller.signal});await flush();
