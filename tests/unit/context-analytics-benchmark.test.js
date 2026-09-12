@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
   assessBenchmarkAffinity,
@@ -14,7 +15,14 @@ import {
   validateGrowthMarker,
 } from "../qa/context-analytics-benchmark.mjs";
 
-const benchmark = join(process.cwd(), "tests/qa/context-analytics-benchmark.mjs");
+// Anchor on this file, not on the working directory. Vitest pins its root to
+// tests/ (tests/vitest.config.js), so the worker working directory IS tests/ and
+// joining "tests/qa/..." onto it resolved to tests/tests/qa/..., which never
+// loaded: each assertion then read a Node module-resolution stack instead of the
+// script own stderr.
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const benchmark = join(repoRoot, "tests/qa/context-analytics-benchmark.mjs");
+const seed = join(repoRoot, "tests/qa/economics-analytics-seed.mjs");
 
 describe("context analytics growth benchmark", () => {
   it("compiles the population plan without executing an unmeasured population query", () => {
@@ -50,7 +58,7 @@ describe("context analytics growth benchmark", () => {
 
   it("requires a completed external one-million-row fixture", () => {
     const result = spawnSync(process.execPath, [benchmark, "--economics", "--growth-only", `--data-dir=/tmp/tokenproxy-growth-missing-${process.pid}`, "--rows=1000000"], {
-      cwd: process.cwd(), encoding: "utf8",
+      cwd: repoRoot, encoding: "utf8",
     });
 
     expect(result.status).not.toBe(0);
@@ -79,8 +87,8 @@ describe("context analytics growth benchmark", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "tokenproxy-growth-seed-test-"));
     const receipt = join(dataDir, "seed.json");
     try {
-      const result = spawnSync(process.execPath, [join(process.cwd(), "tests/qa/economics-analytics-seed.mjs"), `--data-dir=${dataDir}`, "--rows=1", receipt], {
-        cwd: process.cwd(), encoding: "utf8",
+      const result = spawnSync(process.execPath, [seed, `--data-dir=${dataDir}`, "--rows=1", receipt], {
+        cwd: repoRoot, encoding: "utf8",
       });
       expect(result.status, result.stderr).toBe(0);
       expect(JSON.parse(readFileSync(join(dataDir, ".tokenproxy-economics-fixture.json"), "utf8"))).toMatchObject({
@@ -100,8 +108,8 @@ describe("context analytics growth benchmark", () => {
       try {
         mkdirSync(join(existing, ".."), { recursive: true });
         writeFileSync(existing, "preserve-me");
-        const result = spawnSync(process.execPath, [join(process.cwd(), "tests/qa/economics-analytics-seed.mjs"), `--data-dir=${dataDir}`, "--rows=1", receipt], {
-          cwd: process.cwd(), encoding: "utf8",
+        const result = spawnSync(process.execPath, [seed, `--data-dir=${dataDir}`, "--rows=1", receipt], {
+          cwd: repoRoot, encoding: "utf8",
         });
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain("seed data directory must be empty or absent");
