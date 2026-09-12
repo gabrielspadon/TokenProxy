@@ -31,7 +31,11 @@ vi.mock("../../src/sse/services/model.js", () => ({
 vi.mock("../../open-sse/handlers/embeddingsCore.js", () => ({
   handleEmbeddingsCore: mocks.handleEmbeddingsCore,
 }));
-vi.mock("../../open-sse/utils/error.js", () => ({
+// Spread the real module: a partial mock fails the whole file the moment the
+// module gains an export this object does not name (combo.js now imports
+// extractRetryAfterDeadline).
+vi.mock("../../open-sse/utils/error.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   errorResponse: (status, message) => Response.json({ error: message }, { status }),
   unavailableResponse: (status, message) => Response.json({ error: message }, { status }),
 }));
