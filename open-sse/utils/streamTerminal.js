@@ -5,6 +5,18 @@ import { buildAbortedResponsesTerminalBytes } from "./responsesStreamHelpers.js"
 export const MAX_SSE_TERMINAL_RECORD_BYTES = 64 * 1024;
 export const MAX_SSE_TERMINAL_DATA_LINES = 128;
 
+export function observeSseBody(body, observer) {
+  return body && observer ? body.pipeThrough(new TransformStream({
+    transform(chunk, controller) { observer.observe(chunk); controller.enqueue(chunk); },
+  })) : body;
+}
+
+export function providerStreamTerminalEvidence(observer) {
+  const value = observer?.outcome();
+  return value && value.state !== 'unknown' ? { ...value, source: 'provider-stream' }
+    : { state: 'unknown', reason: value?.reason || 'unsupported-terminal', source: 'gateway-stream' };
+}
+
 const SUPPORTED_FORMATS = new Set([
   FORMATS.OPENAI,
   FORMATS.CLAUDE,

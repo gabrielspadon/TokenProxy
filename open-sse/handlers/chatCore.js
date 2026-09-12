@@ -1,3 +1,4 @@
+import { classifyHttpTerminalEvidence } from "../../src/lib/db/terminalEvidence.js";
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
 import { isReplaySafeRejection, isSafeQuotaAccountRejection, withReplaySafety } from "../utils/replaySafety.js";
 import { isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
@@ -2579,7 +2580,7 @@ async function handleChatCoreAttempt({
         pxpipe: pxpipeSummary,
         status: "error",
         rid,
-      }),
+      }, { terminalEvidence: classifyHttpTerminalEvidence(providerResponse) }),
     ).catch(() => {});
 
     const errMsg = provider === "antigravity"

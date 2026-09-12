@@ -67,9 +67,13 @@ it('qualifies 24 hours and 1000 natural logical requests exactly once from signe
   expect(JSON.stringify(result)).not.toContain(SECRET.toString('base64'));
 });
 
-it('does not count HTTP200 SSE errors as successful requests and separates provider failures', () => {
+it.each([
+  ['provider-stream', 'upstream-error-event'],
+  ['provider-json', 'upstream-error-response'],
+  ['provider-http', 'upstream-http-error'],
+])('separates signed %s failures from successful requests', (terminalSource, terminalReason) => {
   const f = fixture();
-  Object.assign(f.attempts[0], { status: 'error', terminalState: 'failed', terminalReason: 'upstream-error-event' });
+  Object.assign(f.attempts[0], { status: 'error', terminalState: 'failed', terminalSource, terminalReason });
   f.end = f.snapshot(END, f.events, f.attempts);
   const result = assembleObservation(f);
   expect(result.counts).toMatchObject({ naturalLogicalRequests: 1000, success: 999, providerFailure: 1, proxyFailure: 0 });

@@ -35,6 +35,7 @@ const ctx = {
 };
 
 const encoder = new TextEncoder();
+const completionProof = { terminalEvidence: { state: 'succeeded', reason: 'stream-complete', source: 'provider-stream' } };
 
 describe('interrupted streaming request detail', () => {
   beforeEach(() => {
@@ -67,7 +68,7 @@ describe('interrupted streaming request detail', () => {
 
   it('does not overwrite after normal completion', () => {
     const { onStreamComplete, onStreamAbandoned } = buildOnStreamComplete({ ...ctx });
-    onStreamComplete({ content: 'done' }, { prompt_tokens: 5, completion_tokens: 7 }, Date.now());
+    onStreamComplete({ content: 'done' }, { prompt_tokens: 5, completion_tokens: 7 }, Date.now(), completionProof);
     onStreamAbandoned('client_disconnected');
 
     expect(mocks.saveRequestDetail).toHaveBeenCalledTimes(1);
@@ -121,7 +122,7 @@ describe('interrupted streaming request detail', () => {
 
   it('keeps normal completion behavior intact (success row + usage save)', () => {
     const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...ctx });
-    onStreamComplete({ content: 'ok' }, { prompt_tokens: 3, completion_tokens: 4 }, null);
+    onStreamComplete({ content: 'ok' }, { prompt_tokens: 3, completion_tokens: 4 }, null, completionProof);
 
     const detail = mocks.saveRequestDetail.mock.calls[0][0];
     expect(detail.id).toBe(streamDetailId);

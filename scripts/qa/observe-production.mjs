@@ -148,7 +148,7 @@ function classify(row, attempts, capturedAt) {
   try {
     normalizeTerminalEvidence({ state: last.terminalState, reason: last.terminalReason, source: last.terminalSource }, last.status);
   } catch { return { category: 'unknown', reason: 'invalid-backend-terminal-evidence' }; }
-  if (last.terminalSource === 'provider-stream' && last.terminalState === 'failed') return { category: 'providerFailure', reason: last.terminalReason };
+  if (['provider-stream', 'provider-json', 'provider-http'].includes(last.terminalSource) && last.terminalState === 'failed') return { category: 'providerFailure', reason: last.terminalReason };
   if (terminal.state === 'succeeded' && terminal.terminalReason === 'backend-response-complete' && last.terminalState === 'succeeded') return { category: 'success', reason: last.terminalReason };
   return { category: 'unknown', reason: last.terminalReason || 'unattributed-terminal' };
 }

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
+import { once } from "node:events";
 
 const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -67,7 +69,7 @@ vi.mock("../../open-sse/translator/concerns/adaptiveStripper.js", () => ({
   extractRejectedFieldNamesFromError: vi.fn(() => []),
 }));
 vi.mock("../../open-sse/handlers/chatCore/requestDetail.js", () => ({
-  buildRequestDetail: vi.fn((detail) => detail),
+  buildRequestDetail: vi.fn((detail, overrides) => ({ ...detail, ...overrides })),
   extractRequestConfig: vi.fn(() => ({})),
 }));
 vi.mock("../../open-sse/handlers/chatCore/nonStreamingHandler.js", () => ({ handleNonStreamingResponse: vi.fn() }));
@@ -153,6 +155,7 @@ vi.mock("../../open-sse/handlers/videoCore.js", () => ({
 }));
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+const { saveRequestDetail } = await import("@/lib/usageDb.js");
 const { handleEmbeddings } = await import("../../src/sse/handlers/embeddings.js");
 const { handleFetch } = await import("../../src/sse/handlers/fetch.js");
 const { handleImageGeneration } = await import("../../src/sse/handlers/imageGeneration.js");
@@ -240,6 +243,27 @@ describe("chat core model failure metadata", () => {
       status: 502,
       failureMetadata: { clientErrorStatus: 502, unknownModelVerified: false },
     });
+    expect(saveRequestDetail).toHaveBeenCalledWith(expect.objectContaining({
+      terminalEvidence: { state: "unknown", reason: "response-rejected", source: "gateway-response" },
+    }));
+  });
+
+  it("persists native fetched HTTP rejection provenance through the managed chat core", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end('{"error":{"message":"fixture rejection"}}');
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.address().port}`);
+      mocks.execute.mockResolvedValueOnce({ response, url: response.url, headers: {}, transformedBody: {} });
+      const result = await handleChatCore(options());
+      expect(result.status).toBe(404);
+      expect(saveRequestDetail).toHaveBeenCalledWith(expect.objectContaining({ status: "error",
+        terminalEvidence: { state: "failed", reason: "upstream-http-error", source: "provider-http" },
+      }));
+    } finally { await new Promise((resolve) => server.close(resolve)); }
   });
 
   it("projects selected metadata through every credentialed all-rate-limited handler", async () => {

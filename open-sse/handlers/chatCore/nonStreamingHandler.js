@@ -1,3 +1,5 @@
+import { classifyJsonTerminalEvidence } from "../../../src/lib/db/terminalEvidence.js";
+import { createSseTerminalObserver, observeSseBody, providerStreamTerminalEvidence } from "../../utils/streamTerminal.js";
 import { recordContextFailure } from "./contextTelemetry.js";
 import { FORMATS } from "../../translator/formats.js";
 import { needsTranslation } from "../../translator/index.js";
@@ -640,18 +642,25 @@ function hasMultipleClassifierAlternatives(responseBody) {
  * Handle non-streaming response from provider.
  */
 export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, verificationContext, onValidationRequired, notifyTerminalVerificationSuccess: notifyTerminal, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, trackDone, appendLog, pxpipe, privacyFilter, reqTag, log, callerSignal, rid, route, fmt, sel, saverFields = {}, saverMeta = {}, contextTelemetry, preSaverSerialized, sid }) {
+  let responseEvidence = { state: "unknown", reason: "response-rejected", source: "gateway-response" };
   // HEADERS finding: gateway-built error responses carry the same x-tp-*
   // saver telemetry as successes.
   const saverErrorResult = (...args) => {
-    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, tokens: extractUsageFromResponse(responseBody) });
+    const failureEvidence = providerTerminalObserver ? providerStreamTerminalEvidence(providerTerminalObserver) : responseEvidence;
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, tokens: extractUsageFromResponse(responseBody),
+      terminalEvidence: failureEvidence.state === "failed" ? failureEvidence
+        : { state: "unknown", reason: "response-rejected", source: "gateway-response" } });
     args[3] = { ...args[3], safeToReplay: false };
     return withSaverHeaders(createErrorResult(...args), saverMeta);
   };
   const abortResult = () => {
-    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted" });
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted",
+      terminalEvidence: { state: "cancelled", reason: "caller-cancelled", source: "gateway-response" } });
     return withSaverHeaders(createCallerAbortResult(), saverMeta);
   };
   const contentType = providerResponse.headers.get("content-type") || "";
+  const providerTerminalObserver = contentType.includes("text/event-stream") ? createSseTerminalObserver(targetFormat) : null;
+  const providerBody = observeSseBody(providerResponse.body, providerTerminalObserver);
   const classifierMode = sourceFormat === FORMATS.CLAUDE
     && isClaudeClassifierRequest(body);
   let responseBody;
@@ -683,7 +692,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   if (contentType.includes("text/event-stream")) {
     if (provider === "antigravity") {
       try {
-        antigravitySseText = await readResponseTextWithDeadline({ body: providerResponse.body, callerSignal });
+        antigravitySseText = await readResponseTextWithDeadline({ body: providerBody, callerSignal });
       } catch (err) {
         const result = bodyReadFailure(err, "read Antigravity SSE");
         appendLog({ status: `FAILED ${result.status}` });
@@ -711,8 +720,8 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       try {
         if (antigravitySseText !== null) {
           responseBody = await convertResponsesStreamToJson(createSseTextStream(antigravitySseText));
-        } else if (classifierMode && typeof providerResponse.body?.tee === "function") {
-          const [conversionStream, projectionStream] = providerResponse.body.tee();
+        } else if (classifierMode && typeof providerBody?.tee === "function") {
+          const [conversionStream, projectionStream] = providerBody.tee();
           [responseBody, classifierProjection] = await Promise.all([
             consumeResponseBodyWithDeadline({
               body: conversionStream,
@@ -731,9 +740,9 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
           ]);
         } else {
           responseBody = await consumeResponseBodyWithDeadline({
-            body: providerResponse.body,
+            body: providerBody,
             callerSignal,
-            consume: (reader) => convertResponsesStreamToJson(providerResponse.body, { reader }),
+            consume: (reader) => convertResponsesStreamToJson(providerBody, { reader }),
           });
         }
       } catch (err) {
@@ -746,7 +755,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       if (antigravitySseText !== null) {
         sseText = antigravitySseText;
       } else try {
-        sseText = await readResponseTextWithDeadline({ body: providerResponse.body, callerSignal });
+        sseText = await readResponseTextWithDeadline({ body: providerBody, callerSignal });
       } catch (err) {
         const result = bodyReadFailure(err, "read SSE");
         appendLog({ status: `FAILED ${result.status}` });
@@ -772,13 +781,18 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     }
   } else {
     try {
-      responseBody = await readResponseJsonWithDeadline({ body: providerResponse.body, callerSignal });
+      responseBody = await readResponseJsonWithDeadline({ body: providerBody, callerSignal });
     } catch (err) {
       const result = bodyReadFailure(err, "parse JSON");
       appendLog({ status: `FAILED ${result.status}` });
       return result;
     }
   }
+
+  responseEvidence = contentType.includes("text/event-stream")
+    ? providerStreamTerminalEvidence(providerTerminalObserver)
+    : classifyJsonTerminalEvidence(responseBody, targetFormat);
+  providerTerminalObserver?.release();
 
   if (provider === "antigravity") {
     const validation = classifyAntigravityValidation({
@@ -821,14 +835,6 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     providerResponse.headers,
     provider === "antigravity" ? redactAntigravitySinkValue(responseBody) : responseBody,
   );
-
-  if (onRequestSuccess && provider !== "antigravity") {
-    Promise.resolve()
-      .then(onRequestSuccess)
-      .catch(err => {
-        console.error("[ChatCore] onRequestSuccess failed:", err?.message || err);
-      });
-  }
 
   // Decloak tool_use names once on raw Claude body, before any translation (INPUT side)
   responseBody = decloakToolNames(responseBody, toolNameMap);
@@ -979,7 +985,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     );
   }
 
-  if (onRequestSuccess && provider === "antigravity") {
+  if (onRequestSuccess && responseEvidence.state === "succeeded") {
     Promise.resolve()
       .then(onRequestSuccess)
       .catch(err => {
@@ -1013,16 +1019,16 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       finish_reason: translatedResponse?.choices?.[0]?.finish_reason || "unknown"
     },
     pxpipe,
-    status: "success",
+    status: responseEvidence.state === "succeeded" ? "success" : responseEvidence.state === "failed" ? "error" : "unknown",
     rid,
-  }, { endpoint: clientRawRequest?.endpoint || null });
+  }, { terminalEvidence: responseEvidence, endpoint: clientRawRequest?.endpoint || null });
   // saveRequestDetail mints detail.id synchronously (before its first await),
   // so the REQ line below can carry row=.
   saveRequestDetail(doneDetail).catch(() => {
     decide("ACCT", "detail-write-failed", { rid, phase: "save" });
   });
 
-  if (provider === "antigravity") {
+  if (provider === "antigravity" && responseEvidence.state === "succeeded") {
     await notifyTerminalVerificationSuccess(
       notifyTerminal,
       connectionId,
@@ -1034,7 +1040,8 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   // serialised body so text inside a tool call's `arguments` is covered too.
   // No filter (the default) returns the same string untouched.
   // The one nominal per-request line (doc §3.3/3.4).
-  reqSummary("ok", { ...saverFields, rid,
+  reqSummary(responseEvidence.state === "succeeded" ? "ok" : responseEvidence.state === "failed" ? "failed" : "unknown", { ...saverFields, rid,
+    ...(responseEvidence.state === "succeeded" ? {} : { status: providerResponse.status, why: responseEvidence.reason }),
     conn: connPrefix,
     route,
     fmt,

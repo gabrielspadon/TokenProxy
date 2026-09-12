@@ -313,7 +313,7 @@ describe("streaming: buildOnStreamComplete emissions", () => {
     ...over,
   });
 
-  it("flags estimated usage, locks the empty stream, and still emits REQ.ok", () => {
+  it("flags estimated usage, locks the empty stream, and keeps missing terminal proof unknown", () => {
     const { onStreamComplete, streamDetailId } = buildOnStreamComplete(streamCtx());
     onStreamComplete({ content: "", thinking: "" }, { estimated: true, prompt_tokens: 3, completion_tokens: 0 }, null, {});
     const streams = classLines("STREAM");
@@ -321,7 +321,7 @@ describe("streaming: buildOnStreamComplete emissions", () => {
     expect(streams.some((l) => l.includes("STREAM.empty") && l.includes("lock=true"))).toBe(true);
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
-    expect(reqs[0]).toContain("REQ.ok");
+    expect(reqs[0]).toContain("REQ.unknown");
     expect(reqs[0]).toContain(`row=${streamDetailId}`);
     expect(reqs[0]).toContain("in=3");
   });
@@ -332,7 +332,7 @@ describe("streaming: buildOnStreamComplete emissions", () => {
       { content: "partial", thinking: "" },
       { prompt_tokens: 3, completion_tokens: 1 },
       Date.now(),
-      { aborted: true }
+      { aborted: true, terminalEvidence: { state: "cancelled", reason: "caller-cancelled", source: "gateway-stream" } }
     );
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
@@ -347,7 +347,8 @@ describe("streaming: buildOnStreamComplete emissions", () => {
     onStreamAbandoned("stall_timeout");
     const streams = classLines("STREAM");
     expect(streams.some((l) => l.includes("STREAM.stalled") && l.includes("action=lock"))).toBe(true);
-    expect(reqLines()[0]).toContain("REQ.failed");
+    expect(reqLines()[0]).toContain("REQ.unknown");
+    expect(reqLines()[0]).not.toContain("status=502");
   });
 
   it("routes detail-write failures to ACCT with phases save-stream/update/finalize", async () => {

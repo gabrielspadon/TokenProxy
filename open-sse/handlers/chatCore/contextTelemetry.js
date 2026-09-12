@@ -37,11 +37,11 @@ export async function recordContextAttempt(contextTelemetry, fields) {
   }
   return saveRequestStats({ id: contextTelemetry.requestId, timestamp: contextTelemetry.timestamp,
     contextTelemetry, provider: fields.provider, model: fields.model, connectionId: fields.connectionId,
-    status: fields.status || "pending", tokens: fields.tokens ?? null, latency: fields.latency });
+    status: fields.status || "pending", tokens: fields.tokens ?? null, latency: fields.latency, terminalEvidence: fields.terminalEvidence });
 }
 
-export function recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status = "error", tokens = null }) {
+export function recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status = "error", tokens = null, terminalEvidence = null }) {
   if (!contextTelemetry) return;
-  return recordContextAttempt(contextTelemetry, { provider, model, connectionId, status, tokens,
+  return recordContextAttempt(contextTelemetry, { provider, model, connectionId, status, tokens, terminalEvidence,
     latency: { total: Date.now() - requestStartTime } });
 }

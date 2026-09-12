@@ -1,3 +1,4 @@
+import { createSseTerminalObserver, observeSseBody, providerStreamTerminalEvidence } from "../../utils/streamTerminal.js";
 import { recordContextFailure } from "./contextTelemetry.js";
 import { convertResponsesStreamToJson } from "../../transformer/streamToJsonConverter.js";
 import { createCallerAbortResult, createErrorResult, isCallerAbortError } from "../../utils/error.js";
@@ -412,6 +413,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
   if (!isSSE) return null; // not handled here
+  const providerTerminalObserver = createSseTerminalObserver(targetFormat);
+  const providerBody = observeSseBody(providerResponse.body, providerTerminalObserver);
+  const terminalEvidence = () => providerStreamTerminalEvidence(providerTerminalObserver);
 
   let antigravitySseText = null;
   const classifierMode = sourceFormat === FORMATS.CLAUDE
@@ -428,14 +432,17 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   // saver telemetry as successes.
   let contextFailureTokens = null;
   const saverErrorResult = (...args) => {
-    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, tokens: contextFailureTokens });
+    recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, tokens: contextFailureTokens,
+      terminalEvidence: terminalEvidence().state === "failed" ? terminalEvidence()
+        : { state: "unknown", reason: "response-rejected", source: "gateway-response" } });
     args[3] = { ...args[3], safeToReplay: false };
     return withSaverHeaders(createErrorResult(...args), saverMeta);
   };
   const bodyReadFailure = (error, context = "convert-sse-json") => {
     trackDoneOnce();
     if (callerSignal?.aborted && isCallerAbortError(error)) {
-      recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted", tokens: contextFailureTokens });
+      recordContextFailure(contextTelemetry, { provider, model, connectionId, requestStartTime, status: "aborted", tokens: contextFailureTokens,
+        terminalEvidence: { state: "cancelled", reason: "caller-cancelled", source: "gateway-response" } });
       return withSaverHeaders(createCallerAbortResult(), saverMeta);
     }
     if (isBodyReadTimeoutError(error)) {
@@ -454,7 +461,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
   if (provider === "antigravity") {
     try {
-      antigravitySseText = await readResponseTextWithDeadline({ body: providerResponse.body, callerSignal });
+      antigravitySseText = await readResponseTextWithDeadline({ body: providerBody, callerSignal });
     } catch (err) {
       const result = bodyReadFailure(err);
       appendLog({ status: `FAILED ${result.status}` });
@@ -493,7 +500,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       let jsonResponse;
       let classifierProjection = null;
       if (isGeminiSse) {
-        const sseText = antigravitySseText ?? await readResponseTextWithDeadline({ body: providerResponse.body, callerSignal });
+        const sseText = antigravitySseText ?? await readResponseTextWithDeadline({ body: providerBody, callerSignal });
         if (classifierMode) assertClassifierGeminiSseLossless(sseText);
         const parsed = parseGeminiSSEToOpenAIResponse(sseText, model, targetFormat, provider);
         if (!parsed) {
@@ -514,8 +521,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         jsonResponse = chatCompletionToResponses(parsed, customToolNames, responsesToolNameMap);
       } else if (antigravitySseText !== null) {
         jsonResponse = await convertResponsesStreamToJson(createSseTextStream(antigravitySseText));
-      } else if (classifierMode && typeof providerResponse.body?.tee === "function") {
-        const [conversionStream, projectionStream] = providerResponse.body.tee();
+      } else if (classifierMode && typeof providerBody?.tee === "function") {
+        const [conversionStream, projectionStream] = providerBody.tee();
         [jsonResponse, classifierProjection] = await Promise.all([
           consumeResponseBodyWithDeadline({
             body: conversionStream,
@@ -534,9 +541,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         ]);
       } else {
         jsonResponse = await consumeResponseBodyWithDeadline({
-          body: providerResponse.body,
+          body: providerBody,
           callerSignal,
-          consume: (reader) => convertResponsesStreamToJson(providerResponse.body, { reader }),
+          consume: (reader) => convertResponsesStreamToJson(providerBody, { reader }),
         });
       }
       contextFailureTokens = jsonResponse?.usage ?? null;
@@ -558,7 +565,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         return saverErrorResult(HTTP_STATUS.BAD_GATEWAY, ANTIGRAVITY_SAFE_ERROR_MESSAGE, null, null, rid);
       }
       trackDoneOnce();
-      if (onRequestSuccess) await onRequestSuccess();
+      if (onRequestSuccess && terminalEvidence().state === "succeeded") await onRequestSuccess();
 
       const usage = jsonResponse.usage || {};
       appendLog({ tokens: usage, status: "200 OK" });
@@ -575,21 +582,22 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         latency: { ttft: totalLatency, total: totalLatency },
         tokens: jsonResponse.usage ?? null,
         response: { content: textContent, thinking: null, finish_reason: jsonResponse.status || "unknown" },
-        status: "success",
+        status: terminalEvidence().state === "succeeded" ? "success" : terminalEvidence().state === "failed" ? "error" : "unknown",
         rid,
-      }, { endpoint: clientRawRequest?.endpoint || null });
+      }, { terminalEvidence: terminalEvidence(), endpoint: clientRawRequest?.endpoint || null });
       // saveRequestDetail mints detail.id synchronously (before its first await).
       saveRequestDetail(doneDetail).catch(() => {
         decide("ACCT", "detail-write-failed", { rid, phase: "save-json" });
       });
 
-      if (provider === "antigravity") {
+      if (provider === "antigravity" && terminalEvidence().state === "succeeded") {
         await notifyTerminalVerificationSuccess(notifyTerminal, connectionId, log);
       }
 
       // Client is Responses API → return as-is
       if (sourceFormat === FORMATS.OPENAI_RESPONSES) {
-        reqSummary("ok", { ...saverFields, rid,
+        reqSummary(terminalEvidence().state === "succeeded" ? "ok" : terminalEvidence().state === "failed" ? "failed" : "unknown", { ...saverFields, rid,
+        ...(terminalEvidence().state === "succeeded" ? {} : { status: providerResponse.status, why: terminalEvidence().reason }),
           conn: connPrefix,
           route,
           fmt,
@@ -713,7 +721,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         );
       }
 
-      reqSummary("ok", { ...saverFields, rid,
+      reqSummary(terminalEvidence().state === "succeeded" ? "ok" : terminalEvidence().state === "failed" ? "failed" : "unknown", { ...saverFields, rid,
+        ...(terminalEvidence().state === "succeeded" ? {} : { status: providerResponse.status, why: terminalEvidence().reason }),
         conn: connPrefix,
         route,
         fmt,
@@ -752,7 +761,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
   // Standard Chat Completions SSE path
   try {
-    const sseText = antigravitySseText ?? await readResponseTextWithDeadline({ body: providerResponse.body, callerSignal });
+    const sseText = antigravitySseText ?? await readResponseTextWithDeadline({ body: providerBody, callerSignal });
     let parsed = parseSSEToOpenAIResponse(sseText, model);
     if (!parsed) {
       trackDoneOnce();
@@ -791,7 +800,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     }
 
     trackDoneOnce();
-    if (onRequestSuccess) await onRequestSuccess();
+    if (onRequestSuccess && terminalEvidence().state === "succeeded") await onRequestSuccess();
 
     const usage = parsed.usage || {};
     appendLog({ tokens: usage, status: "200 OK" });
@@ -808,9 +817,9 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
         thinking: parsed.choices?.[0]?.message?.reasoning_content || null,
         finish_reason: parsed.choices?.[0]?.finish_reason || "unknown"
       },
-      status: "success",
+      status: terminalEvidence().state === "succeeded" ? "success" : terminalEvidence().state === "failed" ? "error" : "unknown",
       rid,
-    }, { endpoint: clientRawRequest?.endpoint || null });
+    }, { terminalEvidence: terminalEvidence(), endpoint: clientRawRequest?.endpoint || null });
     // saveRequestDetail mints detail.id synchronously (before its first await).
     saveRequestDetail(doneDetail).catch(() => {
       decide("ACCT", "detail-write-failed", { rid, phase: "save-json" });
@@ -860,11 +869,12 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
       finalBody = validateClaudeClassifierMessage(body, finalBody, null);
     }
 
-    if (provider === "antigravity") {
+    if (provider === "antigravity" && terminalEvidence().state === "succeeded") {
       await notifyTerminalVerificationSuccess(notifyTerminal, connectionId, log);
     }
 
-    reqSummary("ok", { ...saverFields, rid,
+    reqSummary(terminalEvidence().state === "succeeded" ? "ok" : terminalEvidence().state === "failed" ? "failed" : "unknown", { ...saverFields, rid,
+        ...(terminalEvidence().state === "succeeded" ? {} : { status: providerResponse.status, why: terminalEvidence().reason }),
       conn: connPrefix,
       route,
       fmt,

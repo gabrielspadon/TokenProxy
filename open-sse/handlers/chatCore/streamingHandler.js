@@ -4,7 +4,7 @@ import { needsTranslation } from "../../translator/index.js";
 import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger } from "../../utils/stream.js";
 import { restoreResponseStream } from "../../utils/privacyFilter.js";
 import { pipeWithDisconnect } from "../../utils/streamHandler.js";
-import { createSseTerminalObserver } from "../../utils/streamTerminal.js";
+import { createSseTerminalObserver, observeSseBody } from "../../utils/streamTerminal.js";
 import { createCallerAbortResult } from "../../utils/error.js";
 import { saverTelemetryHeaders, withSaverHeaders } from "./saverHeaders.js";
 import { PROVIDERS } from "../../config/providers.js";
@@ -347,17 +347,6 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     firstChunk = new TextEncoder().encode(bufferedAntigravityJson);
   }
 
-  // Non-Antigravity streams can clear account health after their first valid
-  // event. Antigravity must wait for terminal completion because a later SSE
-  // frame can still be a validation challenge.
-  if (onRequestSuccess && provider !== "antigravity") {
-    Promise.resolve()
-      .then(onRequestSuccess)
-      .catch(err => {
-        console.error("[ChatCore] onRequestSuccess failed:", err?.message || err);
-      });
-  }
-
   // Reconstruct the upstream stream with the buffered first chunk prepended.
   // Antigravity frames are parsed before every downstream sink, not only once.
   let responseBodyStream = bufferedAntigravityJson == null
@@ -403,20 +392,20 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     }
   }
 
-  let antigravityRequestSuccessNotified = false;
+  let requestSuccessNotified = false;
   const providerTerminalObserver = createSseTerminalObserver(targetFormat);
   let emittedTerminalObserver = null;
   let pendingCompletion = null;
   let completionDelivered = false;
-  const notifyAntigravitySuccess = (...args) => {
-    if (provider !== "antigravity" || antigravityRequestSuccessNotified || typeof onRequestSuccess !== "function") return;
+  const notifyRequestSuccess = (...args) => {
+    if (requestSuccessNotified || typeof onRequestSuccess !== "function") return;
     const [contentObj, usage, , { aborted = false } = {}] = args;
     if (aborted || !(contentObj?.content?.trim?.() || contentObj?.thinking?.trim?.() || hasOutputTokens(usage))) return;
-    antigravityRequestSuccessNotified = true;
+    requestSuccessNotified = true;
     Promise.resolve()
       .then(onRequestSuccess)
       .catch(() => {
-        console.error("[ChatCore] onRequestSuccess failed:", ANTIGRAVITY_SAFE_ERROR_MESSAGE);
+        console.error("[ChatCore] onRequestSuccess failed");
       });
   };
   const captureTransformCompletion = (...args) => {
@@ -444,7 +433,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
             : emittedOutcome?.state === "unknown" ? emittedOutcome.reason : "unsupported-terminal", source: "gateway-stream" };
     pendingCompletion[3] = { ...pendingCompletion[3], terminalEvidence };
     onStreamComplete?.(...pendingCompletion);
-    if (terminalEvidence.state === "succeeded" || terminalEvidence.reason === "unsupported-terminal") notifyAntigravitySuccess(...pendingCompletion);
+    if (terminalEvidence.state === "succeeded") notifyRequestSuccess(...pendingCompletion);
   };
   const completionAwareController = {
     ...streamController,
@@ -470,9 +459,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
   const wrappedResponse = {
     ...providerResponse,
-    body: providerTerminalObserver ? responseBodyStream.pipeThrough(new TransformStream({
-      transform(chunk, controller) { providerTerminalObserver.observe(chunk); controller.enqueue(chunk); },
-    })) : responseBodyStream,
+    body: observeSseBody(responseBodyStream, providerTerminalObserver),
     headers: providerResponse.headers,
   };
   const transformedBody = pipeWithDisconnect(wrappedResponse, transformStream, completionAwareController, {
@@ -599,7 +586,8 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     }
   };
 
-  const onStreamComplete = (contentObj, usage, ttftAt, { aborted = false, terminalEvidence = null } = {}) => {
+  const onStreamComplete = (contentObj, usage, ttftAt, { aborted = false,
+    terminalEvidence = { state: "unknown", reason: "missing-terminal", source: "gateway-stream" } } = {}) => {
     if (completed) return;
     completed = true;
     const latency = {
@@ -646,15 +634,17 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
     saveUsageStats({ contextTelemetry, usageFinality: aborted ? "partial" : "final", provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: aborted ? "STREAM USAGE (aborted)" : "STREAM USAGE", silent: true, rid, preSaverSerialized, sid });
-    // The one nominal per-request line (doc §3.3/3.4): success is REQ.ok,
-    // an aborted/interrupted completion is REQ.failed — exactly one, never both.
+    // Preserve semantic uncertainty independently of the HTTP 200 transport.
     if (usage?.estimated) decide("STREAM", "usage-estimated", { rid, conn: connPrefix(), why: "provider-omitted-usage" });
-    if (aborted) {
+    if (terminalEvidence.state === "unknown") {
+      reqSummary("unknown", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, row: streamDetailId,
+        ...doneFields({ usage, latency }), status: 200, why: terminalEvidence.reason });
+    } else if (aborted) {
       reqSummary("failed", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, status: 499, why: "aborted" });
-    } else if (!terminalEvidence || terminalEvidence.state === "succeeded") {
+    } else if (terminalEvidence.state === "succeeded") {
       reqSummary("ok", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, row: streamDetailId, ...doneFields({ usage, latency }) });
     } else {
-      reqSummary("failed", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, status: 502, why: terminalEvidence.reason });
+      reqSummary("failed", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, status: 200, why: terminalEvidence.reason });
     }
 
     if (!contentObj?.content?.trim?.() && !contentObj?.thinking?.trim?.() && !hasOutputTokens(usage)) {
@@ -665,7 +655,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     if (
       provider === "antigravity"
       && !aborted
-      && (!terminalEvidence || terminalEvidence.state === "succeeded" || terminalEvidence.reason === "unsupported-terminal")
+      && terminalEvidence.state === "succeeded"
       && (contentObj?.content?.trim?.() || contentObj?.thinking?.trim?.() || hasOutputTokens(usage))
     ) {
       notifyTerminalVerificationSuccess(notifyTerminal, connectionId, log);
@@ -710,12 +700,13 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       saveUsageStats({ contextTelemetry, usageFinality: "partial", provider, model, tokens, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, requestedModel: clientRawRequest?.body?.model, translatedBody, label: "STREAM USAGE (interrupted)", silent: true });
     }
     if (log?.line) log.line(reqTag, "✗", `INTERRUPTED ${reason || "unknown"}`);
-    reqSummary("failed", { ...saverFields, rid,
+    const callerCancelled = ["client_disconnect", "client_disconnected", "caller_abort"].includes(reason);
+    reqSummary(callerCancelled ? "failed" : "unknown", { ...saverFields, rid,
       conn: connPrefix(),
       route,
       fmt,
       sel,
-      status: reason === "client_disconnect" || reason === "caller_abort" ? 499 : 502,
+      status: callerCancelled ? 499 : 200,
       why: String(reason || "unknown").slice(0, 40),
     });
 

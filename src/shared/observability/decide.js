@@ -69,7 +69,7 @@ export const VERDICTS = Object.freeze({
   STREAM: Object.freeze(['stalled', 'empty', 'non-sse', 'terminal-synthesized', 'usage-estimated', 'detail-pending']),
   ACCT: Object.freeze(['detail-write-failed', 'alias-dropped']),
   DRAIN: Object.freeze(['begin', 'end']),
-  REQ: Object.freeze(['ok', 'failed', 'refused']),
+  REQ: Object.freeze(['ok', 'failed', 'refused', 'unknown']),
   LOG: Object.freeze(['throttled', 'resumed', 'sink-failed', 'unknown-verdict', 'boot']),
 });
 
