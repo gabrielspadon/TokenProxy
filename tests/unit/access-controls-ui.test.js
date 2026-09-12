@@ -13,7 +13,7 @@ vi.mock('@/shared/hooks/usePoll', () => ({
     refresh: fixture.refresh,
   }),
 }));
-const { default: AccessPage } = await import('@/app/dashboard/access/page.js');
+const { default: AccessPage, routeRevokedSession } = await import('@/app/dashboard/access/page.js');
 let root, container, fetchMock, reply, readback;
 const writes = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
 // Access is a board. A method's settings live in its own card, which opens in
@@ -225,4 +225,12 @@ it('keeps a failed sign-in status visible and retryable while editing single sig
   await act(async () => retry.click());
   expect(fixture.refresh).toHaveBeenCalledTimes(1);
   expect(writes()).toHaveLength(0);
+});
+
+it('routes an acknowledged session revocation to sign-in without re-reading protected settings', () => {
+  const location = { assign: vi.fn() };
+  expect(routeRevokedSession({ sessionRevoked: true, redirectTo: '/login' }, location)).toBe(true);
+  expect(location.assign).toHaveBeenCalledWith('/login');
+  expect(routeRevokedSession({ success: true }, location)).toBe(false);
+  expect(location.assign).toHaveBeenCalledTimes(1);
 });

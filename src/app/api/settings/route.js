@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getProxyPoolById, getSettings, getProviderConnectionById, updateProviderStrategy, updateSettings } from "@/lib/localDb";
+import { clearDashboardAuthCookie, createDashboardSessionGeneration } from "@/lib/auth/dashboardSession";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { isValidConnectTimeoutMs } from "open-sse/config/connectTimeout.js";
@@ -273,9 +275,11 @@ export async function PATCH(request) {
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
 
     // If updating password, hash it
+    let passwordChanged = false;
+    let settingsBeforeAuthChange = null;
     if (body.newPassword) {
-      const settings = await getSettings();
-      const currentHash = settings.password;
+      settingsBeforeAuthChange = await getSettings();
+      const currentHash = settingsBeforeAuthChange.password;
 
       // Verify current password if it exists
       if (currentHash) {
@@ -298,6 +302,7 @@ export async function PATCH(request) {
       body.password = await bcrypt.hash(body.newPassword, salt);
       delete body.newPassword;
       delete body.currentPassword;
+      passwordChanged = true;
     }
 
     if (Object.prototype.hasOwnProperty.call(body, "oidcClientSecret")) {
@@ -306,7 +311,24 @@ export async function PATCH(request) {
       }
     }
 
-    const settings = await updateSettings(body);
+    const authModeKeys = ["authMode", "ssoType", "requireLogin"];
+    const requestedAuthModeKeys = authModeKeys.filter((key) => Object.hasOwn(body, key));
+    if (requestedAuthModeKeys.length > 0 && !settingsBeforeAuthChange) {
+      settingsBeforeAuthChange = await getSettings();
+    }
+    const authModeChanged = requestedAuthModeKeys.some(
+      (key) => body[key] !== settingsBeforeAuthChange?.[key],
+    );
+    const revokeSessions = passwordChanged || authModeChanged;
+    const settings = await updateSettings(
+      body,
+      revokeSessions
+        ? {
+            durability: "critical",
+            dashboardSessionGeneration: createDashboardSessionGeneration(),
+          }
+        : undefined,
+    );
 
     // Refresh the in-memory contextWindow override map so dashboard edits apply
     // immediately (no restart). Import here — open-sse capabilities is a cold
@@ -359,7 +381,16 @@ export async function PATCH(request) {
         .catch((error) => console.warn("[FreeModelSync] settings update failed:", error.message));
     }
 
-    return NextResponse.json(toSafeSettings(settings), { headers: SETTINGS_RESPONSE_HEADERS });
+    const responseBody = {
+      ...toSafeSettings(settings),
+      ...(revokeSessions
+        ? { sessionRevoked: true, redirectTo: "/login" }
+        : {}),
+    };
+    if (revokeSessions) {
+      clearDashboardAuthCookie(await cookies());
+    }
+    return NextResponse.json(responseBody, { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

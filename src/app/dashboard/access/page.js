@@ -81,6 +81,12 @@ function passwordRefusal(status, body) {
   return refusal(status, body);
 }
 
+export function routeRevokedSession(body, location = window.location) {
+  if (body?.sessionRevoked !== true) return false;
+  location.assign(body.redirectTo || '/login');
+  return true;
+}
+
 function Unreported({ why }) {
   return (
     <>
@@ -180,6 +186,7 @@ export default function AccessPage() {
       setFailure(body.newPassword ? passwordRefusal(res.status, res.body) : refusal(res.status, res.body));
       return;
     }
+    if (routeRevokedSession(res.body)) return;
     if (url === '/api/settings' && !body.newPassword) {
       setBusy(true);
       const readback = await call('/api/settings');
@@ -472,7 +479,7 @@ export default function AccessPage() {
                     ? 'The password this gateway uses now.'
                     : 'Nothing. No password is stored yet.',
                   changes:
-                    'Every sign-in after this one uses the new password. Sessions already issued keep working until they expire.',
+                    'Every existing session, including this one, ends after the new password is stored. Sign in again with the new password.',
                   undo: 'The old password cannot be recovered.',
                   irreversible: true,
                   onConfirm: () =>
@@ -497,7 +504,7 @@ export default function AccessPage() {
                   verb: 'Clear stored password',
                   requires: 'A request from the machine that runs the gateway, or the command-line token.',
                   changes:
-                    'The stored password is cleared. The next sign-in uses the process startup password, or the built-in default when none is configured. Remote sign-in is refused only for the built-in default.',
+                    'The stored password is cleared and every existing session ends. The next sign-in uses the process startup password, or the built-in default when none is configured. Remote sign-in is refused only for the built-in default.',
                   undo: 'The old password cannot be recovered.',
                   irreversible: true,
                   onConfirm: () =>

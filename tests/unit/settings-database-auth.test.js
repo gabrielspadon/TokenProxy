@@ -113,4 +113,14 @@ describe("settings/database auth gate", () => {
     expect(res.status).toBe(401);
     expect(mocks.exportDb).not.toHaveBeenCalled();
   });
+
+  it("rejects a stale dashboard cookie even when the supplied password is correct", async () => {
+    mocks.hasValidCliToken.mockResolvedValue(false);
+    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+    mocks.verifyDashboardPassword.mockResolvedValue(true);
+
+    const res = await GET(request({ jwt: "stale.generation.token", password: "secret" }));
+    expect(res.status).toBe(401);
+    expect(mocks.exportDb).not.toHaveBeenCalled();
+  });
 });

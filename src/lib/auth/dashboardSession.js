@@ -1,11 +1,15 @@
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "@/lib/dataDir";
 import { getSettings } from "@/lib/localDb";
+import { getAdapter } from "@/lib/db/driver.js";
 
 const DEFAULT_PASSWORD = "123456";
+const DASHBOARD_SESSION_GENERATION_KEY = "dashboardSessionGeneration";
+const INITIAL_SESSION_GENERATION = "initial";
 
 function loadJwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -17,6 +21,18 @@ function loadJwtSecret() {
 
 const SECRET = new TextEncoder().encode(loadJwtSecret());
 
+async function readDashboardSessionGeneration() {
+  const db = await getAdapter();
+  return db.get(
+    "SELECT value FROM _meta WHERE key = ?",
+    [DASHBOARD_SESSION_GENERATION_KEY],
+  )?.value ?? null;
+}
+
+export function createDashboardSessionGeneration() {
+  return randomUUID();
+}
+
 export function shouldUseSecureCookie(request) {
   const forceSecureCookie = process.env.AUTH_COOKIE_SECURE === "true";
   const forwardedProto = request?.headers?.get?.("x-forwarded-proto");
@@ -25,7 +41,12 @@ export function shouldUseSecureCookie(request) {
 }
 
 export async function createDashboardAuthToken(claims = {}) {
-  return new SignJWT({ authenticated: true, ...claims })
+  const generation = await readDashboardSessionGeneration();
+  return new SignJWT({
+    ...claims,
+    authenticated: true,
+    sessionGeneration: generation ?? INITIAL_SESSION_GENERATION,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("24h")
@@ -33,19 +54,25 @@ export async function createDashboardAuthToken(claims = {}) {
 }
 
 export async function verifyDashboardAuthToken(token) {
-  if (!token) return false;
-  try {
-    await jwtVerify(token, SECRET);
-    return true;
-  } catch {
-    return false;
-  }
+  return !!(await getDashboardAuthSession(token));
 }
 
 export async function getDashboardAuthSession(token) {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, SECRET);
+    const generation = await readDashboardSessionGeneration();
+    const issuedGeneration = payload.sessionGeneration;
+    if (generation === null) {
+      // Preserve tokens issued before this persisted revocation mechanism was
+      // introduced. The first acknowledged revocation creates the meta row and
+      // invalidates every such legacy token.
+      if (issuedGeneration !== undefined && issuedGeneration !== INITIAL_SESSION_GENERATION) {
+        return null;
+      }
+    } else if (issuedGeneration !== generation) {
+      return null;
+    }
     return payload;
   } catch {
     return null;

@@ -256,11 +256,34 @@ export async function getSettings() {
 }
 
 // Atomic read-merge-write inside transaction (prevents losing concurrent updates)
-export async function updateSettings(updates) {
+export async function updateSettings(
+  updates,
+  { durability, dashboardSessionGeneration } = {},
+) {
+  if (durability !== undefined && durability !== "critical") {
+    throw new TypeError(`Unsupported settings durability mode: ${durability}`);
+  }
+  if (
+    dashboardSessionGeneration !== undefined
+    && (durability !== "critical"
+      || typeof dashboardSessionGeneration !== "string"
+      || !dashboardSessionGeneration)
+  ) {
+    throw new TypeError("Dashboard session revocation requires a critical generation write");
+  }
   const tracked = CONFIG_SETTINGS_KEYS.some(key => Object.hasOwn(updates, key));
   const db = await getAdapter();
+  const transact = durability === "critical"
+    ? db.criticalTransaction?.bind(db)
+    : db.transaction.bind(db);
+  if (!transact) {
+    throw Object.assign(
+      new Error("Critical settings persistence is unavailable for this database driver"),
+      { code: "CRITICAL_TRANSACTION_UNSUPPORTED" },
+    );
+  }
   let next;
-  db.transaction(configurationDomainMutation(db, 'repo.settings.update', function () {
+  transact(configurationDomainMutation(db, 'repo.settings.update', function () {
     const before = tracked ? readRoutingConfig(db) : null;
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? asSettingsObject(parseJson(row.data, {})) : {};
@@ -299,6 +322,12 @@ export async function updateSettings(updates) {
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)],
     );
+    if (dashboardSessionGeneration !== undefined) {
+      db.run(
+        "INSERT INTO _meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ["dashboardSessionGeneration", dashboardSessionGeneration],
+      );
+    }
     if (tracked) recordConfigMutation(db, before, "repo.settings.update");
   }));
   return mergeWithDefaults(next);

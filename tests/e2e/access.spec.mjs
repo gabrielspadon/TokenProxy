@@ -148,3 +148,27 @@ test('a refused settings read renders as its own sentence, not a raw status', as
   await expect(page.getByText('This action is not allowed from here.')).toBeVisible();
   await expect(page.locator('body')).not.toContainText('HTTP 403');
 });
+
+test('an acknowledged password change clears the initiating session and routes to sign-in', async ({ page, context, baseURL }) => {
+  test.setTimeout(180000);
+  page.setDefaultTimeout(20000);
+  const { runtime, writes } = await fixture({ page, context, baseURL });
+  await page.route('**/api/settings', route =>
+    route.request().method() === 'PATCH'
+      ? route.fulfill(json(200, { sessionRevoked: true, redirectTo: '/login' }))
+      : route.fallback()
+  );
+  await open(page, runtime);
+  await page.getByRole('button', { name: 'Expand Password' }).click();
+  const card = page.locator('article[data-account-id="password"]');
+  await card.getByLabel('Current password').fill('synthetic-current');
+  await card.getByLabel('New password', { exact: true }).fill('synthetic-next');
+  await card.getByLabel('New password again').fill('synthetic-next');
+  await card.getByRole('button', { name: 'Change password' }).click();
+  await page.getByRole('group', { name: 'Change password' })
+    .getByRole('button', { name: 'Change password' })
+    .click();
+
+  await expect(page).toHaveURL(`${runtime.url}/login`);
+  expect(writes).toContainEqual({ path: '/api/settings', method: 'PATCH' });
+});
