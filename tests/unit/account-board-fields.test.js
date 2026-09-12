@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { MantineProvider, Tooltip } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CommitNumber, NameField } from '@/shared/workspace/CommitFields';
+import { QuotaLine } from '@/app/dashboard/QuotaLine';
 
 let root, container;
 beforeEach(() => {
@@ -29,6 +30,25 @@ async function type(value) {
 }
 const key = (name) => act(async () => input().dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true })));
 const blur = () => act(async () => input().dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
+
+it.each([
+  [-1, '0', 'depleted', false],
+  [0, '100', 'good', true],
+  [1000, '100', 'good', true],
+  [16 * 60_000, '0', 'depleted', false],
+])('keeps quota meter, label and estimated reset evidence consistent at offset %i', async (offset, value, level, estimated) => {
+  const resetAt = Date.parse('2026-01-01T12:00:00Z');
+  const window = { key: 'session (5h)', label: 'Session', remaining: 0,
+    resetAt: new Date(resetAt).toISOString(), observedAt: new Date(resetAt - 60_000).toISOString() };
+  await render(<QuotaLine window={window} now={resetAt + offset} onInspect={() => {}} />);
+  const meter = container.querySelector('[role="meter"]');
+  expect(meter.getAttribute('aria-valuenow')).toBe(value);
+  expect(meter.firstElementChild.style.width).toBe(`${value}%`);
+  expect(container.querySelector('[data-level]').getAttribute('data-level')).toBe(level);
+  expect(meter.getAttribute('aria-valuetext').startsWith('Estimated')).toBe(estimated);
+  expect(container.textContent).toContain(`${estimated ? '≈' : ''}${value}%`);
+  expect(container.querySelector('button').title.includes('last observed 0%')).toBe(estimated);
+});
 
 it('commits a changed number on Enter and on blur, once each, and never an unchanged one', async () => {
   const onCommit = vi.fn();

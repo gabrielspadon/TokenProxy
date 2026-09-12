@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // P-F2: a quota cache miss used to await a live provider fetch (3s timeout)
 // INSIDE the serialized selection queue, stalling every admission of the
@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // revalidate) and the refresh runs deduped in the background; concurrent
 // misses share one fetch. Fail-open is preserved: a rejecting refresh never
 // throws into the caller.
+
+vi.mock("@/lib/db/repos/quotaHistoryRepo.js", () => ({ retainQuotaUsage: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock("open-sse/services/usage.js", () => ({
   getUsageForProvider: vi.fn(),
@@ -15,18 +17,30 @@ vi.mock("@/lib/network/connectionProxy", () => ({
 }));
 vi.mock("@/lib/localDb", () => ({
   updateProviderConnection: vi.fn().mockResolvedValue(undefined),
+  updateConnectionProxyPoolSnapshotIfBound: vi.fn().mockResolvedValue(undefined),
 }));
 
+import { retainQuotaUsage } from "@/lib/db/repos/quotaHistoryRepo.js";
 import { evaluateQuota, _clearQuotaCache } from "@/sse/services/quotaGuard.js";
 import { getUsageForProvider } from "open-sse/services/usage.js";
+import { updateProviderConnection } from '@/lib/localDb';
+import { withRequestLifetime } from 'open-sse/utils/requestLifetime.js';
+import { quotaEvidenceIdentity } from '@/sse/services/quotaEvidenceIdentity.js';
 
-const okConn = (over = {}) => ({
+const okConn = (over = {}) => {
+  const connection = {
   id: "c-pf2",
   provider: "claude",
   authType: "oauth",
   quotaPauseThresholds: {},
   ...over,
-});
+  };
+  if (connection.lastQuotaSnapshot && !connection.lastQuotaSnapshot.evidenceIdentity) {
+    connection.lastQuotaSnapshot = { ...connection.lastQuotaSnapshot,
+      evidenceIdentity: quotaEvidenceIdentity(connection, { strictProxy: false }) };
+  }
+  return connection;
+};
 
 const staleSnapshot = () => ({
   windows: [{ key: "session (5h)", remainingPercentage: 20, resetAt: null, unlimited: false }],
@@ -37,8 +51,41 @@ beforeEach(() => {
   vi.clearAllMocks();
   _clearQuotaCache();
 });
+afterEach(() => { _clearQuotaCache(); vi.useRealTimers(); });
 
 describe("quota evidence stale-while-revalidate (P-F2)", () => {
+  it('releases a refresh owner whose retention write never settles', async () => {
+    vi.useFakeTimers();
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    retainQuotaUsage.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = evaluateQuota(okConn());
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(pending).resolves.toMatchObject({ reason: 'no-data', failureClass: 'timeout' });
+    await vi.advanceTimersByTimeAsync(5001);
+    await evaluateQuota(okConn());
+    expect(getUsageForProvider).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not use unbound legacy quota as current credential evidence after a cold start', async () => {
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    const connection = okConn({ accessToken: 'current-token' });
+    connection.lastQuotaSnapshot = staleSnapshot();
+    const result = await evaluateQuota(connection);
+    expect(result).toMatchObject({ reason: 'no-data', snapshot: null });
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an old credential observation after caches are cleared', async () => {
+    const old = okConn({ accessToken: 'old-token' });
+    const snapshot = { ...staleSnapshot(), fetchedAt: new Date().toISOString(),
+      evidenceIdentity: quotaEvidenceIdentity(old, { strictProxy: false }) };
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    _clearQuotaCache();
+    const result = await evaluateQuota({ ...old, accessToken: 'new-token', lastQuotaSnapshot: snapshot });
+    expect(result).toMatchObject({ reason: 'no-data', snapshot: null });
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("serves a stale snapshot synchronously and refreshes in the background", async () => {
     let resolveFetch;
     getUsageForProvider.mockImplementation(
@@ -97,5 +144,71 @@ describe("quota evidence stale-while-revalidate (P-F2)", () => {
     const r = await evaluateQuota(okConn({ quotaPauseThresholds: { "session (5h)": 15 } }));
     expect(r.paused).toBe(false);
     expect(r.reason).toBe("no-data");
+  });
+
+  it.each(['empty', 'fetch-error'])('briefly caches a classified %s response without inventing quota', async failureClass => {
+    vi.useFakeTimers();
+    if (failureClass === 'empty') getUsageForProvider.mockResolvedValue({ quotas: {} });
+    else getUsageForProvider.mockRejectedValue(new Error('provider unavailable'));
+    const conn = okConn();
+    for (let i = 0; i < 20; i++) {
+      expect(await evaluateQuota(conn)).toMatchObject({ paused: false, reason: 'no-data', failureClass, snapshot: null, rawUsage: null });
+    }
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    await evaluateQuota(conn);
+    expect(getUsageForProvider).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates a negative read when credentials or route configuration change', async () => {
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    await evaluateQuota(okConn({ accessToken: 'test-token-a' }));
+    await evaluateQuota(okConn({ accessToken: 'test-token-b' }));
+    await evaluateQuota(okConn({ accessToken: 'test-token-b', providerSpecificData: { proxyPoolId: 'other-pool' } }));
+    expect(getUsageForProvider).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not reuse an older successful snapshot after credential rotation', async () => {
+    const snapshot = { ...staleSnapshot(), fetchedAt: new Date().toISOString() };
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    const original = okConn({ accessToken: 'test-token-a', lastQuotaSnapshot: snapshot });
+    await evaluateQuota(original);
+    expect(getUsageForProvider).not.toHaveBeenCalled();
+    const result = await evaluateQuota({ ...original, accessToken: 'test-token-b' });
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ reason: 'no-data', snapshot: null });
+  });
+
+  it('releases one cancelled waiter without cancelling the shared read', async () => {
+    const started = Promise.withResolvers(), fetched = Promise.withResolvers();
+    getUsageForProvider.mockImplementation(() => { started.resolve(); return fetched.promise; });
+    const cancelled = new AbortController();
+    const first = withRequestLifetime(cancelled.signal, () => evaluateQuota(okConn())).catch(error => error);
+    await started.promise;
+    const second = evaluateQuota(okConn());
+    cancelled.abort(new DOMException('fixture cancelled', 'AbortError'));
+    expect((await first).name).toBe('AbortError');
+    expect(getUsageForProvider.mock.calls[0][2].signal.aborted).toBe(false);
+    fetched.resolve({ quotas: { weekly: { remainingPercentage: 90, total: 100 } } });
+    expect((await second).snapshot.windows[0].remainingPercentage).toBe(90);
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it('times out once, clears its timer, and ignores a late provider completion', async () => {
+    vi.useFakeTimers();
+    const started = Promise.withResolvers(), fetched = Promise.withResolvers();
+    getUsageForProvider.mockImplementation(() => { started.resolve(); return fetched.promise; });
+    const result = evaluateQuota(okConn());
+    await started.promise;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(await result).toMatchObject({ reason: 'no-data', failureClass: 'timeout', snapshot: null });
+    expect(getUsageForProvider.mock.calls[0][2].signal.aborted).toBe(true);
+    const timers = vi.getTimerCount();
+    fetched.resolve({ quotas: { weekly: { remainingPercentage: 90, total: 100 } } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(updateProviderConnection).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(timers);
+    expect(await evaluateQuota(okConn())).toMatchObject({ failureClass: 'timeout' });
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,7 +3,11 @@
 // back-fill stamping, the endpoint backfill upsert, per-connection daily
 // usage, history reads with masked keys, the 24h chart buckets, recent logs,
 // and the spend window. Real SQLite in this file's isolated DATA_DIR.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+
+// These fixtures exercise production display behavior. Origin-boundary tests
+// separately prove that actual test processes cannot self-label their rows.
+vi.mock('../../src/lib/db/telemetryOrigin.js', () => ({ processTelemetryOrigin: () => 'production' }));
 
 const { DATA_FILE } = await import('../../src/lib/db/paths.js');
 const { getAdapter } = await import('../../src/lib/db/driver.js');
@@ -289,12 +293,14 @@ describe('logs, spend, health', () => {
     expect(parts[2]).toBe(parts[2].toUpperCase());
   });
 
-  it('getSpendWindow reports the sample count with the sum', async () => {
+  it('getSpendWindow reports priced and unknown coverage beside the sum', async () => {
     const w = await getSpendWindow(iso(60));
     expect(w.samples).toBe(
       db.get(`SELECT COUNT(*) AS c FROM usageHistory WHERE timestamp >= ?`, [iso(60)]).c
     );
-    expect(w.spendUsd).toBeGreaterThanOrEqual(0);
+    expect(w.pricedSamples + w.unknownSamples).toBe(w.samples);
+    if (w.pricedSamples) expect(w.spendUsd).toBeGreaterThanOrEqual(0);
+    else expect(w.spendUsd).toBeNull();
     expect((await getSpendWindow(new Date(now + 3600000).toISOString())).samples).toBe(0);
   });
 

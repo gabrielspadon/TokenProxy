@@ -7,7 +7,7 @@ import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 // the antigravity projectId cold-miss path. Upstream dispatch (handleChatCore)
 // and account selection are mocked; expectations read the mocks' captured
 // arguments rather than literals where the handler owns the wiring.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
   clearAccountError: vi.fn(),
@@ -99,8 +99,8 @@ const { handleChat: rawHandleChat, providerConcurrencyOverflow, readAttemptCeili
   await import('@/sse/handlers/chat.js');
 const handleChat = trackResponseLifetime(rawHandleChat);
 
-function request(body = { model: 'prov/m', messages: [] }, headers = {}) {
-  return new Request('http://localhost/v1/chat/completions', {
+function request(body = { model: 'prov/m', messages: [] }, headers = {}, endpoint = '/v1/chat/completions') {
+  return new Request(`http://localhost${endpoint}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -142,6 +142,85 @@ beforeEach(() => {
   authMocks.getProviderCredentials.mockResolvedValue(null);
 });
 
+afterEach(() => vi.useRealTimers());
+
+describe('fallback deadline across preparation', () => {
+  it('refuses a connection repurposed or disabled during proactive refresh', async () => {
+    authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'changed', providerSpecificData: {} });
+    refreshMocks.checkAndRefreshToken.mockRejectedValueOnce(Object.assign(new Error('Selected connection changed'), {
+      code: 'CREDENTIAL_SELECTION_CHANGED', retryable: false,
+    }));
+    const response = await handleChat(request());
+    expect(response.status).toBe(503);
+    expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledOnce();
+  });
+  it.each(['settings', 'model', 'combo', 'augmentation'])('bounds a stalled %s lookup before account reservation', async stage => {
+    vi.useFakeTimers();
+    const stalled = () => new Promise(() => {});
+    if (stage === 'settings') settingsMocks.getSettings.mockImplementation(stalled);
+    if (stage === 'model') modelMocks.getModelInfo.mockImplementation(stalled);
+    if (stage === 'combo') modelMocks.getComboModels.mockImplementation(stalled);
+    if (stage === 'augmentation') {
+      capacityMocks.augmentModelsWithCapacityAdapter.mockReturnValue(['prov/m', 'other/m']);
+      authMocks.getReachableProviders.mockImplementation(stalled);
+    }
+    const pending = handleChat(request());
+    await vi.advanceTimersByTimeAsync(120_000);
+    const result = await pending;
+    expect(result.status).toBe(504);
+    expect(authMocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+  });
+
+  it('does not escalate a configured cascade after an uncertain cheap-model failure', async () => {
+    settingsMocks.getSettings.mockResolvedValue({ cascadePairs: [{ strong: 'prov/strong', cheap: 'prov/cheap' }] });
+    authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'c1', providerSpecificData: {} });
+    refreshMocks.checkAndRefreshToken.mockImplementation(async (_p, c) => c);
+    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 0, failureClass: 'transient' });
+    coreMocks.handleChatCore.mockResolvedValue({ success: false, status: 502, error: 'Interrupted after acceptance',
+      failureMetadata: { safeToReplay: false }, response: Response.json({ error: { message: 'Interrupted after acceptance' } }, { status: 502 }) });
+    const response = await handleChat(request({ model: 'prov/strong', messages: [{ role: 'user', content: 'Inspect this' }] }));
+    expect(response.status).toBe(502);
+    expect(coreMocks.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(coreMocks.handleChatCore.mock.calls[0][0].modelInfo.model).toBe('cheap');
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+  });
+
+  it('does not dispatch after account selection consumes the request budget', async () => {
+    let clock = 0;
+    const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      authMocks.getProviderCredentials.mockImplementation(async () => {
+        clock = 120_001;
+        return { connectionId: 'c1', accountLease: 'test-lease' };
+      });
+      const response = await handleChat(request());
+      expect(response.status).toBe(504);
+      expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+      const { releaseAccountLease } = await import('@/sse/services/accountLeaseRegistry.js');
+      expect(releaseAccountLease).toHaveBeenCalledWith('test-lease');
+    } finally { monotonic.mockRestore(); }
+  });
+
+  it('does not dispatch after credential refresh consumes the remaining budget', async () => {
+    let clock = 0;
+    const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'c1', accountLease: 'test-lease' });
+      refreshMocks.checkAndRefreshToken.mockImplementationOnce(async (_, credentials) => {
+        clock = 120_001;
+        return credentials;
+      });
+      const response = await handleChat(request());
+      expect(response.status).toBe(504);
+      expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+      const { releaseAccountLease } = await import('@/sse/services/accountLeaseRegistry.js');
+      expect(releaseAccountLease).toHaveBeenCalledWith('test-lease');
+    } finally { monotonic.mockRestore(); }
+  });
+});
+
 describe('body and model validation', () => {
   it('refuses an unparseable JSON body with 400', async () => {
     const res = await handleChat(request('{not json'));
@@ -153,6 +232,20 @@ describe('body and model validation', () => {
     const res = await handleChat(request({ messages: [] }));
     expect(res.status).toBe(400);
     expect((await res.json()).error.message).toContain('Missing model');
+  });
+
+  it.each([
+    ['/v1/chat/completions', { model: 'prov/m', messages: { role: 'user', content: 'not-an-array' } }],
+    ['/v1/messages', { model: 'prov/m', max_tokens: 32, messages: 'not-an-array' }],
+    ['/v1/responses', { model: 'prov/m', input: [{ type: 'function_call', call_id: 'call_1', name: '', arguments: '{}' }] }],
+    ['/v1/responses', { model: 'prov/m', input: [{ type: 'function_call', call_id: '', name: 'tool', arguments: '{}' }] }],
+  ])('rejects malformed %s input before provider selection', async (endpoint, body) => {
+    const res = await handleChat(request(body, {}, endpoint));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toContain('Invalid request body');
+    expect(settingsMocks.getSettings).not.toHaveBeenCalled();
+    expect(authMocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
   });
 
   it('tolerates a clientRawRequest with no headers field', async () => {
@@ -357,7 +450,8 @@ describe('the single-model loop', () => {
     });
     expect(refreshMocks.updateProviderCredentials).toHaveBeenCalledWith(
       'c1',
-      expect.objectContaining({ accessToken: 'new', testStatus: 'active' })
+      expect.objectContaining({ accessToken: 'new', testStatus: 'active' }),
+      { expectedCredentials: undefined, durability: 'critical' },
     );
     expect(authMocks.markAccountUnavailable).toHaveBeenCalled(); // onEmptyStream lock
     expect(authMocks.clearAccountError).toHaveBeenCalledWith('c1', expect.anything(), 'g');

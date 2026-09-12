@@ -290,6 +290,33 @@ describe("dashboard guard public LLM API access", () => {
   });
 });
 
+describe("dashboard session generation verdict", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.TOKENPROXY_PEER_TOKEN = PEER_TOKEN;
+    mocks.getSettings.mockResolvedValue({ requireLogin: true });
+    mocks.getConsistentMachineId.mockResolvedValue("cli-token");
+  });
+
+  it("redirects a stale dashboard cookie after the session verifier rejects its generation", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+    const dashboardRequest = request("/dashboard/access", { host: "router.example.com" });
+    dashboardRequest.cookies.get.mockReturnValue({ value: "stale-generation-token" });
+
+    const response = await proxy(dashboardRequest);
+    expect(response.status).toBe(307);
+    expect(String(response.url)).toBe("http://localhost/login");
+  });
+
+  it("preserves access for a cookie whose persisted generation is current", async () => {
+    mocks.verifyDashboardAuthToken.mockResolvedValue(true);
+    const dashboardRequest = request("/dashboard/access", { host: "router.example.com" });
+    dashboardRequest.cookies.get.mockReturnValue({ value: "current-generation-token" });
+
+    expect(await proxy(dashboardRequest)).toBe(mocks.nextResponse);
+  });
+});
+
 describe("dashboard guard auto-import local-only access", () => {
   beforeEach(() => {
     vi.clearAllMocks();

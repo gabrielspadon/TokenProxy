@@ -54,10 +54,10 @@ function recordDay(day, { requests, promptTokens, completionTokens, cost }) {
       byAccount: {}, byApiKey: {}, byEndpoint: {},
     })],
   );
-  adapter.run(
+  for (let index = 0; index < requests; index++) adapter.run(
     `INSERT INTO usageHistory(timestamp, provider, model, endpoint, promptTokens, completionTokens, cost, status, tokens)
      VALUES(?, 'openai', 'gpt', '/v1/chat/completions', ?, ?, ?, 'ok', '{}')`,
-    [day.toISOString(), promptTokens, completionTokens, cost],
+    [day.toISOString(), promptTokens / requests, completionTokens / requests, cost / requests],
   );
 }
 

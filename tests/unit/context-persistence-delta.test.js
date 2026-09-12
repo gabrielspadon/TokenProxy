@@ -10,6 +10,7 @@ import { TABLES, buildCreateTableSql } from '../../src/lib/db/schema.js';
 import { saveRequestStats } from '../../src/lib/db/repos/requestStatsRepo.js';
 import { readContextEvidenceExport } from '../../src/lib/db/analytics/contextEvidenceExport.mjs';
 import { measureContextStructure } from '../../open-sse/utils/contextStructure.js';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 
 const factories = [['better-sqlite3', createBetterSqliteAdapter], ['node:sqlite', createNodeSqliteAdapter], ['sql.js', createSqlJsAdapter]];
 const stamp = new Date().toISOString();
@@ -23,10 +24,11 @@ function entry(patch = {}) {
 }
 const snapshot = db => Object.fromEntries(['requestStats', 'contextStages', 'contextStructures', 'contextSessions', 'usageRateSnapshots'].map(table => [table, db.all(`SELECT * FROM ${table} ORDER BY 1`)]));
 for (const [driver, create] of factories) describe(driver, () => {
-  let db, file;
+  let db, file, visible;
   beforeEach(async () => {
     file = join(mkdtempSync(join(process.env.DATA_DIR, 'delta-')), 'data.sqlite');
     db = await create(file); state.adapter = db; state.get.mockReset().mockImplementation(async () => db);
+    visible = createVisibleTelemetryFixture(db, `context-persistence-delta:${driver}`);
     for (const [name, definition] of Object.entries(TABLES)) db.exec(buildCreateTableSql(name, definition));
     db.exec('CREATE TABLE _testLedgerWrites(name TEXT,operation TEXT)');
     for (const table of ['contextStages', 'contextStructures']) for (const operation of ['INSERT', 'UPDATE', 'DELETE']) db.exec(`CREATE TRIGGER test_${table}_${operation} AFTER ${operation} ON ${table} BEGIN INSERT INTO _testLedgerWrites VALUES('${table}','${operation}'); END`);
@@ -54,12 +56,13 @@ for (const [driver, create] of factories) describe(driver, () => {
   });
   it('persists and exports every effective context control, including false values', async () => {
     const detail = entry();
+    detail.status = 'success';
     detail.contextTelemetry.controls = {
       rtk: true, contextStructure: true,
       diet: true, lingua: false, epochMicro: true, epochAuto: false, adaptiveCacheTtl: true,
       ignored: true,
     };
-    await saveRequestStats(detail);
+    await visible(() => saveRequestStats(detail));
     const expected = {
       rtk: true, contextStructure: true,
       diet: true, lingua: false, epochMicro: true, epochAuto: false, adaptiveCacheTtl: true,

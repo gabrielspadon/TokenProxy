@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { canonicalConfig } from '../db/helpers/configHistory.js';
+import { telemetryFilterSql } from '../db/analytics/telemetryFilter.mjs';
 
 export const AUTOMATION_LIMITS = Object.freeze({ queued: 256, batch: 8, dailyGlobal: 20 });
 export const AUTOMATION_CONDITIONS = Object.freeze(['quota_risk','stale_telemetry','repeated_fallback','operation_failure','compression_saver_failure']);
@@ -80,7 +81,7 @@ function retainedEvidenceMatches(db, event, rule) {
       let pair; try { pair = JSON.parse(ref); } catch { return false; }
       if (!Array.isArray(pair) || typeof pair[0] !== 'string' || !Number.isSafeInteger(pair[1])) return false;
       return Boolean(db.get(`SELECT s.requestId FROM contextStages s JOIN requestStats r ON r.id=s.requestId
-        WHERE s.requestId=? AND s.ordinal=? AND r.connectionId=? AND s.outcome='failed' AND s.outcomeSource='execution'
+        WHERE ${telemetryFilterSql('requestStats', 'r')} AND s.requestId=? AND s.ordinal=? AND r.connectionId=? AND s.outcome='failed' AND s.outcomeSource='execution'
         AND (s.executionRequestId IS NULL OR s.executionRequestId=s.requestId)`,[pair[0],pair[1],rule.scopeId]));
     }
     return false;

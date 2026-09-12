@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,9 +10,18 @@ async function setupDb() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenproxy-recent-"));
   process.env.DATA_DIR = tempDir;
   vi.resetModules();
-  const { getActiveRequests } = await import("@/lib/db/repos/usageRepo.js");
+  const index = await import("@/lib/db/index.js");
+  await index.initDb();
+  const { getAdapter } = await import("../../src/lib/db/driver.js");
+  const { createVisibleTelemetryFixture } = await import("../fixtures/visible-telemetry.mjs");
+  // The adapter is a process-global singleton, so a fresh DATA_DIR does not
+  // discard rows an earlier case in this file already persisted.
+  (await getAdapter()).run("DELETE FROM usageHistory");
+  const { getActiveRequests, saveRequestUsage } = await import("@/lib/db/repos/usageRepo.js");
   return {
     getActiveRequests,
+    saveRequestUsage,
+    visible: createVisibleTelemetryFixture(await getAdapter(), "recent-requests-model"),
     cleanup() {
       fs.rmSync(tempDir, { recursive: true, force: true });
     },
@@ -83,24 +93,12 @@ describe("recent requests model display", () => {
     const ctx = await setupDb();
     cleanup = ctx.cleanup;
 
-    global._recentRing.items.push(
-      {
-        timestamp: "2026-08-15T10:00:00.000Z",
-        provider: "opencode",
-        model: "big-pickle",
-        requestedModel: "oc/big-pickle",
-        tokens: { prompt_tokens: 10, completion_tokens: 5 },
-        status: "ok",
-      },
-      {
-        timestamp: "2026-08-15T10:00:00.000Z",
-        provider: "opencode",
-        model: "big-pickle",
-        requestedModel: "big-pickle",
-        tokens: { prompt_tokens: 10, completion_tokens: 5 },
-        status: "ok",
-      },
-    );
+    await ctx.visible(async () => {
+      for (const requestedModel of ["oc/big-pickle", "big-pickle"]) {
+        await ctx.saveRequestUsage({ requestId: randomUUID(), provider: "opencode", model: "big-pickle",
+          requestedModel, tokens: { prompt_tokens: 10, completion_tokens: 5 } });
+      }
+    });
 
     const { recentRequests } = await ctx.getActiveRequests();
     expect(recentRequests).toHaveLength(1);
@@ -112,22 +110,12 @@ describe("recent requests model display", () => {
     const ctx = await setupDb();
     cleanup = ctx.cleanup;
 
-    global._recentRing.items.push(
-      {
-        timestamp: "2026-08-15T10:00:00.000Z",
-        provider: "opencode",
-        model: "big-pickle",
-        tokens: {},
-        status: "PENDING",
-      },
-      {
-        timestamp: "2026-08-15T10:01:00.000Z",
-        provider: "opencode",
-        model: "deepseek-v4-flash-free",
-        tokens: { prompt_tokens: 5, completion_tokens: 3 },
-        status: "ok",
-      },
-    );
+    await ctx.visible(async () => {
+      await ctx.saveRequestUsage({ requestId: randomUUID(), provider: "opencode", model: "big-pickle",
+        tokens: { prompt_tokens: 0, completion_tokens: 0 }, status: "PENDING" });
+      await ctx.saveRequestUsage({ requestId: randomUUID(), provider: "opencode", model: "deepseek-v4-flash-free",
+        tokens: { prompt_tokens: 5, completion_tokens: 3 } });
+    });
 
     const { recentRequests } = await ctx.getActiveRequests();
     expect(recentRequests).toHaveLength(1);

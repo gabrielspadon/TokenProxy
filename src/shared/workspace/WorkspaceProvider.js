@@ -81,11 +81,14 @@ function WorkspaceStateProvider({ children }) {
   const health = useResource('/api/admin/health/detail', { onSnapshot: observeSnapshot });
   const quota = useResource('/api/admin/quota', { onSnapshot: observeSnapshot });
   const models = useResource('/api/admin/models', { onSnapshot: observeSnapshot, interval: 60000 });
-  const activityScopeKey=analyticsUrl(scope);
+  const activityFacets=!pathname || pathname==='/dashboard' || pathname==='/' ? 'summary,groups,series'
+    : pathname==='/dashboard/connections' ? 'groups'
+      : pathname==='/dashboard/context' ? 'summary,series' : null;
+  const activityScopeKey=activityFacets ? analyticsUrl(scope,'activity',{facets:activityFacets}) : null;
   const activityGroupPage=activityPageState.key===activityScopeKey?activityPageState.page:1;
   const setActivityGroupPage=page=>setActivityPageState({key:activityScopeKey,page});
   const activity = useResource(activityScopeKey, { onSnapshot: observeSnapshot });
-  const pagedInventoryActivity=useResource(activityGroupPage>1?analyticsUrl(scope,'activity',{groupPage:activityGroupPage,groupPageSize:100}):null,{onSnapshot:observeSnapshot});
+  const pagedInventoryActivity=useResource(activityGroupPage>1 && activityFacets?.includes('groups')?analyticsUrl(scope,'activity',{facets:'groups',groupPage:activityGroupPage,groupPageSize:100}):null,{onSnapshot:observeSnapshot});
   const inventoryActivity=activityGroupPage===1?activity:pagedInventoryActivity;
   const accounts = health.data?.checks?.connections || EMPTY;
   const selectedAccountId = selectedRecord?.kind === 'account' ? selectedRecord.id : null;

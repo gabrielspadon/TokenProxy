@@ -13,9 +13,8 @@ const { GET } = await import("../../src/app/api/usage/chart/route.js");
 let db;
 
 const insertDay = (dateKey, promptTokens, completionTokens, cost) =>
-  db.run("INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)", [
-    dateKey,
-    JSON.stringify({ promptTokens, completionTokens, cost }),
+  db.run("INSERT INTO usageHistory(timestamp,promptTokens,completionTokens,cost,dataOrigin) VALUES(?,?,?,?, 'production')", [
+    new Date(`${dateKey}T12:00:00`).toISOString(), promptTokens, completionTokens, cost,
   ]);
 
 beforeAll(async () => {
@@ -23,7 +22,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  db.run("DELETE FROM usageDaily");
+  db.run("DELETE FROM usageHistory");
 });
 
 describe("all-time usage charts (#2415)", () => {

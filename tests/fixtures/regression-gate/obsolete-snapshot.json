@@ -1,0 +1,7 @@
+{
+  "numFailedTestSuites": 1, "numFailedTests": 0, "numPassedTestSuites": 0, "numPassedTests": 1,
+  "numPendingTestSuites": 0, "numPendingTests": 0, "numTodoTests": 0, "numTotalTestSuites": 1, "numTotalTests": 1,
+  "snapshot": {"failure": false, "unchecked": 1, "uncheckedKeysByFile": [{"filePath": "/fixture/tests/unit/example.test.js", "keys": ["old snapshot 1"]}], "unmatched": 0, "filesRemoved": 0},
+  "success": false,
+  "testResults": [{"name": "/fixture/tests/unit/example.test.js", "status": "failed", "message": "Obsolete snapshots found when no snapshot update is expected.", "assertionResults": [{"fullName": "example passes", "status": "passed", "failureMessages": []}]}]
+}

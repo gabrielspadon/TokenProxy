@@ -1,0 +1,7 @@
+{
+  "encoding": "utf8",
+  "chunks": [
+    "{\"message\":{\"role\":\"assistant\",\"content\":\"fixture-ok\"},\"done\":false}\n",
+    "{\"done\":true,\"done_reason\":\"stop\"}\n"
+  ]
+}

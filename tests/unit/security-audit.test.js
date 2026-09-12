@@ -45,8 +45,10 @@ describe("AUDIT-002: API key masking", () => {
     const maskedCount = (source.match(/apiKeyMasked/g) || []).length;
     expect(maskedCount).toBeGreaterThanOrEqual(4); // function def + 3 usage sites
 
-    expect(source).toContain("getApiKeyAggregate(apiKeyVal");
+    // Public aggregates use opaque identities. Private daily counters have a
+    // different shape; usage-api-key-identity.test.js checks all public periods.
     expect(source).toContain("getApiKeyAggregate(r.apiKey");
+    expect(source).toContain("stats.byApiKey[identity.aggregateKey]");
     expect(source).toContain("apiKeyMasked: identity.apiKeyMasked");
     expect(source).toContain("apiKeyKey: identity.apiKeyKey");
   });

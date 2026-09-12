@@ -1,6 +1,7 @@
 import { getAdapter } from "../../lib/db/driver.js";
 import { isReplaySafeRejection } from "../../../open-sse/utils/replaySafety.js";
-import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain } from "../../lib/db/repos/budgetRepo.js";
+import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain,
+  releaseRejectedBudgetReservation } from "../../lib/db/repos/budgetRepo.js";
 
 // OpenAI's native chat contract includes visible and reasoning tokens in this
 // cap. Compatible endpoints and predicted/audio output have no verified bound
@@ -46,12 +47,12 @@ export async function beginBudgetDispatch(context, apiKey, wire) {
 }
 export async function observeBudgetResponse(context, { response, nonacceptance } = {}) {
   if (!context?.budgetReservationId) return;
-  if (isReplaySafeRejection(response)) {
-    const db = await getAdapter();
-    db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
-      WHERE requestId=? AND state IN ('dispatched','uncertain') AND usageRowId IS NULL`,
-    [new Date().toISOString(), JSON.stringify({ source: "upstream-status", kind: "provider-nonacceptance", status: response.status,
-      classification: nonacceptance ?? null }), context.budgetReservationId]);
+  // BaseExecutor passes its exact bounded body proof through nonacceptance.
+  // Specialized executors may also supply their own verified classification.
+  const replaySafe = Boolean(nonacceptance) || isReplaySafeRejection(response);
+  if (replaySafe) {
+    await releaseRejectedBudgetReservation(context.budgetReservationId,
+      { status: response.status, classification: nonacceptance ?? null });
   } else if (!response?.ok) {
     await markBudgetUncertain(context.budgetReservationId, "upstream-error-without-nonacceptance-proof");
   }

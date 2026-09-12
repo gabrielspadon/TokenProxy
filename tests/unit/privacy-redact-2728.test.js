@@ -200,12 +200,13 @@ describe("the wiring that makes it reachable (#2728)", () => {
   it("does the redaction work only when the gate is on", () => {
     const i = chatCoreSrc.indexOf("privacyFilter = redactOutbound(");
     expect(i).toBeGreaterThan(0);
-    const guard = chatCoreSrc.slice(0, i).lastIndexOf("if (privacyEnabled");
+    const guard = chatCoreSrc.slice(0, i).lastIndexOf('stageGuard.sync("privacy", () => {');
     expect(guard).toBeGreaterThan(0);
-    // Nothing between the gate and the call escapes it.
-    expect(chatCoreSrc.slice(guard, i)).not.toContain("\n  }");
-    // ...and the forced-SSE-to-JSON path, which has no restore half, is excluded.
-    expect(chatCoreSrc.slice(guard, i + 200)).toContain("providerRequiresStreaming && !clientRequestedStreaming");
+    const gate = chatCoreSrc.indexOf('}, privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming));', i);
+    expect(gate).toBeGreaterThan(i);
+    // The redaction remains inside the guarded callback, with forced SSE excluded.
+    expect(chatCoreSrc.slice(guard, i)).not.toContain('});');
+    expect(chatCoreSrc.slice(i, gate)).not.toContain('measureSaverStage(');
   });
 
   it("hands the mapping to both response paths", () => {

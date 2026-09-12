@@ -307,6 +307,14 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       result.messages.push(tr);
     }
   }
+  // A Responses turn may end with a reasoning item. There is no following
+  // assistant/function call to receive the buffered continuity, so preserve it
+  // as an explicit empty assistant turn rather than silently dropping it.
+  if (pendingReasoning || pendingReasoningEncrypted) {
+    const trailingReasoning = { role: ROLE.ASSISTANT, content: "" };
+    attachPendingReasoning(trailingReasoning);
+    result.messages.push(trailingReasoning);
+  }
 
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
   if (responsesToolNameMap.size > 0) result._responsesToolNameMap = responsesToolNameMap;
@@ -329,6 +337,11 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   }
 
   delete result.input;
+  // `instructions` already became the leading system message above, so the
+  // Responses-only field is removed after translation rather than forwarded on
+  // a Chat Completions body. The sibling conversion in formats/responsesApi.js
+  // already does this.
+  delete result.instructions;
   delete result.include;
   delete result.prompt_cache_key;
   delete result.store;

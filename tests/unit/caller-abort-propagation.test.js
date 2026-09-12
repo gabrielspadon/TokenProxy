@@ -58,14 +58,17 @@ function credentials(connectionId = "account-a") {
 }
 
 function request(path = "/v1/chat/completions", signal) {
+  // The shape guard runs per endpoint before dispatch, so a Responses path
+  // carries input[] — a chat-shaped body there is refused as malformed and the
+  // abort path under test is never reached.
+  const body = path.includes("/v1/responses")
+    ? { model: "codex/gpt-5.6-sol", input: "hello" }
+    : { model: "codex/gpt-5.6-sol", messages: [{ role: "user", content: "hello" }] };
   return new Request(`http://localhost${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     signal,
-    body: JSON.stringify({
-      model: "codex/gpt-5.6-sol",
-      messages: [{ role: "user", content: "hello" }],
-    }),
+    body: JSON.stringify(body),
   });
 }
 

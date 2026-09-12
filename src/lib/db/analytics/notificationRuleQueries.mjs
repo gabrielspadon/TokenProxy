@@ -6,6 +6,7 @@
 
 import { CONDITIONS, UNAVAILABLE_CONDITIONS } from '../../notifications/conditions.mjs';
 import { qualifiedRegressionEvidence } from '../../compatibility/evidence.mjs';
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 
 const DAY = 86_400_000;
 export const NOTIFICATION_EVIDENCE_MAX_ROWS = 20_000;
@@ -238,7 +239,7 @@ function compatibilityRegressionEvidence(db, query) {
 
 function transformationFailureEvidence(db, query) {
   const clauses = ["s.outcomeSource='execution'", "s.outcome='failed'",
-    '(s.executionRequestId IS NULL OR s.executionRequestId=s.requestId)', 'r.timestamp>=?', 'r.timestamp<?'];
+    '(s.executionRequestId IS NULL OR s.executionRequestId=s.requestId)', 'r.timestamp>=?', 'r.timestamp<?', telemetryFilterSql('requestStats', 'r')];
   const values = [query.start, query.end];
   if (query.scopeKind === 'connection') { clauses.push('r.connectionId=?'); values.push(query.scopeId); }
   else if (query.scopeKind === 'provider') { clauses.push('r.provider=?'); values.push(query.scopeId); }

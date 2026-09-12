@@ -23,6 +23,11 @@ import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
 import { NOTIFICATION_DELIVERY_TABLES, PROJECT_NOTIFICATION_COLUMNS } from './notificationDeliverySchema.js';
 import { NOTIFICATION_AUTOMATION_TABLES } from './notificationAutomationSchema.js';
 import { CONTEXT_STAGE_OUTCOME_COLUMNS } from './contextStageOutcomeSchema.js';
+import { TELEMETRY_ORIGIN_COLUMNS, TELEMETRY_OUTCOME_TABLES } from './telemetryOutcomeSchema.js';
+import { REQUEST_TERMINAL_COLUMNS } from './terminalEvidence.js';
+import { REQUEST_REPLAY_COLUMNS } from './replayEvidence.js';
+import { CRITICAL_ACK_TABLES, CRITICAL_ACK_TRIGGERS } from './criticalAckSchema.js';
+import { ECONOMICS_PROJECTION_TABLES } from './economicsProjectionSchema.js';
 import {
   PROJECT_TABLES,
   USAGE_PROJECT_COLUMNS,
@@ -48,14 +53,22 @@ import {
 // 29 = controlled compatibility scopes and retained operator evaluation sets.
 // 34 = queryable non-secret connection identity (accountId, plan,
 // organizationId) captured at OAuth sign-in; secrets stay in the blob.
-export const SCHEMA_VERSION = 34;
+// 35 = trusted telemetry origins, logical/client outcomes, timing and reversible quarantine.
+// 36 = transactionally maintained normalized economics analytics projection.
+// 37 = preserve integer/real token storage classes in the economics projection.
+// 38 = durable semantic terminal evidence and explicit usage backfill provenance.
+// 39 = origin-preserving economics projection with reversible visibility joins.
+// 40 = reported cache presence in the economics projection.
+// 41 = dispatch replay evidence and durable critical-write acknowledgments.
+export const SCHEMA_VERSION = 41;
+export const TRIGGERS = CRITICAL_ACK_TRIGGERS;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA temp_store = MEMORY;
-PRAGMA mmap_size = 30000000;
-PRAGMA cache_size = -64000;
+PRAGMA mmap_size = 0;
+PRAGMA cache_size = -32768;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 `;
@@ -98,6 +111,9 @@ export const TABLES = {
   ...ACCESS_PROFILE_TABLES,
   ...KEY_ROTATION_TABLES,
   ...COST_LEDGER_TABLES,
+  ...TELEMETRY_OUTCOME_TABLES,
+  ...ECONOMICS_PROJECTION_TABLES,
+  ...CRITICAL_ACK_TABLES,
   _meta: {
     columns: {
       key: 'TEXT PRIMARY KEY',
@@ -209,6 +225,7 @@ export const TABLES = {
   },
   usageHistory: {
     columns: {
+      ...TELEMETRY_ORIGIN_COLUMNS,
       id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
       timestamp: 'TEXT NOT NULL',
       provider: 'TEXT',
@@ -343,8 +360,12 @@ export const TABLES = {
   },
   requestStats: {
     columns: {
+      ...TELEMETRY_ORIGIN_COLUMNS,
       ...REQUEST_IDENTITY_COLUMNS,
+      ...REQUEST_TERMINAL_COLUMNS,
+      ...REQUEST_REPLAY_COLUMNS,
       id: 'TEXT PRIMARY KEY',
+      sourceUsageId: 'INTEGER',
       timestamp: 'TEXT NOT NULL',
       provider: 'TEXT',
       model: 'TEXT',
@@ -393,6 +414,7 @@ export const TABLES = {
       'CREATE INDEX IF NOT EXISTS idx_rs_provider ON requestStats(provider)',
       'CREATE INDEX IF NOT EXISTS idx_rs_model ON requestStats(model)',
       'CREATE INDEX IF NOT EXISTS idx_rs_conn ON requestStats(connectionId)',
+      'CREATE INDEX IF NOT EXISTS idx_rs_source_usage ON requestStats(sourceUsageId)',
     ],
   },
   // Normalized quota evidence, one row per (connection, window). The shape is

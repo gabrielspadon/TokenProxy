@@ -5,9 +5,9 @@ import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { isReplaySafeRejection } from "../../utils/replaySafety.js";
 import { extractRetryAfterDeadline } from "../../utils/error.js";
 
-function upstreamFailure(response, error) {
+function upstreamFailure(response, error, errorPayload = null) {
   return { success: false, status: response.status, error,
-    failureMetadata: { safeToReplay: isReplaySafeRejection(response) },
+    failureMetadata: { safeToReplay: isReplaySafeRejection(response, errorPayload) },
     resetsAtMs: extractRetryAfterDeadline(response) };
 }
 
@@ -417,11 +417,12 @@ function boundedUpstreamFailure(response, body, context) {
   const { status } = response;
   const generic = `Ollama web fetch failed (HTTP ${status})`;
   let message = generic;
+  let errorPayload = null;
   if (!body.overflowed && isJsonMediaType(response.headers.get("content-type"))) {
     try {
       const text = new TextDecoder("utf-8", { fatal: true }).decode(body.bytes).trim();
-      const parsed = JSON.parse(text);
-      const candidate = parsed?.error ?? parsed?.message ?? parsed?.detail;
+      errorPayload = JSON.parse(text);
+      const candidate = errorPayload?.error ?? errorPayload?.message ?? errorPayload?.detail;
       if (["string", "number", "boolean"].includes(typeof candidate)) {
         message = String(candidate);
       }
@@ -431,7 +432,9 @@ function boundedUpstreamFailure(response, body, context) {
     status,
     OLLAMA_ERROR.UPSTREAM_ERROR,
     sanitizeOllamaError(message, context),
-  ), failureMetadata: { safeToReplay: isReplaySafeRejection(response) }, resetsAtMs: extractRetryAfterDeadline(response) };
+  ), failureMetadata: {
+    safeToReplay: isReplaySafeRejection(response, errorPayload),
+  }, resetsAtMs: extractRetryAfterDeadline(response) };
 }
 
 function classifyOllamaFailure(error, { deadline, apiKey, url, proxyOptions }) {
@@ -786,7 +789,7 @@ async function runFirecrawl({ url, fmt, timeoutMs, apiKey, maxCharacters, costPe
   const upstreamMs = Date.now() - upstreamStart;
   const { json } = await readJsonOrText(r.res);
   if (!r.res.ok) {
-    return upstreamFailure(r.res, json?.error || `Firecrawl error: ${r.res.status}`);
+    return upstreamFailure(r.res, json?.error || `Firecrawl error: ${r.res.status}`, json);
   }
   const d = json?.data || {};
   const text = truncate(d.markdown || d.html || d.text || "", maxCharacters);
@@ -828,7 +831,11 @@ async function runJina({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQuer
   const upstreamMs = Date.now() - upstreamStart;
   const body = await r.res.text();
   if (!r.res.ok) {
-    return upstreamFailure(r.res, body?.slice(0, 500) || `Jina error: ${r.res.status}`);
+    // The parsed envelope is the replay evidence. Dropping it classified the
+    // same upstream rejection differently here than on the other providers.
+    let payload = null;
+    try { payload = JSON.parse(body); } catch { /* non-JSON upstream text */ }
+    return upstreamFailure(r.res, body?.slice(0, 500) || `Jina error: ${r.res.status}`, payload);
   }
   const text = truncate(body, maxCharacters);
   return {
@@ -859,7 +866,7 @@ async function runTavily({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQu
   const upstreamMs = Date.now() - upstreamStart;
   const { json } = await readJsonOrText(r.res);
   if (!r.res.ok) {
-    return upstreamFailure(r.res, json?.error || `Tavily error: ${r.res.status}`);
+    return upstreamFailure(r.res, json?.error || `Tavily error: ${r.res.status}`, json);
   }
   const first = json?.results?.[0] || {};
   const text = truncate(first.raw_content || "", maxCharacters);
@@ -889,7 +896,7 @@ async function runExa({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQuery
   const upstreamMs = Date.now() - upstreamStart;
   const { json } = await readJsonOrText(r.res);
   if (!r.res.ok) {
-    return upstreamFailure(r.res, json?.error || `Exa error: ${r.res.status}`);
+    return upstreamFailure(r.res, json?.error || `Exa error: ${r.res.status}`, json);
   }
   const first = json?.results?.[0] || {};
   const text = truncate(first.text || "", maxCharacters);

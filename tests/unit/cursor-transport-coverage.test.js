@@ -115,12 +115,35 @@ describe('transformProtobufToJSON', () => {
     expect(json.choices[0].message.content).toBeNull();
   });
 
-  it('stops at an incomplete trailing frame without throwing', async () => {
+  it('rejects an incomplete trailing frame without returning partial content', async () => {
     const header = Buffer.alloc(5);
     header.writeUInt32BE(100, 1); // claims 100 bytes, none follow
     const buffer = Buffer.concat([textFrame('ok'), header]);
-    const json = await ex().transformProtobufToJSON(buffer, 'm', { messages: [] }).json();
-    expect(json.choices[0].message.content).toBe('ok');
+    const response = ex().transformProtobufToJSON(buffer, 'm', { messages: [] });
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect((await response.json()).error.code).toBe('invalid_cursor_protobuf');
+  });
+
+  it('rejects a zero-frame body and one byte over the configured response bound', async () => {
+    const executor = new CursorExecutor({ responseMaxBytes: 16 });
+    const empty = executor.transformProtobufToJSON(Buffer.alloc(0), 'm', { messages: [] });
+    const oversized = executor.transformProtobufToJSON(Buffer.alloc(17), 'm', { messages: [] });
+
+    expect(empty.status).toBe(502);
+    expect((await empty.json()).error.code).toBe('missing_response_body');
+    expect(oversized.status).toBe(502);
+    expect(oversized.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect((await oversized.json()).error.code).toBe('cursor_response_too_large');
+  });
+
+  it('accepts a complete frame exactly at the configured response bound', async () => {
+    const frame = textFrame('ok');
+    const executor = new CursorExecutor({ responseMaxBytes: frame.length });
+    const response = executor.transformProtobufToJSON(frame, 'm', { messages: [] });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).choices[0].message.content).toBe('ok');
   });
 
   it('maps a JSON error frame to a structured error response', async () => {
@@ -170,6 +193,17 @@ describe('transformProtobufToJSON', () => {
 });
 
 describe('transformProtobufToSSE', () => {
+  it('rejects truncated protobuf rather than emitting a successful SSE terminator', async () => {
+    const frame = textFrame('complete');
+    const response = ex().transformProtobufToSSE(frame.subarray(0, frame.length - 1), 'm', {
+      messages: [],
+    });
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect((await response.json()).error.code).toBe('invalid_cursor_protobuf');
+  });
+
   it('maps a JSON error frame to a structured error response', async () => {
     const err = Buffer.from('{"error":{"message":"nope"}}');
     const response = ex().transformProtobufToSSE(rawFrame(0x00, err), 'm', { messages: [] });

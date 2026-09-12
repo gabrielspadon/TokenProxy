@@ -41,6 +41,11 @@ describePosix("DB file permissions", () => {
     expect(modeOf(dbDir)).toBe(0o700);
     expect(modeOf(path.join(dbDir, "backups"))).toBe(0o700);
     expect(modeOf(path.join(dbDir, "data.sqlite"))).toBe(0o600);
+    if (typeof process.geteuid === "function") {
+      for (const target of [tempDir, dbDir, path.join(dbDir, "backups"), path.join(dbDir, "data.sqlite")]) {
+        expect(fs.statSync(target).uid).toBe(process.geteuid());
+      }
+    }
   });
 
   it("repairs world-readable permissions left by an existing install", async () => {
@@ -70,6 +75,31 @@ describePosix("DB file permissions", () => {
       // Only better-sqlite3/node:sqlite in WAL mode create these.
       if (fs.existsSync(sidecar)) expect(modeOf(sidecar)).toBe(0o600);
     }
+  });
+
+  it("repairs every existing DB sidecar and installation-key mode", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    await getAdapter();
+    const { hardenPermissions, SECRET_KEY_FILE, DATA_FILE } = await import("@/lib/db/paths.js");
+    const files = [SECRET_KEY_FILE, `${DATA_FILE}-wal`, `${DATA_FILE}-shm`];
+    fs.writeFileSync(SECRET_KEY_FILE, "a".repeat(64), { mode: 0o644 });
+    for (const file of files) {
+      if (!fs.existsSync(file)) fs.writeFileSync(file, "fixture", { mode: 0o644 });
+      fs.chmodSync(file, 0o644);
+    }
+    hardenPermissions();
+    for (const file of files) expect(modeOf(file)).toBe(0o600);
+  });
+
+  it("reports chmod refusal without breaking a readable container volume", async () => {
+    const { chmodQuiet } = await import("@/lib/db/paths.js");
+    const chmod = vi.spyOn(fs, "chmodSync").mockImplementation(() => {
+      throw Object.assign(new Error("read-only volume metadata"), { code: "EPERM" });
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(chmodQuiet(path.join(tempDir, "mounted.sqlite"), 0o600)).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/EPERM.*mounted\.sqlite|mounted\.sqlite.*EPERM/));
+    chmod.mockRestore();
   });
 
   it("writes schema-migration backups owner-only", async () => {

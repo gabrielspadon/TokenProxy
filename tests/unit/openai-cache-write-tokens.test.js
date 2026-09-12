@@ -129,9 +129,9 @@ describe("OpenAI nested cache_write_tokens", () => {
   });
 
   it("adds no flat cache alias to a plain Claude body", () => {
-    // canonicalizeUsage logs ACCT.alias-dropped on an OWN `cache_write_tokens`
-    // key, and `{ k: undefined }` creates one. Lifting the nested key out here
-    // would fire that log on every non-streaming Claude request.
+    // `{ k: undefined }` creates an OWN key, so lifting the nested spelling out
+    // here would assert presence on every Claude body that never reported one.
+    // resolveCacheTokens reads the nested form directly; no flat copy is needed.
     const usage = extractUsageFromResponse({ usage: { input_tokens: 100, output_tokens: 10 } });
     expect(Object.prototype.hasOwnProperty.call(usage, "cache_write_tokens")).toBe(false);
   });

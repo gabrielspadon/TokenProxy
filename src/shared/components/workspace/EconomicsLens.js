@@ -1277,7 +1277,7 @@ export default function EconomicsLens({
               ? 'Reading recorded economics…'
               : advanced
                 ? 'Cohort sorting and the record ledger run on the server'
-                : 'Advanced view adds every token column and the record ledger'
+                : 'Includes every token column and the record ledger'
           }
         />
         <BoardToolbar

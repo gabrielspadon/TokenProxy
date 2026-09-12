@@ -11,11 +11,15 @@ import { getAdapter } from '../../src/lib/db/driver.js';
 import { readActivityAnalytics } from '../../src/lib/db/analytics/activityQueries.mjs';
 import { readRid } from '../../src/shared/observability/decide.js';
 import { isCompletionId } from '../../src/lib/db/completionIdentity.mjs';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 
 const db = await getAdapter();
 const args = { provider:'openai', model:'gpt-4o', tokens:{prompt_tokens:100,cached_tokens:50,cache_creation_input_tokens:0,completion_tokens:20}, preSaverSerialized:'x'.repeat(400), silent:true };
 const read = () => readActivityAnalytics(db,{operation:'activity',view:'economics'}).items;
-async function complete(rid) { await saveUsageStats({...args,rid}); await waitForLedgerWrite(rid); }
+// Public analytics excludes test-origin writes, so each completion's own rows
+// are re-identified as a receipted synthetic import before it is read back.
+const visible = createVisibleTelemetryFixture(db, 'completion-identity-pipeline');
+async function complete(rid) { await visible(async () => { await saveUsageStats({...args,rid}); await waitForLedgerWrite(rid); }); }
 beforeEach(() => { failure.active=false; db.run('DELETE FROM usageHistory'); db.run('DELETE FROM costLedger'); });
 
 describe('server completion binding through the real final usage writer', () => {
@@ -47,7 +51,7 @@ describe('server completion binding through the real final usage writer', () => 
     expect(db.get('SELECT completionId,ts FROM costLedger')).toEqual({...old,ts:'2026-09-01T00:00:00.000Z'});
   });
   it('does not bind partial usage or turn legacy request IDs into completion evidence', async () => {
-    await saveUsageStats({...args,rid:'cafebabe',usageFinality:'partial'});
+    await visible(() => saveUsageStats({...args,rid:'cafebabe',usageFinality:'partial'}));
     expect(db.get('SELECT completionId FROM usageHistory').completionId).toBeNull();
     expect(db.all('SELECT * FROM costLedger')).toHaveLength(0);
     db.run('UPDATE usageHistory SET requestId=?,meta=?',['cafebabe',JSON.stringify({costLedgerId:'cafebabe'})]);

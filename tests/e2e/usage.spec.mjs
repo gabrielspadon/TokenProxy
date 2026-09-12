@@ -57,6 +57,26 @@ const EMPTY_STATISTICS = {
 
 test.beforeEach(async ({ page }) => { await signIn(page); });
 
+test("the economics screen reuses one initial all-facet projection", async ({ page }) => {
+  const reads=[];
+  await page.route("**/api/analytics?*",(route)=>{
+    const query=new URL(route.request().url()).searchParams;
+    reads.push(Object.fromEntries(query));
+    route.fulfill(json(200,{
+      source:'usageHistory',filters:Object.fromEntries(query),
+      summary:{records:0,succeeded:0,failed:0,recordedPending:0,inputTokens:0,outputTokens:0,costSamples:0,recordedCostUsd:null},
+      groups:[],groupPagination:{page:1,pageSize:12,totalItems:0,totalPages:0,hasNext:false,hasPrev:false},groupsTruncated:false,
+      series:{bucketMs:null,points:[]},items:[],pagination:{page:1,pageSize:25,totalItems:0,totalPages:0,hasNext:false,hasPrev:false},
+      units:{tokens:'tokens',cost:'USD',latency:'ms',time:'UTC'},definitions:{},
+    }));
+  });
+  await page.goto("/dashboard/usage");
+  await expect(page.getByRole('heading',{name:'Economics'})).toBeVisible();
+  await expect.poll(()=>reads.length).toBe(1);
+  expect(reads[0]).toMatchObject({view:'economics',facets:'summary,groups,series,items',pageSize:'25',sortBy:'timestamp',sortDirection:'desc'});
+  expect(reads.some(query=>query.view==='activity')).toBe(false);
+});
+
 test("the usage stream reports reconnecting then stale when it cannot connect", async ({ page }) => {
   await page.route("**/api/usage/stream*", (r) => r.abort());
   await page.goto("/dashboard/usage");

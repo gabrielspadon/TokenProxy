@@ -190,18 +190,6 @@ afterEach(() => {
   consoleSpy.mockRestore();
 });
 
-// One snapshot clock for every connection: byte-identical windows keep the
-// ranker's decidedKey stable (reset-horizon vs fallback-order otherwise
-// flips on millisecond timing between the two at() calls).
-const SNAP = (() => {
-  const t0 = Date.now();
-  return {
-    fetchedAt: new Date(t0).toISOString(),
-    hourlyReset: new Date(t0 + 8 * 3600 * 1000).toISOString(),
-    weeklyReset: new Date(t0 + 7 * 24 * 3600 * 1000).toISOString(),
-  };
-})();
-
 function makeConnection(id, apiKey) {
   return {
     id,
@@ -216,15 +204,7 @@ function makeConnection(id, apiKey) {
     testStatus: "ok",
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
-    // Rankable quota evidence so the scheduler ranks instead of falling back:
-    // two percentage windows with future resets on the synthetic scale.
-    lastQuotaSnapshot: {
-      windows: [
-        { key: "hourly (5h)", remainingPercentage: 85, resetAt: SNAP.hourlyReset, unlimited: false },
-        { key: "weekly (7d)", remainingPercentage: 90, resetAt: SNAP.weeklyReset, unlimited: false },
-      ],
-      fetchedAt: SNAP.fetchedAt,
-    },
+    // API-key accounts have no subscription quota evidence to rank by.
   };
 }
 

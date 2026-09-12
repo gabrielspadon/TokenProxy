@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,6 +41,20 @@ function legacyUsage() {
 }
 
 describe('complete pre-schema backup', () => {
+  it.each(['node:sqlite', 'better-sqlite3'])('retains committed WAL data when serialization cannot allocate with %s', async driver => {
+    await open(driver);
+    db.exec('PRAGMA wal_autocheckpoint=0; CREATE TABLE acknowledged(id TEXT PRIMARY KEY,value TEXT)');
+    db.run('INSERT INTO acknowledged(id,value) VALUES(?,?)', ['committed-wal', 'retained']);
+    const serialize = vi.fn(() => { throw new Error('Out of memory'); });
+    const file = backupDbLite({ ...db, raw: { serialize } }, makeBackupDir('bounded-memory'));
+    const restored = new DatabaseSync(file);
+    try {
+      expect(restored.prepare('SELECT * FROM acknowledged').all()).toEqual([{ id: 'committed-wal', value: 'retained' }]);
+      expect(restored.prepare('PRAGMA integrity_check').get().integrity_check).toBe('ok');
+      expect(serialize).not.toHaveBeenCalled();
+    } finally { restored.close(); }
+  });
+
   it.each(['node:sqlite', 'better-sqlite3', 'sql.js', 'native-without-serialize'])('publishes all data and schema independently with %s', async driver => {
     await open(driver === 'native-without-serialize' ? 'node:sqlite' : driver);
     const backupAdapter = driver === 'native-without-serialize' ? { ...db, raw: {} } : db;
@@ -82,6 +97,29 @@ describe('complete pre-schema backup', () => {
 });
 
 describe('atomic additive schema migration', () => {
+  it('promotes identity from a legacy deterministic-fallback ciphertext and republishes a local recovery key', async () => {
+    await open();
+    const nodeMachineId = require('node-machine-id');
+    const machine = vi.spyOn(nodeMachineId, 'machineIdSync').mockImplementation(() => { throw new Error('machine id unavailable'); });
+    const key = crypto.createHash('sha256').update('tokenproxy-conn-secret').digest();
+    const iv = Buffer.alloc(12, 4);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const clear = JSON.stringify({ refreshToken: 'retained', providerSpecificData: { accountId: 'legacy-account', plan: 'team' } });
+    const encrypted = Buffer.concat([cipher.update(clear, 'utf8'), cipher.final()]);
+    const stored = `enc1:${iv.toString('hex')}:${cipher.getAuthTag().toString('hex')}:${encrypted.toString('hex')}`;
+    db.exec(`CREATE TABLE providerConnections(id TEXT PRIMARY KEY,provider TEXT NOT NULL,authType TEXT NOT NULL,name TEXT,email TEXT,priority INTEGER,isActive INTEGER,data TEXT NOT NULL,createdAt TEXT NOT NULL,updatedAt TEXT NOT NULL);
+      CREATE TABLE _meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)`);
+    db.run('INSERT INTO _meta(key,value) VALUES(?,?),(?,?)', ['schemaVersion', '2', 'backupSchemaVersion', '34']);
+    db.run('INSERT INTO providerConnections(id,provider,authType,isActive,data,createdAt,updatedAt) VALUES(?,?,?,?,?,?,?)', ['legacy', 'codex', 'oauth', 1, stored, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z']);
+
+    await runMigrationOnce(db);
+
+    expect(db.get('SELECT accountId,plan FROM providerConnections WHERE id=?', ['legacy']))
+      .toEqual({ accountId: 'legacy-account', plan: 'team' });
+    expect(fs.readFileSync(path.join(tempDir, 'db', 'secret.key'), 'utf8')).toMatch(/^[a-f0-9]{64}$/);
+    machine.mockRestore();
+  });
+
   it('backs up missing schema objects even when the stored version already matches', async () => {
     await open();
     await runMigrationOnce(db);

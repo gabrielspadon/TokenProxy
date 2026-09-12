@@ -124,15 +124,15 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
       await expect(activity.locator('dl > div').nth(3).locator('dd')).toHaveText(Number.isFinite(evidence.summary.cacheReadFraction) ? `${format(evidence.summary.cacheReadFraction * 100)}%` : 'Unknown');
       await expect(activity).toContainText('Cache reads · tokens');
       await expect(activity).toContainText('Cache writes · tokens');
-      // The time charts carry a scale and a style; the calendar a grouped metric.
+      // Time charts retain scale and style; the calendar shows all four metrics.
       await expect(activity.getByRole('combobox', { name: 'Chart scale', exact: true })).toHaveValue('Auto');
       await expect(activity.getByRole('radiogroup', { name: 'Chart style', exact: true })).toBeVisible();
       await activity.getByText('Tokens', { exact: true }).click();
       await expect(activity).toContainText('Tokens out');
       await activity.getByText('Calendar', { exact: true }).click();
-      await expect(activity.getByRole('combobox', { name: 'Calendar metric', exact: true })).toHaveValue('In');
+      for (const label of ['Tokens in', 'Tokens out', 'Cache read', 'Cache write']) await expect(activity.getByRole('list', { name: 'Calendar metrics', exact: true })).toContainText(label);
       await expect(activity.getByRole('combobox', { name: 'Chart scale', exact: true })).toHaveCount(0);
-      await expect(activity).toContainText('Daily totals');
+      await expect(activity).toContainText('Daily token totals');
       await activity.getByText('Requests', { exact: true }).click();
       await expect(activity).toContainText('Cache reads · tokens');
       report.activity = { logicalRequests: evidence.summary.logicalRequests, attempts: evidence.summary.records, cacheReadFraction: evidence.summary.cacheReadFraction, source: evidence.source };
@@ -316,16 +316,11 @@ test('compact scope, exact selection, shared comparison and inline evidence reta
     await check('The activity chart selector persists and never opens a dialog', async () => {
       const activity = page.getByRole('region', { name: 'Requests and cache activity', exact: true });
       await activity.getByText('Calendar', { exact: true }).click();
-      const metric = activity.getByRole('combobox', { name: 'Calendar metric', exact: true });
-      await expect(metric).toHaveValue('In');
-      await metric.click();
-      // The metric list is grouped so no option repeats a word.
-      await expect(page.getByText('Cache', { exact: true })).toBeVisible();
-      await page.getByRole('option', { name: 'Write', exact: true }).click();
-      await expect(metric).toHaveValue('Write');
-      await expect(activity).toContainText('Cache');
+      await expect(activity.locator('[data-day]').first()).toBeVisible();
+      await expect(activity.locator('[data-day]').first().locator('span > b')).toHaveCount(4);
       await page.reload();
-      await expect(activity.getByRole('combobox', { name: 'Calendar metric', exact: true })).toHaveValue('Write', { timeout: 60000 });
+      await expect(activity.getByRole('radio', { name: 'Calendar', exact: true })).toBeChecked({ timeout: 60000 });
+      await expect(activity.locator('[data-day]').first().locator('span > b')).toHaveCount(4);
       await expect(page.getByRole('dialog')).toHaveCount(0);
       await activity.getByText('Requests', { exact: true }).click();
       // The scale and the style persist the same way.

@@ -9,6 +9,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createVisibleTelemetryFixture } from "../../fixtures/visible-telemetry.mjs";
+
+// Public analytics and history deliberately exclude test-origin writes. The
+// fixture verifies the origin of the rows each seeding call owns and
+// re-identifies only those as a receipted synthetic import, so the public read
+// under test stays the real one.
+let visibleFixture;
+async function withVisibleRows(produce) {
+  visibleFixture ||= createVisibleTelemetryFixture(await (await import("@/lib/db/driver.js")).getAdapter(), "managed-upstream-exit");
+  return visibleFixture(produce);
+}
+
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { resolveTransport } from "open-sse/services/provider.js";
 import { checkFallbackError, getQuotaCooldown } from "open-sse/services/accountFallback.js";
@@ -90,7 +102,7 @@ describe("managed.upstream.exit: receipt model, endpoint and attempt equal assig
       connectionId: "managed-exact-pin-conn",
       endpoint: resolveTransport("kimi", "openai", OAUTH_CREDS)?.baseUrl,
     };
-    await db.saveRequestUsage({ ...assignment, tokens: { prompt_tokens: 200, completion_tokens: 60 } });
+    await withVisibleRows(() => db.saveRequestUsage({ ...assignment, tokens: { prompt_tokens: 200, completion_tokens: 60 } }));
 
     const hist = await db.getUsageHistory({ provider: "kimi" });
     const row = hist.find((h) => h.connectionId === assignment.connectionId);
@@ -100,15 +112,17 @@ describe("managed.upstream.exit: receipt model, endpoint and attempt equal assig
 
   it("two different attempts never merge into one receipt — each keeps its own endpoint", async () => {
     const base = { provider: "kimi", model: "k3", tokens: { prompt_tokens: 10, completion_tokens: 5 } };
-    await db.saveRequestUsage({
-      ...base,
-      connectionId: "managed-attempt-a",
-      endpoint: "https://api.kimi.com/coding/v1/chat/completions",
-    });
-    await db.saveRequestUsage({
-      ...base,
-      connectionId: "managed-attempt-b",
-      endpoint: "https://api.moonshot.ai/v1/chat/completions",
+    await withVisibleRows(async () => {
+      await db.saveRequestUsage({
+        ...base,
+        connectionId: "managed-attempt-a",
+        endpoint: "https://api.kimi.com/coding/v1/chat/completions",
+      });
+      await db.saveRequestUsage({
+        ...base,
+        connectionId: "managed-attempt-b",
+        endpoint: "https://api.moonshot.ai/v1/chat/completions",
+      });
     });
 
     const hist = await db.getUsageHistory({ provider: "kimi" });

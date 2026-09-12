@@ -26,7 +26,8 @@ try {
  await page.getByRole('button',{name:'Save request capacity'}).click();
  await page.getByRole('status').filter({hasText:'Admission policy saved.'}).waitFor();
  await page.waitForFunction(async()=>{const r=await fetch('/api/system/admission');const d=await r.json();return d.smoothedPressure>1;},{},{timeout:15000});
- const analyticsPending=Promise.all(Array.from({length:8},()=>context.request.get(`${runtimeReceipt.url}/api/analytics?view=economics`)));
+ const analyticsUrl=`${runtimeReceipt.url}/api/analytics?view=economics&facets=summary%2Cgroups%2Cseries%2Citems&groupBy=provider&pageSize=25&groupPageSize=12&groupSortBy=recordedCostUsd&groupSortDirection=desc`;
+ const analyticsPending=Promise.all(Array.from({length:8},()=>context.request.get(analyticsUrl)));
  await page.getByLabel('Maximum streams',{exact:true}).fill(String(original.policy.maxStreams===96?97:96));
  await page.getByRole('button',{name:'Save request capacity'}).click();await page.getByRole('status').filter({hasText:'Admission policy saved.'}).waitFor();
  const saved=await (await context.request.get(`${runtimeReceipt.url}/api/system/admission`)).json();assert.equal(saved.policy.memoryBudgetMb,1);
@@ -41,12 +42,17 @@ try {
    return {id:'connection-fixture-alpha',changed:true,restored:true};
  });
  const reads=await analyticsPending;
- const analytics=[];for(const response of reads){assert.equal(response.status(),200);const body=await response.json();assert.equal(body.projection.mode,'reduced');assert.equal(response.headers()['x-tokenproxy-refresh-after-ms'],'60000');analytics.push({status:response.status(),projection:body.projection});}
+ const analytics=[];for(const response of reads){assert.equal(response.status(),200);const body=await response.json();assert.equal(body.projection.mode,'reduced');assert.equal(response.headers()['x-tokenproxy-refresh-after-ms'],'60000');assert(Number(response.headers()['x-tokenproxy-analytics-query-ms'])>=0);analytics.push({status:response.status(),projection:body.projection,freshness:body.freshness});}
  const viewports=[];for(const [width,height] of [[1440,1000],[1920,1080],[390,844]]){await page.setViewportSize({width,height});await page.getByRole('heading',{name:'Request capacity'}).evaluate(n=>n.scrollIntoView({block:'start'}));await page.evaluate(()=>window.scrollBy(0,-72));const file=join(output,`shared-analytics-${width}x${height}.png`);await page.screenshot({path:file});const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);assert.equal(overflow,false);viewports.push({width,height,file,overflow});}
  const cancelled=await page.evaluate(async()=>{for(const s of window.analyticsSubscribers){s.abort.abort();await s.reader.cancel().catch(()=>{});}return window.analyticsSubscribers.length;});assert.equal(cancelled,2);
+ const initialReads=[];page.on('response',response=>{if(new URL(response.url()).pathname==='/api/analytics')initialReads.push({url:response.url(),status:response.status()});});
+ await page.goto(`${runtimeReceipt.url}/dashboard/usage`,{waitUntil:'domcontentloaded',timeout:120000});
+ await page.getByRole('heading',{name:'Economics'}).waitFor({timeout:120000});
+ await page.waitForFunction(()=>document.querySelector('[aria-label="Economics by cohort"]') || document.body.textContent.includes('No cohorts'),{},{timeout:120000});
+ assert.equal(initialReads.length,1);assert.equal(initialReads[0].status,200);assert.equal(new URL(initialReads[0].url).searchParams.get('facets'),'summary,groups,series,items');
  const restore=await context.request.put(`${runtimeReceipt.url}/api/system/admission`,{data:original.policy});assert.equal(restore.status(),200);
  const anonymous=await browser.newContext();assert.equal((await anonymous.request.get(`${runtimeReceipt.url}/api/usage/stream`)).status(),401);await anonymous.close();
  assert.deepEqual(fixture.outboundFailures,[]);
- const receipt={runtimeReceipt,shared,analytics,viewports,simultaneousSubscribers:2,cancelled,controlSaveUnderPressure:true,accountControl,restoredPolicy:true,unauthenticatedStatus:401,synthetic:true,paidUpstreamCalls:0,latencyQualification:false,outboundFailures:fixture.outboundFailures};
+ const receipt={runtimeReceipt,shared,analytics,economicsInitialReads:initialReads,viewports,simultaneousSubscribers:2,cancelled,controlSaveUnderPressure:true,accountControl,restoredPolicy:true,unauthenticatedStatus:401,synthetic:true,paidUpstreamCalls:0,latencyQualification:false,outboundFailures:fixture.outboundFailures};
  await writeFile(join(output,'browser-receipt.json'),JSON.stringify(receipt,null,2));console.log('SHARED ANALYTICS BROWSER PASS 2 subscribers; 8 actual analytics reads; control saved under measured pressure; 3 viewports');
 }finally{await browser.close();}

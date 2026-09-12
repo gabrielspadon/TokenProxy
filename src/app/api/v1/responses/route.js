@@ -1,4 +1,4 @@
-import { handleChat } from "@/sse/handlers/chat.js";
+import { handleChat, validateClientRequestShape } from "@/sse/handlers/chat.js";
 import { initTranslators } from "open-sse/translator/index.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { errorResponse } from "open-sse/utils/error.js";
@@ -35,6 +35,9 @@ export async function POST(request) {
   } catch {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
+
+  const requestShapeError = validateClientRequestShape(new URL(request.url).pathname, body);
+  if (requestShapeError) return errorResponse(HTTP_STATUS.BAD_REQUEST, requestShapeError);
 
   if (body?.stream !== true) return handleChat(request, null, { body });
 

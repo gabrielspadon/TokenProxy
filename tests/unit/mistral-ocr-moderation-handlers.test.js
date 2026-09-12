@@ -190,7 +190,7 @@ describe("Mistral OCR and moderation handlers", () => {
       .mockResolvedValueOnce(account({ connectionId: "conn-2", apiKey: "second-secret" }));
     authMocks.markAccountUnavailable.mockResolvedValueOnce({ shouldFallback: true });
     global.fetch
-      .mockResolvedValueOnce(jsonResponse({ error: "rate limited" }, 429))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "rate limited" } }, 429))
       .mockResolvedValueOnce(jsonResponse({ results: [{ flagged: false }] }));
 
     const response = await handleModerations(requestFor("/v1/moderations", {

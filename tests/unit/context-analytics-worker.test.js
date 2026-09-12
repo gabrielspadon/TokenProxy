@@ -8,14 +8,15 @@ import { saveRequestStats } from "../../src/lib/db/repos/requestStatsRepo.js";
 import { getContextOverview, getContextSession } from "../../src/lib/db/repos/contextRepo.js";
 import { parseContextFilter, readContextOverview, validateAnalyticsQuery } from "../../src/lib/db/analytics/contextQueries.mjs";
 import { openAnalyticsReadOnly } from "../../src/lib/db/analytics/readOnly.mjs";
-import { createContextAnalyticsClient, ContextAnalyticsError } from "../../src/lib/db/analytics/client.js";
+import { analyticsDataVersion, createContextAnalyticsClient, ContextAnalyticsError } from "../../src/lib/db/analytics/client.js";
+import { createVisibleTelemetryFixture } from "../fixtures/visible-telemetry.mjs";
 
 let db;
 beforeAll(async () => {
   db = await getAdapter();
-  await saveRequestStats({ id: "worker-fixture", timestamp: "2026-09-06T12:00:00.000Z", provider: "fixture", model: "model", connectionId: "account", status: "success",
+  await createVisibleTelemetryFixture(db, "context-analytics-worker")(() => saveRequestStats({ id: "worker-fixture", timestamp: "2026-09-06T12:00:00.000Z", provider: "fixture", model: "model", connectionId: "account", status: "success",
     tokens: { prompt_tokens: 100, completion_tokens: 5, cached_tokens: 0 },
-    contextTelemetry: { sessionHash: "a".repeat(32), stages: [{ stage: "rtk", in: 100, out: 90 }] } });
+    contextTelemetry: { sessionHash: "a".repeat(32), stages: [{ stage: "rtk", in: 100, out: 90 }] } }));
 });
 afterAll(async () => { await globalThis._contextAnalytics?.client.close(); });
 
@@ -52,6 +53,24 @@ describe("read-only Context analytics", () => {
       reader.exec("ROLLBACK");
       expect(reader.get("SELECT COUNT(*) AS n FROM requestStats").n).toBe(before + 1);
     } finally { reader.close(); }
+  });
+  it("does not cache across checkpoint metadata changes and reuses a stable primed snapshot", async () => {
+    db.checkpoint();
+    db.run("INSERT OR REPLACE INTO _meta(key,value) VALUES(?,?)", ["checkpoint-cache-test", "1"]);
+    const client = createContextAnalyticsClient({ file: DATA_FILE, driver: db.driver, traceLifecycle: true });
+    const query = { operation: "overview", filter: { view: "summary" }, retainedDays: 45 };
+    const before = analyticsDataVersion(DATA_FILE);
+    try {
+      await client.run(query, { onComputationStarted: () => db.exec("PRAGMA wal_checkpoint(PASSIVE)") });
+      expect(analyticsDataVersion(DATA_FILE)).not.toBe(before);
+      expect(client.status().cached).toBe(0);
+      db.checkpoint();
+      client.invalidate();
+      expect((await client.run(query)).freshness.delivery).toBe("computed");
+      expect(client.status().cached).toBe(1);
+      const hits = await Promise.all(Array.from({ length: 5 }, () => client.run(query)));
+      expect(hits.map(value => value.freshness.delivery)).toEqual(Array(5).fill("cache-hit"));
+    } finally { await client.close(); }
   });
   it("reports filtered unattributed coverage without manufacturing sessions", async () => {
     db.run("INSERT INTO requestStats(id,timestamp,provider) VALUES(?,?,?)", ["history", "2026-09-05T12:00:00.000Z", "legacy"]);
@@ -157,9 +176,21 @@ describe("bounded analytics admission", () => {
     const first = client.run(query("first")), shared = client.run(query("first")), second = client.run(query("second"));
     await expect(client.run(query("third"))).rejects.toBeInstanceOf(ContextAnalyticsError);
     expect(worker.messages).toHaveLength(1);
-    worker.respond(); await expect(first).resolves.toEqual({ ready: true }); await shared;
+    worker.respond(); await expect(first).resolves.toMatchObject({ ready: true }); await shared;
     expect(worker.messages).toHaveLength(2); worker.respond(1); await second;
     await client.close();
+  });
+  it("reports snapshot start to coalesced subscribers and always releases the worker", async () => {
+    const worker = new HeldWorker(), starts = [];
+    const client = createContextAnalyticsClient({ workerFactory: () => worker, traceLifecycle: true });
+    const first = client.run(query("trace"), { onComputationStarted: () => { throw new Error('observer failed'); } });
+    const shared = client.run(query("trace"), { onComputationStarted: value => starts.push(['shared', value]) });
+    worker.emit('message', { id: worker.messages[0].id, lifecycle: 'snapshot-started', snapshotStartedAt: '2026-09-12T12:00:00.000Z' });
+    expect(starts).toEqual([
+      ['shared', { snapshotStartedAt: '2026-09-12T12:00:00.000Z' }],
+    ]);
+    expect(worker.messages[1]).toEqual({ id: worker.messages[0].id, lifecycle: 'snapshot-continue' });
+    worker.respond(); await first; await shared; await client.close();
   });
   it("removes cancelled queued jobs without cancelling a shared active reader", async () => {
     const worker = new HeldWorker(), abort = new AbortController(), queuedAbort = new AbortController();
@@ -181,5 +212,18 @@ describe("bounded analytics admission", () => {
     const pending = client.run(query("shutdown")); await client.close();
     await expect(pending).rejects.toBeInstanceOf(ContextAnalyticsError);
     await expect(client.run(query("closed"))).rejects.toBeInstanceOf(ContextAnalyticsError);
+  });
+  it("terminates an abandoned active read before serving the next job", async () => {
+    const workers = [], abort = new AbortController();
+    const client = createContextAnalyticsClient({ workerFactory: () => { const worker = new HeldWorker(); workers.push(worker); return worker; } });
+    const abandoned = client.run(query("abandoned"), { signal: abort.signal });
+    abort.abort();
+    await expect(abandoned).rejects.toBeInstanceOf(ContextAnalyticsError);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(workers[0].terminated).toBe(true);
+    const next = client.run(query("next"));
+    workers[1].respond();
+    await expect(next).resolves.toMatchObject({ ready: true, freshness: expect.objectContaining({ queueDurationMs: expect.any(Number), executionDurationMs: expect.any(Number) }) });
+    await client.close();
   });
 });

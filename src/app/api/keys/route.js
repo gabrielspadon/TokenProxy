@@ -105,6 +105,7 @@ export async function POST(request) {
     // and absent means every model (#1154).
     const limits = pickLimits(body);
     const stored = Object.keys(limits).length ? await updateApiKey(apiKey.id, limits) : apiKey;
+    globalThis.__tokenproxyLiveSafety?.authorizeDelivery('client-key-create', apiKey.key);
 
     return NextResponse.json(
       {

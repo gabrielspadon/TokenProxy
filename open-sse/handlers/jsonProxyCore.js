@@ -133,7 +133,7 @@ export async function handleJsonProxyCore({
       const parsed = await parseUpstreamError(upstream, null, { signal });
       const message = sanitizeSecrets(parsed.message, credentials);
       return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`, parsed.resetsAtMs,
-        { safeToReplay: isReplaySafeRejection(upstream) });
+        { safeToReplay: isReplaySafeRejection(upstream, parsed.errorPayload) });
     }
     responseBody = await upstream.text();
   } catch (error) {

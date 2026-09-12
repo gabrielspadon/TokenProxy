@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Unit tests for tokenproxy embeddings endpoint",
   "scripts": {
-    "test": "vitest run --reporter=verbose",
+    "test": "node ../scripts/qa/run-offline-tests.mjs",
     "test:watch": "vitest --reporter=verbose"
   },
   "devDependencies": {
@@ -17,6 +17,6 @@
     "undici": "^7.19.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   }
 }

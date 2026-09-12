@@ -13,6 +13,15 @@ export const FORMATS = {
   COMMANDCODE: "commandcode"
 };
 
+// These specialized executors own both sides of their private wire protocol.
+// The translator sees OpenAI-shaped data at the executor boundary, so route
+// completeness must validate the client-to-OpenAI leg without requiring a
+// fictitious translator for the private protocol name.
+export const EXECUTOR_MANAGED_FORMATS = Object.freeze({
+  "grok-web": Object.freeze({ requestFormat: FORMATS.OPENAI, responseFormat: FORMATS.OPENAI }),
+  "perplexity-web": Object.freeze({ requestFormat: FORMATS.OPENAI, responseFormat: FORMATS.OPENAI }),
+});
+
 /**
  * Detect source format from request URL pathname + body.
  * Returns null to fall back to body-based detection.
@@ -31,4 +40,3 @@ export function detectFormatByEndpoint(pathname, body) {
 
   return null;
 }
-

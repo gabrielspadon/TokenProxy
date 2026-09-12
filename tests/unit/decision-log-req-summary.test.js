@@ -194,15 +194,26 @@ describe("x-tp-rid header echo", () => {
   });
 });
 
-describe("ACCT.alias-dropped", () => {
-  it("names the dropped alias with conn/model context", () => {
-    canonicalizeUsage({ cache_write_tokens: 12, prompt_tokens: 5 }, { conn: "abc12345", model: "m" });
-    const acct = classLines("ACCT");
-    expect(acct).toHaveLength(1);
-    expect(acct[0]).toContain("ACCT.alias-dropped");
-    expect(acct[0]).toContain("conn=abc12345");
-    expect(acct[0]).toContain("model=m");
-    expect(acct[0]).toContain("why=cache_write_tokens");
+describe("ACCT telemetry for cache aliases the resolver supports", () => {
+  // CACHE_WRITE_KEYS carries `cache_write_tokens`, so resolveCacheTokens reads
+  // the spelling. A dropped-alias line here would report a loss that did not
+  // happen; the quantity assertion is what proves the silence is earned.
+  it("stays silent on a flat cache_write_tokens and keeps its quantity", () => {
+    const out = canonicalizeUsage({ cache_write_tokens: 12, prompt_tokens: 5 });
+    expect(out.cache_creation_input_tokens).toBe(12);
+    expect(classLines("ACCT")).toHaveLength(0);
+  });
+
+  it("stays silent on the nested input_tokens_details spelling", () => {
+    const out = canonicalizeUsage({ input_tokens: 20, input_tokens_details: { cache_write_tokens: 6 } });
+    expect(out.cache_creation_input_tokens).toBe(6);
+    expect(classLines("ACCT")).toHaveLength(0);
+  });
+
+  it("stays silent on a reported zero and on a genuine absence alike", () => {
+    expect(canonicalizeUsage({ prompt_tokens: 5, cache_write_tokens: 0 }).cache_creation_input_tokens).toBe(0);
+    expect(canonicalizeUsage({ prompt_tokens: 5 }).cache_creation_input_tokens).toBe(0);
+    expect(classLines("ACCT")).toHaveLength(0);
   });
 });
 
@@ -215,7 +226,7 @@ describe("handleChatCore REQ.ok one-liner", () => {
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
     expect(reqs[0]).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=abcdef1234 conn=test-con route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=abcdef1234 conn=test-con route=openai\/gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
     );
   });
 
@@ -313,7 +324,7 @@ describe("streaming: buildOnStreamComplete emissions", () => {
     ...over,
   });
 
-  it("flags estimated usage, locks the empty stream, and still emits REQ.ok", () => {
+  it("flags estimated usage, locks the empty stream, and keeps missing terminal proof unknown", () => {
     const { onStreamComplete, streamDetailId } = buildOnStreamComplete(streamCtx());
     onStreamComplete({ content: "", thinking: "" }, { estimated: true, prompt_tokens: 3, completion_tokens: 0 }, null, {});
     const streams = classLines("STREAM");
@@ -321,7 +332,7 @@ describe("streaming: buildOnStreamComplete emissions", () => {
     expect(streams.some((l) => l.includes("STREAM.empty") && l.includes("lock=true"))).toBe(true);
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
-    expect(reqs[0]).toContain("REQ.ok");
+    expect(reqs[0]).toContain("REQ.unknown");
     expect(reqs[0]).toContain(`row=${streamDetailId}`);
     expect(reqs[0]).toContain("in=3");
   });
@@ -332,7 +343,7 @@ describe("streaming: buildOnStreamComplete emissions", () => {
       { content: "partial", thinking: "" },
       { prompt_tokens: 3, completion_tokens: 1 },
       Date.now(),
-      { aborted: true }
+      { aborted: true, terminalEvidence: { state: "cancelled", reason: "caller-cancelled", source: "gateway-stream" } }
     );
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
@@ -347,7 +358,8 @@ describe("streaming: buildOnStreamComplete emissions", () => {
     onStreamAbandoned("stall_timeout");
     const streams = classLines("STREAM");
     expect(streams.some((l) => l.includes("STREAM.stalled") && l.includes("action=lock"))).toBe(true);
-    expect(reqLines()[0]).toContain("REQ.failed");
+    expect(reqLines()[0]).toContain("REQ.unknown");
+    expect(reqLines()[0]).not.toContain("status=502");
   });
 
   it("routes detail-write failures to ACCT with phases save-stream/update/finalize", async () => {
@@ -560,7 +572,7 @@ describe("REQ.ok save=/ce= with a composed saver pipeline", () => {
     expect(reqs).toHaveLength(1);
     // "hello" → "hi" is a 3-byte shrink; save_tok rounds /4 toward -1.
     expect(reqs[0]).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=saver-0001 conn=test-con save=rtk:-3 save_tok=-1 route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=saver-0001 conn=test-con save=rtk:-3 save_tok=-1 route=openai\/gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
     );
     // first request of the session: no previous body to compare against
     expect(reqs[0]).not.toContain("ce=");

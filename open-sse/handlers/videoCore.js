@@ -175,7 +175,7 @@ export async function handleVideoProxyCore({
     const parsed = await parseUpstreamError(upstream);
     const message = sanitizeSecrets(parsed.message, credentials);
     return createErrorResult(upstream.status, `[${provider}] ${message.slice(0, 2000)}`, parsed.resetsAtMs,
-      { safeToReplay: isReplaySafeRejection(upstream) });
+      { safeToReplay: isReplaySafeRejection(upstream, parsed.errorPayload) });
   }
   const bodyText = await upstream.text().catch(() => "");
 

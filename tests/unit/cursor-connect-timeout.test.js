@@ -264,6 +264,56 @@ describe("Cursor response-header deadlines", () => {
     await expect(pending).resolves.toMatchObject({ status: 200 });
   });
 
+  it("fetch mode cancels a body that exceeds the configured response bound", async () => {
+    let cancelled = false;
+    proxyFetch.mockResolvedValue(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.from("12345678"));
+        controller.enqueue(Buffer.from("9"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }), { status: 200 }));
+    const executor = new CursorExecutor({ responseMaxBytes: 8 });
+
+    await expect(executor.makeFetchRequest(
+      "https://api2.cursor.sh/chat",
+      {},
+      Buffer.from("body"),
+      undefined,
+      { enabled: true },
+      { globalTimeout: 15000 },
+    )).rejects.toMatchObject({ code: "cursor_response_too_large" });
+    expect(cancelled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fetch mode preserves caller abort while reading a response body", async () => {
+    let cancelled = false;
+    proxyFetch.mockResolvedValue(new Response(new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    }), { status: 200 }));
+    const controller = new AbortController();
+    const reason = new DOMException("caller left during Cursor body", "AbortError");
+    const pending = new CursorExecutor({ responseMaxBytes: 8 }).makeFetchRequest(
+      "https://api2.cursor.sh/chat",
+      {},
+      Buffer.from("body"),
+      controller.signal,
+      { enabled: true },
+      { globalTimeout: 15000 },
+    );
+    await flush();
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(cancelled).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("standard HTTP/2 clears only the header deadline and keeps the original whole-request ceiling", async () => {
     const executor = new CursorExecutor();
     const pending = executor.makeHttp2Request(
@@ -295,6 +345,24 @@ describe("Cursor response-header deadlines", () => {
     sessions[0].request.emit("data", Buffer.from("ok"));
     sessions[0].request.emit("end");
     await expect(pending).resolves.toMatchObject({ status: 200, body: Buffer.from("ok") });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("standard HTTP/2 destroys the response after one byte over the configured bound", async () => {
+    const pending = new CursorExecutor({ responseMaxBytes: 8 }).makeHttp2Request(
+      "https://api2.cursor.sh/chat",
+      {},
+      Buffer.from("body"),
+      undefined,
+      { globalTimeout: 15000 },
+    );
+    sessions[0].request.emit("response", { ":status": 200 });
+    sessions[0].request.emit("data", Buffer.from("12345678"));
+    sessions[0].request.emit("data", Buffer.from("9"));
+
+    await expect(pending).rejects.toMatchObject({ code: "cursor_response_too_large" });
+    expect(sessions[0].request.destroy).toHaveBeenCalled();
+    expect(sessions[0].client.close).toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -361,6 +429,25 @@ describe("Cursor response-header deadlines", () => {
     controller.abort(reason);
     await expect(session.read()).rejects.toBe(reason);
     expect(sessions[0].request.destroy).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("AgentService discards queued bytes and fails after crossing the response bound", async () => {
+    const stream = await new CursorExecutor({ responseMaxBytes: 8 }).openAgentHttp2Stream(
+      "https://agent.api5.cursor.sh/agent.v1.AgentService/Run",
+      {},
+      undefined,
+      null,
+      { globalTimeout: 15000 },
+    );
+    sessions[0].request.emit("response", { ":status": 200 });
+    await stream.responseHeaders;
+    sessions[0].request.emit("data", Buffer.from("12345678"));
+    sessions[0].request.emit("data", Buffer.from("9"));
+
+    await expect(stream.read()).rejects.toMatchObject({ code: "cursor_response_too_large" });
+    expect(sessions[0].request.destroy).toHaveBeenCalled();
+    expect(leases[0].close).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -444,6 +531,7 @@ describe("Cursor response-header deadlines", () => {
       await expect(pending).rejects.toThrow("agent request failed");
     } else if (ending === "normal end") {
       native.request.emit("response", { ":status": 200 });
+      native.request.emit("data", Buffer.from([0, 0, 0, 0, 0]));
       native.request.emit("end");
       await expect(pending).resolves.toMatchObject({ response: expect.any(Response) });
     } else {
@@ -464,6 +552,7 @@ describe("Cursor response-header deadlines", () => {
     const pending = new CursorExecutor().executeAgent(agentArgs({ signal: controller.signal, connectTimeout: { globalTimeout: 15000 } }));
     await flush();
     sessions[0].request.emit("response", { ":status": 200 });
+    sessions[0].request.emit("data", Buffer.from([0, 0, 0, 0, 0]));
     sessions[0].request.emit("end");
     await expect(pending).resolves.toMatchObject({ response: expect.any(Response) });
     const forwardingListener = addSpy.mock.calls.find(([type]) => type === "abort")[1];

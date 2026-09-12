@@ -1,22 +1,46 @@
 'use client';
 import { SegmentedControl, TextInput } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import { usePathname } from 'next/navigation';
 import { Icon } from '@/shared/components/Icon';
 import styles from './board.module.css';
 
-// The two decisions every working surface shares. The level is the sidebar's
-// Everyday / Advanced choice; the density is one comfy / tidy choice for the
-// whole application. Both persist per browser.
-export const LEVEL_KEY = 'tokenproxy.navigation-mode';
-export const DENSITY_KEY = 'tokenproxy.capacity-density';
+// The level is the route's, not a stored preference: Context is the one
+// approachable surface, and every other destination presents its full controls.
+// The match is on a route boundary, so /dashboard/context and its children read
+// as Context while a path that merely starts with those letters does not. An
+// unknown path reads as the full presentation, so nothing hides by default.
+export const EVERYDAY_ROUTES = ['/dashboard/context'];
+
+export function isEverydayRoute(pathname) {
+  const path = typeof pathname === 'string' ? pathname : '';
+  return EVERYDAY_ROUTES.some((route) => path === route || path.startsWith(`${route}/`));
+}
 
 export function useLevel() {
-  const [mode] = useLocalStorage({ key: LEVEL_KEY, defaultValue: 'everyday' });
-  return mode === 'advanced';
+  return !isEverydayRoute(usePathname());
+}
+
+// Density is the one choice the operator still makes, and it persists per
+// browser. Four ordered stops, densest first. `tidy` and `comfy` keep the
+// meaning they already had, so a stored value from an earlier build reads back
+// unchanged and anything unrecognised falls back rather than asking for a reset.
+export const DENSITY_KEY = 'tokenproxy.capacity-density';
+export const DENSITY_DEFAULT = 'tidy';
+export const DENSITY_STOPS = [
+  { value: 'compact', label: 'Compact' },
+  { value: 'dense', label: 'Dense' },
+  { value: 'tidy', label: 'Tidy' },
+  { value: 'comfy', label: 'Comfy' },
+];
+
+export function resolveDensity(value) {
+  return DENSITY_STOPS.some((stop) => stop.value === value) ? value : DENSITY_DEFAULT;
 }
 
 export function useDensity() {
-  return useLocalStorage({ key: DENSITY_KEY, defaultValue: 'tidy' });
+  const [stored, setDensity] = useLocalStorage({ key: DENSITY_KEY, defaultValue: DENSITY_DEFAULT });
+  return [resolveDensity(stored), setDensity];
 }
 
 export function DensitySwitch({ value, onChange }) {
@@ -24,12 +48,9 @@ export function DensitySwitch({ value, onChange }) {
     <SegmentedControl
       size="xs"
       aria-label="Density"
-      value={value}
+      value={resolveDensity(value)}
       onChange={onChange}
-      data={[
-        { value: 'comfy', label: 'Comfy' },
-        { value: 'tidy', label: 'Tidy' },
-      ]}
+      data={DENSITY_STOPS}
       className={styles.density}
     />
   );

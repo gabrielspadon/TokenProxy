@@ -5,16 +5,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The catalog module only needs the codex refresh hooks; stub them so the test
 // never drags the SQLite layer in.
-vi.mock("@/sse/services/tokenRefresh", () => ({
+const refreshMocks = vi.hoisted(() => ({
   refreshCodexToken: vi.fn(async () => null),
-  updateProviderCredentials: vi.fn(async () => {}),
+  updateProviderCredentials: vi.fn(async () => null),
 }));
+vi.mock("@/sse/services/tokenRefresh", () => refreshMocks);
 
 const {
+  parseOpenAIStyleModels,
   normalizeOpenAICatalog,
   normalizeCodexCatalog,
+  buildOAuthResolver,
   withStaticMediaModels,
   fetchOpenAICatalog,
+  codexModelsResolver,
   resolveLiveOpenAIModels,
 } = await import("@/app/api/providers/[id]/models/liveCatalog.js");
 
@@ -24,8 +28,12 @@ const ids = (models) => models.map((m) => m.id);
 const okResponse = (body) => ({ ok: true, status: 200, json: async () => body });
 
 let originalFetch;
-beforeEach(() => { originalFetch = globalThis.fetch; });
-afterEach(() => { globalThis.fetch = originalFetch; });
+beforeEach(() => {
+  originalFetch = globalThis.fetch;
+  refreshMocks.refreshCodexToken.mockReset().mockResolvedValue(null);
+  refreshMocks.updateProviderCredentials.mockReset().mockResolvedValue(null);
+});
+afterEach(() => { globalThis.fetch = originalFetch; vi.restoreAllMocks(); });
 
 describe("normalizeOpenAICatalog", () => {
   it("keeps a live chat model the static registry has never heard of", () => {
@@ -134,8 +142,11 @@ describe("fetchOpenAICatalog fails open", () => {
   });
 
   it("returns null when the upstream throws or times out", async () => {
-    globalThis.fetch = vi.fn(async () => { throw new Error("The operation was aborted"); });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => { throw new Error("secret-token-in-error"); });
     expect(await fetchOpenAICatalog({ apiKey: "sk-test" })).toBeNull();
+    expect(log.mock.calls.flat().join(" ")).not.toContain("secret-token-in-error");
+    log.mockRestore();
   });
 
   it("returns null on an empty catalog", async () => {
@@ -150,6 +161,22 @@ describe("fetchOpenAICatalog fails open", () => {
     expect(url).toBe("https://api.openai.com/v1/models");
     expect(init.headers.Authorization).toBe("Bearer sk-connection-one");
     expect(init.signal).toBeDefined();
+  });
+});
+
+describe("Codex catalog logging", () => {
+  it("does not retain or log an upstream error body", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      text: async () => "secret-upstream-body",
+    }));
+    const result = await codexModelsResolver({ accessToken: "token" });
+    expect(result.warning).toBe("Failed to fetch Codex models: HTTP 401");
+    expect(JSON.stringify(result)).not.toContain("secret-upstream-body");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("secret-upstream-body");
+    log.mockRestore();
   });
 });
 
@@ -168,5 +195,85 @@ describe("resolveLiveOpenAIModels", () => {
   it("returns null, not an empty list, when the fetch cannot answer", async () => {
     globalThis.fetch = vi.fn(async () => ({ ok: false, status: 500, text: async () => "" }));
     expect(await resolveLiveOpenAIModels({ apiKey: "sk-test" })).toBeNull();
+  });
+});
+
+describe("OAuth live-catalog credential publication", () => {
+  it("retries only with the full authoritative revision after durable acknowledgement", async () => {
+    const original = {
+      id: "catalog-account",
+      provider: "codex",
+      accessToken: "fixture-old-access",
+      refreshToken: "fixture-old-refresh",
+      credentialRevisionId: "revision-old",
+      providerSpecificData: { retained: true },
+    };
+    const authoritative = {
+      ...original,
+      accessToken: "fixture-authoritative-access",
+      refreshToken: "fixture-authoritative-refresh",
+      credentialRevisionId: "revision-new",
+      lastQuotaSnapshot: { remainingPercentage: 41 },
+    };
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 401 })
+      .mockResolvedValueOnce(okResponse({ data: [{ id: "gpt-5.6-sol" }] }));
+    const refreshFn = vi.fn(async () => ({
+      accessToken: "fixture-issued-access",
+      refreshToken: "fixture-issued-refresh",
+      expiresIn: 3600,
+    }));
+    let observedExpected;
+    refreshMocks.updateProviderCredentials.mockImplementationOnce(async (_id, _patch, options) => {
+      observedExpected = { ...options.expectedCredentials };
+      return authoritative;
+    });
+    const resolve = buildOAuthResolver({
+      refreshFn,
+      fetchFn,
+      parseFn: parseOpenAIStyleModels,
+      errorLabel: "Catalog unavailable",
+    });
+
+    const signal = new AbortController().signal;
+    await expect(resolve(original, { signal })).resolves.toEqual({ models: [{ id: "gpt-5.6-sol" }] });
+    expect(refreshMocks.updateProviderCredentials).toHaveBeenCalledWith(
+      original.id,
+      expect.objectContaining({
+        accessToken: "fixture-issued-access",
+        refreshToken: "fixture-issued-refresh",
+        existingProviderSpecificData: { retained: true },
+      }),
+      { expectedCredentials: original },
+    );
+    expect(observedExpected.credentialRevisionId).toBe("revision-old");
+    expect(fetchFn).toHaveBeenNthCalledWith(2, "fixture-authoritative-access", authoritative, signal);
+    expect(original).toEqual(authoritative);
+  });
+
+  it("never retries with an issued credential when durable publication fails", async () => {
+    const canary = "credential-canary://do-not-log\nprivate";
+    const connection = {
+      id: "catalog-account-failure",
+      accessToken: "fixture-old-access",
+      refreshToken: "fixture-old-refresh",
+    };
+    const fetchFn = vi.fn(async () => ({ ok: false, status: 401 }));
+    const refreshFn = vi.fn(async () => ({ accessToken: "fixture-issued-access" }));
+    refreshMocks.updateProviderCredentials.mockRejectedValueOnce(new Error(canary));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const resolve = buildOAuthResolver({
+      refreshFn,
+      fetchFn,
+      parseFn: parseOpenAIStyleModels,
+      errorLabel: "Catalog unavailable",
+    });
+
+    const result = await resolve(connection);
+    expect(result).toEqual({ models: [], warning: "Catalog unavailable: unavailable" });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(connection.accessToken).toBe("fixture-old-access");
+    expect(JSON.stringify(log.mock.calls)).not.toContain(canary);
+    log.mockRestore();
   });
 });

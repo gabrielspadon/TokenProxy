@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
-import { openSync, closeSync, realpathSync } from 'node:fs';
+import { openSync, closeSync, existsSync, readlinkSync, realpathSync } from 'node:fs';
 import { access, cp, mkdir, mkdtemp, readFile, readdir, writeFile, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -9,6 +9,9 @@ import { sourceManifest } from '../../../scripts/redesign-preview.mjs';
 
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const profile = '(version 1)(allow default)(deny network*)';
+// iproute2 sits in /usr/sbin on Debian-family hosts and /sbin elsewhere; the
+// namespace shell runs with a fixed PATH, so resolve the absolute path once.
+const ipBinary = ['/usr/sbin/ip', '/sbin/ip', '/bin/ip'].find(path => existsSync(path)) || 'ip';
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2), { mode: 0o600 });
 
 async function retainArtifact(root) {
@@ -31,11 +34,74 @@ async function retainArtifact(root) {
   return { dist, artifactManifestHash: artifact.artifactManifestHash, artifactFiles: artifact.fileCount };
 }
 
+// Linux has no sandbox-exec. The equivalent process-family network denial here
+// is a user+network namespace, which is the same boundary the canonical offline
+// runner requires (scripts/qa/run-offline-tests.mjs:143-155): a namespace that
+// differs from the parent, `lo` as the only interface, and `lo` brought up so
+// the build's own loopback still works. Reuse that contract rather than invent
+// a second, weaker one. A probe inside the namespace must fail to leave it.
+const netnsPrefix = ['--user', '--map-root-user', '--net', '--'];
+
+export function linuxNetworkIsolation() {
+  const parent = readlinkSync('/proc/self/ns/net');
+  const probe = [
+    'set -eu',
+    '[ "$(readlink /proc/self/ns/net)" != "$TOKENPROXY_BUILD_PARENT_NETNS" ]',
+    '[ "$(awk -F: \'NR > 2 { gsub(/ /, "", $1); print $1 }\' /proc/net/dev)" = lo ]',
+    `${ipBinary} link set lo up`,
+    // Egress must be unreachable and loopback must work, so assert both rather
+    // than only the denial: a namespace with lo down would pass a denial-only
+    // probe and then fail every build that talks to its own port.
+    `exec "$@" -e ${JSON.stringify(
+      'const net=require("node:net");'
+      + 'const egress=net.connect(9,"8.8.8.8");'
+      + 'egress.on("connect",()=>process.exit(11));'
+      + 'egress.on("error",e=>{if(!["ENETUNREACH","EHOSTUNREACH","ENETDOWN"].includes(e.code))process.exit(12);'
+      + 'const s=net.createServer(()=>{});s.listen(0,"127.0.0.1",()=>{const c=net.connect(s.address().port,"127.0.0.1");'
+      + 'c.on("connect",()=>{s.close();process.exit(0)});c.on("error",()=>process.exit(13))})});'
+      + 'setTimeout(()=>process.exit(14),4000).unref();',
+    )}`,
+  ].join(' && ');
+  execFileSync('/usr/bin/unshare', [...netnsPrefix, '/bin/sh', '-c', probe, 'tokenproxy-build-probe', process.execPath], {
+    stdio: 'pipe',
+    timeout: 15000,
+    env: { PATH: `${dirname(process.execPath)}:/usr/sbin:/usr/bin:/bin`, TOKENPROXY_BUILD_PARENT_NETNS: parent },
+  });
+  return {
+    networkPolicy: 'Linux user+network namespace inherited by all build children; loopback-only, no route off lo',
+    probe: 'egress to 8.8.8.8:9 rejected ENETUNREACH and owned loopback connect accepted inside the namespace',
+    parentNetworkNamespace: parent,
+  };
+}
+
 export function verifyBuildIsolation() {
-  if (process.platform !== 'darwin') throw new Error('This build wrapper requires macOS sandbox-exec; no unguarded fallback');
-  const probe = 'const s=require("node:net").connect(9,"127.0.0.1");s.on("connect",()=>process.exit(1));s.on("error",e=>process.exit(e.code==="EPERM"?0:1));setTimeout(()=>process.exit(1),2000).unref();';
-  execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe], { stdio: 'pipe', timeout: 5000 });
-  return { networkPolicy: 'macOS deny network* inherited by all build children', probe: 'loopback connect rejected with EPERM' };
+  if (process.platform === 'darwin') {
+    const probe = 'const s=require("node:net").connect(9,"127.0.0.1");s.on("connect",()=>process.exit(1));s.on("error",e=>process.exit(e.code==="EPERM"?0:1));setTimeout(()=>process.exit(1),2000).unref();';
+    execFileSync('/usr/bin/sandbox-exec', ['-p', profile, process.execPath, '-e', probe], { stdio: 'pipe', timeout: 5000 });
+    return { networkPolicy: 'macOS deny network* inherited by all build children', probe: 'loopback connect rejected with EPERM' };
+  }
+  if (process.platform === 'linux') return linuxNetworkIsolation();
+  throw new Error(`This build wrapper requires macOS sandbox-exec or Linux network namespaces; no unguarded fallback on ${process.platform}`);
+}
+
+// The sandbox command for the build itself, derived from the isolation this
+// platform actually proved. Never a bare spawn: an unverified platform threw
+// above, so there is no path here without a proven boundary.
+function sandboxedBuild(isolation, root) {
+  const npm = join(dirname(process.execPath), 'npm');
+  if (process.platform === 'darwin') return { command: '/usr/bin/sandbox-exec', args: ['-p', profile, npm, 'run', 'build'] };
+  return {
+    command: '/usr/bin/unshare',
+    args: [...netnsPrefix, '/bin/sh', '-c', [
+      'set -eu',
+      '[ "$(readlink /proc/self/ns/net)" != "$TOKENPROXY_BUILD_PARENT_NETNS" ]',
+      '[ "$(awk -F: \'NR > 2 { gsub(/ /, "", $1); print $1 }\' /proc/net/dev)" = lo ]',
+      `${ipBinary} link set lo up`,
+      'exec "$@"',
+    ].join(' && '), 'tokenproxy-build', npm, 'run', 'build'],
+    extraEnv: { TOKENPROXY_BUILD_PARENT_NETNS: isolation.parentNetworkNamespace, PATH: `${dirname(process.execPath)}:/usr/sbin:/usr/bin:/bin` },
+    root,
+  };
 }
 
 export async function buildProduction() {
@@ -59,10 +125,13 @@ export async function buildProduction() {
     const descriptor = openSync(join(root, 'build.log'), 'a', 0o600);
     let buildExit;
     try {
+      const sandbox = sandboxedBuild(isolation, root);
       buildExit = await new Promise((accept, reject) => {
-        const child = spawn('/usr/bin/sandbox-exec', ['-p', profile, join(dirname(process.execPath), 'npm'), 'run', 'build'], {
+        const child = spawn(sandbox.command, sandbox.args, {
           cwd: project, stdio: ['ignore', descriptor, descriptor],
-          env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: join(root, 'home'), TMPDIR: root, NODE_ENV: 'production', TZ: 'UTC', NEXT_TELEMETRY_DISABLED: '1', MODEL_CATALOG_SYNC: 'off', NEXT_PHASE: 'phase-production-build', DATA_DIR: join(root, 'build-data'), TOKENPROXY_BUILD_SHA: before.revision, INITIAL_PASSWORD: randomBytes(24).toString('hex'), JWT_SECRET: randomBytes(32).toString('hex'), DB_ENCRYPTION_KEY: randomBytes(32).toString('hex'), npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false' },
+          // Built from scratch, so no host credential or proxy variable is inherited.
+          // XDG paths join HOME inside the disposable root for the same reason.
+          env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, HOME: join(root, 'home'), TMPDIR: root, XDG_CONFIG_HOME: join(root, 'home', '.config'), XDG_DATA_HOME: join(root, 'home', '.local/share'), XDG_CACHE_HOME: join(root, 'home', '.cache'), XDG_STATE_HOME: join(root, 'home', '.local/state'), NODE_ENV: 'production', TZ: 'UTC', NEXT_TELEMETRY_DISABLED: '1', MODEL_CATALOG_SYNC: 'off', NEXT_PHASE: 'phase-production-build', DATA_DIR: join(root, 'build-data'), TOKENPROXY_BUILD_SHA: before.revision, INITIAL_PASSWORD: randomBytes(24).toString('hex'), JWT_SECRET: randomBytes(32).toString('hex'), DB_ENCRYPTION_KEY: randomBytes(32).toString('hex'), npm_config_update_notifier: 'false', npm_config_audit: 'false', npm_config_fund: 'false', npm_config_cache: join(root, 'npm-cache'), ...sandbox.extraEnv },
         });
         child.once('error', reject);
         child.once('exit', (code, signal) => accept(code ?? `signal:${signal}`));

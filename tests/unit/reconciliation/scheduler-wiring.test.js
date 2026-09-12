@@ -46,8 +46,33 @@ const dbMocks = vi.hoisted(() => ({
   getSettings: vi.fn(async () => ({})),
   getProxyPools: vi.fn(async () => []),
 }));
+// The guard stands in for ONE thing: a quota read that succeeded and returned
+// this account's own evidence. Real quotaGuard only hands back a snapshot it
+// has verified against the connection's evidence identity (quotaGuard.js's
+// readSnapshot/staleSnapshot both reject an unbound row), and auth.js ranks on
+// THAT answer rather than on connection.lastQuotaSnapshot directly, so a mock
+// answering `snapshot: null` for every account describes a pool with no
+// evidence at all and leaves the ranker nothing to order by. Serving the
+// fixture's own snapshot back is the same shape the explicit per-test
+// overrides below use. Evidence BINDING is not this file's subject; it is
+// owned by credit-state-exit and quota-stale-while-refresh-pf2.
+//
+// `paused` stays false on purpose: no fixture here configures
+// quotaPauseThresholds, so a depleted window must be skipped by RANKING, which
+// is the behaviour under test, and never by the pause gate.
+const readQuota = async (connection) => ({
+  paused: false,
+  reason: connection?.lastQuotaSnapshot ? 'ok' : 'no-data',
+  snapshot: connection?.lastQuotaSnapshot ?? null,
+  rawUsage: null,
+});
 const quotaMocks = vi.hoisted(() => ({
-  evaluateQuota: vi.fn(async () => ({ paused: false, reason: 'disabled', snapshot: null })),
+  evaluateQuota: vi.fn(async (connection) => ({
+    paused: false,
+    reason: connection?.lastQuotaSnapshot ? 'ok' : 'no-data',
+    snapshot: connection?.lastQuotaSnapshot ?? null,
+    rawUsage: null,
+  })),
 }));
 // Hoisted so beforeEach can restore the default. A vi.mock factory's own vi.fn
 // is NOT re-created by resetModules, so a mockResolvedValue set inside one test
@@ -145,7 +170,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   dbMocks.getSettings.mockResolvedValue({});
   dbMocks.getProxyPools.mockResolvedValue([]);
-  quotaMocks.evaluateQuota.mockResolvedValue({ paused: false, reason: 'disabled', snapshot: null });
+  quotaMocks.evaluateQuota.mockImplementation(readQuota);
   proxyMocks.resolveConnectionProxyConfig.mockResolvedValue({ kind: 'usable' });
   proxyMocks.toConnectionProxyOptions.mockReturnValue({ connectionProxyEnabled: false });
   proxyMocks.pickProxyPoolId.mockReturnValue(null);

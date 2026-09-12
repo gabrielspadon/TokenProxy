@@ -3,7 +3,11 @@
 // stats-summary-honesty.test.js does not: the saveRequestStats upsert,
 // buildStatsWhere time-window and multi-select filters, the usageHistory
 // backfill, getStatsFilters cascading maps, and getStatsSeries bucketing.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+
+// These fixtures exercise production display behavior. Origin-boundary tests
+// separately prove that actual test processes cannot self-label their rows.
+vi.mock('../../src/lib/db/telemetryOrigin.js', () => ({ processTelemetryOrigin: () => 'production' }));
 
 const { DATA_FILE } = await import('../../src/lib/db/paths.js');
 const { getAdapter } = await import('../../src/lib/db/driver.js');
@@ -28,8 +32,9 @@ beforeAll(async () => {
 });
 
 describe('buildStatsWhere', () => {
-  it('no filter means no WHERE clause and no params', () => {
-    expect(buildStatsWhere({})).toEqual({ where: '', params: [] });
+  it('no caller filter still applies the shared visible population', () => {
+    expect(buildStatsWhere({}).where).toContain('telemetryQuarantineRows');
+    expect(buildStatsWhere({}).params).toEqual([]);
   });
 
   it('a scalar and an array both become IN clauses, empties are skipped', () => {
@@ -158,6 +163,25 @@ describe('aggregation over the saved rows', () => {
     expect(f.modelsByProvider['prov-b']).toEqual(['model-b']);
     expect(f.accountsByProvider['prov-b'].map((a) => a.id)).toEqual(['conn-b']);
     expect(f.modelsByAccount['conn-b']).toEqual(['model-b']);
+  });
+
+  it('getStatsFilters applies time bounds and caps distinct facet tuples', async () => {
+    const bounded = await getStatsFilters({ startDate: iso(30), endDate: iso(0) });
+    expect(bounded.providers.map((provider) => provider.id)).toEqual(['prov-a']);
+    expect(bounded.models).toEqual(['model-a']);
+
+    db.exec(`WITH RECURSIVE seq(n) AS (
+      SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n < 5000
+    )
+    INSERT INTO requestStats(id, timestamp, provider, model, connectionId)
+    SELECT 'facet-cap-' || n, '${iso(1)}', 'facet-provider', printf('facet-%04d', n), NULL FROM seq`);
+    try {
+      const capped = await getStatsFilters({ startDate: iso(2), endDate: iso(0) });
+      expect(capped.models).toHaveLength(5000);
+      expect(capped.models).not.toContain('facet-5000');
+    } finally {
+      db.run(`DELETE FROM requestStats WHERE id LIKE 'facet-cap-%'`);
+    }
   });
 
   it('getStatsSeries returns [] with no matching rows and conserves totals when bucketing', async () => {

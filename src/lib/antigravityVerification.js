@@ -209,6 +209,7 @@ export async function runAntigravityUsageProbe(connection, proxyOptions, options
   );
   return getUsageForProvider(connection, proxyOptions, {
     force: options.force === true,
+    signal: options.signal,
     verificationContext: hooks.verificationContext,
     onValidationRequired: hooks.onValidationRequired,
     onVerificationSuccess: hooks.onVerificationSuccess,

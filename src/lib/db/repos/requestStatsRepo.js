@@ -1,6 +1,10 @@
 import { getAdapter } from "../driver.js";
 import { saveContextMetrics, shouldIgnorePending, cleanupContext, retentionDays } from "./contextRepo.js";
 import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
+import { normalizeTerminalEvidence } from "../terminalEvidence.js";
+import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
+import { processTelemetryOrigin } from '../telemetryOrigin.js';
+import { normalizeReplayEvidence } from '../replayEvidence.js';
 
 // Full-history statistics source. One row per request (id is the requestDetail
 // id, shared across the streaming start/complete upsert), written
@@ -27,6 +31,7 @@ const SERIES_BUCKET_MS = [
   MIN_MS,
 ];
 const MIN_SERIES_POINTS = 30;
+const MAX_STATS_FILTER_ROWS = 5000;
 
 let lastCleanup = 0;
 let backfillStarted = false;
@@ -81,7 +86,7 @@ function colIn(col, values) {
 }
 
 export function buildStatsWhere(filter = {}) {
-  const conds = [];
+  const conds = [telemetryFilterSql('requestStats')];
   const params = [];
   for (const [col, key] of [["provider", "provider"], ["model", "model"], ["connectionId", "connectionId"]]) {
     const c = colIn(col, filter[key]);
@@ -93,15 +98,37 @@ export function buildStatsWhere(filter = {}) {
   return { where, params };
 }
 
-export async function saveRequestStats(detail) {
+const pendingWrites = new Map();
+export function saveRequestStats(detail) {
+  const logicalId = detail?.contextTelemetry?.logicalRequestId;
+  const write = saveRequestStatsInternal(detail);
+  if (!logicalId) return write;
+  const pending = pendingWrites.get(logicalId) || new Set();
+  pendingWrites.set(logicalId, pending);
+  const tracked = write.finally(() => {
+    pending.delete(tracked);
+    if (!pending.size) pendingWrites.delete(logicalId);
+  });
+  pending.add(tracked);
+  return tracked;
+}
+
+export async function flushRequestStats(logicalId) {
+  while (pendingWrites.has(logicalId)) await Promise.allSettled([...pendingWrites.get(logicalId)]);
+}
+
+async function saveRequestStatsInternal(detail) {
   if (!detail || typeof detail !== "object" || !detail.id) return;
   try {
+    const terminalEvidence = normalizeTerminalEvidence(detail.terminalEvidence, detail.status);
+    const replayEvidence = normalizeReplayEvidence(detail.contextTelemetry?.replayEvidence);
     const db = await getAdapter();
     const tokens = canonicalizeUsage(detail.tokens) || {};
     const latency = detail.latency || {};
     const { persistUsagePricing } = await import("./usagePricing.js");
     db.transaction(() => {
       const existing = db.get(`SELECT * FROM requestStats WHERE id=?`, [detail.id]);
+      if (detail.status === "pending" && existing?.terminalObservedAt) return;
       if (shouldIgnorePending(existing, detail)) return;
       const timestamp = detail.timestamp || new Date().toISOString();
       const values = {
@@ -113,8 +140,8 @@ export async function saveRequestStats(detail) {
       if (!existing || Object.entries(values).some(([field, value]) => existing[field] !== value)) db.run(
         `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
            promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens,
-           latencyTotal, latencyTtft)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           latencyTotal, latencyTtft, dataOrigin)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            timestamp = excluded.timestamp,
            status = excluded.status,
@@ -139,6 +166,7 @@ export async function saveRequestStats(detail) {
           tokens.reasoning_tokens || 0,
           latency.total || 0,
           latency.ttft || 0,
+          processTelemetryOrigin(),
         ]
       );
       const coverage = detail.contextTelemetry?.dispatchCoverage;
@@ -159,6 +187,10 @@ export async function saveRequestStats(detail) {
         db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
         db.run(`DELETE FROM contextStructures WHERE requestId=?`, [detail.id]);
       }
+      if (terminalEvidence) db.run(`UPDATE requestStats SET terminalState=?,terminalReason=?,terminalSource=?,terminalObservedAt=? WHERE id=?`,
+        [terminalEvidence.terminalState, terminalEvidence.terminalReason, terminalEvidence.terminalSource, terminalEvidence.terminalObservedAt, detail.id]);
+      if (replayEvidence) db.run(`UPDATE requestStats SET replayDisposition=?,replaySource=?,replayStatus=?,replayObservedAt=? WHERE id=?`,
+        [replayEvidence.replayDisposition, replayEvidence.replaySource, replayEvidence.replayStatus, replayEvidence.replayObservedAt, detail.id]);
     });
     await maybeCleanup(db);
   } catch (e) {
@@ -192,12 +224,12 @@ export async function ensureStatsBackfilled() {
     db.transaction(() => {
       db.run(
         `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
-           promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens)
+           promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens, dataOrigin, originReceiptId, sourceUsageId)
          SELECT 'bh-' || id, timestamp, provider, model, connectionId, status,
                 promptTokens, completionTokens,
                 COALESCE(json_extract(tokens, '$.cached_tokens'), json_extract(tokens, '$.cache_read_input_tokens'), 0),
                 COALESCE(json_extract(tokens, '$.cache_creation_input_tokens'), 0),
-                COALESCE(json_extract(tokens, '$.reasoning_tokens'), 0)
+                COALESCE(json_extract(tokens, '$.reasoning_tokens'), 0), dataOrigin, originReceiptId, id
          FROM usageHistory`
       );
       db.run(`INSERT INTO _meta(key, value) VALUES('statsBackfilled', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
@@ -207,15 +239,27 @@ export async function ensureStatsBackfilled() {
   }
 }
 
-export async function getStatsFilters() {
+export async function getStatsFilters(filter = {}) {
   await ensureStatsBackfilled();
   const db = await getAdapter();
   const connMap = await getConnectionMap();
   const providerNameMap = await getProviderNameMap();
+  // Facets intentionally ignore the currently selected dimensions so the UI
+  // can offer alternate values, but they must share the route's validated
+  // time window. A stable hard cap bounds both SQLite work and response size.
+  const { where, params } = buildStatsWhere({
+    startDate: filter.startDate,
+    endDate: filter.endDate,
+  });
+  const nonEmptyFacet = "(provider IS NOT NULL OR model IS NOT NULL OR connectionId IS NOT NULL)";
+  const boundedWhere = where ? `${where} AND ${nonEmptyFacet}` : `WHERE ${nonEmptyFacet}`;
 
   const rows = db.all(
     `SELECT DISTINCT provider, model, connectionId FROM requestStats
-     WHERE provider IS NOT NULL OR model IS NOT NULL OR connectionId IS NOT NULL`
+     ${boundedWhere}
+     ORDER BY provider, model, connectionId
+     LIMIT ?`,
+    [...params, MAX_STATS_FILTER_ROWS],
   );
 
   const providerSet = new Map();
@@ -441,13 +485,13 @@ export async function getTrafficWindow(sinceIso, { percentile = 0.95 } = {}) {
       `SELECT COUNT(*) AS requests,
               SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors,
               SUM(CASE WHEN latencyTotal > 0 THEN 1 ELSE 0 END) AS latencySamples
-       FROM requestStats WHERE timestamp >= ?`,
+       FROM requestStats WHERE ${telemetryFilterSql('requestStats')} AND timestamp >= ?`,
       [sinceIso]
     ) || {};
 
   // Unbounded on purpose: the freshness indicator has to distinguish "quiet
   // instance" from "no telemetry at all", which the windowed count cannot.
-  const freshness = db.get(`SELECT MAX(timestamp) AS lastEventAt FROM requestStats`) || {};
+  const freshness = db.get(`SELECT MAX(timestamp) AS lastEventAt FROM requestStats WHERE ${telemetryFilterSql('requestStats')}`) || {};
 
   // latencyTotal is 0 for rows whose latency was never measured (backfilled
   // history, and any writer that omitted it), so those are excluded from the
@@ -460,7 +504,7 @@ export async function getTrafficWindow(sinceIso, { percentile = 0.95 } = {}) {
     const offset = Math.max(0, Math.ceil(percentile * latencySamples) - 1);
     const row = db.get(
       `SELECT latencyTotal FROM requestStats
-       WHERE timestamp >= ? AND latencyTotal > 0
+       WHERE ${telemetryFilterSql('requestStats')} AND timestamp >= ? AND latencyTotal > 0
        ORDER BY latencyTotal ASC LIMIT 1 OFFSET ?`,
       [sinceIso, offset]
     );

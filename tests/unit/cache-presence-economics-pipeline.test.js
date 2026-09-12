@@ -16,6 +16,8 @@ async function persist(tokens) {
   await saveUsageStats({ provider: 'codex', model: 'cache-presence-fixture', tokens, silent: true });
   const row = db.get('SELECT id,tokens FROM usageHistory WHERE model=?', ['cache-presence-fixture']);
   expect(row).toBeDefined();
+  // Deliberately expose this owned fixture to the public analytics filter.
+  db.run("UPDATE usageHistory SET dataOrigin='unknown' WHERE id=?", [row.id]);
   return JSON.parse(row.tokens);
 }
 
@@ -31,9 +33,15 @@ describe.each(['stream', 'json'])('cache presence through %s extraction and comp
       cache_read_tokens_present: true, cache_write_tokens_present: write !== undefined });
     // Reported 0 stays 0 and still counts as a sample; absent reads back null
     // with no sample. The read fraction is unaffected either way.
-    expect(read().summary).toMatchObject({ inputTokens: 20000, cacheReadTokens: 12000, cacheReadFraction: 0.6,
+    const result = read();
+    expect(result.summary).toMatchObject({ inputTokens: 20000, cacheReadTokens: 12000, cacheReadFraction: 0.6,
       cacheWriteTokens: write ?? null, cacheWriteSamples: write === undefined ? 0 : 1,
       uncachedInputTokens: write === undefined ? null : 8000 - write });
+    const current = db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value;
+    try {
+      db.run("UPDATE _meta SET value='0' WHERE key='economicsProjectionVersion'");
+      expect(read()).toEqual(result);
+    } finally { db.run("UPDATE _meta SET value=? WHERE key='economicsProjectionVersion'", [current]); }
   });
 });
 

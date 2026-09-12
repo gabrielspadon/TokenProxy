@@ -1,11 +1,12 @@
 import { publicTurn } from './contextQueries.mjs';
 import { publicContextEvent } from './contextEvents.mjs';
 import { CONTEXT_STRUCTURE_DEFINITIONS, OWNED_EVENT_LINK, readContextRelated } from './contextRelated.mjs';
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 
 const CONTROL_KEYS = ['rtk','rtkAllowLossy','schema','schemaAllowLossy','headroom','headroomAllowLossy','pxpipe','pxpipeAllowLossy','thinking','privacy','memory','qac','pairs','reorder','midinject','diet','lingua','epochMicro','epochAuto','handoff','adaptiveCacheTtl','caveman','ponytail','clientOptOut','contextStructure'];
 export function readContextEvidenceExport(db, definition, mode, limit) {
   const selection = mode === 'selected' ? definition.selection : null;
-  const scope = definition.scope, clauses = ['r.contextSessionId IS NOT NULL'], args = [];
+  const scope = definition.scope, clauses = ['r.contextSessionId IS NOT NULL', telemetryFilterSql('requestStats', 'r')], args = [];
   const requestedAttempts = mode==='attempt-comparison' ? [{role:'selected',id:definition.selection.id,sessionId:definition.selection.sessionId},{role:'baseline',...definition.context.baseline}] : null;
   if (requestedAttempts) {
     clauses.push('((r.id=? AND r.contextSessionId=?) OR (r.id=? AND r.contextSessionId=?))');
@@ -30,7 +31,7 @@ export function readContextEvidenceExport(db, definition, mode, limit) {
   const related = readContextRelated(db, rows.map((row) => row.id)), stages = new Map();
   for (let offset=0;offset<rows.length;offset+=100) {
     const ids=rows.slice(offset,offset+100).map((row)=>row.id);
-    for (const {requestId,...stage} of db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk,outcomeSource,errorCode,executionRequestId FROM contextStages WHERE requestId IN (${ids.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,ids)) {
+    for (const {requestId,...stage} of db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk,outcomeSource,errorCode,executionRequestId,durationMs,durationSource FROM contextStages WHERE requestId IN (${ids.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,ids)) {
       if (!stages.has(requestId)) stages.set(requestId,[]);
       stages.get(requestId).push(stage);
     }

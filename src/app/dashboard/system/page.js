@@ -878,7 +878,7 @@ export default function SystemPage() {
         <div className={shared.lensTitle}>
           <h1>System</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · the gateway process, its version, backups and the
+            the gateway process, its version, backups and the
             switches that shape it
           </p>
         </div>

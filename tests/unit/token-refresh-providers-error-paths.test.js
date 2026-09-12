@@ -200,3 +200,44 @@ describe('refreshTraeToken catch exit', () => {
     expect(await mod.refreshTraeToken(`trae-net-${Date.now()}`, {}, null)).toBeNull();
   });
 });
+
+describe('provider error log sanitization', () => {
+  const opaque = 'opaque-canary {"refresh_token":"rotated-secret"}\nhttps://idp.invalid/error?token=secret';
+
+  it.each([
+    ['generic', (log, token) => mod.refreshAccessToken('github', token, {}, log)],
+    ['codex', (log, token) => mod.refreshCodexToken(token, log)],
+    ['kiro-aws', (log, token) => mod.refreshKiroToken(token, { clientId: 'client', clientSecret: 'secret' }, log)],
+    ['kiro-social', (log, token) => mod.refreshKiroToken(token, {}, log)],
+    ['copilot', (log, token) => mod.refreshCopilotToken(token, log)],
+    ['codebuddy', (log, token) => mod.refreshCodebuddyToken(token, log)],
+    ['codebuddy-intl', (log, token) => mod.refreshCodebuddyIntlToken(token, log)],
+  ])('%s keeps opaque response bodies out of structured logs', async (name, call) => {
+    respondWith({ error: opaque, message: opaque }, { ok: false, status: 503 });
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
+    await call(log, `sanitized-http-${name}-${Date.now()}`);
+    const output = JSON.stringify([...log.error.mock.calls, ...log.warn.mock.calls]);
+    expect(output).not.toContain('opaque-canary');
+    expect(output).not.toContain('rotated-secret');
+    expect(output).not.toContain('idp.invalid');
+    expect(output).toContain('503');
+    expect(output).toContain('reason');
+  });
+
+  it.each([
+    ['generic', (log, token) => mod.refreshAccessToken('github', token, {}, log)],
+    ['codex', (log, token) => mod.refreshCodexToken(token, log)],
+    ['copilot', (log, token) => mod.refreshCopilotToken(token, log)],
+    ['codebuddy', (log, token) => mod.refreshCodebuddyToken(token, log)],
+    ['codebuddy-intl', (log, token) => mod.refreshCodebuddyIntlToken(token, log)],
+  ])('%s keeps thrown opaque errors out of logs', async (name, call) => {
+    respondThrow(opaque);
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() };
+    await call(log, `sanitized-throw-${name}-${Date.now()}`);
+    const output = JSON.stringify([...log.error.mock.calls, ...log.warn.mock.calls]);
+    expect(output).not.toContain('opaque-canary');
+    expect(output).not.toContain('rotated-secret');
+    expect(output).not.toContain('idp.invalid');
+    expect(output).toContain('reason');
+  });
+});

@@ -1,0 +1,17 @@
+{
+  "model": "fixture-model",
+  "max_output_tokens": 32,
+  "instructions": "Keep exact user intent.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Reply with fixture-ok."
+        }
+      ]
+    }
+  ]
+}

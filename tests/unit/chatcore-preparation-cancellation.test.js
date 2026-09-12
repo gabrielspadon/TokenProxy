@@ -20,8 +20,9 @@ vi.mock('../../open-sse/utils/requestLogger.js', () => ({ createRequestLogger: a
 vi.mock('@/lib/usageDb.js', () => ({ trackPendingRequest() {}, async appendRequestLog() {}, async saveRequestDetail() {}, async saveRequestUsage() {} }));
 const { handleChatCore } = await import('../../open-sse/handlers/chatCore.js');
 const { getAdapter } = await import('../../src/lib/db/driver.js');
+const { createFallbackDeadline } = await import('../../open-sse/utils/fallbackDeadline.js');
 beforeEach(() => { state.service = null; state.signal = null; state.execute.mockReset(); });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 describe('gateway preparation cancellation boundary', () => {
   for (const service of ['media', 'headroom', 'embedding', 'pxpipe']) it(`returns caller cancellation during ${service} without invoking a provider`, async () => {
     state.service = service;
@@ -63,5 +64,22 @@ describe('gateway preparation cancellation boundary', () => {
       modelInfo: { provider: 'gemini', model: 'gemini-2.5-flash' }, credentials: { apiKey: 'fixture', providerSpecificData: {} },
       connectionId: 'fixture', contextStructureEnabled: false, clientRawRequest: { headers: { 'user-agent': 'fixture-harness' } } });
     expect(result.status).toBe(413); expect(state.execute).not.toHaveBeenCalled();
+  });
+
+  it('enforces the remaining fallback budget during preparation without provider dispatch', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    state.service = 'media';
+    const entered = new Promise(resolve => { state.entered = resolve; });
+    const task = handleChatCore({
+      body: { model: 'gemini-2.5-flash', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://images.test/a' } }] }], stream: false },
+      modelInfo: { provider: 'gemini', model: 'gemini-2.5-flash' },
+      credentials: { apiKey: 'fixture', providerSpecificData: {} }, connectionId: 'fixture', contextStructureEnabled: false,
+      connectTimeout: { fallbackDeadline: createFallbackDeadline({ timeoutMs: 1000 }) },
+    });
+    await entered;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await task).toMatchObject({ status: 504 });
+    expect(state.signal.aborted).toBe(true);
+    expect(state.execute).not.toHaveBeenCalled();
   });
 });

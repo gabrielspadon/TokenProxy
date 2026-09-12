@@ -30,35 +30,50 @@ afterAll(() => {
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });
+import { createVisibleTelemetryFixture } from "../../fixtures/visible-telemetry.mjs";
 
-// saveRequestUsage is called fire-and-forget from saveUsageStats (its promise
-// is swallowed with .catch, by design — callers on the streaming path cannot
-// block on a DB write). vi.waitFor polls for the row rather than guessing a
-// sleep duration.
-async function waitForRow(connectionId) {
-  return vi.waitFor(
-    async () => {
-      const hist = await db.getUsageHistory({});
-      const row = hist.find((h) => h.connectionId === connectionId);
-      if (!row) throw new Error(`row for ${connectionId} not persisted yet`);
-      return row;
-    },
-    { timeout: 2000, interval: 10 },
-  );
+// Public history deliberately excludes test-origin writes. The fixture verifies
+// the origin of the rows each seeding call owns and re-identifies only those as
+// a receipted synthetic import, so the public read under test stays the real
+// one. The adapter is resolved lazily because the db module is imported after
+// vi.resetModules() in beforeAll.
+let visibleFixture;
+async function withVisibleRows(produce) {
+  visibleFixture ||= createVisibleTelemetryFixture(await (await import("@/lib/db/driver.js")).getAdapter(), "receipt-state-exit");
+  return visibleFixture(produce);
+}
+
+// saveRequestUsage is called fire-and-forget from saveUsageStats (its promise is
+// swallowed with .catch, by design — callers on the streaming path cannot block
+// on a DB write), so the raw row is awaited INSIDE the ownership window and the
+// public read happens after it has been re-identified.
+async function waitForRow(connectionId, produce) {
+  await withVisibleRows(async () => {
+    produce();
+    const adapter = await (await import("@/lib/db/driver.js")).getAdapter();
+    await vi.waitFor(() => {
+      if (!adapter.get("SELECT id FROM usageHistory WHERE connectionId=?", [connectionId])) {
+        throw new Error(`row for ${connectionId} not persisted yet`);
+      }
+    }, { timeout: 2000, interval: 10 });
+  });
+  const hist = await db.getUsageHistory({});
+  const row = hist.find((h) => h.connectionId === connectionId);
+  if (!row) throw new Error(`row for ${connectionId} is not visible to public history`);
+  return row;
 }
 
 describe("receipt.state.exit — one redacted receipt exists for every non-cache generation", () => {
   it("a real generation (nonzero tokens) gets exactly one persisted receipt", async () => {
     const connectionId = "receipt-real-gen-conn";
-    saveUsageStats({
+    await waitForRow(connectionId, () => saveUsageStats({
       provider: "acme",
       model: "m1",
       tokens: { prompt_tokens: 120, completion_tokens: 40 },
       connectionId,
       endpoint: "/v1/chat/completions",
       silent: true,
-    });
-    await waitForRow(connectionId);
+    }));
     const hist = await db.getUsageHistory({});
     expect(hist.filter((h) => h.connectionId === connectionId)).toHaveLength(1);
   });
@@ -81,7 +96,7 @@ describe("receipt.state.exit — one redacted receipt exists for every non-cache
   it('mutation "persist raw metadata": the raw API key and the translated request body never survive to the row', async () => {
     const connectionId = "receipt-redact-conn";
     const secret = "sk-THIS-MUST-NEVER-BE-PERSISTED-RAW";
-    saveUsageStats({
+    const row = await waitForRow(connectionId, () => saveUsageStats({
       provider: "acme",
       model: "m1",
       tokens: { prompt_tokens: 10, completion_tokens: 5 },
@@ -90,8 +105,7 @@ describe("receipt.state.exit — one redacted receipt exists for every non-cache
       endpoint: "/v1/messages",
       translatedBody: { messages: [{ role: "user", content: "top secret prompt body" }] },
       silent: true,
-    });
-    const row = await waitForRow(connectionId);
+    }));
     expect(row.apiKeyMasked).not.toBe(secret);
     const serialized = JSON.stringify(row);
     expect(serialized).not.toContain(secret);
@@ -100,15 +114,14 @@ describe("receipt.state.exit — one redacted receipt exists for every non-cache
 
   it('mutation "omit provider attempt": the provider, model and endpoint that served this generation survive exactly', async () => {
     const connectionId = "receipt-attempt-conn";
-    saveUsageStats({
+    const row = await waitForRow(connectionId, () => saveUsageStats({
       provider: "acme-provider",
       model: "exact-model",
       tokens: { prompt_tokens: 30, completion_tokens: 15 },
       connectionId,
       endpoint: "/v1/responses",
       silent: true,
-    });
-    const row = await waitForRow(connectionId);
+    }));
     expect(row.provider).toBe("acme-provider");
     expect(row.model).toBe("exact-model");
     expect(row.endpoint).toBe("/v1/responses");
@@ -122,9 +135,9 @@ describe("receipt.state.exit — one redacted receipt exists for every non-cache
     // history it thinks is longer or shorter than it is.
     const usage = { prompt_tokens: 500, completion_tokens: 80, estimated: true };
 
-    saveUsageStats({ provider: "acme", model: "m1", tokens: usage, connectionId, silent: true });
-    const row = await waitForRow(connectionId);
+    const row = await waitForRow(connectionId,
+      () => saveUsageStats({ provider: "acme", model: "m1", tokens: usage, connectionId, silent: true }));
     expect(row.tokens.prompt_tokens).toBe(500);
     expect(row.tokens.completion_tokens).toBe(80);
-});
+  });
 });

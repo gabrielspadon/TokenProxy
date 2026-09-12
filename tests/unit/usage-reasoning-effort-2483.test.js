@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { summarizeReasoning } from "open-sse/handlers/chatCore/requestDetail.js";
+import { buildRecentRequestRow } from "../../src/lib/db/repos/usageRepo.js";
 
 describe("the label a request is grouped by (#2483)", () => {
   it("reads the OpenAI flat effort", () => {
@@ -68,8 +69,12 @@ describe("the rollup dimension (#2483)", () => {
   });
 
   it("reads it back on both history paths", () => {
-    const reads = repo.match(/parseJson\(r?e?\.?meta, \{\}\)\.reasoningEffort/g) || [];
-    expect(reads.length).toBeGreaterThanOrEqual(2);
+    // The in-memory ring carries the parsed field and a usageHistory row carries
+    // it inside a JSON meta string; one reader serves both, so exercise the
+    // behaviour rather than counting occurrences of a call expression.
+    expect(buildRecentRequestRow({ reasoningEffort: "high" }).reasoningEffort).toBe("high");
+    expect(buildRecentRequestRow({ meta: JSON.stringify({ reasoningEffort: "12k" }) }).reasoningEffort).toBe("12k");
+    expect(buildRecentRequestRow({ meta: JSON.stringify({ requestedModel: "m" }) }).reasoningEffort).toBeNull();
   });
 
   it("counts into its own dimension, leaving byModel's key alone", () => {

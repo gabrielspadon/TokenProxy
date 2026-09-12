@@ -30,9 +30,12 @@ describe('translateResponse same-format passthrough (OAuth tool cloak)', () => {
 
   it('leaves an uncloaked chunk untouched', () => {
     // Decoy name — declared to the provider unsuffixed, so it is not in the map.
+    // "Untouched" is the VALUE, not the object: translateResponse hands back a
+    // private copy so the caller's chunk survives translation unmodified.
     const decoy = toolUseStart('Bash');
     const [out] = translateResponse(FORMATS.CLAUDE, FORMATS.CLAUDE, decoy, state());
-    expect(out).toBe(decoy);
+    expect(out).toEqual(toolUseStart('Bash'));
+    expect(decoy).toEqual(toolUseStart('Bash'));
     expect(out.content_block.name).toBe('Bash');
 
     const delta = {
@@ -40,8 +43,10 @@ describe('translateResponse same-format passthrough (OAuth tool cloak)', () => {
       index: 1,
       delta: { type: 'input_json_delta', partial_json: '{}' },
     };
+    const deltaSource = structuredClone(delta);
     const [outDelta] = translateResponse(FORMATS.CLAUDE, FORMATS.CLAUDE, delta, state());
-    expect(outDelta).toBe(delta);
+    expect(outDelta).toEqual(deltaSource);
+    expect(delta).toEqual(deltaSource);
   });
 
   it('is a no-op without a cloak map, and on a non-Claude same-format stream', () => {
@@ -52,7 +57,8 @@ describe('translateResponse same-format passthrough (OAuth tool cloak)', () => {
 
     const openaiChunk = { choices: [{ delta: { content: 'hi' } }] };
     const [out] = translateResponse(FORMATS.OPENAI, FORMATS.OPENAI, openaiChunk, state());
-    expect(out).toBe(openaiChunk);
+    expect(out).toEqual({ choices: [{ delta: { content: 'hi' } }] });
+    expect(openaiChunk).toEqual({ choices: [{ delta: { content: 'hi' } }] });
   });
 
   it('still emits nothing for the null flush chunk', () => {

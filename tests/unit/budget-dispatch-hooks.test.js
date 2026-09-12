@@ -19,6 +19,10 @@ it('a rejected admission causes zero transport calls and no response callback',a
  await expect(executor().execute({...options,beforeDispatch:async()=>{throw new Error('budget rejected');},afterDispatch})).rejects.toThrow('budget rejected');
  expect(fetchMock).not.toHaveBeenCalled();expect(afterDispatch).not.toHaveBeenCalled();
 });
+it('does not attach the shared 429 proof label to replay-safe non-429 responses',async()=>{
+ const response=Response.json({error:{message:'rejected'}},{status:400});const afterDispatch=vi.fn();fetchMock.mockResolvedValue(response);
+ await executor().execute({...options,afterDispatch});expect(afterDispatch).toHaveBeenCalledWith({response});
+});
 it('overridden execute cannot silently inherit the Base coverage claim',()=>{
  class HiddenTransport extends BaseExecutor { async execute(){return null;} }
  expect(executor().supportsBudgetDispatch).toBe(true);

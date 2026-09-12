@@ -7,7 +7,7 @@ import { authenticateRedesign, installRedesignBrowser } from './redesign-fixture
 test.use({ serviceWorkers: 'block', timezoneId: 'UTC', reducedMotion: 'reduce', trace: 'off', screenshot: 'off', video: 'off' });
 
 for (const width of [1440, 1920, 390]) {
-  test(`everyday navigation and task drafts remain usable at ${width}px`, async ({ page, context, baseURL }, testInfo) => {
+  test(`route defaults and task drafts remain usable at ${width}px`, async ({ page, context, baseURL }, testInfo) => {
     test.setTimeout(180000);
     page.setDefaultTimeout(15000);
     expect(process.env.E2E_FIXTURE_ROOT, 'Use an owned isolated fixture root').toBeTruthy();
@@ -61,28 +61,21 @@ for (const width of [1440, 1920, 390]) {
     try {
       await navigate('/dashboard/tools');
       await openNavigation();
-      await expect(sections.getByRole('radio', { name: 'Everyday', exact: true })).toBeChecked();
-      await expect(sections.locator('a[href="/dashboard/compatibility"]')).toHaveCount(0);
-      await sections.getByText('Advanced', { exact: true }).click();
-      await expect(sections.getByRole('radio', { name: 'Advanced', exact: true })).toBeChecked();
+      await expect(page.getByRole('radiogroup', { name: 'Navigation view' })).toHaveCount(0);
       await expect(sections.locator('a[href="/dashboard/compatibility"]')).toBeVisible();
       await page.reload();
       await openNavigation();
-      await expect(sections.getByRole('radio', { name: 'Advanced', exact: true })).toBeChecked();
+      await expect(sections.locator('a[href="/dashboard/compatibility"]')).toBeVisible();
       await expect(sections.locator('a[href="/dashboard/remote"], a[href="/dashboard/translation"]')).toHaveCount(0);
-      await sections.getByText('Everyday', { exact: true }).click();
-      await page.reload();
-      await openNavigation();
-      await expect(sections.getByRole('radio', { name: 'Everyday', exact: true })).toBeChecked();
       await closeNavigation();
+      await navigate('/dashboard/context');
+      await expect(page.locator('section[data-layout="cards"]').first()).toBeVisible();
       await navigate('/dashboard/compatibility');
       await openNavigation();
-      await expect(sections.getByText('Current page', { exact: true })).toBeVisible();
       await expect(sections.locator('a[href="/dashboard/compatibility"]')).toHaveAttribute('aria-current', 'page');
-      await expect(sections.locator('a[href="/dashboard/remote"], a[href="/dashboard/translation"]')).toHaveCount(0);
-      await capture('everyday-current-deep-link');
+      await capture('route-current-deep-link');
       await closeNavigation();
-      report.checks.push('Everyday and Advanced survive reload; advanced deep links remain available; retired links absent');
+      report.checks.push('Full navigation survives reload; Context uses cards; retired links and the mode picker are absent');
 
       // The three Operations pages are boards: one panel per page, groups of
       // cards rather than task tabs, and a card that opens in place.

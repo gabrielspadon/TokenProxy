@@ -607,7 +607,7 @@ export default function ModelContextPage() {
         <div className={shared.lensTitle}>
           <h1>Context limits</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · registered windows and the overrides the gateway
+            registered windows and the overrides the gateway
             applies
           </p>
         </div>

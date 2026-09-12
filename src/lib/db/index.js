@@ -161,7 +161,8 @@ export async function importDb(payload) {
       validateBudgetPolicy(merged.budgetPolicy ?? null);
       return merged;
     });
-    // Wipe all tables (keep _meta)
+    // Replace the selected configuration tables within this transaction. Plain
+    // INSERT rejects duplicate incoming identities instead of discarding rows.
     db.run(`DELETE FROM settings`);
     db.run(`DELETE FROM providerConnections`);
     db.run(`DELETE FROM providerNodes`);
@@ -178,49 +179,49 @@ export async function importDb(payload) {
     for (const c of payload.providerConnections || []) {
       const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
       db.run(
-        `INSERT OR REPLACE INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [id, provider, importedAuthType(authType, provider, providerCatalog), name || null, email || null, priority || null, isActive === false ? 0 : 1, encryptSecretJson({...rest, credentialRevisionId:randomUUID()}), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
     for (const n of payload.providerNodes || []) {
       const { id, type, name, createdAt, updatedAt, ...rest } = n;
       db.run(
-        `INSERT OR REPLACE INTO providerNodes(id, type, name, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO providerNodes(id, type, name, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
         [id, type || null, name || null, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
     for (const p of payload.proxyPools || []) {
       const { id, isActive, testStatus, createdAt, updatedAt, ...rest } = p;
       db.run(
-        `INSERT OR REPLACE INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO proxyPools(id, isActive, testStatus, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
         [id, isActive === false ? 0 : 1, testStatus || "unknown", stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
       );
     }
     for (const k of keysToImport) {
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id,key,name,machineId,isActive,createdAt,expiresAt,maxPromptTokens,maxCompletionTokens,maxCostUsd,budgetPolicy) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO apiKeys(id,key,name,machineId,isActive,createdAt,expiresAt,maxPromptTokens,maxCompletionTokens,maxCostUsd,budgetPolicy) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
         [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false || k.isActive === 0 ? 0 : 1, k.createdAt || new Date().toISOString(),
           k.expiresAt ?? null, k.maxPromptTokens ?? null, k.maxCompletionTokens ?? null, k.maxCostUsd ?? null, k.budgetPolicy ?? null]
       );
     }
     for (const c of payload.combos || []) {
       db.run(
-        `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
         [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
       );
     }
     for (const [a, m] of Object.entries(payload.modelAliases || {})) {
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [a, stringifyJson(m)]);
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('modelAliases', ?, ?)`, [a, stringifyJson(m)]);
     }
     for (const m of payload.customModels || []) {
       const k = `${m.providerAlias}|${m.id}|${m.type || "llm"}`;
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, stringifyJson(m)]);
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, stringifyJson(m)]);
     }
     for (const [tool, mappings] of Object.entries(payload.mitmAlias || {})) {
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`, [tool, stringifyJson(mappings || {})]);
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('mitmAlias', ?, ?)`, [tool, stringifyJson(mappings || {})]);
     }
     for (const [provider, models] of Object.entries(payload.pricing || {})) {
-      db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
     }
   });
 

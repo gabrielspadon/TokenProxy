@@ -40,9 +40,10 @@ import {
   useLevel,
 } from '@/shared/workspace/Board';
 import {
-  BUCKETS,
+  CATEGORIES,
   SORTS,
-  accountBucket,
+  accountCategory,
+  categorySummary,
   accountHeld,
   accountStateWord,
   credentialModes,
@@ -76,7 +77,7 @@ import styles from './connections.module.css';
 import './styles.css';
 
 const EMPTY = [];
-const TONE = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, bucket.tone]));
+const TONE = Object.fromEntries(CATEGORIES.map((bucket) => [bucket.id, bucket.tone]));
 const VIEWS = [
   { value: 'accounts', label: 'Accounts' },
   { value: 'add', label: 'Add' },
@@ -122,13 +123,9 @@ const unchecked = (account, state) => state === 'Not checked' || !account.status
 // board it mirrors: the copy still read a quota pause as the operator's own.
 // accountHeld answers the same question from the one model.
 const known = (account, now) => accountHeld(account, now) || !unchecked(account, accountControlState(account, now));
-const bucketOf = (account, now) => (known(account, now) ? accountBucket(account, now) : 'unknown');
+const bucketOf = accountCategory;
 const wordOf = (account, now) => (known(account, now) ? accountStateWord(account, now) : 'Not checked');
-const summaryOf = (accounts, now) => {
-  const counts = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, 0]));
-  for (const account of accounts) counts[bucketOf(account, now)] += 1;
-  return counts;
-};
+const summaryOf = categorySummary;
 
 const toast = (color, message, title) =>
   notifications.show({ color, message, title, autoClose: color === 'teal' ? 4000 : 9000 });
@@ -1157,12 +1154,6 @@ export default function ConnectionsPage() {
       return {
         ...account,
         windows: snapshot?.windows || EMPTY,
-        // accountWindows() prefers a stored lastQuotaSnapshot over the admin
-        // projection whenever its fetchedAt is newer, which on this page meant
-        // a stale fixture snapshot greyed every meter while Capacity, reading
-        // the same account, drew it green. Where the shared quota read has an
-        // answer, that answer is the one both pages use.
-        lastQuotaSnapshot: snapshot ? null : account.lastQuotaSnapshot,
         drain: !drain.error
           ? drain.data?.connections?.find((item) => item.connectionId === id)
           : null,
@@ -1353,7 +1344,7 @@ export default function ConnectionsPage() {
         <div className={shared.lensTitle}>
           <h1>Connections</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · stored accounts, their qualification and their
+            stored accounts, their qualification and their
             credentials
           </p>
         </div>
@@ -1421,7 +1412,7 @@ export default function ConnectionsPage() {
               note={degradedNote}
               chips={[
                 { count: scoped.length, label: 'accounts' },
-                ...BUCKETS.map((item) => ({
+                ...CATEGORIES.map((item) => ({
                   id: item.id,
                   tone: item.tone,
                   count: summary[item.id],
@@ -1517,7 +1508,7 @@ export default function ConnectionsPage() {
               </Text>
             ) : null}
             {!advanced
-              ? BUCKETS.map((item) => {
+              ? CATEGORIES.map((item) => {
                   const members = orderCards(
                     visible.filter((account) => bucketOf(account, now) === item.id),
                     now

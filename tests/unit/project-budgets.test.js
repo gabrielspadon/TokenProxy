@@ -8,17 +8,21 @@ import { reserveBudget, markBudgetDispatched, releaseBudgetReservation, getBudge
 import { saveRequestUsage, reconcileBudgetUsage } from '@/lib/db/repos/usageRepo.js';
 import { readActivityAnalytics } from '@/lib/db/analytics/activityQueries.mjs';
 import { projectSpendingForecast } from '@/lib/db/projectBudgetEvidence.js';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 const db = await getAdapter();
 const fields = { provider: 'fixture', model: 'model', connectionId: 'account' };
+// Public analytics excludes test-origin writes. Passed only by the two tests
+// that read a public identity population; the rest keep their rows hidden.
+const visible = createVisibleTelemetryFixture(db, 'project-budgets');
 beforeEach(() => {
   for (const table of ['projectBindings','projectPolicyVersions','projectBudgetAlerts','projectBudgetUsageHours','projectBudgetAccounts','projects','apiKeyBudgetReservations','apiKeyBudgetAccounts','usageHistory','requestStats','apiKeys']) db.run(`DELETE FROM ${table}`);
 });
-async function client(name = 'one', limits = {}) {
+async function client(name = 'one', limits = {}, publish = produce => produce()) {
   const created = await createApiKey(name, 'isolated');
   const key = await updateApiKey(created.id, { ...limits, budgetPolicy: 'strict' });
   const capture = await prepareContextCapture({ body: {}, apiKey: key.key, headers: new Headers({ 'x-tokenproxy-client-id': name, 'x-tokenproxy-project-id': 'private-project', 'x-tokenproxy-task-id': 'private-task' }) });
   const context = { requestId: randomUUID(), logicalRequestId: randomUUID(), attempt: 1, explicitIdentity: capture.identity, apiKeyId: key.id };
-  await saveRequestUsage({ ...fields, apiKey: key.key, contextTelemetry: context, tokens: { prompt_tokens: 1, completion_tokens: 1, cost_usd: 0.01 } });
+  await publish(() => saveRequestUsage({ ...fields, apiKey: key.key, contextTelemetry: context, tokens: { prompt_tokens: 1, completion_tokens: 1, cost_usd: 0.01 } }));
   return { key, identity: capture.identity, context };
 }
 async function projectFor(clients, policy = {}) {
@@ -101,8 +105,8 @@ describe('exact project attribution and joint budget authority', () => {
     expect(await admission(c, { completionTokens: 100 })).toBeTruthy();
   });
   it('retains authenticated task and project references after request retention expires, including pagination', async () => {
-    const c = await client(); const p = await projectFor([c]);
-    for (let i = 0; i < 3; i++) { const r = await admission(c, { completionTokens: 10 }); await markBudgetDispatched(r.requestId); await usage(c, r, { prompt_tokens: 4, completion_tokens: 5, cost_usd: 1 }); }
+    const c = await client('one', {}, visible); const p = await projectFor([c]);
+    for (let i = 0; i < 3; i++) { const r = await admission(c, { completionTokens: 10 }); await markBudgetDispatched(r.requestId); await visible(() => usage(c, r, { prompt_tokens: 4, completion_tokens: 5, cost_usd: 1 })); }
     db.run('DELETE FROM requestStats');
     const result = readActivityAnalytics(db, { operation: 'activity', view: 'economics', projectRef: c.identity.projectRef, taskRef: c.identity.taskRef, pageSize: 1 });
     expect(result.summary.records).toBe(4);
@@ -134,7 +138,7 @@ describe('exact project attribution and joint budget authority', () => {
     expect((await getProject(p.project.id)).bindings).toHaveLength(100);
   });
   it('paginates the full observed identity population without duplicates or key mixing', async () => {
-    const c = await client();
+    const c = await client('one', {}, visible);
     for (let i = 0; i < 4; i++) db.run('INSERT INTO usageHistory(timestamp,clientKeyId,clientIdentitySource,clientRef,projectRef) VALUES(?,?,?,?,?)', [new Date().toISOString(), c.key.id, 'client-reported', c.identity.clientRef, `ctx1_${String(i).repeat(64)}`]);
     const seen = new Set(); let before = null;
     do { const page = await listProjectCandidates(c.key.id, { limit: 2, before }); for (const row of page.items) { expect(row.apiKeyId).toBe(c.key.id); expect(seen.has(row.projectRef)).toBe(false); seen.add(row.projectRef); } before = page.nextCursor; } while (before);

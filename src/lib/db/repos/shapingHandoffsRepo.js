@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { getAdapter } from '../driver.js';
+import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
 import { normalizeContextIdentity } from './contextEvidenceRepo.js';
 import { ShapingError } from '../../shaping/profile.js';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -15,7 +16,7 @@ function observed(db, requestId) {
     JOIN projectBindings b ON b.apiKeyId=r.clientKeyId AND b.clientRef=r.clientRef AND b.projectRef=r.projectRef
     JOIN projects p ON p.id=b.projectId AND p.archived=0
     JOIN apiKeys k ON k.id=r.clientKeyId AND k.isActive=1
-    WHERE r.id=? AND r.clientIdentitySource='client-reported' AND r.clientSessionRef IS NOT NULL`, [requestId]);
+    WHERE ${telemetryFilterSql('requestStats', 'r')} AND r.id=? AND r.clientIdentitySource='client-reported' AND r.clientSessionRef IS NOT NULL`, [requestId]);
   if (!row) throw new ShapingError('handoff_explicit_project_session_required', 422);
   const identity = normalizeContextIdentity(row);
   if (!identity.clientRef || !identity.projectRef || !identity.clientSessionRef) throw new ShapingError('handoff_explicit_project_session_required', 422);
@@ -82,7 +83,7 @@ export async function listShapingHandoffs(options) {
   const { page, pageSize, offset } = pagination(options), db = await getAdapter(), at = new Date().toISOString();
   if (expireContent(db, at)) db.flush?.();
   const total = db.get('SELECT COUNT(*) AS count FROM shapingHandoffs').count;
-  const rows = db.all(`SELECT h.*, (SELECT COUNT(*) FROM contextHandoffApplications a WHERE a.handoffId=h.id AND a.executionRequestId=a.requestId) AS preparations
+  const rows = db.all(`SELECT h.*, (SELECT COUNT(*) FROM contextHandoffApplications a JOIN requestStats r ON r.id=a.requestId WHERE ${telemetryFilterSql('requestStats', 'r')} AND a.handoffId=h.id AND a.executionRequestId=a.requestId) AS preparations
     FROM shapingHandoffs h ORDER BY h.createdAt DESC,h.id LIMIT ? OFFSET ?`, [pageSize, offset]).map(row => ({ ...publicPacket(row, at), preparations: row.preparations }));
   return { rows, pagination: { page, pageSize, total, pages: Math.ceil(total / pageSize) }, effect: HANDOFF_EFFECT };
 }
@@ -90,7 +91,7 @@ export async function handoffTargets(options) {
   const { page, pageSize, offset } = pagination(options), db = await getAdapter();
   const population = `FROM requestStats r JOIN projectBindings b ON b.apiKeyId=r.clientKeyId AND b.clientRef=r.clientRef AND b.projectRef=r.projectRef
     JOIN projects p ON p.id=b.projectId AND p.archived=0 JOIN apiKeys k ON k.id=r.clientKeyId AND k.isActive=1
-    WHERE r.clientIdentitySource='client-reported' AND r.clientSessionRef IS NOT NULL`;
+    WHERE ${telemetryFilterSql('requestStats', 'r')} AND r.clientIdentitySource='client-reported' AND r.clientSessionRef IS NOT NULL`;
   const total = db.get(`SELECT COUNT(*) AS count ${population}`).count;
   const rows = db.all(`SELECT r.id,r.contextSessionId,r.clientTool,r.requestedModel,r.timestamp,p.id AS projectId,p.name AS projectName ${population} ORDER BY r.timestamp DESC,r.id LIMIT ? OFFSET ?`, [pageSize, offset]);
   return { rows, pagination: { page, pageSize, total, pages: Math.ceil(total / pageSize) } };

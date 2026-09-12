@@ -1,0 +1,11 @@
+{
+  "model": "fixture-model",
+  "input": [
+    {
+      "type": "function_call",
+      "call_id": "call_missing_name",
+      "name": "",
+      "arguments": "{}"
+    }
+  ]
+}

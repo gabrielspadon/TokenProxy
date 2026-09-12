@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   ActionIcon,
   AppShell,
+  Button,
   Burger,
   Group,
   Modal,
@@ -17,7 +18,7 @@ import {
   Tooltip,
   useMantineColorScheme,
 } from '@mantine/core';
-import { useHotkeys, useLocalStorage, useMediaQuery, useMounted } from '@mantine/hooks';
+import { useHotkeys, useMediaQuery, useMounted } from '@mantine/hooks';
 import { NAV, navigationGroups } from '@/shared/nav';
 import { useAuthStatus } from '@/store/authStatus';
 import { Icon } from './Icon';
@@ -37,6 +38,10 @@ const SEARCH_TERMS = {
 };
 const LABELS = { '/dashboard': 'Capacity', '/dashboard/usage': 'Economics' };
 const lensName = (item) => LABELS[item.href] || item.label;
+// A destination is current for its own route and everything under it, matched
+// on a path boundary so /dashboard/connections never claims a sibling route.
+const isCurrent = (href, pathname) =>
+  pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`));
 const SEARCH_DESTINATIONS = [
   ...NAV,
   { href: '/dashboard/usage?tool=pricing', label: 'Model pricing', icon: 'i-usage', terms: 'rates cache input output reset price' },
@@ -81,7 +86,6 @@ function WorkspaceShell({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [navigationMode, setNavigationMode] = useLocalStorage({ key: 'tokenproxy.navigation-mode', defaultValue: 'everyday' });
   const desktopNavigation = useMediaQuery('(min-width: 62em)');
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
@@ -118,8 +122,8 @@ function WorkspaceShell({ children }) {
   const accountResults = normalizedQuery ? (accounts || []).filter((account) =>
     `${account.displayName || account.name || ''} ${account.provider || ''} ${account.connectionId || ''}`.toLowerCase().includes(normalizedQuery)
   ).slice(0, 12) : [];
-  // Every dashboard page now composes the lens heading and the board itself.
-  const isCapacity = pathname.startsWith('/dashboard');
+  // Every dashboard page composes the lens heading and the board itself.
+  const lensRoute = pathname === '/dashboard' || pathname.startsWith('/dashboard/');
   return (
     <AppShell
       padding={0}
@@ -162,11 +166,7 @@ function WorkspaceShell({ children }) {
       <AppShell.Navbar id="workspace-navigation" className={styles.navbar} inert={!desktopNavigation && !mobileOpen ? true : undefined}>
         <ScrollArea className={styles.navScroll}>
           <nav aria-label="Sections">
-            <div className={styles.navigationMode}>
-              <SegmentedControl fullWidth size="xs" aria-label="Navigation view" value={navigationMode === 'advanced' ? 'advanced' : 'everyday'} onChange={setNavigationMode}
-                data={[{ value: 'everyday', label: 'Everyday' }, { value: 'advanced', label: 'Advanced' }]} />
-            </div>
-            {navigationGroups(navigationMode, pathname).map((group) => (
+            {navigationGroups(pathname).map((group) => (
               <div className={styles.navGroup} key={group.label}>
                 <Text className={styles.navGroupLabel}>
                   {group.label}
@@ -182,8 +182,8 @@ function WorkspaceShell({ children }) {
                       prefetch={false}
                       label={lensName(item)}
                       leftSection={<Icon name={item.icon} />}
-                      active={pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`))}
-                      aria-current={pathname === item.href ? 'page' : undefined}
+                      active={isCurrent(item.href, pathname)}
+                      aria-current={isCurrent(item.href, pathname) ? 'page' : undefined}
                       onClick={() => setMobileOpen(false)}
                       className={styles.navItem}
                     />
@@ -218,19 +218,18 @@ function WorkspaceShell({ children }) {
                     : 'Operator account'}
               </span>
               {auth?.authenticated && (
-                <Tooltip label="Sign out">
-                  <ActionIcon
-                    variant="subtle"
-                    color="gray"
-                    size="sm"
-                    aria-label="Sign out"
-                    loading={signingOut}
-                    disabled={snapshot?.isolated}
-                    onClick={signOut}
-                  >
-                    <Icon name="i-signout" />
-                  </ActionIcon>
-                </Tooltip>
+                <Button
+                  className={styles.railSignOut}
+                  variant="subtle"
+                  color="gray"
+                  size="compact-xs"
+                  leftSection={<Icon name="i-signout" />}
+                  loading={signingOut}
+                  disabled={snapshot?.isolated}
+                  onClick={signOut}
+                >
+                  logout
+                </Button>
               )}
             </div>
             {signOutError && <p role="alert" className={styles.railAlert}>{signOutError}</p>}
@@ -245,7 +244,7 @@ function WorkspaceShell({ children }) {
         </div>
       </AppShell.Navbar>
       <AppShell.Main className={styles.main}>
-        <div id="main" tabIndex={-1} className={isCapacity ? styles.lensMain : styles.legacyMain}>
+        <div id="main" tabIndex={-1} className={lensRoute ? styles.lensMain : styles.legacyMain}>
           {children}
         </div>
       </AppShell.Main>

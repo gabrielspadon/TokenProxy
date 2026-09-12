@@ -29,8 +29,10 @@ function resolveAudioContentType(file) {
 }
 
 async function upstreamError(res) {
-  const { statusCode, message, resetsAtMs } = await parseUpstreamError(res);
-  return createErrorResult(statusCode, message, resetsAtMs, { safeToReplay: isReplaySafeRejection(res) });
+  const { statusCode, message, resetsAtMs, errorPayload } = await parseUpstreamError(res);
+  return createErrorResult(statusCode, message, resetsAtMs, {
+    safeToReplay: isReplaySafeRejection(res, errorPayload),
+  });
 }
 
 // Deepgram: raw binary POST + model query param

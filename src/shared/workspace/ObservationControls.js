@@ -2,12 +2,30 @@
 import { SegmentedControl, Tooltip } from '@mantine/core';
 import { useWorkspace } from './WorkspaceProvider';
 import styles from './workspace.module.css';
+import local from './observationControls.module.css';
 
+// The internal enum stays summary|live|paused so a stored preference and every
+// consumer keep working. Only the rail's wording changed: "Summary" named a
+// shape of data, when what it selects is who triggers the read. "Snapshot" was
+// unavailable -- this same rail already prints it for an isolated captured
+// dataset -- so the non-automatic mode is Manual.
+//
+// Manual is not "no reads": every mode reads each source ONCE when a page
+// opens, because a workspace with nothing on screen has nothing to hold. What
+// Manual withholds is the repeat.
 const BEHAVIORS = [
-  { value: 'summary', label: 'Summary' },
+  { value: 'summary', label: 'Manual' },
   { value: 'live', label: 'Live' },
   { value: 'paused', label: 'Paused' },
 ];
+// Said where the choice is made, so the operator does not have to open a
+// tooltip to learn whether the screen is reading. Per-panel freshness stays
+// authoritative for when each source last succeeded.
+const BEHAVIOR_NOTE = {
+  summary: 'Reads each source once when a page opens. Refresh to read again.',
+  live: 'Refreshes automatically and follows supported streams. Refreshes slow under load.',
+  paused: 'No repeating reads or streams. Shown values are held until you refresh.',
+};
 const utcClock = (value) => `${new Date(value).toISOString().slice(11, 19)} UTC`;
 
 // How the workspace observes its sources is chosen in place in the rail and
@@ -25,8 +43,8 @@ export function ObservationControls() {
     } else observations.setMode(next);
   }
   const explanation = [
-    'Summary reads each visible source when it is opened. Live refreshes visible retained evidence on bounded intervals and reconnects supported streams. Pausing closes those streams and stops background reads. Selecting another record or explicitly refreshing still reads its evidence.',
-    'Each source keeps its own observation age. Resuming re-reads current state; events that were not retained during a pause cannot be recovered. Dashboard refresh does not request provider authentication or inference.',
+    'Manual reads each visible source when it is opened. Live refreshes visible retained evidence on bounded intervals and reconnects supported streams. Pausing closes those streams and stops background reads. Selecting another record or explicitly refreshing still reads its evidence.',
+    'The chosen behavior is kept for this browser and applies to every page until it is changed. Each source keeps its own observation age. Resuming re-reads current state; events that were not retained during a pause cannot be recovered. Dashboard refresh does not request provider authentication or inference.',
     snapshot &&
       'Fixed isolated snapshot. Live updates are unavailable for this captured dataset. Permitted local changes can be verified with an explicit refresh.',
     !snapshot &&
@@ -38,6 +56,7 @@ export function ObservationControls() {
     <div
       className={styles.railSetting}
       data-observation-control
+      data-observation-mode={observations.mode}
       data-disabled={snapshot ? true : undefined}
     >
       <div className={styles.railHead}>
@@ -69,6 +88,11 @@ export function ObservationControls() {
           }))}
         />
       </Tooltip>
+      <p className={local.behavior}>
+        {snapshot && observations.mode !== 'paused'
+          ? 'Reads the captured dataset once. Live updates are unavailable for it.'
+          : BEHAVIOR_NOTE[observations.mode]}
+      </p>
       {observations.pausedAt && (
         <p className={styles.railNote}>
           Paused at{' '}

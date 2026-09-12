@@ -1,4 +1,5 @@
 import { getAdapter } from '../driver.js';
+import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
 
 /**
  * Which client last used each key, from retained request statistics.
@@ -31,7 +32,7 @@ export async function getKeyAttribution() {
             COUNT(DISTINCT clientTool) AS distinctClients,
             MAX(timestamp) AS lastSeenAt
        FROM requestStats
-      WHERE clientKeyId IS NOT NULL
+      WHERE ${telemetryFilterSql('requestStats')} AND clientKeyId IS NOT NULL
       GROUP BY clientKeyId`
   )) {
     // The label belongs to the MOST RECENT request, not to the most frequent
@@ -39,7 +40,7 @@ export async function getKeyAttribution() {
     // they rotate or revoke it.
     const latest = db.get(
       `SELECT clientTool, timestamp FROM requestStats
-        WHERE clientKeyId = ? AND clientTool IS NOT NULL
+        WHERE ${telemetryFilterSql('requestStats')} AND clientKeyId = ? AND clientTool IS NOT NULL
         ORDER BY timestamp DESC, id DESC LIMIT 1`,
       [row.clientKeyId]
     );

@@ -344,12 +344,12 @@ function ageToken(observedAts, nowMs) {
 }
 
 const soonestResetOf = (windows) => {
-  const resets = (windows || []).map((w) => w.resetAt).filter(Number.isFinite);
+  const resets = (windows || []).map((w) => w.effectiveResetAt).filter(Number.isFinite);
   return resets.length ? new Date(Math.min(...resets)).toISOString() : null;
 };
 
 const minRemainingOf = (windows) => {
-  const rems = (windows || []).map((w) => w.remaining).filter(Number.isFinite);
+  const rems = (windows || []).map((w) => w.effectiveRemaining).filter(Number.isFinite);
   return rems.length ? Math.min(...rems) : null;
 };
 

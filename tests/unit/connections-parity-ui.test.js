@@ -13,7 +13,8 @@ import ProviderControls from '@/app/dashboard/connections/ProviderControls';
 import { ClientSetup } from '@/app/dashboard/keys/ClientSetup';
 import { call } from '@/shared/api';
 
-const fixture = vi.hoisted(() => ({ reads: {}, refresh: vi.fn() }));
+const fixture = vi.hoisted(() => ({ reads: {}, refresh: vi.fn(), workspace: null }));
+vi.mock('@/shared/workspace/WorkspaceProvider', async (original) => ({ ...(await original()), useOptionalWorkspace: () => fixture.workspace }));
 vi.mock('@/shared/api', () => ({ call: vi.fn() }));
 // The shared scope strip reads the whole workspace; these tests are about the
 // board under it, so it is stubbed rather than fixtured.
@@ -22,7 +23,7 @@ vi.mock('@/shared/hooks/usePoll', () => ({ usePoll: url => ({ data: fixture.read
 vi.mock('@/shared/workspace/SelectionDock', () => ({ SelectionDock: ({ children }) => <div>{children}</div> }));
 let root, container;
 beforeEach(() => {
-  vi.clearAllMocks(); fixture.reads = {};
+  vi.clearAllMocks(); fixture.reads = {}; fixture.workspace = null;
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, 'matchMedia', { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
@@ -60,6 +61,16 @@ async function pickProvider(id) {
   await act(async () => option.click());
 }
 async function submit() { await act(async () => document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))); }
+
+it('retains observed quota when the shared projection has no windows', async () => {
+  const now = Date.now();
+  fixture.reads['/api/providers'] = { connections: [{ id: 'observed', provider: 'codex', name: 'Observed account', isActive: true,
+    lastQuotaSnapshot: { fetchedAt: new Date(now - 60000).toISOString(), windows: [{ key: 'weekly', remainingPercentage: 78, resetAt: new Date(now + 86400000).toISOString() }] } }] };
+  fixture.workspace = { scope: {}, quota: { data: { snapshots: [{ connectionId: 'observed', windows: [] }] } }, activity: { data: { groups: [] } }, comparisonIds: [] };
+  await mount(<ConnectionsPage />);
+  expect(container.querySelector('[data-account-id="observed"]').textContent).toContain('78%');
+  expect(container.querySelector('[data-account-id="observed"]').textContent).not.toContain('No quota recorded');
+});
 
 it('does not report an accepted account option write as verified when readback differs', async () => {
   const connection = { id: 'fixture-account', provider: 'azure', name: 'Fixture account', providerSpecificData: { deployment: 'old' } };

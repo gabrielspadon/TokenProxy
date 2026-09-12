@@ -7,6 +7,11 @@ vi.mock("@/lib/usageDb.js", () => ({
   saveRequestUsage: vi.fn(async () => {}),
 }));
 
+// Both classifier consumers statically import these bindings. Vitest must wrap
+// the module before those consumers load, otherwise a later namespace spy only
+// observes direct test calls and misses calls made by either handler.
+vi.mock("../../open-sse/handlers/chatCore/claudeClassifier.js", { spy: true });
+
 const { FORMATS } = await import("../../open-sse/translator/formats.js");
 const { handleForcedSSEToJson } = await import(
   "../../open-sse/handlers/chatCore/sseToJsonHandler.js"
@@ -264,12 +269,19 @@ const nonStreamingContext = ({
   reqTag: "classifier-test",
   log: null,
 });
-const classifierCallSpies = () => ({
-  detect: vi.spyOn(claudeClassifier, "isClaudeClassifierRequest"),
-  output: vi.spyOn(claudeClassifier, "projectResponsesClassifierOutput"),
-  stream: vi.spyOn(claudeClassifier, "projectResponsesClassifierStream"),
-  validate: vi.spyOn(claudeClassifier, "validateClaudeClassifierMessage"),
-});
+const classifierCallSpies = () => {
+  const spies = {
+    detect: vi.spyOn(claudeClassifier, "isClaudeClassifierRequest"),
+    output: vi.spyOn(claudeClassifier, "projectResponsesClassifierOutput"),
+    stream: vi.spyOn(claudeClassifier, "projectResponsesClassifierStream"),
+    validate: vi.spyOn(claudeClassifier, "validateClaudeClassifierMessage"),
+  };
+  // The module-level spy is installed before both static consumers import it,
+  // so its history spans the file. Each assertion needs a fresh observation
+  // window rather than counts inherited from preceding table cases.
+  for (const spy of Object.values(spies)) spy.mockClear();
+  return spies;
+};
 const expectNoClassifierCalls = (spies) => {
   for (const spy of Object.values(spies)) expect(spy).not.toHaveBeenCalled();
 };
@@ -288,6 +300,9 @@ const runWithoutClassifierCalls = async (run) => {
 };
 
 const CHAT_HANDLER_MOCKS = [
+  "@/lib/db/repos/logicalRequestOutcomeRepo.js",
+  "@/lib/db/repos/requestStatsRepo.js",
+  "@/lib/disabledModelsDb",
   "open-sse/index.js",
   "@/sse/services/auth.js",
   "@/lib/localDb",
@@ -354,6 +369,11 @@ async function loadTerminalChatHandler({ coreResult, shouldFallback = false }) {
   };
 
   vi.resetModules();
+  // Keep database lifetime timers outside the request-abort timer assertion.
+  vi.doMock("@/lib/db/repos/logicalRequestOutcomeRepo.js", () => ({
+    getLogicalOutcomeStore: async () => ({ begin: () => ({}), finalize: vi.fn() }),
+  }));
+  vi.doMock("@/lib/db/repos/requestStatsRepo.js", () => ({ flushRequestStats: async () => {} }));
   vi.doMock("open-sse/index.js", () => ({}));
   vi.doMock("@/sse/services/auth.js", () => ({
     clearAccountError: mocks.clearAccountError,
@@ -1187,7 +1207,7 @@ describe("Claude Code response classifier validation", () => {
     expect(result.status).toBe(502);
     expect(await result.response.json()).toEqual(CLASSIFIER_ERROR);
     await Promise.resolve();
-    expect(context.onRequestSuccess).toHaveBeenCalledOnce();
+    expect(context.onRequestSuccess).not.toHaveBeenCalled();
     expect(context.appendLog).toHaveBeenCalledOnce();
     expect(context.appendLog).toHaveBeenCalledWith(expect.objectContaining({
       status: "200 OK",

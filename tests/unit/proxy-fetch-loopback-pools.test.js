@@ -9,6 +9,21 @@ const route = (identity = 0, strictProxy = true) => ({ enabled: true, url: fixtu
 const target = path => `http://transport.fixture.test${path}`;
 
 describe("actual loopback proxy pool lifecycle", () => {
+  it('closes a timed-out metadata body while another owner keeps its stream', async () => {
+    const owner = new AbortController();
+    const expired = await transport.proxyAwareFetch(target('/long'), {}, { ...route(), signal: owner.signal });
+    const healthy = await transport.proxyAwareFetch(target('/long'), {}, route());
+    const failedBody = expired.text().catch(error => error);
+    const started = performance.now();
+    owner.abort(new DOMException('metadata timeout', 'TimeoutError'));
+    expect(await failedBody).toBeInstanceOf(Error);
+    await vi.waitFor(() => expect(fixture.stats.closedBodies).toBe(1), { interval: 5, timeout: 900 });
+    expect(performance.now() - started).toBeLessThan(1000);
+    const reader = healthy.body.getReader();
+    expect(await reader.read()).toMatchObject({ done: false });
+    reader.releaseLock();
+  });
+
   it("stops pending construction at shutdown before upstream dispatch and refuses later direct work", async () => {
     const pending = transport.proxyAwareFetch(target("/sample"), {}, route());
     const closing = transport.closeTransportDispatchers();

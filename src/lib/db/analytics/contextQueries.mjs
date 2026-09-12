@@ -1,4 +1,5 @@
 import { CONTEXT_STRUCTURE_DEFINITIONS, readContextRelated } from "./contextRelated.mjs";
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 
 // Fixed read-only Context projections. No driver, migration or writer imports.
 export class ContextQueryError extends Error {}
@@ -62,11 +63,11 @@ export function parseContextFilter(params) {
 }
 
 function whereFor(f, sessionId, attributedOnly = true) {
-  const clauses = [attributedOnly ? "r.contextSessionId IS NOT NULL" : "1=1"];
+  const clauses = [attributedOnly ? "r.contextSessionId IS NOT NULL" : "1=1", telemetryFilterSql('requestStats', 'r')];
   const args = [];
   for (const key of ["provider", "model", "connectionId", "clientTool", "clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef", "logicalRequestId", "requestId"]) if (f[key]) { clauses.push(`r.${key === "requestId" ? "id" : key}=?`); args.push(f[key]); }
   if (f.projectId) {
-    clauses.push("EXISTS (SELECT 1 FROM usageHistory u WHERE u.requestId=r.id AND u.projectId=? AND u.connectionId IS r.connectionId AND u.model IS r.model AND u.provider IS r.provider AND u.logicalRequestId IS r.logicalRequestId AND u.attempt IS r.attempt)");
+    clauses.push(`EXISTS (SELECT 1 FROM usageHistory u WHERE u.requestId=r.id AND u.projectId=? AND u.connectionId IS r.connectionId AND u.model IS r.model AND u.provider IS r.provider AND u.logicalRequestId IS r.logicalRequestId AND u.attempt IS r.attempt AND ${telemetryFilterSql('usageHistory', 'u')})`);
     args.push(f.projectId);
   }
   if (f.projectLabel) { clauses.push("s.projectLabel=?"); args.push(f.projectLabel); }

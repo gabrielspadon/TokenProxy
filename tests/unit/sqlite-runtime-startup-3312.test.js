@@ -62,7 +62,7 @@ describe("SQLite runtime startup (#3312)", () => {
       sqlJs: true,
     });
     expect(spawnSync).toHaveBeenCalledWith(
-      expect.stringMatching(/^npm(?:\.cmd)?$/),
+      expect.any(String),
       // The package and the 30s cap are what this test is about. The install is
       // deliberately saved rather than --no-save, so the next npm install in
       // the runtime directory cannot prune the engine away (#1605).

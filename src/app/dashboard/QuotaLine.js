@@ -3,8 +3,8 @@ import { useMemo } from 'react';
 import { Tooltip } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { Icon } from '@/shared/components/Icon';
-import { accountWindowStale, accountWindowTime } from './accountControlPanelModel';
-import { resetShort, windowHiddenId, windowLevel } from './accountBoardModel';
+import { accountWindowObservationStale, accountWindowStale, accountWindowTime } from './accountControlPanelModel';
+import { resetShort, windowHeadroom, windowHiddenId, windowLevel, windowReplenished } from './accountBoardModel';
 import styles from '@/shared/workspace/board.module.css';
 
 const number = (value) =>
@@ -35,10 +35,13 @@ export function useHiddenWindows() {
 export function QuotaLine({ window, now, onInspect, onHide, threshold = null }) {
   const known = Number.isFinite(window.remaining) && !window.unlimited;
   const stale = accountWindowStale(window, now);
-  const level = windowLevel(window);
+  const estimated = known && windowReplenished(window, now) && !accountWindowObservationStale(window, now);
+  const remaining = estimated ? windowHeadroom(window, now) : window.remaining;
+  const level = windowLevel({ ...window, remaining, resetAt: null }, now);
+  const valueText = `${estimated ? 'Estimated ' : ''}${number(remaining)} percent remaining`;
   const observed = accountWindowTime(window.observedAt, now);
   const reset = accountWindowTime(window.resetAt, now, true);
-  const evidence = `${window.key}: ${known ? `${number(window.remaining)}% remaining` : window.unlimited ? 'unlimited' : 'remaining unknown'}. ${observed.label}. ${reset.label}.${window.threshold > 0 ? ` Auto-pause at ${number(window.threshold)}% remaining.` : ''}`;
+  const evidence = `${window.key}: ${known ? valueText : window.unlimited ? 'unlimited' : 'remaining unknown'}. ${estimated ? `Estimated after reset; last observed ${number(window.remaining)}% remaining. ` : ''}${observed.label}. ${reset.label}.${window.threshold > 0 ? ` Auto-pause at ${number(window.threshold)}% remaining.` : ''}`;
   return (
     <div className={styles.line} data-stale={stale || undefined} data-level={level || undefined}>
       <button
@@ -56,18 +59,18 @@ export function QuotaLine({ window, now, onInspect, onHide, threshold = null }) 
           aria-label={known ? `${window.key} remaining` : undefined}
           aria-valuemin={known ? 0 : undefined}
           aria-valuemax={known ? 100 : undefined}
-          aria-valuenow={known ? window.remaining : undefined}
-          aria-valuetext={known ? `${number(window.remaining)} percent remaining` : undefined}
+          aria-valuenow={known ? remaining : undefined}
+          aria-valuetext={known ? valueText : undefined}
           data-unknown={!known || undefined}
         >
-          {known ? <span className={styles.fill} style={{ width: `${window.remaining}%` }} /> : null}
+          {known ? <span className={styles.fill} style={{ width: `${remaining}%` }} /> : null}
           {window.threshold > 0 && !window.unlimited ? (
             <span className={styles.threshold} style={{ left: `${window.threshold}%` }} />
           ) : null}
         </div>
       </Tooltip>
       <span className={styles.lineValue}>
-        {window.unlimited ? '∞' : known ? `${number(window.remaining)}%` : '—'}
+        {window.unlimited ? '∞' : known ? `${estimated ? '≈' : ''}${number(remaining)}%` : '—'}
       </span>
       <span className={styles.lineReset} title={reset.label}>
         {resetShort(window, now)}

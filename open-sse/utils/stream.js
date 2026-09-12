@@ -1,4 +1,5 @@
 import { translateResponse, initState } from "../translator/index.js";
+import { Buffer } from "node:buffer";
 import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "../../src/lib/usageDb.js";
 import { CLAUDE_BLOCK } from "../translator/schema/index.js";
@@ -16,6 +17,14 @@ export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
 
 // sharedEncoder is stateless — safe to share across streams
 const sharedEncoder = new TextEncoder();
+const OLLAMA_NDJSON_MAX_RECORD_BYTES = 1024 * 1024;
+
+class ProviderStreamProtocolError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ProviderStreamProtocolError";
+  }
+}
 
 function withoutExactProviderCosts(usage) {
   if (!usage || typeof usage !== "object") return usage;
@@ -116,6 +125,7 @@ export function createSSEStream(options = {}) {
   } = options;
 
   let buffer = "";
+  let ollamaRecordBytes = 0;
   let usage = null;
 
   // Per-stream decoder with stream:true to correctly handle multi-byte chars split across chunks
@@ -124,6 +134,25 @@ export function createSSEStream(options = {}) {
   const state = mode === STREAM_MODE.TRANSLATE
     ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), responsesToolNameMap, model }
     : null;
+
+  const accountOllamaFragment = (text) => {
+    if (targetFormat !== FORMATS.OLLAMA || !text) return;
+    let start = 0;
+    for (;;) {
+      const newline = text.indexOf("\n", start);
+      if (newline < 0) break;
+      ollamaRecordBytes += Buffer.byteLength(text.slice(start, newline), "utf8");
+      if (ollamaRecordBytes > OLLAMA_NDJSON_MAX_RECORD_BYTES) {
+        throw new ProviderStreamProtocolError("Ollama NDJSON record exceeded 1 MiB");
+      }
+      ollamaRecordBytes = 0;
+      start = newline + 1;
+    }
+    ollamaRecordBytes += Buffer.byteLength(text.slice(start), "utf8");
+    if (ollamaRecordBytes > OLLAMA_NDJSON_MAX_RECORD_BYTES) {
+      throw new ProviderStreamProtocolError("Ollama NDJSON record exceeded 1 MiB");
+    }
+  };
 
   let totalContentLength = 0;
   let accumulatedContent = "";
@@ -175,6 +204,7 @@ export function createSSEStream(options = {}) {
     transform(chunk, controller) {
       if (!ttftAt) ttftAt = Date.now();
       const text = decoder.decode(chunk, { stream: true });
+      accountOllamaFragment(text);
       buffer += text;
       reqLogger?.appendProviderChunk?.(text);
 
@@ -356,6 +386,9 @@ export function createSSEStream(options = {}) {
         if (!trimmed) continue;
 
         const parsed = parseSSELine(trimmed, targetFormat);
+        if (targetFormat === FORMATS.OLLAMA && !parsed) {
+          throw new ProviderStreamProtocolError("Invalid Ollama NDJSON record");
+        }
         if (!parsed) continue;
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
@@ -526,7 +559,10 @@ export function createSSEStream(options = {}) {
       trackPendingRequest(model, provider, connectionId, false);
       try {
         const remaining = decoder.decode();
-        if (remaining) buffer += remaining;
+        if (remaining) {
+          accountOllamaFragment(remaining);
+          buffer += remaining;
+        }
 
         if (mode === STREAM_MODE.PASSTHROUGH) {
           if (buffer) {
@@ -597,6 +633,9 @@ export function createSSEStream(options = {}) {
           // accepts "data: " lines, so an NDJSON provider (Ollama) lost whatever
           // arrived without its closing newline.
           const parsed = parseSSELine(buffer.trim(), targetFormat);
+          if (targetFormat === FORMATS.OLLAMA && !parsed) {
+            throw new ProviderStreamProtocolError("Invalid Ollama NDJSON record");
+          }
           // parseSSELine turns the SSE sentinel "data: [DONE]" into { done: true },
           // which must not be translated. An Ollama chunk also carries done:true,
           // but it is the real final chunk — it holds done_reason and the token
@@ -700,6 +739,7 @@ export function createSSEStream(options = {}) {
         syncState();
         finishStream(state?.usage);
       } catch (error) {
+        if (error instanceof ProviderStreamProtocolError) throw error;
         console.log("Error in flush:", error);
       }
     },

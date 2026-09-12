@@ -27,6 +27,28 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('Claude usage cache lifetime (#2848)', () => {
+  it('cancels a bounded quota read without poisoning a concurrent dashboard read', async () => {
+    const { getClaudeUsage } = await freshModule();
+    const dashboardFetch = Promise.withResolvers();
+    const ownerStarted = Promise.withResolvers();
+    fetchMock.mockImplementation((_url, _init, proxy) => {
+      if (!proxy?.signal) return dashboardFetch.promise;
+      ownerStarted.resolve();
+      return new Promise((_resolve, reject) => proxy.signal.addEventListener('abort', () => reject(proxy.signal.reason), { once: true }));
+    });
+    const dashboard = getClaudeUsage('tok-shared');
+    const owner = new AbortController();
+    const quota = getClaudeUsage('tok-shared', null, { signal: owner.signal }).catch(error => error);
+    await ownerStarted.promise;
+    const reason = new DOMException('quota timeout', 'TimeoutError');
+    owner.abort(reason);
+    expect(await quota).toBe(reason);
+    dashboardFetch.resolve(json(quotaPayload));
+    expect((await dashboard).quotas['session (5h)'].remaining).toBe(60);
+    expect((await getClaudeUsage('tok-shared')).quotas['session (5h)'].remaining).toBe(60);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('reports the expiry on 401 instead of serving the last good quota', async () => {
     const { getClaudeUsage } = await freshModule();
     fetchMock.mockResolvedValueOnce(json(quotaPayload));

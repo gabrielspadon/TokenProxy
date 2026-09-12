@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "generator": "controlled-corpus-v1",
+  "model": "claude-opus-4-6",
+  "contextWindowTokens": 1000000,
+  "effort": "high",
+  "outputTokens": 32,
+  "warmupRequests": 10,
+  "measuredRequests": 100,
+  "populations": [
+    {
+      "id": "small-32k",
+      "estimatedContextTokens": 32000,
+      "p95GatewayOverheadMs": 250,
+      "seed": 701
+    },
+    {
+      "id": "median-250k",
+      "estimatedContextTokens": 250000,
+      "p95GatewayOverheadMs": 1000,
+      "seed": 702
+    },
+    {
+      "id": "large-900k",
+      "estimatedContextTokens": 900000,
+      "p95GatewayOverheadMs": 2000,
+      "seed": 703
+    }
+  ]
+}

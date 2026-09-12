@@ -16,6 +16,7 @@ import { deriveQuotaSnapshot, isQuotaEligible } from "@/shared/utils/quotaPause.
 import { runAntigravityUsageProbe } from "@/lib/antigravityVerification";
 import { ANTIGRAVITY_SAFE_ERROR_MESSAGE } from "open-sse/services/antigravityValidation.js";
 import { runUsageProbe } from "@/lib/usageProbeGate.js";
+import { bindQuotaSnapshot } from '@/sse/services/quotaEvidenceIdentity.js';
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -74,6 +75,16 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
     }
     throw new Error("Failed to refresh credentials. Please re-authorize the connection.");
   }
+  if (
+    refreshResult.error === "unrecoverable_refresh_error"
+    || refreshResult.error === "invalid_grant"
+    || refreshResult.reauthRequired === true
+  ) {
+    throw Object.assign(
+      new Error("Credential refresh requires reauthentication"),
+      { code: "REAUTH_REQUIRED", reauthRequired: true },
+    );
+  }
 
   // Build update object
   const now = new Date().toISOString();
@@ -120,9 +131,24 @@ export async function refreshAndUpdateCredentials(connection, force = false, pro
     };
   }
 
-  // Update database
-  const saved = await updateProviderConnection(connection.id, updateData, { expectedCredentials: connection });
-  if (!saved) throw Object.assign(new Error('Account was removed during credential refresh'), { code: 'CREDENTIAL_CONFLICT' });
+  // Credential redemption is not complete until its replacement is durably
+  // published. Keep this owner detached from a dashboard request cancellation,
+  // and return the repository's authoritative CAS winner.
+  const { updateProviderCredentials } = await import("@/sse/services/tokenRefresh.js");
+  const saved = await updateProviderCredentials(
+    connection.id,
+    {
+      ...updateData,
+      existingProviderSpecificData: connection.providerSpecificData,
+    },
+    { expectedCredentials: connection },
+  );
+  if (!saved || typeof saved !== "object") {
+    throw Object.assign(
+      new Error("Credential refresh requires reauthentication"),
+      { code: "CREDENTIAL_PERSISTENCE_UNCONFIRMED", reauthRequired: true },
+    );
+  }
 
   return {
     connection: saved,
@@ -194,10 +220,15 @@ async function handleUsageRequest(connectionId, force) {
         const result = await refreshAndUpdateCredentials(connection, false, proxyOptions);
         connection = result.connection;
       } catch (refreshError) {
-        const safeError = connection.provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : refreshError;
-        console.error("[Usage API] Credential refresh failed:", safeError);
+        console.error("[Usage API] Credential refresh failed", {
+          provider: connection.provider,
+          reason: refreshError?.code === "REAUTH_REQUIRED" ? "rejected" : "persistence",
+        });
         return Response.json({
-          error: connection.provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : `Credential refresh failed: ${refreshError.message}`
+          error: connection.provider === "antigravity"
+            ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
+            : "Credential refresh requires reauthentication",
+          code: "reauth_required",
         }, { status: 401 });
       }
     }
@@ -217,10 +248,16 @@ async function handleUsageRequest(connectionId, force) {
           ? await runAntigravityUsageProbe(connection, proxyOptions, { force })
           : await getUsageForProvider(connection, proxyOptions, { force });
       } catch (retryError) {
-        console.warn(
-          `[Usage] ${connection.provider}: force refresh failed:`,
-          connection.provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : retryError.message,
-        );
+        console.warn("[Usage] Force refresh failed", {
+          provider: connection.provider,
+          reason: retryError?.code === "REAUTH_REQUIRED" ? "rejected" : "persistence",
+        });
+        return Response.json({
+          error: connection.provider === "antigravity"
+            ? ANTIGRAVITY_SAFE_ERROR_MESSAGE
+            : "Credential refresh requires reauthentication",
+          code: "reauth_required",
+        }, { status: 401 });
       }
     }
 
@@ -228,9 +265,9 @@ async function handleUsageRequest(connectionId, force) {
     // when its remaining % drops to/below the per-account pause threshold
     // (see src/sse/services/quotaGuard.js). The remaining % is nested inside
     // usage.quotas, so derive it first. Fail-open — never block the response.
-    const snapshot = deriveQuotaSnapshot(connection.provider, usage);
+    const snapshot = bindQuotaSnapshot(connection, proxyOptions, deriveQuotaSnapshot(connection.provider, usage));
     if (snapshot) {
-      updateProviderConnection(connection.id, { lastQuotaSnapshot: snapshot }).catch(() => {});
+      updateProviderConnection(connection.id, { lastQuotaSnapshot: snapshot }, { expectedCredentials: connection }).catch(() => {});
     }
 
     await retainQuotaUsage(connection, usage);

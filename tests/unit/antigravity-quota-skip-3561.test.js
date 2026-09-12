@@ -32,7 +32,7 @@ vi.mock("@/shared/constants/providers.js", async (importOriginal) => ({
   resolveProviderId: (provider) => provider,
 }));
 vi.mock("@/sse/services/quotaGuard.js", () => ({
-  evaluateQuota: vi.fn(async () => ({ paused: false })),
+  evaluateQuota: vi.fn(async connection => ({ paused: false, snapshot: connection.lastQuotaSnapshot || null })),
 }));
 vi.mock("@/sse/utils/logger.js", () => ({
   debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),

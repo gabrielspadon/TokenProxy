@@ -4,9 +4,9 @@
    gutters from workspace.module.css. */
 .group {
   display: grid;
-  gap: 2px;
+  gap: max(0px, calc(var(--density-gap) - 3px));
   margin: 0;
-  padding: 6px 10px 6px;
+  padding: max(0px, calc(var(--density-pad-block) - 1px)) 10px;
   border-top: 1px solid var(--rule);
 }
 .group:first-of-type {
@@ -48,7 +48,7 @@
 }
 .rows {
   display: grid;
-  gap: 1px;
+  gap: max(0px, calc(var(--density-gap) - 4px));
 }
 
 .row {
@@ -56,8 +56,8 @@
   grid-template-columns: minmax(200px, 1.1fr) minmax(0, 1.4fr) minmax(120px, 0.6fr);
   align-items: center;
   column-gap: 12px;
-  min-height: 30px;
-  padding: 2px 6px;
+  min-height: calc(var(--density-row-min) - 2px);
+  padding: max(0px, calc(var(--density-pad-block) - 5px)) 6px;
   border-radius: 6px;
   font-size: var(--type-dense);
 }
@@ -214,17 +214,6 @@
   font-size: var(--type-dense);
 }
 
-[data-density='comfy'] .group {
-  gap: 4px;
-  padding: 10px 10px 10px;
-}
-[data-density='comfy'] .row {
-  min-height: 36px;
-  padding: 4px 8px;
-}
-[data-density='comfy'] .rows {
-  gap: 2px;
-}
 
 @container board (max-width: 720px) {
   .row {

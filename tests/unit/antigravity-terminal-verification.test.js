@@ -149,6 +149,7 @@ beforeEach(() => {
 });
 
 describe("Antigravity terminal verification success", () => {
+  const completionProof = { terminalEvidence: { state: "succeeded", reason: "stream-complete", source: "provider-stream" } };
   it("notifies verification only after useful non-stream output", async () => {
     const notify = terminalSpy();
     await expect(handleNonStreamingResponse(nonStreamingCtx(new Response(JSON.stringify(usefulBody()), { headers: { "content-type": "application/json" } }), notify))).resolves.toMatchObject({ success: true });
@@ -773,21 +774,21 @@ describe("Antigravity terminal verification success", () => {
   it("notifies at non-aborted terminal text completion", () => {
     const notify = terminalSpy();
     const { onStreamComplete } = buildOnStreamComplete(streamCtx(notify));
-    onStreamComplete({ content: "terminal text" }, { completion_tokens: 0 }, Date.now());
+    onStreamComplete({ content: "terminal text" }, { completion_tokens: 0 }, Date.now(), completionProof);
     expect(notify).toHaveBeenCalledOnce();
   });
 
   it("notifies at non-aborted terminal thinking completion", () => {
     const notify = terminalSpy();
     const { onStreamComplete } = buildOnStreamComplete(streamCtx(notify));
-    onStreamComplete({ thinking: "terminal reasoning" }, { completion_tokens: 0 }, Date.now());
+    onStreamComplete({ thinking: "terminal reasoning" }, { completion_tokens: 0 }, Date.now(), completionProof);
     expect(notify).toHaveBeenCalledOnce();
   });
 
   it("notifies at non-aborted terminal output-token completion", () => {
     const notify = terminalSpy();
     const { onStreamComplete } = buildOnStreamComplete(streamCtx(notify));
-    onStreamComplete({}, { completion_tokens: 3 }, Date.now());
+    onStreamComplete({}, { completion_tokens: 3 }, Date.now(), completionProof);
     expect(notify).toHaveBeenCalledOnce();
   });
 
@@ -815,8 +816,17 @@ describe("Antigravity terminal verification success", () => {
   it("notifies terminal verification at most once", () => {
     const notify = terminalSpy();
     const { onStreamComplete } = buildOnStreamComplete(streamCtx(notify));
-    onStreamComplete({ content: "once" }, { completion_tokens: 1 }, Date.now());
-    onStreamComplete({ content: "twice" }, { completion_tokens: 1 }, Date.now());
+    onStreamComplete({ content: "once" }, { completion_tokens: 1 }, Date.now(), completionProof);
+    onStreamComplete({ content: "twice" }, { completion_tokens: 1 }, Date.now(), completionProof);
     expect(notify).toHaveBeenCalledOnce();
+  });
+
+  it("does not clear verification after useful output with unsupported terminal evidence", () => {
+    const notify = terminalSpy();
+    const { onStreamComplete } = buildOnStreamComplete(streamCtx(notify));
+    onStreamComplete({ content: "partial" }, { completion_tokens: 1 }, Date.now(), {
+      terminalEvidence: { state: "unknown", reason: "unsupported-terminal", source: "gateway-stream" },
+    });
+    expect(notify).not.toHaveBeenCalled();
   });
 });

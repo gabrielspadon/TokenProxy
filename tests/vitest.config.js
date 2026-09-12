@@ -2,11 +2,14 @@ import { defineConfig } from 'vitest/config';
 import { transformWithOxc } from 'vite';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { mkdtempSync } from 'fs';
+import { mkdirSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const configuredDataRoot = process.env.DATA_DIR?.trim();
+const testDataRoot = configuredDataRoot || mkdtempSync(join(tmpdir(), 'tokenproxy-test-'));
+mkdirSync(testDataRoot, { recursive: true, mode: 0o700 });
 
 const BASE_EXCLUDE = ['**/node_modules/**', '**/.claude/**', '**/dist/**', '**/.stryker-tmp/**'];
 
@@ -47,7 +50,10 @@ export default defineConfig({
     // in quotaWindows and accountSwitches, and /api/admin/receipts reported them
     // as real model_failure switches. DATA_DIR is read at import time, so it must
     // be in the environment before any test module loads, which is what env does.
-    env: { DATA_DIR: mkdtempSync(join(tmpdir(), 'tokenproxy-test-')) },
+    env: {
+      DATA_DIR: testDataRoot,
+      TOKENPROXY_TEST_DATA_ROOT: testDataRoot,
+    },
 
     // Node by default — most of the suite is handlers and translators. A test that
     // needs a DOM opts in per file with a `// @vitest-environment jsdom` docblock

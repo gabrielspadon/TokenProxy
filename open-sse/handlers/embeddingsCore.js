@@ -133,10 +133,12 @@ export async function handleEmbeddingsCore({
   }
 
   if (!providerResponse.ok) {
-    const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse);
+    const { statusCode, message, resetsAtMs, errorPayload } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("EMBEDDINGS", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg, resetsAtMs, { safeToReplay: isReplaySafeRejection(providerResponse) });
+    return createErrorResult(statusCode, errMsg, resetsAtMs, {
+      safeToReplay: isReplaySafeRejection(providerResponse, errorPayload),
+    });
   }
 
   let responseBody;

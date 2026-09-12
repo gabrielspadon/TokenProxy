@@ -9,6 +9,7 @@ vi.mock("open-sse/services/usage.js", () => ({ getUsageForProvider: mocks.usage 
 vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: async () => ({}) }));
 vi.mock("@/lib/localDb", () => ({ updateProviderConnection: mocks.update }));
 import { evaluateQuota, _clearQuotaCache } from "../../src/sse/services/quotaGuard.js";
+import { bindQuotaSnapshot } from '@/sse/services/quotaEvidenceIdentity.js';
 
 const now = Date.parse("2026-09-06T18:00:00Z");
 const future = "2026-09-07T18:00:00.000Z";
@@ -55,7 +56,9 @@ describe("expired and missing quota observations cannot pause selection", () => 
     expect(deriveQuotaSnapshot("claude", { quotas: { weekly: { total: 100, used: 0 } } }).windows[0].remainingPercentage).toBe(100);
   });
   it("the actual stale-while-refresh quota gate does not bench an expired account", async () => {
-    const conn = account(0, expired); const before = JSON.stringify(conn);
+    const conn = account(0, expired);
+    conn.lastQuotaSnapshot = bindQuotaSnapshot(conn, { strictProxy: false }, conn.lastQuotaSnapshot);
+    const before = JSON.stringify(conn);
     const result = await evaluateQuota(conn);
     expect(result.paused).toBe(false); expect(result.reason).toBe("ok");
     expect(result.snapshot.windows[0].remainingPercentage).toBe(0);

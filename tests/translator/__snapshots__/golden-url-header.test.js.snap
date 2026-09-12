@@ -377,98 +377,6 @@ exports[`GOLDEN buildHeaders (default executor providers) > claude → headers (
 }
 `;
 
-exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (apiKey / oauth) 1`] = `
-{
-  "apiKey": {
-    "Accept": "text/event-stream",
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "TokenProxy/<VERSION>",
-    "X-CLIENT-TYPE": "tokenproxy",
-    "X-CLIENT-VERSION": "<VERSION>",
-    "X-CORE-VERSION": "<VERSION>",
-    "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "<PLATFORM>",
-    "X-PLATFORM-VERSION": "<NODE>",
-    "X-Title": "Cline",
-  },
-  "nonStream": {
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "TokenProxy/<VERSION>",
-    "X-CLIENT-TYPE": "tokenproxy",
-    "X-CLIENT-VERSION": "<VERSION>",
-    "X-CORE-VERSION": "<VERSION>",
-    "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "<PLATFORM>",
-    "X-PLATFORM-VERSION": "<NODE>",
-    "X-Title": "Cline",
-  },
-  "oauth": {
-    "Accept": "text/event-stream",
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "TokenProxy/<VERSION>",
-    "X-CLIENT-TYPE": "tokenproxy",
-    "X-CLIENT-VERSION": "<VERSION>",
-    "X-CORE-VERSION": "<VERSION>",
-    "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "<PLATFORM>",
-    "X-PLATFORM-VERSION": "<NODE>",
-    "X-Title": "Cline",
-  },
-}
-`;
-
-exports[`GOLDEN buildHeaders (default executor providers) > clinepass → headers (apiKey / oauth) 1`] = `
-{
-  "apiKey": {
-    "Accept": "text/event-stream",
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "TokenProxy/<VERSION>",
-    "X-CLIENT-TYPE": "tokenproxy",
-    "X-CLIENT-VERSION": "<VERSION>",
-    "X-CORE-VERSION": "<VERSION>",
-    "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "<PLATFORM>",
-    "X-PLATFORM-VERSION": "<NODE>",
-    "X-Title": "Cline",
-  },
-  "nonStream": {
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "TokenProxy/<VERSION>",
-    "X-CLIENT-TYPE": "tokenproxy",
-    "X-CLIENT-VERSION": "<VERSION>",
-    "X-CORE-VERSION": "<VERSION>",
-    "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "<PLATFORM>",
-    "X-PLATFORM-VERSION": "<NODE>",
-    "X-Title": "Cline",
-  },
-  "oauth": {
-    "Accept": "text/event-stream",
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "TokenProxy/<VERSION>",
-    "X-CLIENT-TYPE": "tokenproxy",
-    "X-CLIENT-VERSION": "<VERSION>",
-    "X-CORE-VERSION": "<VERSION>",
-    "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "<PLATFORM>",
-    "X-PLATFORM-VERSION": "<NODE>",
-    "X-Title": "Cline",
-  },
-}
-`;
-
 exports[`GOLDEN buildHeaders (default executor providers) > cloudflare-ai → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -601,25 +509,6 @@ exports[`GOLDEN buildHeaders (default executor providers) > crof-ai → headers 
 `;
 
 exports[`GOLDEN buildHeaders (default executor providers) > deepgram → headers (apiKey / oauth) 1`] = `
-{
-  "apiKey": {
-    "Accept": "text/event-stream",
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-  },
-  "nonStream": {
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-  },
-  "oauth": {
-    "Accept": "text/event-stream",
-    "Authorization": "Bearer <TOK>",
-    "Content-Type": "application/json",
-  },
-}
-`;
-
-exports[`GOLDEN buildHeaders (default executor providers) > deepseek → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
     "Accept": "text/event-stream",
@@ -1837,20 +1726,6 @@ exports[`GOLDEN buildUrl (default executor providers) > claude → url (stream +
 }
 `;
 
-exports[`GOLDEN buildUrl (default executor providers) > cline → url (stream + non-stream) 1`] = `
-{
-  "nonStream": "https://api.cline.bot/api/v1/chat/completions",
-  "stream": "https://api.cline.bot/api/v1/chat/completions",
-}
-`;
-
-exports[`GOLDEN buildUrl (default executor providers) > clinepass → url (stream + non-stream) 1`] = `
-{
-  "nonStream": "https://api.cline.bot/api/v1/chat/completions",
-  "stream": "https://api.cline.bot/api/v1/chat/completions",
-}
-`;
-
 exports[`GOLDEN buildUrl (default executor providers) > cloudflare-ai → url (stream + non-stream) 1`] = `
 {
   "nonStream": "https://api.cloudflare.com/client/v4/accounts/ACC123/ai/v1/chat/completions",
@@ -1890,13 +1765,6 @@ exports[`GOLDEN buildUrl (default executor providers) > deepgram → url (stream
 {
   "nonStream": "https://api.deepgram.com/v1/listen",
   "stream": "https://api.deepgram.com/v1/listen",
-}
-`;
-
-exports[`GOLDEN buildUrl (default executor providers) > deepseek → url (stream + non-stream) 1`] = `
-{
-  "nonStream": "https://api.deepseek.com/chat/completions",
-  "stream": "https://api.deepseek.com/chat/completions",
 }
 `;
 

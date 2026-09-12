@@ -65,6 +65,7 @@ it('worker reuse includes canonical filters, authorization, exact page and chang
   const q={operation:'activity',filter:{page:1,from:'2026-09-08',provider:'mock'}};
   const first=client.run(q,{authorizedScope:'admin'});worker.respond();await first;
   const same=await client.run({filter:{provider:'mock',from:'2026-09-08',page:1},operation:'activity'},{authorizedScope:'admin'});
+  expect(same.freshness.delivery).toBe('cache-hit');
   same.items.push('mutated');expect((await client.run(q,{authorizedScope:'admin'})).items).toEqual([0]);expect(worker.messages).toHaveLength(1);
   for(const [scope,page,v] of [['other',1,'v1'],['admin',2,'v1'],['admin',1,'v2']]){version=v;const next=client.run({...q,filter:{...q.filter,page}},{authorizedScope:scope});worker.respond(worker.messages.length-1);await next;}
   expect(worker.messages).toHaveLength(4);client.invalidate();expect(client.status().cached).toBe(0);await client.close();
@@ -89,6 +90,24 @@ it('worker queue serves a second scope ahead of a saturated scope and bounds eac
   requests.push(client.run({n:5},{authorizedScope:'b'}));
   worker.respond(0);expect(worker.messages[1].query.n).toBe(5);
   worker.respond(1);worker.respond(2);worker.respond(3);await Promise.all(requests);await client.close();
+});
+it('reports queue and execution time separately while retaining one total deadline',async()=>{
+  let clock=0;const worker=new Worker();const client=createContextAnalyticsClient({workerFactory:()=>worker,version:()=>1,monotonic:()=>clock,timeoutMs:100});
+  const first=client.run({n:1});clock=5;const second=client.run({n:2});
+  clock=10;worker.respond(0);await first;
+  clock=25;worker.respond(1);const result=await second;
+  expect(result.freshness).toMatchObject({cacheHit:false,delivery:'computed',queueDurationMs:5,executionDurationMs:15,
+    computationQueueDurationMs:5,computationExecutionDurationMs:15,serviceDeadlineMs:100});
+  await client.close();
+});
+it('reports cache-hit delivery timing without relabeling the original computation',async()=>{
+  let clock=0,now=0;const worker=new Worker();const client=createContextAnalyticsClient({workerFactory:()=>worker,version:()=>1,monotonic:()=>clock,now:()=>now});
+  const computed=client.run({n:1});clock=12;worker.respond();const first=await computed;
+  clock=40;now=25;const hit=await client.run({n:1});
+  expect(first.freshness).toMatchObject({cacheHit:false,queueDurationMs:0,executionDurationMs:12,computationExecutionDurationMs:12});
+  expect(hit.freshness).toMatchObject({cacheHit:true,delivery:'cache-hit',queueDurationMs:0,executionDurationMs:0,
+    computationQueueDurationMs:0,computationExecutionDurationMs:12,cacheAgeMs:25});
+  await client.close();
 });
 it('explicit invalidation during computation cannot repopulate old cache, and TTL preserves bounded reuse',async()=>{
   let now=0;const worker=new Worker();const client=createContextAnalyticsClient({workerFactory:()=>worker,version:()=>1,now:()=>now,maxCacheEntries:1,cacheTtlMs:100});

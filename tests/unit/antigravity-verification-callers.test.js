@@ -57,16 +57,32 @@ describe("Antigravity verification callers", () => {
     expect(contents).toMatch(/getProjectIdForConnection\([^;]*verificationHooks\)/s);
   });
 
-  it("keeps quota guard's three-second race on the verification wrapper", () => {
-    const contents = source("src/sse/services/quotaGuard.js");
-    expect(contents).toContain("runAntigravityUsageProbe(connection, proxyOptions)");
-    expect(contents).toContain("Promise.race([usagePromise, timeout])");
+  it("forwards the independent metadata owner lifetime through the verification wrapper", async () => {
+    vi.resetModules();
+    usageMocks.getUsageForProvider.mockClear().mockResolvedValue({ quotas: {} });
+    const { runAntigravityUsageProbe } = await import('../../src/lib/antigravityVerification.js');
+    const owner = new AbortController();
+    await runAntigravityUsageProbe({ id: 'conn-owner', provider: 'antigravity' }, {}, { signal: owner.signal });
+    expect(usageMocks.getUsageForProvider.mock.calls[0][2].signal).toBe(owner.signal);
   });
 
-  it("does not abort or suppress late quota-wrapper callbacks after the race", () => {
-    const contents = source("src/sse/services/quotaGuard.js");
-    expect(contents).toContain("runAntigravityUsageProbe(connection, proxyOptions)");
-    expect(contents).not.toMatch(/usagePromise\.(?:catch|finally|abort)/);
+  it("keeps trusted verification callbacks independent of caller cancellation", async () => {
+    vi.resetModules();
+    usageMocks.getUsageForProvider.mockClear().mockResolvedValue({ quotas: {} });
+    const store = await import('../../src/lib/antigravityVerification.js');
+    const owner = new AbortController();
+    await store.runAntigravityUsageProbe({ id: 'conn-late', provider: 'antigravity' }, {}, { signal: owner.signal });
+    const hooks = usageMocks.getUsageForProvider.mock.calls[0][2];
+    owner.abort();
+    const url = 'https://accounts.google.com/AccountChooser?continue=https%3A%2F%2Fcloudcode-pa.googleapis.com%2Fv1internal%3AloadCodeAssist&flowName=GlifWebSignIn&opaque=fixture';
+    expect(hooks.onValidationRequired({
+      validation: { kind: 'antigravity_validation_required', url, source: 'usage' },
+      observationId: hooks.verificationContext.observationId,
+    })).toBe(true);
+    const current = store.getAntigravityVerification('conn-late');
+    expect(current.href).toBe(url);
+    expect(hooks.onVerificationSuccess({ challengeId: current.challengeId })).toBe(true);
+    expect(store.getAntigravityVerification('conn-late')).toBeNull();
   });
 
   it("uses a fresh wrapper for every hot-reload quota verification attempt", () => {
@@ -91,7 +107,7 @@ describe("Antigravity verification callers", () => {
     expect(contents.match(/runAntigravityUsageProbe\(connection, proxyOptions, \{ force \}\)/g)).toHaveLength(2);
   });
 
-  it("forwards only force and trusted hook fields through one usage attempt", async () => {
+  it("forwards only force, owner signal and trusted hook fields through one usage attempt", async () => {
     vi.resetModules();
     usageMocks.getUsageForProvider.mockResolvedValue({ quotas: {} });
     const store = await import("../../src/lib/antigravityVerification.js");
@@ -119,6 +135,7 @@ describe("Antigravity verification callers", () => {
       "force",
       "onValidationRequired",
       "onVerificationSuccess",
+      "signal",
       "verificationContext",
     ]);
   });

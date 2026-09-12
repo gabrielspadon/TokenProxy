@@ -23,6 +23,24 @@ afterEach(() => {
 });
 
 describe("Driver fallback chain", () => {
+  it.each([
+    ["node:sqlite", async (file) => (await import("@/lib/db/adapters/nodeSqliteAdapter.js")).createNodeSqliteAdapter(file)],
+    ["sql.js", async (file) => (await import("@/lib/db/adapters/sqljsAdapter.js")).createSqlJsAdapter(file)],
+  ])("%s publishes critical writes before acknowledgement", async (_driver, create) => {
+    const file = path.join(tempDir, `${_driver.replace(/\W/g, "-")}.sqlite`);
+    const db = await create(file);
+    db.exec("CREATE TABLE critical_value(value TEXT)");
+    db.flush?.();
+    db.criticalTransaction(() => db.run("INSERT INTO critical_value(value) VALUES(?)", ["durable"]));
+    const reopened = await create(file);
+    try {
+      expect(reopened.get("SELECT value FROM critical_value").value).toBe("durable");
+    } finally {
+      reopened.close();
+      db.close();
+    }
+  });
+
   it("default → picks better-sqlite3 when available", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
@@ -55,5 +73,20 @@ describe("Driver fallback chain", () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
     expect(db.driver).toBe("sql.js");
+  });
+
+  it("can retry initialization after a transient migration failure", async () => {
+    let attempts = 0;
+    vi.doMock("@/lib/db/migrate.js", () => ({
+      runMigrationOnce: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw Object.assign(new Error("transient migration read failure"), { code: "EIO" });
+      }),
+    }));
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    await expect(getAdapter()).rejects.toThrow("transient migration read failure");
+    const recovered = await getAdapter();
+    expect(attempts).toBe(2);
+    expect(["better-sqlite3", "node:sqlite", "sql.js"]).toContain(recovered.driver);
   });
 });

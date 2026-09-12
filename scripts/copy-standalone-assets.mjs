@@ -1,6 +1,7 @@
 import { cpSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import buildIdentity from './build-identity.cjs';
 
 export function copyStandaloneAssets({ projectRoot = process.cwd(), distDir = process.env.NEXT_DIST_DIR || ".next" } = {}) {
   if (process.env.NEXT_TRACING_ROOT_MODE === "workspace") {
@@ -15,6 +16,7 @@ export function copyStandaloneAssets({ projectRoot = process.cwd(), distDir = pr
     console.log(`[standalone-assets] No standalone build found at ${standaloneDir}`);
     return;
   }
+  buildIdentity.copyBuildIdentity(buildDir, standaloneDir);
 
   const staticSource = resolve(buildDir, "static");
   const staticDestination = resolve(standaloneDir, distDir, "static");
@@ -37,6 +39,7 @@ export function copyStandaloneAssets({ projectRoot = process.cwd(), distDir = pr
     cpSync(serverWrapperSource, serverWrapperDestination, { force: true });
     console.log(`[standalone-assets] Copied custom-server.js to ${serverWrapperDestination}`);
   }
+  cpSync(resolve(projectRoot, 'live-safety-runtime.cjs'), resolve(standaloneDir, 'live-safety-runtime.cjs'), { force: true });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(dirname(fileURLToPath(import.meta.url)), "copy-standalone-assets.mjs")) {

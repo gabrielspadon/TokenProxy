@@ -5,13 +5,14 @@ const { execSync, spawnSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 
 const BETTER_SQLITE3_VERSION = "12.10.1";
 // Majors the pinned better-sqlite3 actually supports, transcribed from that
 // package's own engines field ("20.x || 22.x || 23.x || 24.x || 25.x || 26.x").
-// cli/package.json advertises node >=18.0.0, so a Node 18 or 21 user would
-// otherwise spend the whole install timeout on a build that cannot succeed and
-// then fall back anyway. Bump this in the same commit as the version pin.
+// cli/package.json advertises node >=20.18.1, so a Node 21 user would otherwise
+// spend the whole install timeout on a build that cannot succeed and then fall
+// back anyway. Bump this in the same commit as the version pin.
 const BETTER_SQLITE3_NODE_MAJORS = new Set([20, 22, 23, 24, 25, 26]);
 
 function nodeMajorSupportsBetterSqlite() {
@@ -19,6 +20,7 @@ function nodeMajorSupportsBetterSqlite() {
   return Number.isInteger(major) && BETTER_SQLITE3_NODE_MAJORS.has(major);
 }
 const BETTER_SQLITE3_INSTALL_TIMEOUT = 30000;
+const BETTER_SQLITE3_LOAD_TIMEOUT = 5000;
 const SQL_JS_VERSION = "1.14.1";
 
 function getDataDir() {
@@ -66,39 +68,79 @@ function abiStampPath() {
   return path.join(getRuntimeNodeModules(), ".tokenproxy-better-sqlite3-abi.json");
 }
 
-function writeAbiStamp() {
+function nativeBinaryPath() {
+  return path.join(getRuntimeNodeModules(), "better-sqlite3", "build", "Release", "better_sqlite3.node");
+}
+
+function nativeBinarySha256(binary) {
+  return crypto.createHash("sha256").update(fs.readFileSync(binary)).digest("hex");
+}
+
+function writeAbiStamp(binary) {
   try {
     fs.writeFileSync(abiStampPath(), JSON.stringify({
       modules: process.versions.modules,
       version: BETTER_SQLITE3_VERSION,
+      validation: "child-memory-query-v1",
+      binarySha256: nativeBinarySha256(binary),
     }));
   } catch { /* best effort: absence only costs us the check */ }
 }
 
-function abiStampMatches() {
-  // A missing stamp means the binary predates this check. Say nothing about it
-  // rather than invalidating a working install, so this is only ever additive.
-  let stamp;
-  try { stamp = JSON.parse(fs.readFileSync(abiStampPath(), "utf-8")); }
-  catch { return true; }
-  return String(stamp?.modules) === String(process.versions.modules);
+function removeAbiStamp() {
+  try { fs.unlinkSync(abiStampPath()); } catch {}
 }
 
-function isBetterSqliteBinaryValid() {
-  const binary = path.join(getRuntimeNodeModules(), "better-sqlite3", "build", "Release", "better_sqlite3.node");
+function abiStampMatches(binary) {
+  let stamp;
+  try { stamp = JSON.parse(fs.readFileSync(abiStampPath(), "utf-8")); } catch { return false; }
+  if (stamp?.validation !== "child-memory-query-v1"
+      || String(stamp?.modules) !== String(process.versions.modules)
+      || stamp?.version !== BETTER_SQLITE3_VERSION
+      || typeof stamp?.binarySha256 !== "string") {
+    return false;
+  }
+  try { return stamp.binarySha256 === nativeBinarySha256(binary); } catch { return false; }
+}
+
+function probeBetterSqliteLoad() {
+  const moduleDir = path.join(getRuntimeNodeModules(), "better-sqlite3");
+  const program = [
+    "const Database = require(process.argv[1]);",
+    "const db = new Database(':memory:');",
+    "const row = db.prepare('select 1 as ok').get();",
+    "db.close();",
+    "if (row?.ok !== 1) process.exit(2);",
+  ].join("");
+  const result = spawnSync(process.execPath, ["-e", program, moduleDir], {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: BETTER_SQLITE3_LOAD_TIMEOUT,
+    encoding: "utf8",
+  });
+  return result.status === 0;
+}
+
+function isBetterSqliteBinaryValid({ forceProbe = false } = {}) {
+  const binary = nativeBinaryPath();
   if (!fs.existsSync(binary)) return false;
-  if (!abiStampMatches()) return false;
   try {
     const fd = fs.openSync(binary, "r");
     const buf = Buffer.alloc(4);
     fs.readSync(fd, buf, 0, 4, 0);
     fs.closeSync(fd);
     const magic = buf.toString("hex");
-    if (process.platform === "linux") return magic.startsWith("7f454c46");
-    if (process.platform === "darwin") return magic.startsWith("cffaedfe") || magic.startsWith("cefaedfe");
-    if (process.platform === "win32") return magic.startsWith("4d5a");
-    return true;
+    const headerValid = process.platform === "linux" ? magic.startsWith("7f454c46")
+      : process.platform === "darwin" ? magic.startsWith("cffaedfe") || magic.startsWith("cefaedfe")
+        : process.platform === "win32" ? magic.startsWith("4d5a") : true;
+    if (!headerValid) return false;
   } catch { return false; }
+  if (!forceProbe && abiStampMatches(binary)) return true;
+  if (!probeBetterSqliteLoad()) {
+    removeAbiStamp();
+    return false;
+  }
+  writeAbiStamp(binary);
+  return true;
 }
 
 // Extract a short, user-friendly reason from npm stderr.
@@ -115,17 +157,44 @@ function summarizeNpmError(stderr = "") {
   return lastLine ? lastLine.slice(0, 200) : "Unknown error";
 }
 
+function npmInvocation(args) {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return { command: process.execPath, args: [npmExecPath, ...args], shell: false };
+  }
+  return {
+    command: process.platform === "win32" ? "npm.cmd" : "npm",
+    args,
+    shell: process.platform === "win32",
+  };
+}
+
 function runNpmInstall({ cwd, pkgs, extraArgs = [], timeout = 180000 }) {
   const args = ["install", ...pkgs, "--no-audit", "--no-fund", "--prefer-online", ...extraArgs];
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  const res = spawnSync(npmCmd, args, {
+  const invocation = npmInvocation(args);
+  const res = spawnSync(invocation.command, invocation.args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
-    shell: process.platform === "win32",
+    shell: invocation.shell,
     encoding: "utf8",
   });
   return { ok: res.status === 0, code: res.status, stderr: res.stderr || "", stdout: res.stdout || "" };
+}
+
+function rebuildBetterSqlite({ silent = false } = {}) {
+  const invocation = npmInvocation(["rebuild", "better-sqlite3"]);
+  const result = spawnSync(invocation.command, invocation.args, {
+    cwd: getRuntimeDir(),
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: BETTER_SQLITE3_INSTALL_TIMEOUT,
+    shell: invocation.shell,
+    encoding: "utf8",
+  });
+  if (result.status !== 0 && !silent) {
+    console.warn(`⚠️  SQLite engine rebuild failed: ${summarizeNpmError(result.stderr)}`);
+  }
+  return result.status === 0;
 }
 
 function npmInstall(pkgs, opts = {}) {
@@ -167,7 +236,11 @@ function ensureSqliteRuntime({ silent = false, installBetterSqlite = false } = {
     if (sqlJsOk) sqlJsOk = isSqlJsWasmValid();
   }
 
-  const needBetterSqlite = !hasModule("better-sqlite3") || !isBetterSqliteBinaryValid();
+  // Postinstall always performs the child query. A stamp is a startup cache,
+  // not evidence that the runtime executing this postinstall can load the
+  // native binary now.
+  const needBetterSqlite = !hasModule("better-sqlite3")
+    || !isBetterSqliteBinaryValid({ forceProbe: installBetterSqlite });
   if (!needBetterSqlite) {
     if (!silent) console.log("✅ SQLite engine ready");
     return { betterSqlite: true, sqlJs: sqlJsOk };
@@ -193,11 +266,14 @@ function ensureSqliteRuntime({ silent = false, installBetterSqlite = false } = {
     silent,
     timeout: BETTER_SQLITE3_INSTALL_TIMEOUT,
   });
-  // Stamp before validating: the stamp records the ABI this binary was just
-  // built against, and validation is what reads it back.
-  if (ok && hasModule("better-sqlite3")) writeAbiStamp();
+  let valid = ok && hasModule("better-sqlite3")
+    && isBetterSqliteBinaryValid({ forceProbe: true });
+  if (ok && !valid && rebuildBetterSqlite({ silent })) {
+    valid = hasModule("better-sqlite3")
+      && isBetterSqliteBinaryValid({ forceProbe: true });
+  }
   return {
-    betterSqlite: ok && hasModule("better-sqlite3") && isBetterSqliteBinaryValid(),
+    betterSqlite: valid,
     sqlJs: sqlJsOk,
   };
 }

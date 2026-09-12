@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest } from "next/server";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 vi.hoisted(() => { process.env.JWT_SECRET = "context-evidence-fixture-signing-secret-0123456789"; process.env.TOKENPROXY_PEER_TOKEN = "context-export-fixture-peer-proof"; });
 const mocks = vi.hoisted(() => ({ fetch: vi.fn(), executor: null }));
 vi.mock("../../open-sse/executors/index.js", () => ({ getExecutor: () => mocks.executor }));
@@ -19,6 +20,12 @@ const { POST } = await import("../../src/app/api/v1/context/events/route.js");
 const { GET } = await import("../../src/app/api/context/events/route.js");
 const { createDashboardAuthToken } = await import("../../src/lib/auth/dashboardSession.js");
 const db = await getAdapter();
+const visibleFixture = createVisibleTelemetryFixture(db, 'context-evidence-pipeline');
+const completeFixture = input => visibleFixture(async () => {
+  const result = await handleChatCore(input);
+  await result.response.text();
+  return result;
+});
 const API_KEY = "fixture-key-only", KEY_ID = "fixture-key-id";
 const logicalRequestId = randomUUID();
 const headers = { "x-tokenproxy-client-id": "private-client", "x-tokenproxy-session-id": "private-session", "x-tokenproxy-task-id": "private-task", "x-tokenproxy-project-id": "private-project" };
@@ -45,7 +52,7 @@ afterAll(async () => { await globalThis._contextAnalytics?.client.close(); delet
 
 describe("actual request capture, persistence and readonly query", () => {
   it("exports the actual captured attempt and its authenticated client report through the protected read worker", async () => {
-    await handleChatCore(args()); const [row]=await finish();
+    await completeFixture(args()); const [row]=await finish();
     const report=await (await post(event({requestId:row.id,logicalRequestId,sessionId:row.contextSessionId}))).json();
     const { POST: exportEvidence }=await import("../../src/app/api/admin/investigations/export/route.js");
     const token=await createDashboardAuthToken();
@@ -59,8 +66,8 @@ describe("actual request capture, persistence and readonly query", () => {
   });
 
   it("restores a saved exact comparison and exports both actual attempts and reports in one worker snapshot", async()=>{
-    await handleChatCore(args());await finish();mocks.fetch.mockResolvedValue(completion());
-    await handleChatCore(args({contextTelemetry:{logicalRequestId:randomUUID()}}));const rows=await finish();expect(rows).toHaveLength(2);
+    await completeFixture(args());await finish();mocks.fetch.mockResolvedValue(completion());
+    await completeFixture(args({contextTelemetry:{logicalRequestId:randomUUID()}}));const rows=await finish();expect(rows).toHaveLength(2);
     for (const row of rows) expect((await post(event({requestId:row.id,logicalRequestId:row.logicalRequestId,sessionId:row.contextSessionId}))).status).toBe(201);
     const definition={schemaVersion:2,lens:'context',scope:{period:'all',provider:'deliberately-outside'},selection:{kind:'context-attempt',id:rows[1].id,sessionId:rows[1].contextSessionId},context:{baseline:{id:rows[0].id,sessionId:rows[0].contextSessionId}},comparisonIds:[]};
     const token=await createDashboardAuthToken();
@@ -75,7 +82,7 @@ describe("actual request capture, persistence and readonly query", () => {
 
   it("links exact physical UUIDs, content-free boundaries and explicit identity through the worker", async () => {
     const input=args(), before=structuredClone(input.body);
-    const result=await handleChatCore(input); expect(result.response.status).toBe(200);
+    const result=await completeFixture(input); expect(result.response.status).toBe(200);
     const [row]=await finish();
     expect(result.response.headers.get("x-tokenproxy-request-id")).toBe(row.id);
     expect(result.response.headers.get("x-tokenproxy-logical-request-id")).toBe(logicalRequestId);
@@ -93,7 +100,7 @@ describe("actual request capture, persistence and readonly query", () => {
   it("keeps client and gateway evidence with each retry but never carries forward old dispatch evidence", async () => {
     mocks.executor = new BaseExecutor("openrouter", { baseUrl: "https://fixture.invalid/v1", noAuth: true, retry: { 503: { attempts: 1, delayMs: 0 } } });
     mocks.fetch.mockResolvedValueOnce(Response.json({error:{message:"unavailable"}},{status:503,headers:{'x-tokenproxy-replay-safe':'true'}})).mockResolvedValueOnce(completion());
-    const result=await handleChatCore(args()); const rows=await finish();
+    const result=await completeFixture(args()); const rows=await finish();
     expect(rows).toHaveLength(2); expect(new Set(rows.map((r)=>r.id)).size).toBe(2);
     expect(rows.every((r)=>r.logicalRequestId===logicalRequestId)).toBe(true);
     expect(result.response.headers.get("x-tokenproxy-request-id")).toBe(rows.find((r)=>r.status==="success").id);
@@ -103,13 +110,13 @@ describe("actual request capture, persistence and readonly query", () => {
     const body={}; body.self=body;
     const capture=await prepareContextCapture({body,apiKey:API_KEY,headers,enabled:false});
     expect(capture.initial).toBeNull(); expect(capture.identity.clientKeyId).toBe(KEY_ID);
-    const result=await handleChatCore(args({contextStructureEnabled:false})); expect(result.response.status).toBe(200);
+    const result=await completeFixture(args({contextStructureEnabled:false})); expect(result.response.status).toBe(200);
     const [row]=await finish(); expect(row.clientKeyId).toBe(KEY_ID);
     expect(db.get("SELECT COUNT(*) AS n FROM contextStructures").n).toBe(0);
   });
   it("keeps physical refusal identity and missing usage honest", async () => {
     mocks.fetch.mockResolvedValue(Response.json({error:{message:"fixture refusal"}},{status:403}));
-    const result=await handleChatCore(args()); const [row]=await finish();
+    const result=await completeFixture(args()); const [row]=await finish();
     expect(result.response.status).toBe(403); expect(result.response.headers.get("x-tokenproxy-request-id")).toBe(row.id);
     expect(row.usageSource).toBe("missing"); expect(db.get("SELECT COUNT(*) AS n FROM usageHistory").n).toBe(0);
     expect(saverTelemetryHeaders({requestId:"unknown",logicalRequestId:"bad"})).toEqual({});
@@ -121,7 +128,7 @@ describe("actual request capture, persistence and readonly query", () => {
     expect(db.get("SELECT COUNT(*) AS n FROM contextStructures").n).toBe(0);
   });
   it("keeps stored structure private on corrupted rows and survives reader restarts", async () => {
-    await handleChatCore(args()); const [row]=await finish();
+    await completeFixture(args()); const [row]=await finish();
     const first=await getContextSession(row.contextSessionId);
     await globalThis._contextAnalytics.client.close(); delete globalThis._contextAnalytics;
     expect((await getContextSession(row.contextSessionId)).turns[0].structures).toEqual(first.turns[0].structures);
@@ -149,7 +156,7 @@ describe("actual request capture, persistence and readonly query", () => {
 
 describe("explicit client-reported event boundary", () => {
   it("persists linked events, exact duplicates and signed client estimates without claiming verification", async () => {
-    await handleChatCore(args()); const [row]=await finish(); const body=event({requestId:row.id,logicalRequestId,sessionId:row.contextSessionId});
+    await completeFixture(args()); const [row]=await finish(); const body=event({requestId:row.id,logicalRequestId,sessionId:row.contextSessionId});
     const first=await post(body); expect(first.status).toBe(201); const record=await first.json();
     expect(record.event).toMatchObject({requestId:row.id,contextSessionId:row.contextSessionId,source:"client-reported",providerVerified:false,beforeTokens:100,afterTokens:120});
     expect((await post(body)).status).toBe(200);
@@ -180,7 +187,7 @@ describe("explicit client-reported event boundary", () => {
     db.run("UPDATE apiKeys SET isActive=0 WHERE id=?",[KEY_ID]); expect((await post(event())).status).toBe(401);
     db.run("UPDATE apiKeys SET isActive=1,expiresAt='2000-01-01T00:00:00Z' WHERE id=?",[KEY_ID]); expect((await post(event())).status).toBe(401);
     db.run("UPDATE apiKeys SET expiresAt=NULL WHERE id=?",[KEY_ID]);
-    await handleChatCore(args()); const [row]=await finish();
+    await completeFixture(args()); const [row]=await finish();
     const foreign=await post(event({requestId:row.id}),"other-fixture-key");
     const missing=await post(event({requestId:randomUUID()}),"other-fixture-key");
     expect(foreign.status).toBe(404); expect(await foreign.json()).toEqual(await missing.json());

@@ -12,6 +12,7 @@ import { MAX_REFRESH_ENTRIES, withRefreshContext } from "./tokenRefresh/dedup.js
 export const CODEX_MAX_REFRESH_AGE_MS = PROVIDER_OAUTH["codex"]?.maxRefreshAgeMs;
 
 const refreshLocks = new Map();
+const publicationLocks = new Map();
 
 function parseTimeMs(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -147,12 +148,58 @@ export async function withCredentialRefreshLock(provider, credentials, refreshFn
   return pending;
 }
 
-export async function refreshProviderCredentials(provider, credentials, log, {signal} = {}) {
+function persistenceError() {
+  return Object.assign(
+    new Error("Refreshed credentials were not durably stored; reauthentication may be required"),
+    { code: "CREDENTIAL_PERSISTENCE_UNCONFIRMED", reauthRequired: true },
+  );
+}
+
+function needsPublication(credentials) {
+  return !!(
+    credentials?.accessToken
+    || credentials?.apiKey
+    || credentials?.token
+    || credentials?.refreshToken
+    || credentials?.copilotToken
+  );
+}
+
+export async function refreshProviderCredentials(
+  provider,
+  credentials,
+  log,
+  { signal, onCredentialsRefreshed, expectedCredentials } = {},
+) {
   if (!credentials) return null;
   signal?.throwIfAborted();
 
-  return waitForRefresh(withCredentialRefreshLock(provider, credentials, async () => {
+  const lockKey = getRefreshLockKey(provider, credentials);
+  const redemption = withCredentialRefreshLock(provider, credentials, async () => {
     const refreshed = await withRefreshContext({revision:credentialContentRevision(credentials),credentialRevision:credentialRevision(credentials),credentials}, () => refreshTokenByProvider(provider, credentials, log));
     return mergeRefreshedCredentials(provider, credentials, refreshed);
-  }),signal);
+  });
+
+  let delivery = redemption;
+  if (typeof onCredentialsRefreshed === "function") {
+    if (!expectedCredentials || typeof expectedCredentials !== "object") {
+      throw new TypeError("Durable credential publication requires the persisted expected revision");
+    }
+    delivery = publicationLocks.get(lockKey);
+    if (!delivery) {
+      delivery = Promise.resolve(redemption)
+        .then(async (refreshed) => {
+          if (!needsPublication(refreshed) || isUnrecoverableRefreshError(refreshed)) return refreshed;
+          const stored = await onCredentialsRefreshed(refreshed, { expectedCredentials });
+          if (!stored || typeof stored !== "object") throw persistenceError();
+          return stored;
+        })
+        .finally(() => publicationLocks.delete(lockKey));
+      publicationLocks.set(lockKey, delivery);
+    }
+  }
+
+  // The shared redemption/publication owner is detached from this consumer.
+  // Cancellation prevents delivery to the caller, never one-use token storage.
+  return waitForRefresh(delivery, signal);
 }

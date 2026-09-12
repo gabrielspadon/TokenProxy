@@ -1,4 +1,5 @@
 import { CONTEXT_BOUNDARIES, normalizeContextStructure } from './contextStructure.mjs';
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 
 export const CONTEXT_STRUCTURE_DEFINITIONS = {
   units: 'UTF-8 bytes of serialized JSON; not tokens or decoded media bytes.',
@@ -20,16 +21,23 @@ export function readContextRelated(db, ids) {
   let rejectedStructures = 0;
   for (let offset = 0; offset < ids.length; offset += 100) {
     const page = ids.slice(offset, offset + 100), placeholders = page.map(() => '?').join(',');
+    // Preserve independent handoff metadata and missing historical references;
+    // mask identifiers and session evidence from retained excluded requests.
     for (const row of db.all(`SELECT a.requestId,a.handoffId,a.executionRequestId,a.logicalRequestId,a.appliedAt,
-      h.sourceRequestId,h.targetRequestId,h.projectId,h.contentHash,h.expiresAt,h.revokedAt,
-      source.contextSessionId AS sourceSessionId,target.contextSessionId AS targetSessionId
+      CASE WHEN source.id IS NULL OR ${telemetryFilterSql('requestStats', 'source')} THEN h.sourceRequestId END AS sourceRequestId,
+      CASE WHEN target.id IS NULL OR ${telemetryFilterSql('requestStats', 'target')} THEN h.targetRequestId END AS targetRequestId,
+      h.projectId,h.contentHash,h.expiresAt,h.revokedAt,
+      CASE WHEN ${telemetryFilterSql('requestStats', 'source')} THEN source.contextSessionId END AS sourceSessionId,
+      CASE WHEN ${telemetryFilterSql('requestStats', 'target')} THEN target.contextSessionId END AS targetSessionId
       FROM contextHandoffApplications a JOIN shapingHandoffs h ON h.id=a.handoffId JOIN requestStats r ON r.id=a.requestId
       LEFT JOIN requestStats source ON source.id=h.sourceRequestId LEFT JOIN requestStats target ON target.id=h.targetRequestId
-      WHERE a.requestId IN (${placeholders}) AND a.logicalRequestId=r.logicalRequestId ORDER BY a.appliedAt,a.handoffId`, page)) {
+      WHERE a.requestId IN (${placeholders}) AND a.logicalRequestId=r.logicalRequestId
+      AND ${telemetryFilterSql('requestStats', 'r')} ORDER BY a.appliedAt,a.handoffId`, page)) {
       if (!handoffs.has(row.requestId)) handoffs.set(row.requestId, []);
       handoffs.get(row.requestId).push(row);
     }
-    for (const row of db.all(`SELECT requestId,boundary,data FROM contextStructures WHERE requestId IN (${placeholders})`, page)) {
+    for (const row of db.all(`SELECT s.requestId,s.boundary,s.data FROM contextStructures s JOIN requestStats r ON r.id=s.requestId
+      WHERE r.id IN (${placeholders}) AND ${telemetryFilterSql('requestStats', 'r')}`, page)) {
       try {
         const value = normalizeContextStructure(JSON.parse(row.data));
         if (value.boundary !== row.boundary) throw new Error('Invalid boundary');
@@ -40,7 +48,8 @@ export function readContextRelated(db, ids) {
     for (const row of db.all(`SELECT u.id,u.requestId,u.timestamp,u.cost,u.costSource,u.estimatedCostUsd,u.reportedCostUsd,u.rateSnapshotId,u.pricingCapturedAt
       FROM usageHistory u JOIN requestStats r ON r.id=u.requestId
       WHERE r.id IN (${placeholders}) AND (u.logicalRequestId IS NULL OR u.logicalRequestId=r.logicalRequestId)
-      AND (u.contextSessionId IS NULL OR u.contextSessionId=r.contextSessionId) ORDER BY u.id`, page)) {
+      AND (u.contextSessionId IS NULL OR u.contextSessionId=r.contextSessionId)
+      AND ${telemetryFilterSql('requestStats', 'r')} AND ${telemetryFilterSql('usageHistory', 'u')} ORDER BY u.id`, page)) {
       if (!costs.has(row.requestId)) costs.set(row.requestId, []);
       costs.get(row.requestId).push({ ledgerId: row.id, requestId: row.requestId, timestamp: row.timestamp,
         recordedCostUsd: amount(row.cost), estimatedCostUsd: amount(row.estimatedCostUsd), reportedCostUsd: amount(row.reportedCostUsd),

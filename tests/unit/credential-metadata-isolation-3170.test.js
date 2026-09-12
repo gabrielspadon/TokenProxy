@@ -182,7 +182,14 @@ describe("PR #3170 credential metadata isolation", () => {
           transformedBody: {},
         };
       });
-    const onCredentialsRefreshed = vi.fn(async () => {});
+    // The acknowledgement a real persist returns. chatCore treats a callback
+    // that resolves to anything other than an object as "persistence was not
+    // confirmed" and refuses the retry, so a callback returning undefined
+    // describes a store that silently dropped the rotated token rather than
+    // the successful rotation this test is about. Every production caller
+    // (src/sse/handlers/chat.js, src/sse/services/tokenRefresh.js) returns the
+    // stored row.
+    const onCredentialsRefreshed = vi.fn(async (refreshed) => ({ ...refreshed }));
 
     const result = await handleChatCore({
       ...coreOptions(shared, "refresh-request"),

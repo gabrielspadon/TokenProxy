@@ -5,6 +5,18 @@ import { buildAbortedResponsesTerminalBytes } from "./responsesStreamHelpers.js"
 export const MAX_SSE_TERMINAL_RECORD_BYTES = 64 * 1024;
 export const MAX_SSE_TERMINAL_DATA_LINES = 128;
 
+export function observeSseBody(body, observer) {
+  return body && observer ? body.pipeThrough(new TransformStream({
+    transform(chunk, controller) { observer.observe(chunk); controller.enqueue(chunk); },
+  })) : body;
+}
+
+export function providerStreamTerminalEvidence(observer) {
+  const value = observer?.outcome();
+  return value && value.state !== 'unknown' ? { ...value, source: 'provider-stream' }
+    : { state: 'unknown', reason: value?.reason || 'unsupported-terminal', source: 'gateway-stream' };
+}
+
 const SUPPORTED_FORMATS = new Set([
   FORMATS.OPENAI,
   FORMATS.CLAUDE,
@@ -80,6 +92,9 @@ export function createSseTerminalObserver(emittedFormat, getPartialUsage = null)
   let decoder = new TextDecoder("utf-8", { fatal: false });
   let released = false;
   let terminal = false;
+  let failed = false;
+  let overflow = false;
+  let malformed = false;
   let discarding = false;
   let discardLineHasContent = false;
   let recordBytes = 0;
@@ -97,12 +112,24 @@ export function createSseTerminalObserver(emittedFormat, getPartialUsage = null)
   };
 
   const beginDiscard = () => {
+    overflow = true;
     resetRecord();
     discarding = true;
     discardLineHasContent = false;
   };
 
   const recordHasTerminal = () => {
+    let payload = null;
+    try { payload = JSON.parse(dataLines.join("\n")); } catch {
+      if (dataLines.length && !([FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES].includes(emittedFormat)
+        && dataLines.length === 1 && dataLines[0].trim() === "[DONE]")) malformed = true;
+    }
+    if (payload?.error || payload?.type === "error"
+      || ["response.failed", "response.incomplete"].includes(payload?.type)
+      || ["failed", "incomplete", "cancelled"].includes(payload?.response?.status)) {
+      failed = true;
+      return true;
+    }
     if (emittedFormat === FORMATS.OPENAI) {
       if (dataLines.length === 1 && dataLines[0].trim() === "[DONE]") return true;
       try {
@@ -181,6 +208,7 @@ export function createSseTerminalObserver(emittedFormat, getPartialUsage = null)
     const isBlankBoundary = character === "\n"
       && currentLine.replace(/\r$/, "") === "";
     if (recordBytes > MAX_SSE_TERMINAL_RECORD_BYTES) {
+      overflow = true;
       if (isBlankBoundary) resetRecord();
       else beginDiscard();
       return;
@@ -196,7 +224,7 @@ export function createSseTerminalObserver(emittedFormat, getPartialUsage = null)
 
   return {
     observe(bytes) {
-      if (released || terminal || !bytes) return;
+      if (released || !bytes) return;
       const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
       // Keep decoded/parser state bounded even if a provider sends a very large
       // transport chunk. TextDecoder retains only a partial UTF-8 code point.
@@ -208,6 +236,14 @@ export function createSseTerminalObserver(emittedFormat, getPartialUsage = null)
 
     sawTerminal() {
       return terminal;
+    },
+
+    outcome() {
+      if (failed) return { state: "failed", reason: "upstream-error-event" };
+      if (overflow) return { state: "unknown", reason: "terminal-evidence-overflow" };
+      if (malformed) return { state: "unknown", reason: "terminal-evidence-malformed" };
+      if (terminal) return { state: "succeeded", reason: "stream-complete" };
+      return { state: "unknown", reason: "missing-terminal" };
     },
 
     buildIncompleteTerminal() {

@@ -2,14 +2,24 @@
 // Loaded only when process.versions.bun is present.
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
+import { createTransactionController } from "./criticalTransaction.js";
+import { createCriticalAckJournal } from './criticalAckJournal.js';
+import { acquireNativeWriterAdmission } from './writerAdmission.js';
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 export async function createBunSqliteAdapter(filePath) {
   // Dynamic import — only resolves under Bun runtime
   const { Database } = await import("bun:sqlite");
-  const db = new Database(filePath, { create: true });
-  db.exec(PRAGMA_SQL);
+  const admission = acquireNativeWriterAdmission(filePath);
+  let db;
+  try { db = new Database(filePath, { create: true }); db.exec(PRAGMA_SQL); }
+  catch (error) {
+    let closed = !db;
+    try { db?.close(true); closed = true; } catch {}
+    if (closed) admission.release();
+    throw error;
+  }
 
   const stmtCache = new Map();
   function prepare(sql) {
@@ -21,6 +31,17 @@ export async function createBunSqliteAdapter(filePath) {
     return stmt;
   }
 
+  const transactions = createTransactionController({
+    exec: (sql) => db.exec(sql),
+    readSynchronous: () => db.query("PRAGMA synchronous").get()?.synchronous,
+    isInTransaction: () => db.inTransaction,
+    acknowledgments: createCriticalAckJournal({ databaseFile: filePath, driver: 'bun:sqlite', db: {
+      exec: (sql) => db.exec(sql),
+      get: (sql, params = []) => prepare(sql).get(...params),
+      run: (sql, params = []) => prepare(sql).run(...params),
+    } }),
+  });
+
   const checkpointTimer = setInterval(() => {
     // Never wait on an analytics snapshot from the request-serving thread.
     try { db.exec("PRAGMA wal_checkpoint(PASSIVE)"); } catch {}
@@ -29,8 +50,11 @@ export async function createBunSqliteAdapter(filePath) {
 
   function gracefulClose() {
     try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
-    try { stmtCache.clear(); } catch {}
-    try { db.close(); } catch {}
+    for (const statement of stmtCache.values()) {
+      try { statement.finalize(); } catch {}
+    }
+    stmtCache.clear();
+    try { db.close(true); admission.release(); } catch {}
   }
   registerShutdownFlusher(gracefulClose, 100);
 
@@ -48,10 +72,13 @@ export async function createBunSqliteAdapter(filePath) {
     },
     exec(sql) { return db.exec(sql); },
     transaction(fn) {
-      // bun:sqlite has db.transaction() API (similar to better-sqlite3)
-      const tx = db.transaction(fn);
-      return tx();
+      return transactions.transaction(() => {
+        // bun:sqlite has db.transaction() API (similar to better-sqlite3)
+        const tx = db.transaction(fn);
+        return tx();
+      });
     },
+    criticalTransaction: transactions.criticalTransaction,
     checkpoint() { try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} },
     close() {
       clearInterval(checkpointTimer);

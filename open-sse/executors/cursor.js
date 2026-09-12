@@ -3,7 +3,11 @@ import { rejectionHeaders } from "./rejectionHeaders.js";
 import { notifyDispatchResponse } from "../utils/dispatchHooks.js";
 import { Buffer } from "node:buffer";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
-import { FETCH_CONNECT_TIMEOUT_MS, HTTP_STATUS } from "../config/runtimeConfig.js";
+import {
+  CURSOR_RESPONSE_MAX_BYTES,
+  FETCH_CONNECT_TIMEOUT_MS,
+  HTTP_STATUS,
+} from "../config/runtimeConfig.js";
 import {
   generateCursorBody,
   encodeField,
@@ -64,6 +68,93 @@ function agentConnectionClosedError() {
   return Object.assign(new Error("Cursor AgentService closed before response headers"), {
     code: "http2_connection_closed",
   });
+}
+
+class CursorProtocolError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "CursorProtocolError";
+    this.code = code;
+  }
+}
+
+const cursorResponseTooLarge = () => new CursorProtocolError(
+  "cursor_response_too_large",
+  "Cursor response exceeded the configured byte limit",
+);
+
+function createCursorProtocolErrorResponse(code) {
+  const messages = {
+    cursor_response_too_large: "Cursor response exceeded the configured byte limit",
+    invalid_cursor_protobuf: "Cursor returned an incomplete protobuf response",
+    missing_response_body: "Cursor returned an empty response body",
+  };
+  return new Response(JSON.stringify({
+    error: {
+      message: messages[code] || "Cursor returned an invalid response",
+      type: "upstream_error",
+      code,
+    },
+  }), {
+    status: HTTP_STATUS.BAD_GATEWAY,
+    headers: {
+      "Content-Type": "application/json",
+      "x-tokenproxy-replay-safe": "false",
+      "x-should-retry": "false",
+    },
+  });
+}
+
+function validateBufferedCursorResponse(buffer, maxBytes) {
+  if (!buffer || buffer.length === 0) {
+    return createCursorProtocolErrorResponse("missing_response_body");
+  }
+  if (buffer.length > maxBytes) {
+    return createCursorProtocolErrorResponse("cursor_response_too_large");
+  }
+  return null;
+}
+
+async function readBoundedResponseBody(response, maxBytes, signal) {
+  const declaredText = response.headers.get("content-length");
+  const declared = declaredText == null ? null : Number(declaredText);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    try { Promise.resolve(response.body?.cancel()).catch(() => {}); } catch {}
+    throw cursorResponseTooLarge();
+  }
+  if (!response.body) return Buffer.alloc(0);
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  let finished = false;
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason || new DOMException("Request aborted", "AbortError"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) {
+        finished = true;
+        break;
+      }
+      const chunk = Buffer.from(value);
+      total += chunk.length;
+      if (total > maxBytes) throw cursorResponseTooLarge();
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (!finished) {
+      try { Promise.resolve(reader.cancel()).catch(() => {}); } catch {}
+    }
+    try { reader.releaseLock(); } catch {}
+  }
 }
 
 function concatBuffers(...parts) {
@@ -306,9 +397,10 @@ function decompressPayload(payload, flags) {
 
 // Read one cursor protobuf frame: header + bounds + decompress. Returns status + payload + new offset.
 function readCursorFrame(buffer, offset, frameNum, tag) {
+  if (offset === buffer.length) return { status: "eof" };
   if (offset + 5 > buffer.length) {
-    debugLog(`[CURSOR BUFFER${tag}] Reached end, offset=${offset}, remaining=${buffer.length - offset}`);
-    return { status: "done" };
+    debugLog(`[CURSOR BUFFER${tag}] Incomplete header, offset=${offset}, remaining=${buffer.length - offset}`);
+    return { status: "incomplete" };
   }
 
   const flags = buffer[offset];
@@ -317,7 +409,7 @@ function readCursorFrame(buffer, offset, frameNum, tag) {
 
   if (offset + 5 + length > buffer.length) {
     debugLog(`[CURSOR BUFFER${tag}] Incomplete frame, offset=${offset}, length=${length}, buffer.length=${buffer.length}`);
-    return { status: "done" };
+    return { status: "incomplete" };
   }
 
   let payload = buffer.slice(offset + 5, offset + 5 + length);
@@ -351,9 +443,16 @@ function createErrorResponse(jsonError) {
 }
 
 export class CursorExecutor extends BaseExecutor {
-  constructor({ connectHttp2 = defaultConnectHttp2 } = {}) {
+  constructor({
+    connectHttp2 = defaultConnectHttp2,
+    responseMaxBytes = CURSOR_RESPONSE_MAX_BYTES,
+  } = {}) {
     super("cursor", PROVIDERS.cursor);
+    if (!Number.isSafeInteger(responseMaxBytes) || responseMaxBytes <= 0) {
+      throw new TypeError("Cursor responseMaxBytes must be a positive safe integer");
+    }
     this.connectHttp2 = connectHttp2;
+    this.responseMaxBytes = responseMaxBytes;
   }
 
   buildUrl() {
@@ -420,7 +519,7 @@ export class CursorExecutor extends BaseExecutor {
     return {
       status: response.status,
       headers: Object.fromEntries(response.headers.entries()),
-      body: Buffer.from(await response.arrayBuffer())
+      body: await readBoundedResponseBody(response, this.responseMaxBytes, signal),
     };
   }
 
@@ -446,6 +545,7 @@ export class CursorExecutor extends BaseExecutor {
         signal,
       });
       const chunks = [];
+      let responseBytes = 0;
       let responseHeaders = {};
       let headerNotification = Promise.resolve();
       let settled = false;
@@ -494,6 +594,11 @@ export class CursorExecutor extends BaseExecutor {
           responseHeaders = hdrs;
           deadline.clear();
           deadline.signal.removeEventListener("abort", onHeaderAbort);
+          const declared = Number(hdrs["content-length"]);
+          if (Number.isFinite(declared) && declared > this.responseMaxBytes) {
+            finish(reject)(cursorResponseTooLarge());
+            return;
+          }
           if (dispatchHooks.afterDispatch) {
             req.pause?.();
             const response = {
@@ -505,7 +610,16 @@ export class CursorExecutor extends BaseExecutor {
             headerNotification.then(() => { if (!settled) req.resume?.(); }, finish(reject));
           }
         });
-        req.on("data", (chunk) => { chunks.push(chunk); });
+        req.on("data", (chunk) => {
+          if (settled) return;
+          const bytes = Buffer.from(chunk);
+          responseBytes += bytes.length;
+          if (responseBytes > this.responseMaxBytes) {
+            finish(reject)(cursorResponseTooLarge());
+            return;
+          }
+          chunks.push(bytes);
+        });
         req.on("end", () => {
           headerNotification.then(finish(() => {
             resolve({
@@ -555,6 +669,7 @@ export class CursorExecutor extends BaseExecutor {
     let rejectHeaders;
     let onHeaderAbort;
     let onCallerAbort;
+    let responseBytes = 0;
 
     const wake = (result) => {
       if (!waiting) return;
@@ -577,6 +692,7 @@ export class CursorExecutor extends BaseExecutor {
       if (streamError) return;
       streamError = error;
       ended = true;
+      chunkQueue.length = 0;
       if (!headersSettled) {
         headersSettled = true;
         rejectHeaders(error);
@@ -615,14 +731,26 @@ export class CursorExecutor extends BaseExecutor {
       req.on("error", fail);
       req.on("response", (hdrs) => {
         if (headersSettled) return;
+        const declared = Number(hdrs["content-length"]);
+        if (Number.isFinite(declared) && declared > this.responseMaxBytes) {
+          fail(cursorResponseTooLarge());
+          return;
+        }
         headersSettled = true;
         deadline.clear();
         deadline.signal.removeEventListener("abort", onHeaderAbort);
         resolveHeaders(hdrs);
       });
       req.on("data", (chunk) => {
-        if (waiting) wake({ value: chunk, done: false });
-        else chunkQueue.push(chunk);
+        if (closed || ended) return;
+        const bytes = Buffer.from(chunk);
+        responseBytes += bytes.length;
+        if (responseBytes > this.responseMaxBytes) {
+          fail(cursorResponseTooLarge());
+          return;
+        }
+        if (waiting) wake({ value: bytes, done: false });
+        else chunkQueue.push(bytes);
       });
       req.on("end", () => {
         if (closed || ended) return;
@@ -706,7 +834,7 @@ export class CursorExecutor extends BaseExecutor {
     } catch (error) {
       session?.close();
       removeParentAbort();
-      if (error?.name === "AbortError" || isConnectTimeoutError(error)) throw error;
+      if (error?.name === "AbortError" || isConnectTimeoutError(error) || error instanceof CursorProtocolError) throw error;
       throw new Error(`Cursor AgentService request failed: ${error.message}`);
     }
 
@@ -715,7 +843,7 @@ export class CursorExecutor extends BaseExecutor {
       responseHeaders = await session.responseHeaders;
     } catch (error) {
       session.close();
-      if (error?.name === "AbortError" || isConnectTimeoutError(error)) throw error;
+      if (error?.name === "AbortError" || isConnectTimeoutError(error) || error instanceof CursorProtocolError) throw error;
       throw new Error(`Cursor AgentService request failed: ${error.message}`);
     }
 
@@ -730,7 +858,7 @@ export class CursorExecutor extends BaseExecutor {
         }
       } catch (error) {
         session.close();
-        if (error?.name === "AbortError" || isConnectTimeoutError(error)) throw error;
+        if (error?.name === "AbortError" || isConnectTimeoutError(error) || error instanceof CursorProtocolError) throw error;
       }
       session.close();
       return {
@@ -751,14 +879,17 @@ export class CursorExecutor extends BaseExecutor {
     const created = Math.floor(Date.now() / 1000);
     let pending = Buffer.alloc(0);
     let finished = false;
+    let sawFrame = false;
 
     const consume = async (onEvent) => {
+      let failed = false;
       try {
         while (!finished) {
           const { done, value } = await session.read();
           if (done) break;
           pending = Buffer.concat([pending, Buffer.from(value)]);
           pending = decodeAgentFrames(pending, (payload) => {
+            sawFrame = true;
             // A single read can carry several frames; once the turn is over the
             // rest of the batch must not reach the already-closed controller.
             if (finished) return;
@@ -799,10 +930,25 @@ export class CursorExecutor extends BaseExecutor {
             }
           });
         }
+        if (!finished && pending.length > 0) {
+          throw new CursorProtocolError(
+            "invalid_cursor_protobuf",
+            "Cursor returned an incomplete protobuf response",
+          );
+        }
+        if (!finished && !sawFrame) {
+          throw new CursorProtocolError(
+            "missing_response_body",
+            "Cursor returned an empty response body",
+          );
+        }
+      } catch (error) {
+        failed = true;
+        throw error;
       } finally {
         try { session.end(); } catch {}
         try { session.close(); } catch {}
-        if (!finished) onEvent({ type: "done" });
+        if (!finished && !failed) onEvent({ type: "done" });
       }
     };
 
@@ -884,6 +1030,14 @@ export class CursorExecutor extends BaseExecutor {
         return await this.executeAgent({ model, body, stream, credentials, signal, proxyOptions, connectTimeout });
       } catch (error) {
         if (error?.name === "AbortError" || isConnectTimeoutError(error)) throw error;
+        if (error instanceof CursorProtocolError) {
+          return {
+            response: createCursorProtocolErrorResponse(error.code),
+            url: `${PROVIDER_OAUTH.cursor?.agentEndpoint || ""}${AGENT_RUN_PATH}`,
+            headers: {},
+            transformedBody: body,
+          };
+        }
         return {
           response: new Response(JSON.stringify({
             error: { message: error.message, type: "connection_error", code: "" },
@@ -926,16 +1080,7 @@ export class CursorExecutor extends BaseExecutor {
       }
 
       if (!response.body || response.body.length === 0) {
-        const errorResponse = new Response(JSON.stringify({
-          error: {
-            message: "Cursor returned an empty response body",
-            type: "upstream_error",
-            code: "missing_response_body",
-          },
-        }), {
-          status: HTTP_STATUS.BAD_GATEWAY,
-          headers: { "Content-Type": "application/json", "x-tokenproxy-replay-safe": "false" },
-        });
+        const errorResponse = createCursorProtocolErrorResponse("missing_response_body");
         return { response: errorResponse, url, headers, transformedBody: body };
       }
 
@@ -947,6 +1092,14 @@ export class CursorExecutor extends BaseExecutor {
     } catch (error) {
       if (hookFailed) throw error;
       if (error?.name === "AbortError" || isConnectTimeoutError(error)) throw error;
+      if (error instanceof CursorProtocolError) {
+        return {
+          response: createCursorProtocolErrorResponse(error.code),
+          url,
+          headers,
+          transformedBody: body,
+        };
+      }
       const errorResponse = new Response(JSON.stringify({
         error: {
           message: error.message,
@@ -962,6 +1115,8 @@ export class CursorExecutor extends BaseExecutor {
   }
 
   transformProtobufToJSON(buffer, model, body) {
+    const invalid = validateBufferedCursorResponse(buffer, this.responseMaxBytes);
+    if (invalid) return invalid;
     const responseId = `chatcmpl-cursor-${Date.now()}`;
     const created = Math.floor(Date.now() / 1000);
 
@@ -977,7 +1132,10 @@ export class CursorExecutor extends BaseExecutor {
 
     while (offset < buffer.length) {
       const frame = readCursorFrame(buffer, offset, frameCount, "");
-      if (frame.status === "done") break;
+      if (frame.status === "incomplete") {
+        return createCursorProtocolErrorResponse("invalid_cursor_protobuf");
+      }
+      if (frame.status === "eof") break;
       offset = frame.offset;
       frameCount++;
       if (frame.status === "skip") continue;
@@ -1115,6 +1273,8 @@ export class CursorExecutor extends BaseExecutor {
   }
 
   transformProtobufToSSE(buffer, model, body) {
+    const invalid = validateBufferedCursorResponse(buffer, this.responseMaxBytes);
+    if (invalid) return invalid;
     const responseId = `chatcmpl-cursor-${Date.now()}`;
     const created = Math.floor(Date.now() / 1000);
 
@@ -1146,7 +1306,10 @@ export class CursorExecutor extends BaseExecutor {
 
     while (offset < buffer.length) {
       const frame = readCursorFrame(buffer, offset, frameCount, " SSE");
-      if (frame.status === "done") break;
+      if (frame.status === "incomplete") {
+        return createCursorProtocolErrorResponse("invalid_cursor_protobuf");
+      }
+      if (frame.status === "eof") break;
       offset = frame.offset;
       frameCount++;
       if (frame.status === "skip") continue;

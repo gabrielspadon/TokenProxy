@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
@@ -192,16 +193,18 @@ describe("DB SQLite layer — public API parity", () => {
   });
 
   it("usage: saveRequestUsage + getUsageHistory + getUsageStats", async () => {
-    await sqliteDb.saveRequestUsage({
+    const { getAdapter } = await import('../../src/lib/db/driver.js');
+    const visible = createVisibleTelemetryFixture(await getAdapter(), 'public-db-parity');
+    await visible(() => sqliteDb.saveRequestUsage({
       provider: "openai", model: "gpt-4", connectionId: "c1",
       tokens: { prompt_tokens: 100, completion_tokens: 50 },
       endpoint: "/v1/chat/completions", status: "ok",
-    });
-    await sqliteDb.saveRequestUsage({
+    }));
+    await visible(() => sqliteDb.saveRequestUsage({
       provider: "openai", model: "gpt-4", connectionId: "c1",
       tokens: { prompt_tokens: 200, completion_tokens: 100 },
       endpoint: "/v1/chat/completions", status: "ok",
-    });
+    }));
 
     const hist = await sqliteDb.getUsageHistory({ provider: "openai" });
     expect(hist.length).toBeGreaterThanOrEqual(2);

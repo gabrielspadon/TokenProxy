@@ -38,7 +38,7 @@ describe('dedicated search through its own fallback dispatcher',()=>{
 
 describe.each(['firecrawl','jina-reader','tavily','exa'])('%s fetch response evidence',provider=>{
   it.each([[429,{},true],[503,{},false],[503,{'x-tokenproxy-replay-safe':'true'},true],[429,{'x-should-retry':'false'},false]])('classifies actual HTTP%i (%j)',async(status,headers,safe)=>{
-    fetch.mockResolvedValueOnce(Response.json({error:'fixture'},{status,headers}));
+    fetch.mockResolvedValueOnce(Response.json({error:{message:'fixture'}},{status,headers}));
     const result=await handleFetchCore({provider,url:'https://example.com/fixture',credentials});
     expect(fetch).toHaveBeenCalledTimes(1);expect(result.status).toBe(status);expect(result.failureMetadata.safeToReplay).toBe(safe);
   });

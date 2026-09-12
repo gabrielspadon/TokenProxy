@@ -30,17 +30,64 @@ import { readClaudeCompat, rewriteModelsListForClaude } from "@/lib/claudeCompat
 import { buildCodexCatalog } from "@/lib/codexCatalog";
 // Authenticated OpenAI/Codex catalogs, shared with the provider detail route (#2654).
 import { detectClientTool } from "open-sse/utils/clientDetector.js";
+import {
+  classifyCatalogFailure,
+  getPublicModelCatalogState,
+  readLiveCatalog,
+  refreshLiveCatalog,
+  refreshPublicModelCatalogWith,
+  resetPublicModelCatalogForTests,
+  startPublicModelCatalogRefresh,
+} from "./catalogSnapshot.js";
+import { credentialRevision } from "open-sse/services/tokenRefresh/credentialRevision.js";
+
+// Provider catalog clients may include response bodies or request URLs in
+// diagnostic arguments. The public refresh path records provider and error
+// class itself, so delegated clients receive a sink rather than raw console.
+const SAFE_CATALOG_LOG = Object.freeze({
+  debug() {},
+  error() {},
+  info() {},
+  log() {},
+  warn() {},
+});
+
+async function readCurrentProviderConnection(connectionId) {
+  const localDb = await import("@/lib/localDb");
+  if (!Object.prototype.hasOwnProperty.call(localDb, "getProviderConnectionById")) return null;
+  return localDb.getProviderConnectionById(connectionId);
+}
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
-  kiro: async (conn) => {
+  kiro: async (conn, _proxyOptions, signal) => {
+    let credentialPersistenceFailed = false;
     const result = await (await import("open-sse/services/kiroModels.js")).resolveKiroModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console });
+    }, {
+      log: SAFE_CATALOG_LOG,
+      signal,
+      onCredentialsRefreshed: async (refreshed) => {
+        if (!refreshed?.accessToken) return;
+        const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken || conn.refreshToken,
+          expiresIn: refreshed.expiresIn,
+        });
+        if (!persisted) {
+          credentialPersistenceFailed = true;
+          throw new Error("Kiro catalog credential persistence failed");
+        }
+        const current = await readCurrentProviderConnection(conn.id);
+        if (!current) throw new Error("Kiro catalog connection disappeared");
+        Object.assign(conn, current);
+      },
+    });
+    if (credentialPersistenceFailed) throw new Error("Kiro catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
   qoder: async (conn) => {
@@ -56,38 +103,50 @@ const LIVE_MODEL_RESOLVERS = {
       models: result.models.map((m) => ({ id: m.id, name: m.name })),
     };
   },
-  kimchi: async (conn) => {
+  kimchi: async (conn, _proxyOptions, signal) => {
     const result = await (await import("open-sse/services/kimchiModels.js")).resolveKimchiModels({
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console });
+    }, { log: SAFE_CATALOG_LOG, signal });
     return result?.models?.length ? { models: result.models } : null;
   },
-  github: async (conn) => {
+  github: async (conn, _proxyOptions, signal) => {
+    let credentialPersistenceFailed = false;
     const result = await (await import("open-sse/services/copilotModels.js")).resolveCopilotModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
     }, {
-      log: console,
+      log: SAFE_CATALOG_LOG,
+      signal,
       onCredentialsRefreshed: async (refreshed) => {
-        await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
+        const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           copilotToken: refreshed.copilotToken,
           copilotTokenExpiresAt: refreshed.copilotTokenExpiresAt,
           existingProviderSpecificData: conn.providerSpecificData || {},
         });
+        if (!persisted) {
+          credentialPersistenceFailed = true;
+          throw new Error("GitHub catalog credential persistence failed");
+        }
+        const current = await readCurrentProviderConnection(conn.id);
+        if (!current) throw new Error("GitHub catalog connection disappeared");
+        Object.assign(conn, current);
       },
     });
+    if (credentialPersistenceFailed) throw new Error("GitHub catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
-  "grok-cli": async (conn) => {
+  "grok-cli": async (conn, _proxyOptions, signal) => {
+    let credentialPersistenceFailed = false;
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
     const result = await (await import("open-sse/services/grokCliModels.js")).resolveGrokCliModels({
       ...conn,
       connectionId: conn.id,
     }, {
-      log: console,
+      log: SAFE_CATALOG_LOG,
+      signal,
       proxyOptions: {
         connectionProxyEnabled: proxy.connectionProxyEnabled === true,
         connectionProxyUrl: proxy.connectionProxyUrl || "",
@@ -96,19 +155,27 @@ const LIVE_MODEL_RESOLVERS = {
         strictProxy: proxy.strictProxy === true,
       },
       onCredentialsRefreshed: async (refreshed) => {
-        await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
+        const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           ...refreshed,
           existingProviderSpecificData: conn.providerSpecificData || {},
         });
+        if (!persisted) {
+          credentialPersistenceFailed = true;
+          throw new Error("Grok catalog credential persistence failed");
+        }
+        const current = await readCurrentProviderConnection(conn.id);
+        if (!current) throw new Error("Grok catalog connection disappeared");
+        Object.assign(conn, current);
       },
     });
+    if (credentialPersistenceFailed) throw new Error("Grok catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
-  cursor: async (conn, proxyOptions) => {
+  cursor: async (conn, proxyOptions, signal) => {
     const result = await (await import("open-sse/services/cursorModels.js")).resolveCursorModels({
       accessToken: conn.accessToken,
       providerSpecificData: conn.providerSpecificData || {},
-    }, { log: console, proxyOptions });
+    }, { log: SAFE_CATALOG_LOG, proxyOptions, signal });
     return result?.models?.length ? { models: result.models } : null;
   },
   zed: async (conn) => {
@@ -136,8 +203,8 @@ const LIVE_MODEL_RESOLVERS = {
   // and every downstream client still read the static registry (#2654). Both
   // resolve per connection and fail open to that registry, so an expired key or
   // a slow upstream costs a stale listing rather than an empty one.
-  openai: async (conn) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveOpenAIModels(conn),
-  codex: async (conn) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveCodexModels(conn),
+  openai: async (conn, _proxyOptions, signal) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveOpenAIModels(conn, { signal }),
+  codex: async (conn, _proxyOptions, signal) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveCodexModels(conn, { signal }),
 };
 
 function cursorSnapshotOwner(connection) {
@@ -255,7 +322,11 @@ function withContextWindow(entry) {
  *   listing turns it on. localOnly uses only persisted and static catalogues,
  *   so operator inventory reads never resolve provider or proxy-sidecar models.
  */
-export async function buildModelsList(kindFilter, { thinkingVariants = false, localOnly = false } = {}) {
+export async function buildModelsList(kindFilter, {
+  thinkingVariants = false,
+  localOnly = false,
+  refreshSignal,
+} = {}) {
   let connections = [];
   // The static-catalogue dump below is a fail-open for an unreadable connection
   // store, and it was gated on `connections.length === 0`, which is also what a
@@ -486,16 +557,30 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
         && LIVE_MODEL_RESOLVERS[providerId]
         && !(Array.isArray(enabled) && enabled.length > 0),
       );
+      const cachedLive = Boolean(
+        localOnly
+        && conn
+        && LIVE_MODEL_RESOLVERS[providerId]
+        && !(Array.isArray(enabled) && enabled.length > 0),
+      ) ? readLiveCatalog(providerId, conn) : null;
       const cursorProxy = !localOnly && providerId === "cursor"
         ? resolveCursorModelProxyOptions(conn)
         : null;
-      if (!cursorProxy && !wantsLive) continue;
+      if (!cursorProxy && !wantsLive && !cachedLive) continue;
       // Settle both now so a rejection cannot surface as an unhandled one while
       // the loop is still working through the providers ahead of this one.
       const live = wantsLive
-        ? Promise.resolve(cursorProxy).then(
-          (proxyOptions) => LIVE_MODEL_RESOLVERS[providerId](conn, proxyOptions),
-        )
+        ? refreshLiveCatalog(providerId, conn, (signal) => Promise.resolve(cursorProxy).then(
+          (proxyOptions) => LIVE_MODEL_RESOLVERS[providerId](conn, proxyOptions, signal),
+        ), {
+          currentRevision: async () => {
+            const current = await readCurrentProviderConnection(conn.id);
+            return current ? credentialRevision(current) : null;
+          },
+          signal: refreshSignal,
+        })
+        : cachedLive
+        ? Promise.resolve(cachedLive)
         : null;
       inFlightByProvider.set(providerId, {
         cursorProxy: settled(cursorProxy),
@@ -533,10 +618,10 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
       let liveModelKindById = new Map();
       let liveCapabilitiesById = new Map();
 
-      let rawModelIds = localOnly && hasExplicitEnabledModels
+      let rawModelIds = localOnly
         ? Array.from(
             new Set(
-              enabledModels.filter(
+              (hasExplicitEnabledModels ? enabledModels : providerModels.map((model) => model.id)).filter(
                 (modelId) => typeof modelId === "string" && modelId.trim() !== "",
               ),
             ),
@@ -579,7 +664,7 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
         if (resolved.error) {
           const err = resolved.error;
           if (isRequiredProxyUnavailableError(err)) throw err;
-          console.log(`Live model fetch failed for ${providerId}: ${err?.message || err}`);
+          console.log(`Live model fetch failed for ${providerId} class=${classifyCatalogFailure(err)}`);
         } else {
           const live = resolved.value;
           if (live?.models?.length) {
@@ -783,7 +868,7 @@ export async function OPTIONS() {
  */
 export async function GET(request) {
   try {
-    const data = await buildModelsList([LLM_KIND], { thinkingVariants: true });
+    const data = await buildModelsList([LLM_KIND], { thinkingVariants: true, localOnly: true });
 
     // Anthropic-protocol clients (Claude Code) filter model ids by
     // /(claude|anthropic)/i and would see nothing — rewrite ids with the
@@ -889,4 +974,20 @@ export async function GET(request) {
       { status: 500 }
     );
   }
+}
+
+export { getPublicModelCatalogState, resetPublicModelCatalogForTests };
+
+export function refreshPublicModelCatalog(options) {
+  return refreshPublicModelCatalogWith(
+    (signal) => buildModelsList([LLM_KIND], { thinkingVariants: true, refreshSignal: signal }),
+    options,
+  );
+}
+
+export function startPublicModelCatalogScheduler(options) {
+  startPublicModelCatalogRefresh(
+    (signal) => buildModelsList([LLM_KIND], { thinkingVariants: true, refreshSignal: signal }),
+    options,
+  );
 }

@@ -1,4 +1,6 @@
 import { expect, it, vi } from 'vitest';
+// This fixture exercises the production telemetry linked to approved controls.
+vi.mock('../../src/lib/db/telemetryOrigin.js', () => ({ processTelemetryOrigin: () => 'production' }));
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../../src/lib/db/driver.js';
 import { prepareContextCapture } from '../../src/lib/db/repos/contextEvidenceRepo.js';

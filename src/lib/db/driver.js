@@ -104,13 +104,27 @@ async function initAdapter() {
   }
 
   const { runMigrationOnce } = await import("./migrate.js");
-  await runMigrationOnce(adapter);
+  try {
+    await runMigrationOnce(adapter);
+  } catch (error) {
+    try { adapter.close?.(); } catch {}
+    throw error;
+  }
   return adapter;
 }
 
 export async function getAdapter() {
   if (state.instance) return state.instance;
-  if (!state.initPromise) state.initPromise = initAdapter().then((a) => { state.instance = a; return a; });
+  if (!state.initPromise) {
+    state.initPromise = initAdapter()
+      .then((a) => { state.instance = a; return a; })
+      .catch((error) => {
+        // A temporary filesystem or migration fault must not poison this
+        // process forever. The failed candidate is already closed above.
+        state.initPromise = null;
+        throw error;
+      });
+  }
   return state.initPromise;
 }
 

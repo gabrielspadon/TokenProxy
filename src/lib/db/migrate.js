@@ -1,8 +1,9 @@
-import { TABLES, buildCreateTableSql, SCHEMA_VERSION } from "./schema.js";
+import { TABLES, TRIGGERS, buildCreateTableSql, SCHEMA_VERSION } from "./schema.js";
 import { MIGRATIONS, latestVersion } from "./migrations/index.js";
 import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupDbLite, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
+import { economicsProjectionReady, ensureEconomicsProjection, ensureEconomicsProjectionIndexes } from './economicsProjectionSchema.js';
 
 // Track per-adapter so reusing same adapter skips re-run, but new adapter
 // (after reset) re-runs.
@@ -13,7 +14,11 @@ function isFreshDb(adapter) {
 }
 
 function needsSchemaSync(adapter) {
-  const objects = new Set(adapter.all("SELECT name FROM sqlite_master WHERE type IN ('table','index')").map(row => row.name));
+  const objects = new Set(adapter.all("SELECT name FROM sqlite_master WHERE type IN ('table','index','trigger')").map(row => row.name));
+  for (const trigger of TRIGGERS) {
+    const name = /CREATE TRIGGER IF NOT EXISTS (\w+)/i.exec(trigger)?.[1];
+    if (!name || !objects.has(name)) return true;
+  }
   for (const [tableName, def] of Object.entries(TABLES)) {
     if (!objects.has(tableName)) return true;
     const columns = new Set(adapter.all(`PRAGMA table_info(${tableName})`).map(row => row.name));
@@ -79,7 +84,7 @@ function syncSchemaFromTables(adapter) {
     }
 
     // Indexes (idempotent)
-    for (const idx of def.indexes || []) {
+    for (const idx of tableName === 'usageEconomicsProjection' ? [] : def.indexes || []) {
       try { adapter.exec(idx); }
       catch (e) { throw new Error(`[DB][sync] index for ${tableName} failed (${idx}): ${e.message}`, { cause: e }); }
     }
@@ -94,7 +99,9 @@ export async function runMigrationOnce(adapter) {
   const storedSchemaVer = hasMeta
     ? parseInt(getMetaSync(adapter, "backupSchemaVersion", "0"), 10) || 0 : 0;
   const migrationVersion = hasMeta ? parseInt(getMetaSync(adapter, "schemaVersion", "0"), 10) || 0 : 0;
-  const schemaChanging = !fresh && (storedSchemaVer < SCHEMA_VERSION || migrationVersion < latestVersion() || needsSchemaSync(adapter));
+  const schemaOutdated = storedSchemaVer < SCHEMA_VERSION || migrationVersion < latestVersion() || needsSchemaSync(adapter);
+  const projectionHealthy = !fresh && economicsProjectionReady(adapter, { verifyIntegrity: true });
+  const schemaChanging = !fresh && (schemaOutdated || !projectionHealthy);
   if (schemaChanging) {
     try {
       const backupDir = makeBackupDir(`schema-${storedSchemaVer}-to-${SCHEMA_VERSION}`);
@@ -110,6 +117,9 @@ export async function runMigrationOnce(adapter) {
   adapter.transaction(() => {
     runVersionedMigrations(adapter);
     syncSchemaFromTables(adapter);
+    for (const trigger of TRIGGERS) adapter.exec(trigger);
+    ensureEconomicsProjection(adapter, { verifiedReady: projectionHealthy && !schemaOutdated });
+    ensureEconomicsProjectionIndexes(adapter);
     setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);
     const newVer = getAppVersion();
     if (getMetaSync(adapter, "appVersion", null) !== newVer) setMetaSync(adapter, "appVersion", newVer);

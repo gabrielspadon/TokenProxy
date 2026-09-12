@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical-fixture-candidate",
+  "state": "unbound",
+  "applyEligible": false,
+  "reasonCode": "historical-test-fixture",
+  "expectedRequestStatsRows": 156,
+  "usageHistoryRows": "unqualified",
+  "fixtureDate": "2026-09-05",
+  "burstCount": 3,
+  "rowsPerBurst": 52,
+  "providersPerBurst": {
+    "codex": 23,
+    "op-test-chat": 23,
+    "gemini": 4,
+    "claude": 2
+  },
+  "providersTotal": {
+    "codex": 69,
+    "op-test-chat": 69,
+    "gemini": 12,
+    "claude": 6
+  },
+  "model": "gpt-5.6-sol",
+  "fixtureStartTimeMs": 1700000000000,
+  "preciseCohortIntervals": null,
+  "rows": [],
+  "evidenceReferences": [
+    {
+      "path": "/home/spadon/.codex/audits/tokenproxy/2026-09-12/report.md",
+      "sha256": "24e909a80555f7e0b4975bdf80f518d889e14376246057f469f2982ae732bbbf"
+    },
+    {
+      "path": "/home/spadon/.codex/audits/tokenproxy/2026-09-12/validation.md",
+      "sha256": "a916e106ceafa68d06229c3920f7b90b02ebe6587b8d9fc45db6347a6527b552"
+    },
+    {
+      "path": "/home/spadon/.codex/audits/tokenproxy/2026-09-12/statistics.json",
+      "sha256": "93a33f735c1a92d80d928ecb03f662440467b87eb0ffc7eee690a0effe6be026"
+    },
+    {
+      "path": "/home/spadon/.codex/audits/tokenproxy/2026-09-12/final-state.json",
+      "sha256": "480875383eb28acea068c94e6c52fb2179723a450307071c399cddc4ccd7c4ba"
+    }
+  ],
+  "fixtureSource": {
+    "revision": "d99a93ceb2c3c05d14041374249e0a81c6e03caf",
+    "path": "tests/unit/claude-auto-mode-classifier.test.js",
+    "sha256": "ae5fb92355e0ff1aaf4d584849d06170eb07db55a42147c76dabf0a7682f633b"
+  },
+  "missingEvidence": [
+    "Explicit row IDs from an authorized offline backup",
+    "Full current-schema fingerprints for every selected row",
+    "Exact three cohort intervals and per-row fixture signatures",
+    "Independently linked usageHistory rows, if any"
+  ],
+  "selectionPolicy": "Counts, provider/model labels and extreme latency are corroboration only; no automatic selection or quarantine is authorized by this unbound candidate."
+}

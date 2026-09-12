@@ -31,10 +31,11 @@ function event(id,request='r1',key='key-a',logical='logical-'+request,session=1)
 describe('Context evidence export',()=>{
   it('exports exact owned relations without raw content and keeps explicit reports separate from inference',()=>{
     attempt(); event('owned'); event('other-key','r1','key-b'); event('other-logical','r1','key-a','wrong'); event('unlinked',null,'key-a',null,null);
+    native.prepare("UPDATE contextStages SET durationMs=4.5,durationSource='monotonic' WHERE requestId=?").run('r1');
     native.prepare('INSERT INTO usageHistory(timestamp,requestId,logicalRequestId,cost,estimatedCostUsd,reportedCostUsd,costSource,meta,apiKey) VALUES(?,?,?,?,?,?,?,?,?)').run(time,'r1','logical-r1',0,null,null,null,'PRIVATE-meta','PRIVATE-key');
     native.prepare('INSERT INTO usageHistory(timestamp,cost) VALUES(?,?)').run(time,99);
     const result=readEvidence(db,query());
-    expect(result.items[0]).toMatchObject({id:'r1',contextSessionId:1,logicalRequestId:'logical-r1',providerInputTokens:null,stages:[{deltaBytes:20}]});
+    expect(result.items[0]).toMatchObject({id:'r1',contextSessionId:1,logicalRequestId:'logical-r1',providerInputTokens:null,stages:[{deltaBytes:20,durationMs:4.5,durationSource:'monotonic'}]});
     expect(result.items[0].structures.map(s=>s.boundary)).toEqual(['client-received','gateway-shaped','physical-dispatch']);
     expect(result.items[0].costRecords).toMatchObject([{recordedCostUsd:0,estimatedCostUsd:null,reportedCostUsd:null,costSource:null}]);
     expect(result.clientEvents).toMatchObject([{id:'owned',source:'client-reported',providerVerified:false,beforeTokens:100,afterTokens:120}]);

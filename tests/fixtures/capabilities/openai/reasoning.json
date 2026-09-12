@@ -1,0 +1,20 @@
+{
+  "model": "fixture-model",
+  "max_tokens": 32,
+  "reasoning_effort": "high",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Reason briefly, then answer 2+2."
+    },
+    {
+      "role": "assistant",
+      "content": "4",
+      "reasoning_content": "Two plus two equals four."
+    },
+    {
+      "role": "user",
+      "content": "Confirm."
+    }
+  ]
+}

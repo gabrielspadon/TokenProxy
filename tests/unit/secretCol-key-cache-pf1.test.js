@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
 
 // P-F1: deriveKey() called machineIdSync() — a ~2ms subprocess — on EVERY
 // encrypt/decrypt, and row decryption runs per request inside the serialized
@@ -11,12 +12,14 @@ import {
   decryptSecretJson,
   _resetSecretKeyCacheForTests,
 } from "../../src/lib/db/helpers/secretCol.js";
+import { SECRET_KEY_FILE } from "../../src/lib/db/paths.js";
 
 const nodeMachineId = require("node-machine-id");
 let machineIdSpy;
 
 describe("secretCol key cache (P-F1)", () => {
   beforeEach(() => {
+    fs.rmSync(SECRET_KEY_FILE, { force: true });
     _resetSecretKeyCacheForTests();
     machineIdSpy = vi.spyOn(nodeMachineId, "machineIdSync");
   });

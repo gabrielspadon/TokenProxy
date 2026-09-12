@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
 import { getSettings } from "@/lib/localDb";
-import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
+import { assertPublicUrl, fetchPublicUrl } from "@/shared/utils/ssrfGuard.js";
 
 export const OIDC_COOKIE_NAMES = {
   state: "oidc_state",
@@ -11,9 +11,24 @@ export const OIDC_COOKIE_NAMES = {
 
 const DEFAULT_SCOPES = "openid profile email";
 const DEFAULT_LOGIN_LABEL = "Sign in with OIDC";
+const DISCOVERY_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_DISCOVERY_REDIRECTS = 5;
 
 function trimTrailingSlashes(value) {
   return (value || "").trim().replace(/\/+$/, "");
+}
+
+function safeProviderMessage(message, secret, fallback) {
+  const text = typeof message === "string" ? message : "";
+  if (secret && text.includes(secret)) return `${fallback} [REDACTED]`;
+  return text || fallback;
+}
+
+function assertOidcEndpoint(rawUrl) {
+  assertPublicUrl(rawUrl);
+  if (new URL(rawUrl).protocol !== "https:") {
+    throw new Error("OIDC endpoints must use HTTPS");
+  }
 }
 
 // OIDC Core 1.0 section 3.1.2.1 makes "openid" the value that marks an
@@ -78,13 +93,34 @@ export async function getOidcRuntimeConfig() {
 
 export async function fetchOidcDiscovery(issuerUrl) {
   const trimmed = trimTrailingSlashes(issuerUrl);
-  assertPublicUrl(trimmed);
+  assertOidcEndpoint(trimmed);
   const discoveryUrl = `${trimmed}/.well-known/openid-configuration`;
-  const res = await fetch(discoveryUrl, { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`Failed to load OIDC discovery document from ${discoveryUrl}`);
+  // Enterprise IdP front doors commonly redirect discovery. Manual handling
+  // applies the HTTPS and public-host policy before every hop, while the
+  // dispatcher separately validates every address returned by DNS at connect.
+  let currentUrl = discoveryUrl;
+  for (let redirects = 0; ; redirects += 1) {
+    assertOidcEndpoint(currentUrl);
+    const res = await fetchPublicUrl(currentUrl, { cache: "no-store", redirect: "manual" });
+    if (DISCOVERY_REDIRECT_STATUSES.has(res.status)) {
+      if (redirects >= MAX_DISCOVERY_REDIRECTS) {
+        throw new Error(`OIDC discovery exceeded ${MAX_DISCOVERY_REDIRECTS} redirects`);
+      }
+      const location = res.headers?.get?.("location");
+      if (!location) throw new Error("OIDC discovery redirect did not provide a location");
+      currentUrl = new URL(location, currentUrl).toString();
+      assertOidcEndpoint(currentUrl);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Failed to load OIDC discovery document from ${discoveryUrl}`);
+    }
+    const discovery = await res.json();
+    if (discovery?.authorization_endpoint) {
+      assertOidcEndpoint(discovery.authorization_endpoint);
+    }
+    return discovery;
   }
-  return await res.json();
 }
 
 export function createPkcePair() {
@@ -110,6 +146,7 @@ export function buildOidcAuthorizationUrl({
   nonce,
   codeChallenge,
 }) {
+  assertOidcEndpoint(authorizationEndpoint);
   const url = new URL(authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", clientId);
@@ -130,6 +167,7 @@ export async function exchangeOidcCode({
   redirectUri,
   codeVerifier,
 }) {
+  assertOidcEndpoint(tokenEndpoint);
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: clientId,
@@ -142,15 +180,23 @@ export async function exchangeOidcCode({
     body.set("client_secret", clientSecret);
   }
 
-  const res = await fetch(tokenEndpoint, {
+  // The request body contains the client secret. Never replay it through a
+  // 307/308 redirect. Administrators must configure the IdP's final public
+  // token endpoint, while direct enterprise IdP endpoints remain supported.
+  const res = await fetchPublicUrl(tokenEndpoint, {
     method: "POST",
+    redirect: "error",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = data?.error_description || data?.error || `OIDC token exchange failed (${res.status})`;
+    const message = safeProviderMessage(
+      data?.error_description || data?.error,
+      clientSecret,
+      `OIDC token exchange failed (${res.status})`,
+    );
     throw new Error(message);
   }
 
@@ -170,6 +216,7 @@ export async function probeOidcClientSecret({
       message: "No client secret was provided, so secret validation was skipped.",
     };
   }
+  assertOidcEndpoint(tokenEndpoint);
 
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -180,8 +227,9 @@ export async function probeOidcClientSecret({
     code_verifier: "__oidc_test_invalid_verifier__",
   });
 
-  const res = await fetch(tokenEndpoint, {
+  const res = await fetchPublicUrl(tokenEndpoint, {
     method: "POST",
+    redirect: "error",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
@@ -189,13 +237,13 @@ export async function probeOidcClientSecret({
   const data = await res.json().catch(() => ({}));
   const error = (data?.error || "").toLowerCase();
   const errorDescription = data?.error_description || data?.error || "";
+  const safeDescription = safeProviderMessage(errorDescription, clientSecret, "OIDC token endpoint response contained credential material.");
 
   if (res.ok) {
     return {
       tested: true,
       valid: true,
       message: "Client secret was accepted by the token endpoint.",
-      raw: data,
     };
   }
 
@@ -203,8 +251,7 @@ export async function probeOidcClientSecret({
     return {
       tested: true,
       valid: false,
-      message: errorDescription || "Client secret is not valid.",
-      raw: data,
+      message: safeDescription || "Client secret is not valid.",
     };
   }
 
@@ -213,15 +260,13 @@ export async function probeOidcClientSecret({
       tested: true,
       valid: true,
       message: "Client secret was accepted; the token exchange failed only because the test authorization code is invalid.",
-      raw: data,
     };
   }
 
   return {
     tested: true,
     valid: null,
-    message: errorDescription || `Token endpoint responded with ${res.status}`,
-    raw: data,
+    message: safeDescription || `Token endpoint responded with ${res.status}`,
   };
 }
 
@@ -232,7 +277,11 @@ export async function verifyOidcIdToken({
   jwksUri,
   nonce,
 }) {
-  const jwks = createRemoteJWKSet(new URL(jwksUri));
+  assertOidcEndpoint(jwksUri);
+  // jose deliberately uses redirect:"manual" for remote JWKS. Its custom
+  // fetch still needs our dispatcher so DNS rebinding cannot reach a private
+  // address after the initial URL-string check.
+  const jwks = createRemoteJWKSet(new URL(jwksUri), { [customFetch]: fetchPublicUrl });
   const { payload } = await jwtVerify(idToken, jwks, {
     issuer,
     audience,

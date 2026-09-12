@@ -57,7 +57,7 @@ describe("an empty single-model stream is refused, not forwarded (#2535)", () =>
   it("the single-model success path peeks before returning", () => {
     const branch = chat.slice(chat.indexOf("if (result.success) {"));
     const body = branch.slice(0, branch.indexOf("if (result.clientAborted"));
-    expect(body).toContain("await peekStreamForContent(result.response)");
+    expect(body).toMatch(/await peekStreamForContent\(result\.response,\s*Math\.min\(STREAM_FIRST_CHUNK_TIMEOUT_MS, fallbackDeadline\.remainingMs\(\)\), \{ signal: callerSignal \}\)/);
     expect(body).toContain("if (peeked.hasContent)");
   });
 

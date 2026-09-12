@@ -127,8 +127,10 @@ const geminiVideoAdapter = {
 
     const text = await upstream.text().catch(() => "");
     if (!upstream.ok) {
+      let errorPayload = null;
+      try { errorPayload = JSON.parse(text); } catch {}
       return createErrorResult(upstream.status, `[gemini] ${(text || `HTTP ${upstream.status}`).slice(0, 2000)}`, extractRetryAfterDeadline(upstream),
-        { safeToReplay: isReplaySafeRejection(upstream) });
+        { safeToReplay: isReplaySafeRejection(upstream, errorPayload) });
     }
     let operation;
     try {

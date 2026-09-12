@@ -62,6 +62,7 @@ export async function createTechnicalTelemetry(options, { traceExporter, metricE
 // No SDK initialization or export occurs without the explicit operator setting.
 // A private provider avoids adopting Next's global tracing or incoming baggage.
 export async function initializeTechnicalTelemetry() {
+  globalThis.__tokenproxyLiveSafety?.traceMode();
   if (globalThis.__tokenproxyTechnicalTelemetrySetup) return globalThis.__tokenproxyTechnicalTelemetrySetup;
   globalThis.__tokenproxyTechnicalTelemetrySetup = (async () => {
     try {

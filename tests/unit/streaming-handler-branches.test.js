@@ -360,7 +360,9 @@ describe('buildOnStreamComplete guards', () => {
     const nonFn = buildOnStreamComplete(
       buildArgs({ provider: ANTIGRAVITY_PROVIDER, log, notifyTerminalVerificationSuccess: 42 })
     );
-    nonFn.onStreamComplete({ content: 'real answer' }, { completion_tokens: 2 }, null, {});
+    // Verification is published only on a consumed successful terminal; an
+    // unknown terminal must never reach the callback.
+    nonFn.onStreamComplete({ content: 'real answer' }, { completion_tokens: 2 }, null, { terminalEvidence: { state: 'succeeded', reason: 'stream-complete', source: 'provider-stream' } });
     expect(log.warn).not.toHaveBeenCalledWith('VERIFICATION', expect.anything());
 
     const throwing = buildOnStreamComplete(
@@ -372,7 +374,7 @@ describe('buildOnStreamComplete guards', () => {
         },
       })
     );
-    throwing.onStreamComplete({ content: 'real answer' }, { completion_tokens: 2 }, null, {});
+    throwing.onStreamComplete({ content: 'real answer' }, { completion_tokens: 2 }, null, { terminalEvidence: { state: 'succeeded', reason: 'stream-complete', source: 'provider-stream' } });
     expect(log.warn).toHaveBeenCalledWith(
       'VERIFICATION',
       expect.stringContaining('success callback failed')
@@ -388,7 +390,7 @@ describe('buildOnStreamComplete guards', () => {
         notifyTerminalVerificationSuccess: () => Promise.reject(new Error('verify async fail')),
       })
     );
-    onStreamComplete({ content: 'real answer' }, { completion_tokens: 2 }, null, {});
+    onStreamComplete({ content: 'real answer' }, { completion_tokens: 2 }, null, { terminalEvidence: { state: 'succeeded', reason: 'stream-complete', source: 'provider-stream' } });
     await new Promise((r) => setTimeout(r, 10));
     expect(log.warn).toHaveBeenCalledWith(
       'VERIFICATION',

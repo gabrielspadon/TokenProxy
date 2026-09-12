@@ -10,6 +10,9 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 
 function res(status, permission = 'true') {
+  if (status === 429) return Response.json({ error: { message: 'Rate limit exceeded' } }, {
+    status, headers: { 'x-tokenproxy-replay-safe': permission },
+  });
   return { status, headers: new Headers({ 'x-tokenproxy-replay-safe': permission }) };
 }
 
@@ -46,6 +49,17 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
 });
 
 describe("BaseExecutor.execute — baseUrls fallback", () => {
+  it.each([
+    { error: { message: 'Generation accepted before rate limit' } },
+    { error: { message: 'Rate limit exceeded' }, usage: { output_tokens: 1 } },
+    null,
+  ])('refuses every internal replay when 429 does not prove rejection (%j)', async payload => {
+    const ex = makeExec({ baseUrls: ['https://a/api', 'https://b/api'], retry: { 429: { attempts: 2, delayMs: 0 } } });
+    fetchMock.mockResolvedValueOnce(Response.json(payload, { status: 429 }));
+    const result = await ex.execute({ model: 'm', body: {}, stream: false, credentials: creds });
+    expect(result.response.status).toBe(429);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
   it("falls over to the next url on 429 (shouldRetry)", async () => {
     const ex = makeExec({ baseUrls: ["https://a/api", "https://b/api"], retry: { 429: { attempts: 0 } } });
     fetchMock

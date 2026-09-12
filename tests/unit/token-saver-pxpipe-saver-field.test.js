@@ -46,13 +46,15 @@ function makeExecutorRes() {
   return {
     response: new Response(
       JSON.stringify({
-        id: "chatcmpl-x",
-        object: "chat.completion",
-        choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop", index: 0 }],
+        id: "msg-x",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
       }),
       { status: 200, headers: { "content-type": "application/json" } }
     ),
-    url: "https://api.openai.com/v1/chat/completions",
+    url: "https://api.anthropic.com/v1/messages",
     headers: {},
     transformedBody: null,
   };

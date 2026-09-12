@@ -21,6 +21,29 @@ It does not claim coverage of all parameter values or all 262143 nonempty subset
 Remaining over-window estimates are retained as capacity limitations, including
 the disabled baseline; they are distinct from protocol-invariant failures.
 
+The controlled corpus pins estimated context populations at 32,000, 250,000
+and 900,000 tokens with effort `high` and output length 32. Its semantic gate
+checks source immutability, protocol invariants, deterministic cache-prefix
+bytes, consecutive-request prefix retention and per-stage applied or skipped
+receipts.
+
+```bash
+CONTROLLED_SAVER_REPORT=/tmp/tokenproxy-saver-semantics.json \
+  ./tests/node_modules/.bin/vitest run --config tests/vitest.config.js \
+  tests/unit/token-saver-controlled-corpus.test.js --maxWorkers=1
+```
+
+`benchmark-controlled.mjs` uses the same payloads, 10 warm-up requests and 100
+measured requests per population. It retains raw samples, RSS and event-loop
+delay. This local module prequalification excludes started-gateway parsing,
+routing and I/O, so T06 or T09 must run the final gateway overhead gate.
+
+```bash
+DATA_DIR=/tmp/tokenproxy-saver-controlled \
+  node tests/qa/saver-audit/benchmark-controlled.mjs \
+  --out=/tmp/tokenproxy-saver-controlled
+```
+
 The historical exhaustive runner remains available as `run.mjs`. Its
 `--quick` flag runs every selected stage subset once in canonical order. Without it,
 every order of every subset up to `--maxPerm` stages (default 5) is scored, and

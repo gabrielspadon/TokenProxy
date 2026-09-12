@@ -6,6 +6,13 @@ export function useResource(url, { onSnapshot, interval } = {}) {
   const observations = useObservationPolicy();
   const background = observations?.background ?? true;
   const mode = observations?.mode ?? 'live';
+  // Until the provider has read the stored observation mode, what this read
+  // should do is unknown. Reading anyway costs a request that is aborted one
+  // frame later when a stored Live or Paused arrives and re-runs this effect.
+  // The provider sets `hydrated` even when storage is unreadable, so this gate
+  // cannot strand a consumer in loading. Standalone consumers have no provider
+  // and are never gated.
+  const hydrated = observations?.hydrated ?? true;
   const sharedRevision = observations?.revision ?? 0;
   const intervalMs = background ? interval ?? (observations ? 15000 : 0) : 0;
   const requested = useRef(null);
@@ -20,6 +27,7 @@ export function useResource(url, { onSnapshot, interval } = {}) {
   const refresh = useCallback(() => setRevision((r) => r + 1), []);
   useEffect(() => {
     if (!url) { requested.current = null; return; }
+    if (!hydrated) return;
     const previous = requested.current;
     const same = previous?.url === url && previous.revision === revision && previous.sharedRevision === sharedRevision;
     if (!background && same && previous.complete) return;
@@ -84,7 +92,7 @@ export function useResource(url, { onSnapshot, interval } = {}) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [url, revision, onSnapshot, intervalMs, background, sharedRevision, mode]);
+  }, [url, revision, onSnapshot, intervalMs, background, sharedRevision, mode, hydrated]);
   const matching = state.url === url;
   return {
     ...state,

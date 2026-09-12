@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    "tests/unit/example.test.js": ["example passes"]
+  }
+}

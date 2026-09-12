@@ -32,7 +32,7 @@ Quota input uses `lastQuotaSnapshot` through the same `toRankerWindows(snapshot,
 
 ## Decision contract and parity
 
-The live and offline paths both use `accountAdmissionReason` for strict account selection, request exclusions, enabled-model lists, explicit operator disable, drains and active locks. `temporaryPinWait` preserves a rate/transient-locked pin when other operator gates still admit that account. Failure helpers accept an optional injected clock; existing callers keep the wall-clock default.
+The live and offline paths both use `accountAdmissionReason` for strict account selection, request exclusions, enabled-model lists, explicit operator disable, drains and provider-verified quota exhaustion. Stored timed failure records do not exclude an account from admission or park a session pin. Confirmed account-wide credential rejection deactivates the account, which removes it from the live active-account query. Failure helpers accept an optional injected clock; existing callers keep the wall-clock default.
 
 Both paths use `planAccountSelection`, extracted from `selectAndReserve`, to invoke the maintained quota ranker and repin policy and produce the account attempt order. Live `selectAndReserve` still owns the original synchronous transaction, atomic reservation and pin/receipt writes. The simulator only compares the captured counts against `effectiveCapacity`; it cannot reserve a future slot.
 

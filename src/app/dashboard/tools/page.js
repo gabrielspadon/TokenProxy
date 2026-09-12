@@ -284,7 +284,7 @@ export default function ToolsPage() {
         <div className={shared.lensTitle}>
           <h1>Tools</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · the local extensions connected to your gateway
+            the local extensions connected to your gateway
           </p>
         </div>
       </div>
@@ -429,17 +429,31 @@ export default function ToolsPage() {
         <p>
           Configure a Streamable HTTP MCP client at this gateway&apos;s origin plus the path below,
           with a gateway inference key in its Authorization bearer header. It exposes the read-only{' '}
-          <code>context_status</code> tool. Use the same session identity header as your inference
-          client, or an explicit eight-character session ID when permitted by this deployment.
+          <code>context_status</code> tool.
         </p>
         <CopyValue label="MCP path" value="/api/v1/mcp" />
-        <p>
-          The tool reads retained context evidence. Anonymous callers cannot select another session
-          implicitly. Unknown sessions return no snapshot. This does not generate a completion,
-          change context policy, or prove future context capacity.
-        </p>
+        <details className={styles.note}>
+          <summary>Session identity and what this tool does not do</summary>
+          <p>
+            Use the same session identity header as your inference client, or an explicit
+            eight-character session ID when permitted by this deployment.
+          </p>
+          <p>
+            The tool reads retained context evidence. Anonymous callers cannot select another
+            session implicitly. Unknown sessions return no snapshot. This does not generate a
+            completion, change context policy, or prove future context capacity.
+          </p>
+        </details>
         <div className={styles.links}>
-          <Link href="/dashboard/keys">Configure a gateway key</Link>
+          <Button
+            size="xs"
+            variant="default"
+            component={Link}
+            href="/dashboard/keys"
+            leftSection={<Icon name="i-keys" />}
+          >
+            Configure a gateway key
+          </Button>
         </div>
       </section>
       </div>

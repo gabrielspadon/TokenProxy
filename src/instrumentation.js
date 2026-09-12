@@ -1,3 +1,7 @@
+export function canStartFrontOutcomeJournal(phase = process.env.NEXT_PHASE) {
+  return phase !== "phase-production-build" && phase !== "phase-export" && phase !== "phase-static";
+}
+
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     if (process.env.TOKENPROXY_TELEMETRY === "otlp") {
@@ -33,6 +37,25 @@ export async function register() {
       await import("@/shared/services/bootstrap");
     } catch (e) {
       console.error("[Bootstrap] boot start failed:", e?.message);
+    }
+
+    try {
+      const { startPublicModelCatalogScheduler } = await import("@/app/api/v1/models/route.js");
+      startPublicModelCatalogScheduler();
+    } catch {
+      console.warn("[model-list] background refresh start failed class=initialization");
+    }
+
+    // The front persists admission-only outcomes outside the backend process.
+    // Import from the shared private data root before request traffic and then
+    // keep its incremental reader alive for terminal records.
+    if (canStartFrontOutcomeJournal()) {
+      try {
+        const { startFrontOutcomeJournalIngestion } = await import("@/lib/db/repos/frontOutcomeJournalRepo.js");
+        startFrontOutcomeJournalIngestion();
+      } catch {
+        console.warn("[frontOutcomeJournal] boot start failed class=initialization");
+      }
     }
 
     // Webhook delivery watches signals the router already emits; it has to be

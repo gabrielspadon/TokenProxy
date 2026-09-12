@@ -16,12 +16,34 @@ it('retains a redeemed credential pair through the real repository when its orig
   expect(result.connection).toEqual(await getProviderConnectionById(account.id));
   expect(await getProviderConnectionById(account.id)).toMatchObject({ accessToken: 'fixture-new-access', refreshToken: 'fixture-rotated-refresh' });
 });
-it.each([{ accessToken: 'fixture-reauth-access', refreshToken: 'fixture-reauth-refresh' }, { isActive: false }])('refuses late usage-refresh persistence after a concurrent credential or account transition %j', async transition => {
+it('uses a compatible authoritative winner after a concurrent credential transition', async () => {
+  const transition = {
+    accessToken: 'fixture-reauth-access',
+    refreshToken: 'fixture-reauth-refresh',
+    lastQuotaSnapshot: { remainingPercentage: 17, capturedAt: '2026-09-12T10:00:00.000Z' },
+  };
   refresh.mockImplementation(async () => {
     await updateProviderConnection(account.id, transition);
     return { accessToken: 'fixture-late-access', refreshToken: 'fixture-late-refresh' };
   });
-  await expect(refreshAndUpdateCredentials(account)).rejects.toMatchObject({ code: 'CREDENTIAL_CONFLICT' });
+  const result = await refreshAndUpdateCredentials(account);
   const actual = await getProviderConnectionById(account.id);
-  expect(actual).toMatchObject(transition); expect(actual.accessToken).not.toBe('fixture-late-access');
+  expect(result).toEqual({ connection: actual, refreshed: true });
+  expect(actual).toMatchObject(transition);
+  expect(actual.accessToken).not.toBe('fixture-late-access');
+  expect(actual.refreshToken).not.toBe('fixture-late-refresh');
+});
+it('rejects a disabled conflict winner without publishing the late rotation', async () => {
+  refresh.mockImplementation(async () => {
+    await updateProviderConnection(account.id, { isActive: false });
+    return { accessToken: 'fixture-late-access', refreshToken: 'fixture-late-refresh' };
+  });
+  await expect(refreshAndUpdateCredentials(account)).rejects.toMatchObject({
+    code: 'CREDENTIAL_SELECTION_CHANGED',
+    retryable: false,
+  });
+  const actual = await getProviderConnectionById(account.id);
+  expect(actual.isActive).toBe(false);
+  expect(actual.accessToken).not.toBe('fixture-late-access');
+  expect(actual.refreshToken).not.toBe('fixture-late-refresh');
 });

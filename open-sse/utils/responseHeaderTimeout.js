@@ -2,6 +2,7 @@ import {
   isValidConnectTimeoutMs,
   resolveConnectTimeoutMs,
 } from "../config/connectTimeout.js";
+import { FallbackDeadlineError } from "./fallbackDeadline.js";
 
 export class ConnectTimeoutError extends Error {
   constructor(timeoutMs) {
@@ -17,10 +18,13 @@ export function isConnectTimeoutError(error) {
     && error?.code === "UPSTREAM_CONNECT_TIMEOUT";
 }
 
-export function createResponseHeaderTimeout({ timeoutMs, signal: callerSignal } = {}) {
+export function createResponseHeaderTimeout({ timeoutMs, signal: callerSignal, fallbackDeadline } = {}) {
   if (!isValidConnectTimeoutMs(timeoutMs)) {
     throw new TypeError("timeoutMs must be a finite integer from 1000 through 120000");
   }
+  fallbackDeadline?.throwIfExpired(callerSignal);
+  const remainingMs = fallbackDeadline?.remainingMs() ?? Infinity;
+  const effectiveTimeoutMs = Math.min(timeoutMs, Math.ceil(remainingMs));
 
   const timeoutController = new AbortController();
   let source = callerSignal?.aborted ? "caller" : null;
@@ -39,9 +43,9 @@ export function createResponseHeaderTimeout({ timeoutMs, signal: callerSignal } 
   const timer = setTimeout(() => {
     if (source !== null) return;
     source = "timeout";
-    timeoutError = new ConnectTimeoutError(timeoutMs);
+    timeoutError = remainingMs <= timeoutMs ? new FallbackDeadlineError() : new ConnectTimeoutError(timeoutMs);
     timeoutController.abort(timeoutError);
-  }, timeoutMs);
+  }, effectiveTimeoutMs);
 
   const signal = callerSignal
     ? AbortSignal.any([callerSignal, timeoutController.signal])
@@ -56,6 +60,7 @@ export function createResponseHeaderTimeout({ timeoutMs, signal: callerSignal } 
 
   return {
     signal,
+    timeoutMs: effectiveTimeoutMs,
     clear,
     classify(error) {
       if (source === "timeout") return timeoutError;
@@ -77,8 +82,5 @@ export function createExecutorResponseHeaderTimeout({
     globalTimeout: connectTimeout?.globalTimeout,
     envTimeout,
   });
-  return {
-    ...createResponseHeaderTimeout({ timeoutMs, signal }),
-    timeoutMs,
-  };
+  return createResponseHeaderTimeout({ timeoutMs, signal, fallbackDeadline: connectTimeout?.fallbackDeadline });
 }

@@ -874,7 +874,9 @@ describe("Ollama web fetch normalized response", () => {
       status: 429,
       code: "OLLAMA_UPSTREAM_ERROR",
       error: "quota unavailable",
-      failureMetadata: { safeToReplay: true },
+      // Scalar body: bounded message, but no canonical envelope to prove
+      // the request was refused rather than billed.
+      failureMetadata: { safeToReplay: false },
       resetsAtMs: null,
     });
   });

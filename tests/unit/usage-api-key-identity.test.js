@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+// These fixtures exercise production display behavior. Origin-boundary tests
+// separately prove that actual test processes cannot self-label their rows.
+vi.mock('../../src/lib/db/telemetryOrigin.js', () => ({ processTelemetryOrigin: () => 'production' }));
+
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;

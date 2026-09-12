@@ -136,6 +136,19 @@ beforeEach(() => {
 });
 
 describe("Responses early streaming bridge (#2666)", () => {
+  it("rejects a malformed streaming request before opening the 200 bridge", async () => {
+    const response = await responsesRoute.POST(request({
+      model: "codex/gpt-5.6-sol",
+      stream: true,
+      input: [{ type: "function_call", call_id: "call_1", name: "", arguments: "{}" }],
+    }));
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect((await response.json()).error.message).toContain("Invalid request body");
+    expect(dispatchMocks.handleChatCore).not.toHaveBeenCalled();
+  });
+
   it("opens a real SSE response before routing settles and forwards successful bytes unchanged", async () => {
     const pending = deferred();
     let started = false;

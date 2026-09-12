@@ -114,6 +114,12 @@ export const RESPONSE_BODY_TIMEOUT_MS = envMs(
   300 * 1000,
 );
 
+// Cursor's legacy ChatService buffers its ConnectRPC response before
+// translation. Refuse the whole response above this bound instead of
+// accumulating an attacker-controlled body. AgentService uses the same bound
+// for the bytes accepted from its HTTP/2 stream.
+export const CURSOR_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+
 // OCR and moderation are single-response JSON endpoints. Bound their upstream
 // wait independently so a client that stays connected cannot hold an account
 // selection forever. Env: JSON_PROXY_TIMEOUT_MS.

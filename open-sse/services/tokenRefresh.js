@@ -340,7 +340,8 @@ export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
       const result = await refreshFn();
       if (result) return result;
     } catch (error) {
-      log?.warn?.("TOKEN_REFRESH", `Attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);
+      if (error?.retryable === false || error?.name === 'AbortError' || error?.code === 'FALLBACK_DEADLINE_EXCEEDED') throw error;
+      log?.warn?.("TOKEN_REFRESH", `Attempt ${attempt + 1}/${maxRetries} failed`);
     }
   }
 

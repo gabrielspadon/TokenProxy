@@ -1,5 +1,6 @@
-import { FORMATS } from "./formats.js";
-import { assertTranslationContent } from "./concerns/translationError.js";
+import { EXECUTOR_MANAGED_FORMATS, FORMATS } from "./formats.js";
+import { assertTranslationContent, TranslationRouteError } from "./concerns/translationError.js";
+import { isolateRequestBody } from "./concerns/requestIsolation.js";
 import { ensureToolCallIds, fixMissingToolResponses, repairOrphanToolResults } from "./concerns/toolCall.js";
 import { prepareClaudeRequest } from "./formats/claude.js";
 import { cloakClaudeTools } from "../utils/claudeCloaking.js";
@@ -34,16 +35,42 @@ export function register(from, to, requestFn, responseFn) {
 // Describes registered conversion edges without executing a translator.
 export function describeTranslationRoute(from, to, kind = "request") {
   const registry = kind === "request" ? requestRegistry : kind === "response" ? responseRegistry : null;
-  if (!registry || !Object.values(FORMATS).includes(from) || !Object.values(FORMATS).includes(to)) {
+  const knownFormats = Object.values(FORMATS);
+  const executorFormat = kind === "request" ? EXECUTOR_MANAGED_FORMATS[to] : EXECUTOR_MANAGED_FORMATS[from];
+  const routeFrom = kind === "response" && executorFormat ? executorFormat.responseFormat : from;
+  const routeTo = kind === "request" && executorFormat ? executorFormat.requestFormat : to;
+  if (!registry || !knownFormats.includes(routeFrom) || !knownFormats.includes(routeTo)
+      || (kind === "request" && !knownFormats.includes(from))
+      || (kind === "response" && !knownFormats.includes(to))) {
     return { supported: false, kind, mode: "unavailable", edges: [] };
   }
-  if (from === to) return { supported: true, kind, mode: "passthrough", edges: [] };
-  if (registry.has(`${from}:${to}`)) return { supported: true, kind, mode: "direct", edges: [{ from, to }] };
+  if (routeFrom === routeTo) {
+    const edges = executorFormat ? [{ from, to, owner: "executor" }] : [];
+    return { supported: true, kind, mode: executorFormat ? "executor" : "passthrough", edges, missing: [] };
+  }
+  if (registry.has(`${routeFrom}:${routeTo}`)) {
+    const edge = { from: routeFrom, to: routeTo };
+    const edges = executorFormat
+      ? kind === "request" ? [edge, { from: routeTo, to, owner: "executor" }] : [{ from, to: routeFrom, owner: "executor" }, edge]
+      : [edge];
+    return { supported: true, kind, mode: executorFormat ? "executor" : "direct", edges, missing: [] };
+  }
   const edges = [];
-  if (from !== FORMATS.OPENAI) edges.push({ from, to: FORMATS.OPENAI });
-  if (to !== FORMATS.OPENAI) edges.push({ from: FORMATS.OPENAI, to });
+  if (routeFrom !== FORMATS.OPENAI) edges.push({ from: routeFrom, to: FORMATS.OPENAI });
+  if (routeTo !== FORMATS.OPENAI) edges.push({ from: FORMATS.OPENAI, to: routeTo });
   const missing = edges.filter(edge => !registry.has(`${edge.from}:${edge.to}`));
-  return { supported: missing.length === 0, kind, mode: missing.length ? "unavailable" : "pivot", edges, missing };
+  const reportedEdges = executorFormat
+    ? kind === "request" ? [...edges, { from: routeTo, to, owner: "executor" }] : [{ from, to: routeFrom, owner: "executor" }, ...edges]
+    : edges;
+  return { supported: missing.length === 0, kind,
+    mode: missing.length ? "unavailable" : executorFormat ? "executor" : "pivot",
+    edges: reportedEdges, missing };
+}
+
+function requireTranslationRoute(from, to, kind) {
+  const route = describeTranslationRoute(from, to, kind);
+  if (!route.supported) throw new TranslationRouteError(kind, from, to, route.missing || []);
+  return route;
 }
 
 // No-op: translators self-register via the static imports at the bottom of this file.
@@ -79,8 +106,15 @@ function stripContentTypes(body, stripList = []) {
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
+  requireTranslationRoute(sourceFormat, targetFormat, "request");
   assertTranslationContent(sourceFormat, targetFormat, body);
-  let result = body;
+  // Translation normalizes tool transactions and provider-specific envelopes.
+  // Work on a private copy so routing probes, logs and fallback policy can
+  // still inspect the exact client request after a successful conversion.
+  // isolateRequestBody, not structuredClone: a direct engine caller may attach
+  // an AbortSignal or a callback alongside the JSON, and structuredClone throws
+  // DataCloneError on those instead of translating the request.
+  let result = isolateRequestBody(body);
 
   // Null blocks are malformed, but must not abort routes with no media strip configured.
   // Do this before generic normalization walks content blocks for tool IDs.
@@ -218,17 +252,19 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 // Translate response chunk: target -> openai -> source
 export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   ensureInitialized();
+  requireTranslationRoute(targetFormat, sourceFormat, "response");
+  const sourceChunk = chunk == null ? chunk : structuredClone(chunk);
   // If same format, return as-is — except the tool name may still be cloaked:
   // translateRequest() suffixes client tools for OAuth-cloaked Claude providers
   // even when no format conversion is needed, so a streamed tool_use block must
   // be decloaked here or the client sees an unknown ("_ide"-suffixed) tool.
   if (sourceFormat === targetFormat) {
-    if (chunk == null) return [];
-    decloakClaudePassthroughToolUse(chunk, sourceFormat, state?.toolNameMap);
-    return [chunk];
+    if (sourceChunk == null) return [];
+    decloakClaudePassthroughToolUse(sourceChunk, sourceFormat, state?.toolNameMap);
+    return [sourceChunk];
   }
 
-  let results = [chunk];
+  let results = [sourceChunk];
   let openaiResults = null; // Store OpenAI intermediate results
 
   // Direct route: if a response translator is registered for this exact
@@ -237,7 +273,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   // OpenAI-shaped chunks, so this converts them straight to Claude SSE).
   const directFn = responseRegistry.get(`${targetFormat}:${sourceFormat}`);
   if (directFn) {
-    const converted = directFn(chunk, state);
+    const converted = directFn(sourceChunk, state);
     return converted ? (Array.isArray(converted) ? converted : [converted]) : [];
   }
 
@@ -246,7 +282,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
     const toOpenAI = responseRegistry.get(`${targetFormat}:${FORMATS.OPENAI}`);
     if (toOpenAI) {
       results = [];
-      const converted = toOpenAI(chunk, state);
+      const converted = toOpenAI(sourceChunk, state);
       if (converted) {
         results = Array.isArray(converted) ? converted : [converted];
         openaiResults = results; // Store OpenAI intermediate

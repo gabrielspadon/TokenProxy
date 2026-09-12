@@ -73,6 +73,15 @@
   --radius-overlay: 12px;
   --control-height: 30px;
   --compact-control-height: 26px;
+  --rail-control-height: 24px;
+  /* Density is four ordered stops. It moves padding, gap and row rhythm only;
+     label sizes stay on the --type-* ramp at every stop, so the densest board
+     is still readable. :root carries the tidy values, so a surface that never
+     sets data-density renders exactly as it did before the scale existed. */
+  --density-pad-block: 7px;
+  --density-pad-inline: 10px;
+  --density-gap: 5px;
+  --density-row-min: 32px;
   --icon-size: 16px;
   --icon-size-inline: 14px;
   --motion-control: 140ms;
@@ -104,6 +113,30 @@
   --brand-openrouter: #7664b6;
   --brand-kimi: #4f73a6;
   --brand-other: #627480;
+}
+[data-density='compact'] {
+  --density-pad-block: 5px;
+  --density-pad-inline: 8px;
+  --density-gap: 3px;
+  --density-row-min: 26px;
+}
+[data-density='dense'] {
+  --density-pad-block: 6px;
+  --density-pad-inline: 9px;
+  --density-gap: 4px;
+  --density-row-min: 29px;
+}
+[data-density='tidy'] {
+  --density-pad-block: 7px;
+  --density-pad-inline: 10px;
+  --density-gap: 5px;
+  --density-row-min: 32px;
+}
+[data-density='comfy'] {
+  --density-pad-block: 10px;
+  --density-pad-inline: 14px;
+  --density-gap: 8px;
+  --density-row-min: 40px;
 }
 :root[data-mantine-color-scheme='dark'] {
   color-scheme: dark;

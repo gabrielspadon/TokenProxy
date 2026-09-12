@@ -1,0 +1,357 @@
+import { createHash } from "node:crypto";
+import assert from "node:assert/strict";
+
+const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const redact = (value) => digest(value);
+const VALUE_BEARING_CONTROLS = new Set(["reasoning_effort", "reasoning", "thinking", "temperature", "top_p", "stop", "tool_choice", "parallel_tool_calls", "response_format", "seed"]);
+
+function mappedControl(key, value) {
+  // `reasoning` -> `reasoning_effort` is a structural rename carrying the same
+  // value, so it is safe to compute. A Claude `thinking` budget is NOT: the
+  // resulting effort depends on the target model's declared ladder, so it is
+  // left verbatim here and a transform must declare the exact expected upstream
+  // control for the cell it applies to. Guessing a threshold from one fixture
+  // would encode a mapping this contract has not measured.
+  if (key === "reasoning") return { key: "reasoning_effort", value: value?.effort };
+  return { key, value };
+}
+
+function canonicalJson(value) {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value); } catch { return value; }
+}
+
+function canonicalToolContent(value) {
+  if (!Array.isArray(value)) return value;
+  const parts = value.map((part) => part?.type === "text" && typeof part.text === "string" ? part.text : part);
+  return parts.every((part) => typeof part === "string") ? parts.join("") : parts;
+}
+
+function redactedValue(value) {
+  if (value === null) return { type: "null", digest: redact(null) };
+  if (Array.isArray(value)) return value.map(redactedValue);
+  if (typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, redactedValue(value[key])]));
+  return { type: typeof value, digest: redact(value) };
+}
+
+function redactedImage(image, fallbackMime = "") {
+  const value = typeof image === "string" ? image : "";
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(value);
+  return { mime: match?.[1] || fallbackMime, digest: redact(match?.[2] || value) };
+}
+
+function addAtom(shape, role, kind, value) {
+  shape.ordered.push({ role, kind, value: redactedValue(value) });
+}
+
+function textParts(value, shape, role) {
+  if (typeof value === "string") {
+    shape.text.push(redact(value));
+    addAtom(shape, role, "text", value);
+    return;
+  }
+  if (!Array.isArray(value)) return;
+  for (const part of value) {
+    if (!part || typeof part !== "object") continue;
+    if (["text", "input_text", "output_text", "summary_text"].includes(part.type) && typeof part.text === "string") {
+      shape.text.push(redact(part.text));
+      addAtom(shape, role, "text", part.text);
+    }
+    if (part.type === "thinking" && typeof part.thinking === "string") {
+      shape.reasoning.push(redact(part.thinking));
+      addAtom(shape, role, "reasoning", part.thinking);
+    }
+    if (["image", "image_url", "input_image"].includes(part.type)) {
+      const image = part.image_url?.url || part.image_url || part.source?.data || part.source?.url || null;
+      const redacted = redactedImage(image, part.source?.media_type || "");
+      shape.images.push(`${redacted.mime}:${redacted.digest}`);
+      addAtom(shape, role, "image", redacted);
+    }
+    if (part.type === "tool_use") {
+      const call = { id: part.id, name: part.name, input: canonicalJson(part.input) };
+      shape.toolCalls.push(`${redact(call.id)}:${redact(call.name)}:${redact(call.input)}`);
+      addAtom(shape, role, "tool_call", call);
+    }
+    if (part.type === "tool_result") {
+      const result = { id: part.tool_use_id, content: canonicalToolContent(part.content) };
+      shape.toolResults.push(`${redact(result.id)}:${redact(result.content)}`);
+      addAtom(shape, role, "tool_result", result);
+    }
+  }
+}
+
+function addMessage(shape, role) {
+  const normalizedRole = role === "developer" ? "system" : role;
+  shape.roles.push(normalizedRole);
+  addAtom(shape, normalizedRole, "message", normalizedRole);
+  return normalizedRole;
+}
+
+function collectMessage(message, shape) {
+  if (!message || typeof message !== "object" || typeof message.role !== "string") return;
+  // Anthropic encodes tool results in user turns; OpenAI carries each result in
+  // a tool turn. Preserve the actual transactional role in the ordered shape.
+  if (message.role === "user" && Array.isArray(message.content) && message.content.every((part) => part?.type === "tool_result")) {
+    for (const part of message.content) {
+      const role = addMessage(shape, "tool");
+      const result = { id: part.tool_use_id, content: canonicalToolContent(part.content) };
+      shape.toolResults.push(`${redact(result.id)}:${redact(result.content)}`);
+      addAtom(shape, role, "tool_result", result);
+    }
+    return;
+  }
+  const role = addMessage(shape, message.role);
+  // OpenAI represents reasoning alongside content rather than as a typed
+  // content block. Canonicalize it first within the same message so a Claude
+  // thinking block and its OpenAI equivalent retain the same message shape.
+  if (typeof message.reasoning_content === "string") {
+    shape.reasoning.push(redact(message.reasoning_content));
+    addAtom(shape, role, "reasoning", message.reasoning_content);
+  }
+  textParts(message.content, shape, role);
+  for (const call of message.tool_calls || []) {
+    const toolCall = { id: call.id, name: call.function?.name, input: canonicalJson(call.function?.arguments) };
+    shape.toolCalls.push(`${redact(toolCall.id)}:${redact(toolCall.name)}:${redact(toolCall.input)}`);
+    addAtom(shape, role, "tool_call", toolCall);
+  }
+  if (role === "tool") {
+    const result = { id: message.tool_call_id, content: canonicalToolContent(message.content) };
+    shape.toolResults.push(`${redact(result.id)}:${redact(result.content)}`);
+    addAtom(shape, role, "tool_result", result);
+  }
+}
+
+function collectResponseItem(item, shape) {
+  if (!item || typeof item !== "object") return;
+  if (item.type === "message") collectMessage(item, shape);
+  if (item.type === "function_call") {
+    const role = addMessage(shape, "assistant");
+    collectResponseFunctionCall(item, shape, role);
+  }
+  if (item.type === "function_call_output") {
+    const role = addMessage(shape, "tool");
+    const result = { id: item.call_id, content: canonicalToolContent(item.output) };
+    shape.toolResults.push(`${redact(result.id)}:${redact(result.content)}`);
+    addAtom(shape, role, "tool_result", result);
+  }
+  if (item.type === "reasoning") {
+    const role = addMessage(shape, "assistant");
+    const text = Array.isArray(item.summary) ? item.summary.map((part) => part?.text || "").filter(Boolean).join("\n") : item.summary;
+    shape.reasoning.push(redact(text));
+    addAtom(shape, role, "reasoning", text);
+  }
+}
+
+function collectResponseFunctionCall(item, shape, role) {
+    const call = { id: item.call_id, name: item.name, input: canonicalJson(item.arguments) };
+    shape.toolCalls.push(`${redact(call.id)}:${redact(call.name)}:${redact(call.input)}`);
+    addAtom(shape, role, "tool_call", call);
+}
+
+/** Redacted, ordered, value-bearing semantic evidence at provider ingress. */
+export function semanticShape(body) {
+  const shape = { roles: [], text: [], tools: [], toolCalls: [], toolResults: [], reasoning: [], images: [], controls: [], ordered: [] };
+  // The declared output budget is not a VALUE_BEARING_CONTROL, so without this
+  // an upstream raise (adjustMaxTokens turns 32 into 32000 when tools are
+  // present) is invisible to the receipt entirely.
+  shape.outputBudget = body?.max_tokens ?? body?.max_output_tokens ?? null;
+  if (body?.system !== undefined) {
+    const role = addMessage(shape, "system");
+    textParts(body.system, shape, role);
+  }
+  if (body?.instructions !== undefined) {
+    const role = addMessage(shape, "system");
+    textParts(body.instructions, shape, role);
+  }
+  for (const message of body?.messages || []) collectMessage(message, shape);
+  const input = body?.input || [];
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
+    if (item?.type !== "function_call") {
+      collectResponseItem(item, shape);
+      continue;
+    }
+    const role = addMessage(shape, "assistant");
+    do {
+      collectResponseFunctionCall(input[index], shape, role);
+      index += 1;
+    } while (input[index]?.type === "function_call");
+    index -= 1;
+  }
+  for (const tool of body?.tools || []) {
+    const definition = tool.function || tool;
+    const value = { name: definition?.name, schema: definition?.parameters || definition?.input_schema };
+    shape.tools.push(`${redact(value.name)}:${redact(value.schema)}`);
+    addAtom(shape, null, "tool_definition", value);
+  }
+  for (const [key, value] of Object.entries(body || {})) {
+    if (!VALUE_BEARING_CONTROLS.has(key) || value === undefined) continue;
+    const control = mappedControl(key, value);
+    shape.controls.push({ key: control.key, value: redactedValue(control.value) });
+    addAtom(shape, null, "control", control);
+  }
+  return shape;
+}
+
+export function semanticReceipt(body) {
+  const shape = semanticShape(body);
+  return { shape, digest: digest(shape), outputBudget: shape.outputBudget };
+}
+
+function requireSubsequence(expected, actual, label) {
+  let cursor = 0;
+  for (const atom of expected) {
+    const encoded = JSON.stringify(atom);
+    while (cursor < actual.length && JSON.stringify(actual[cursor]) !== encoded) cursor += 1;
+    assert.ok(cursor < actual.length, `${label} lost ordered semantic ${encoded}; received ${JSON.stringify(actual)}`);
+    cursor += 1;
+  }
+}
+
+/**
+ * Atoms whose COUNT changes what the model is asked to do. An ordered
+ * subsequence proves nothing was dropped or altered, but says nothing about
+ * what was inserted between the atoms it matched, so an injected system turn,
+ * a duplicated user turn, a forged tool result and a forged image all satisfy
+ * it. Multiplicity is what denies those.
+ */
+const EMPTY_TEXT_DIGEST = redact("");
+const inflationSensitive = (atom) =>
+  (atom.kind === "text" && atom.role !== "tool" && atom.value?.digest !== EMPTY_TEXT_DIGEST)
+  || atom.kind === "tool_call"
+  || atom.kind === "tool_result"
+  || atom.kind === "image";
+
+const countAtoms = (atoms) => atoms.filter(inflationSensitive).reduce((counts, atom) => {
+  const key = JSON.stringify(atom);
+  return counts.set(key, (counts.get(key) || 0) + 1);
+}, new Map());
+
+function requireNoInflation(expected, actual, label) {
+  const allowed = countAtoms(expected);
+  for (const [key, count] of countAtoms(actual)) {
+    const permitted = allowed.get(key) || 0;
+    assert.ok(
+      count <= permitted,
+      `${label} inflated provider semantics: ${key} appears ${count} times, source permits ${permitted}`,
+    );
+  }
+}
+
+/**
+ * A declared transform names the ONE conversion permitted to introduce a
+ * control for a given cell, so an intentional change is explicit and anything
+ * else fails. Bound per call site; never a blanket exemption.
+ */
+function requireDeclaredControls(expected, actual, label, declaredControls) {
+  const sourceControls = new Map(expected.controls.map(({ key, value }) => [key, JSON.stringify(value)]));
+  const declared = new Map(declaredControls.map(({ key, value }) => [key, JSON.stringify(redactedValue(value))]));
+  for (const { key, value } of actual.controls || []) {
+    const encoded = JSON.stringify(value);
+    if (sourceControls.has(key)) {
+      assert.equal(encoded, sourceControls.get(key), `${label} mutated control ${key}`);
+      continue;
+    }
+    assert.ok(declared.has(key), `${label} introduced undeclared control ${key}`);
+    assert.equal(
+      encoded,
+      declared.get(key),
+      `${label} introduced control ${key} with a value no declared transform expects`,
+    );
+  }
+  // A declared control must actually arrive; a declaration that never
+  // materialises is a stale contract, not a satisfied one.
+  const arrived = new Set((actual.controls || []).map(({ key }) => key));
+  for (const { key } of declaredControls) {
+    assert.ok(arrived.has(key), `${label} declared control ${key} never reached the provider`);
+  }
+}
+
+/**
+ * Require source semantics in order at the upstream, without retaining values,
+ * AND deny inflation plus undeclared control or output-budget changes.
+ *
+ * options.declaredControls names each control a transform expects at the
+ * provider, with its exact value. options.gatedControlKeys names keys a
+ * capability-conditional transform may drop, and is supplied ONLY when that
+ * transform's capability predicate held. options.mappedControls names a
+ * source-to-target rename, whose source atom is waived only once its exact
+ * replacement is proven present. options.outputBudget is
+ * { source, upstream, declaredTransform }; the two may differ only when the
+ * named transform predicts that exact change.
+ */
+export function assertSemanticPreserved(sourceBody, receipt, label, options = {}) {
+  assert.equal(receipt?.digest, digest(receipt?.shape), `${label} semantic digest integrity`);
+  const expected = semanticShape(sourceBody);
+  const actual = receipt.shape;
+  const ordered = actual?.ordered || [];
+  requireSubsequence(expected.ordered.filter((atom) => atom.kind !== "control"), ordered, label);
+  // A source control may be absent upstream in exactly two cases, each of
+  // which must be earned. A capability gate whose predicate HELD may drop its
+  // key. A declared mapping may replace its key, but only once the exact
+  // replacement is shown present, so a rename can never conceal a drop.
+  const gatedKeyDigests = new Set((options.gatedControlKeys || []).map((key) => redact(key)));
+  const mappings = options.mappedControls || [];
+  const upstreamControls = new Map((actual.controls || []).map(({ key, value }) => [key, JSON.stringify(value)]));
+  const mappedSourceDigests = new Set();
+  for (const mapping of mappings) {
+    assert.equal(
+      JSON.stringify(semanticShape({ [mapping.from.key]: mapping.from.value }).controls[0]?.value),
+      JSON.stringify(expected.controls.find(({ key }) => key === mapping.from.key)?.value),
+      `${label} mapping ${mapping.id} source precondition ${mapping.from.key} does not match this fixture`,
+    );
+    assert.ok(
+      upstreamControls.has(mapping.to.key),
+      `${label} mapping ${mapping.id} waived ${mapping.from.key} but ${mapping.to.key} never reached the provider`,
+    );
+    assert.equal(
+      upstreamControls.get(mapping.to.key),
+      JSON.stringify(redactedValue(mapping.to.value)),
+      `${label} mapping ${mapping.id} produced ${mapping.to.key} with a value it does not predict`,
+    );
+    mappedSourceDigests.add(redact(mapping.from.key));
+  }
+  for (const control of expected.ordered.filter((atom) => atom.kind === "control")) {
+    const keyDigest = control.value?.key?.digest;
+    if (gatedKeyDigests.has(keyDigest) || mappedSourceDigests.has(keyDigest)) continue;
+    requireSubsequence([control], ordered, label);
+  }
+  requireNoInflation(expected.ordered, ordered, label);
+  requireDeclaredControls(expected, actual, label, [
+    ...(options.declaredControls || []),
+    ...mappings.map(({ to }) => to),
+  ]);
+  if (options.outputBudget) {
+    const { source, upstream, declaredTransform = null } = options.outputBudget;
+    assert.notEqual(
+      upstream,
+      undefined,
+      `${label} receipt carried no output budget evidence`,
+    );
+    if (source !== upstream) {
+      assert.ok(
+        declaredTransform,
+        `${label} changed the output budget ${source} -> ${upstream} with no declared transform`,
+      );
+      // The named transform must predict this exact budget. Any other value is
+      // an unexplained change wearing a declaration.
+      assert.equal(
+        upstream,
+        declaredTransform.expectedBudget,
+        `${label} budget ${upstream} does not match ${declaredTransform.id} expected ${declaredTransform.expectedBudget}`,
+      );
+      assert.equal(
+        source,
+        declaredTransform.sourceBudget,
+        `${label} source budget ${source} does not match the precondition ${declaredTransform.sourceBudget} of ${declaredTransform.id}`,
+      );
+    } else {
+      assert.equal(
+        declaredTransform,
+        null,
+        `${label} named a budget transform but the budget did not change`,
+      );
+    }
+  }
+  return { expected, actual };
+}

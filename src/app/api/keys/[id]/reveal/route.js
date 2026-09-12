@@ -41,6 +41,7 @@ export async function POST(request, { params }) {
       code: 'credential_disclosed',
       details,
     });
+    globalThis.__tokenproxyLiveSafety?.authorizeDelivery('client-key-reveal', stored.key);
     return adminJson({
       id: stored.id,
       name: stored.name,

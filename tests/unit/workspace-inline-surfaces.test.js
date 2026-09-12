@@ -153,7 +153,7 @@ it('offers update behavior as one inline radiogroup whose Live choice returns a 
     '[data-observation-control] [role="radiogroup"][aria-label="Update behavior"]'
   );
   expect([...group.querySelectorAll('label')].map((label) => label.textContent)).toEqual([
-    'Summary',
+    'Manual',
     'Live',
     'Paused',
   ]);

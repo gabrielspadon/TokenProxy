@@ -279,7 +279,7 @@ function NotificationsContent() {
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>Notifications</h1>
-          <p>{advanced ? 'Advanced' : 'Everyday'} · what raises an alert, where it goes and what arrived</p>
+          <p>what raises an alert, where it goes and what arrived</p>
         </div>
         <Freshness status={pollFresh(notif)} lastDataAt={notif.goodAt} />
       </div>

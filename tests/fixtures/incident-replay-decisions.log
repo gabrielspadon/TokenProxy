@@ -1,17 +1,21 @@
-<ts> SEL.win rid=aa000001 conn=conn-aaa model=claude-fable-5 key=fallback-order win=true alt=conn-bbb:unknown rem=85 reset=<reset> why=initial-pin
-<ts> SEL.repin rid=aa000001 model=claude-fable-5 from=none to=conn-aaa trigger=initial-pin why=no-existing-pin rcpt=rcpt-replay
+<ts> RANK.invalid-record rid=aa000001 conn=conn-aaa model=claude-fable-5 why=no-windows
+<ts> SEL.win rid=aa000001 conn=conn-aaa model=claude-fable-5 key=fallback-order win=true alt=conn-bbb:unknown why=initial-pin
+<ts> SEL.repin rid=aa000001 model=claude-fable-5 from=none to=conn-aaa trigger=initial-pin why=no-existing-pin:no-quota-evidence rcpt=rcpt-replay
 <ts> REQ.ok rid=aa000001 conn=conn-aaa route=claude/claude-fable-5>claude/claude-fable-5 fmt=openai>claude sel=win row=<row> t=<ms> in=1900 out=50 cr=900 cw=0 ctx=1900 ttft=<ms> path=XFORM.headroom-skip,XFORM.cache-legacy
-<ts> SEL.win rid=aa000002 conn=conn-aaa model=claude-fable-5 key=fallback-order win=true alt=conn-bbb:unknown rem=85 reset=<reset> why=initial-pin
-<ts> SEL.repin rid=aa000002 model=claude-fable-5 from=none to=conn-aaa trigger=initial-pin why=no-existing-pin rcpt=rcpt-replay
+<ts> RANK.invalid-record rid=aa000002 conn=conn-aaa model=claude-fable-5 why=no-windows
+<ts> SEL.win rid=aa000002 conn=conn-aaa model=claude-fable-5 key=fallback-order win=true alt=conn-bbb:unknown why=initial-pin
+<ts> SEL.repin rid=aa000002 model=claude-fable-5 from=none to=conn-aaa trigger=initial-pin why=no-existing-pin:no-quota-evidence rcpt=rcpt-replay
 <ts> REQ.failed rid=aa000002 conn=conn-aaa status=429 why=upstream path=XFORM.headroom-skip,XFORM.cache-legacy
 <ts> LOCK.applied rid=aa000002 conn=conn-aaa prov=claude model=claude-fable-5 status=429 class=quota sched=backoff level=0 cooldown=60s cap=21600s why=usage-limit expect_reset=true
 <ts> UP.failover rid=aa000002 from=conn-aaa to=pool why=locked-60s
-<ts> SEL.win rid=aa000002 conn=conn-bbb model=claude-fable-5 key=fallback-order win=true rem=85 reset=<reset> why=initial-pin
+<ts> RANK.invalid-record rid=aa000002 conn=conn-bbb model=claude-fable-5 why=no-windows
+<ts> SEL.win rid=aa000002 conn=conn-bbb model=claude-fable-5 key=fallback-order win=true why=initial-pin
 <ts> STREAM.usage-estimated rid=aa000002 conn=conn-bbb why=provider-omitted-usage
 <ts> REQ.ok rid=aa000002 conn=conn-bbb route=claude/claude-fable-5>claude/claude-fable-5 fmt=openai>claude sel=win row=<row> t=<ms> in=34 out=4 cr=0 cw=0 ttft=<ms> path=XFORM.headroom-skip,XFORM.cache-legacy
-<ts> SEL.repin rid=aa000003 model=claude-fable-5 from=none to=conn-aaa trigger=initial-pin why=no-existing-pin rcpt=rcpt-replay rep=2 first=<ts>
+<ts> SEL.repin rid=aa000003 model=claude-fable-5 from=none to=conn-aaa trigger=initial-pin why=no-existing-pin:no-quota-evidence rcpt=rcpt-replay rep=2 first=<ts>
 <ts> REQ.ok rid=aa000003 conn=conn-aaa route=claude/claude-fable-5>claude/claude-fable-5 fmt=openai>claude sel=win row=<row> t=<ms> in=10 out=5 cr=0 cw=0 ctx=10 ttft=<ms> path=XFORM.headroom-skip,XFORM.cache-keep
-<ts> SEL.win rid=aa000004 conn=conn-aaa model=claude-fable-5 key=fallback-order win=true alt=conn-bbb:unknown rem=85 reset=<reset> why=initial-pin rep=2 first=<ts>
+<ts> RANK.invalid-record rid=aa000004 conn=conn-aaa model=claude-fable-5 why=no-windows rep=2 first=<ts>
+<ts> SEL.win rid=aa000004 conn=conn-aaa model=claude-fable-5 key=fallback-order win=true alt=conn-bbb:unknown why=initial-pin rep=2 first=<ts>
 <ts> REQ.ok rid=aa000004 conn=conn-aaa route=claude/claude-fable-5>claude/claude-fable-5 fmt=openai>claude sel=win row=<row> t=<ms> in=10 out=5 cr=0 cw=0 ctx=10 ttft=<ms> path=XFORM.headroom-skip,XFORM.cache-legacy
 <ts> CRED.refresh-failed conn=conn-ccc prov=claude status=400 why=invalid_grant fp0=44ae9316 age=0m
 <ts> CRED.chain-diverged conn=conn-ccc prov=claude fp0=44ae9316 fp=unknown why=issuer-rejected-held-token

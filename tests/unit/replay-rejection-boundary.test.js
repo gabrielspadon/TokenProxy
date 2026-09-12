@@ -24,14 +24,19 @@ it.each(['x-tokenproxy-replay-safe','x-should-retry'])('honors %s denial before 
 });
 
 it('requires an error rejection and never lets explicit true override a veto', () => {
-  for (const status of [400,401,402,403,404,405,413,415,422,429]) expect(isReplaySafeRejection(new Response(null,{status}))).toBe(true);
+  for (const status of [400,401,402,403,404,405,413,415,422]) expect(isReplaySafeRejection(new Response(null,{status}))).toBe(true);
+  // A bare 429 carries no proof of nonacceptance; only its complete canonical
+  // envelope distinguishes an account refusal from an accepted generation.
+  expect(isReplaySafeRejection(new Response(null,{status:429}))).toBe(false);
+  expect(isReplaySafeRejection(new Response(null,{status:429}), {error:{message:'quota exceeded'}})).toBe(true);
+  expect(isReplaySafeRejection(new Response(null,{status:429}), {error:{message:'quota exceeded after generation accepted'}})).toBe(false);
   for (const status of [200,201,301,408,409,500,502,503]) expect(isReplaySafeRejection(new Response(null,{status}))).toBe(false);
   expect(isReplaySafeRejection(new Response(null,{status:503,headers:{'x-tokenproxy-replay-safe':'true'}}))).toBe(true);
   expect(isReplaySafeRejection(new Response(null,{status:503,headers:{'x-tokenproxy-replay-safe':'true','x-should-retry':'false'}}))).toBe(false);
 });
 
 it('cancels a rejected response before an abortable retry delay and makes no second dispatch', async () => {
-  const upstream = new Response('rejected', {status:429});
+  const upstream = Response.json({error:{message:'rejected'}}, {status:429});
   const controller = new AbortController();
   fetchMock.mockResolvedValueOnce(upstream);
   const run = executor({429:{attempts:1,delayMs:5000}}).execute({...options,signal:controller.signal});

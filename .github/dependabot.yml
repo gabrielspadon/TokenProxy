@@ -5,8 +5,8 @@
 #     ./cli/package.json      tokenproxy        the npm launcher, versioned apart
 #     ./tests/package.json    tokenproxy-tests  the vitest suite, its own package
 #
-# No lockfile is committed anywhere (package-lock.json is in .gitignore), so
-# Dependabot updates the ranges in package.json rather than a resolved tree.
+# Each npm package commits its own lockfile, so Dependabot updates the declared
+# range and reviewed resolved tree together.
 #
 # Groups keep three npm ecosystems from producing one pull request per dependency
 # per week. Majors stay ungrouped so a breaking bump arrives on its own and can

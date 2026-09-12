@@ -153,6 +153,7 @@ let crashReported = false;
 function reportCrashSync(text) {
   crashReported = true;
   const buffer = Buffer.from(`${text}\n`, "utf8");
+  try { globalThis.__tokenproxyLiveSafety?.scan('exception', buffer); } catch {}
   const deadline = Date.now() + CRASH_WRITE_DEADLINE_MS;
   let written = 0;
   while (written < buffer.length) {
@@ -346,6 +347,8 @@ http.createServer = (...args) => {
     }
     try { globalThis.__tokenproxyTechnicalTelemetry?.observe(req,res); }
     catch { /* Optional technical instrumentation cannot reject HTTP work. */ }
+    try { globalThis.__tokenproxyLiveSafety?.observe(req,res); }
+    catch { globalThis.__tokenproxyLiveSafety?.issue('http-observer-install-error'); }
     const socketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : '';
     const xff = req.headers['x-forwarded-for'];
     const xRealIp = req.headers['x-real-ip'];
@@ -368,7 +371,8 @@ http.createServer = (...args) => {
     // abortIncoming". Nothing awaited it, so it surfaced as an unhandled
     // rejection in the log even though the request simply went away. Swallow
     // only that class; anything else is a real failure and must still be seen.
-    const result = handler(req, res);
+    const safety = globalThis.__tokenproxyLiveSafety;
+    const result = safety ? safety.run(res, () => handler(req, res)) : handler(req, res);
     if (result && typeof result.catch === 'function') {
       return result.catch((err) => {
         if (isClientDisconnect(err, req, res)) return;
@@ -556,6 +560,7 @@ function requireJwtSecret() {
 
 if (require.main === module) {
   if (!requireJwtSecret()) process.exit(1);
+  require('./live-safety-runtime.cjs').installLiveSafety(__dirname);
   // The start script used to pass --port 20127, and a CLI flag beats the PORT
   // environment variable, so setting PORT in .env or pm2 did nothing and the
   // server always came up on 20127 (#2602). The flag is gone; default here

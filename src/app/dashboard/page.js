@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useMemo, useState } from 'react';
 import { Pagination, SegmentedControl, Text } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { useDensity, useLevel } from '@/shared/workspace/Board';
 import { orderQuotaWindows } from '@/shared/workspace/QuotaEvidence';
 import { ScopeBar } from '@/shared/workspace/ScopeBar';
 import { useWorkspace } from '@/shared/workspace/WorkspaceProvider';
@@ -24,17 +24,10 @@ export default function CapacityPage() {
   const { accounts, quota, snapshot, setSelectedAccountId } = workspace;
   const { activityGroupPage, setActivityGroupPage } = workspace;
   const drains = useResource(DRAIN_ENDPOINT, { onSnapshot: workspace.observeSnapshot });
-  // The sidebar switch owns the level. Everyday is compact progress cards with
-  // pause, rename and expand; Advanced is the dense board with every control.
-  const [navigationMode] = useLocalStorage({
-    key: 'tokenproxy.navigation-mode',
-    defaultValue: 'everyday',
-  });
-  const [density, setDensity] = useLocalStorage({
-    key: 'tokenproxy.capacity-density',
-    defaultValue: 'tidy',
-  });
-  const advanced = navigationMode === 'advanced';
+  // The route owns the level. Capacity presents the dense board with priority,
+  // drain, comparison and every per-account control already on screen.
+  const advanced = useLevel();
+  const [density, setDensity] = useDensity();
   const [view, setView] = useState('accounts');
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
@@ -98,7 +91,7 @@ export default function CapacityPage() {
       <div className={shared.lensHeading}>
         <div className={shared.lensTitle}>
           <h1>Capacity</h1>
-          <p>{advanced ? 'Advanced' : 'Everyday'} · every account, its quota and its controls</p>
+          <p>Every account, its quota and its controls</p>
         </div>
         <SegmentedControl
           size="xs"

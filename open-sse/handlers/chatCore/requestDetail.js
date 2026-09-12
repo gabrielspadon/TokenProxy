@@ -39,8 +39,7 @@ export function extractUsageFromResponse(responseBody) {
       cache_creation_input_tokens: responseBody.usage.cache_creation_input_tokens,
       // A Responses body matches this branch too (both report input_tokens).
       // Forward the object so resolveCacheTokens sees every nested spelling.
-      // A flat alias would add an own key with an undefined value and trip the
-      // alias-dropped log on every Claude request.
+      // Keep missing fields absent instead of manufacturing a flat own key.
       ...(responseBody.usage.input_tokens_details && typeof responseBody.usage.input_tokens_details === "object"
         ? { input_tokens_details: responseBody.usage.input_tokens_details }
         : {}),

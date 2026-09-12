@@ -1,5 +1,10 @@
+import { classifyHttpTerminalEvidence } from "../../src/lib/db/terminalEvidence.js";
+import { replayResponseEvidence } from '../../src/lib/db/replayEvidence.js';
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
-import { isReplaySafeRejection, withReplaySafety } from "../utils/replaySafety.js";
+import { isReplaySafeRejection, isSafeQuotaAccountRejection, withReplaySafety } from "../utils/replaySafety.js";
+import { isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
+import { withRequestLifetime } from "../utils/requestLifetime.js";
+import { waitForPreparation } from "../utils/preparationAbort.js";
 import { createStageGuard } from "../utils/stageOutcome.js";
 import { pendingShapingHandoffs } from "../../src/lib/db/repos/shapingHandoffsRepo.js";
 import { injectHandoffPackets } from "../services/memory/handoffStore.js";
@@ -119,6 +124,7 @@ import {
 } from "../translator/concerns/adaptiveStripper.js";
 import { MediaAggregateLimitError, prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { defaultClaudeToolType } from "../translator/concerns/toolCall.js";
+import { isolateRequestBody } from "../translator/concerns/requestIsolation.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { applyMemoryEnhancements } from "../services/memory/index.js";
 // Imported from contextBudget directly rather than through the memory index:
@@ -129,24 +135,6 @@ import { memoGet, memoSet } from "../services/memory/sessionMemo.js";
 import { isConnectTimeoutError } from "../utils/responseHeaderTimeout.js";
 import { applyCodexFastMode } from "../config/codexFastMode.js";
 import { projectClientModelStatus } from "../config/modelErrorClassifier.js";
-
-// Own every JSON container before translation or shaping mutates it. Direct
-// engine callers can also attach opaque signals/streams/functions; retain
-// those handles without sharing their surrounding mutable request records.
-function isolateRequestBody(value, copies = new WeakMap()) {
-  if (!value || typeof value !== "object") return value;
-  const prototype = Object.getPrototypeOf(value);
-  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
-  if (copies.has(value)) return copies.get(value);
-  const copy = Array.isArray(value) ? new Array(value.length) : Object.create(prototype);
-  copies.set(value, copy);
-  for (const [key, item] of Object.entries(value)) {
-    Object.defineProperty(copy, key, {
-      value: isolateRequestBody(item, copies), enumerable: true, writable: true, configurable: true,
-    });
-  }
-  return copy;
-}
 
 /**
  * One PROXY line per request, describing which egress the attempt uses.
@@ -422,12 +410,26 @@ function updatePrefixTelemetry(scope, serialized, tracked) {
 export async function handleChatCore(options) {
   try {
     options.callerSignal?.throwIfAborted();
-    return await handleChatCoreAttempt(options);
+    options.connectTimeout?.fallbackDeadline?.throwIfExpired(options.callerSignal);
+    const deadline = options.connectTimeout?.fallbackDeadline;
+    return deadline
+      ? await deadline.run((signal, releaseFallbackPreparation) => handleChatCoreAttempt({
+        ...options, callerSignal: signal, releaseFallbackPreparation,
+      }), { signal: options.callerSignal, onLateResult: discardLateResponse })
+      : await handleChatCoreAttempt(options);
   } catch (error) {
+    if (isFallbackDeadlineError(error)) {
+      trackPendingRequest(options.modelInfo.model, options.modelInfo.provider, options.connectionId, false);
+      return createErrorResult(504, error.message, null, { safeToReplay: false }, options.requestId);
+    }
     if (!options.callerSignal?.aborted) throw error;
     trackPendingRequest(options.modelInfo.model, options.modelInfo.provider, options.connectionId, false);
     return createCallerAbortResult();
   }
+}
+
+function discardLateResponse(result) {
+  try { Promise.resolve(result?.response?.body?.cancel()).catch(() => {}); } catch {}
 }
 
 async function handleChatCoreAttempt({
@@ -489,6 +491,7 @@ async function handleChatCoreAttempt({
   sourceFormatOverride,
   providerThinking,
   connectTimeout,
+  releaseFallbackPreparation,
   memorySettings,
   toolDisclosure,
   codexFastMode,
@@ -518,6 +521,7 @@ async function handleChatCoreAttempt({
         }
       : null;
   const requestStartTime = Date.now();
+  const endPreparationSpan = contextIdentity.startSpan?.('preparation');
   // Stable per-session color so all lines of one CLI conversation share a tag
   const sessionSeed = (() => {
     try {
@@ -1061,13 +1065,13 @@ async function handleChatCoreAttempt({
   // entry bytes and losing it from save=.
   const schemaDistillRan =
     tokenSaverEnabled && schemaDistillEnabled && Array.isArray(translatedBody.tools);
-  if (schemaDistillRan) stageGuard.sync("schema", () => {
+  stageGuard.sync("schema", () => {
     const distilled = distillToolSchemas(translatedBody.tools, { allowLossy: schemaAllowLossy });
     if (distilled.savedBytes > 0) {
       translatedBody.tools = distilled.tools;
       notePath(rid, "XFORM.tool-distill");
     }
-  });
+  }, schemaDistillRan);
   measureSaverStage("schema", schemaDistillRan);
 
   // Prefix token-savers (#token-savers). The pipeline is in two halves.
@@ -1121,7 +1125,7 @@ async function handleChatCoreAttempt({
   const anthropicNative = provider === "claude" || provider === "anthropic";
   const thinkingWillRun =
     tokenSaverEnabled && thinkingStripEnabled && claudePrefixTarget && !anthropicNative && !!prefixMessages();
-  if (thinkingWillRun) stageGuard.sync("thinking", () => {
+  stageGuard.sync("thinking", () => {
     const res = stripHistoricalThinking(translatedBody.messages, { keepRecentTurns: 1 });
     if (res.stripped > 0) {
       translatedBody.messages = res.messages;
@@ -1135,7 +1139,7 @@ async function handleChatCoreAttempt({
         .slice(0, 8);
       pushPrefixNote({ kind: "thinking", text: `stripped ${res.stripped} reasoning block(s)` });
     }
-  });
+  }, thinkingWillRun);
   measureSaverStage("thinking", thinkingWillRun);
 
   // RTK rewrites only this attempt's privately owned request containers.
@@ -1170,14 +1174,14 @@ async function handleChatCoreAttempt({
   // stage measures; without its own stage those bytes were attributed to
   // headroom (wrong save= and a false saver-guard).
   let privacyRan = false;
-  if (privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming)) stageGuard.sync("privacy", () => {
+  stageGuard.sync("privacy", () => {
     privacyRan = true;
     privacyFilter = redactOutbound(translatedBody, privacyTerms);
     if (privacyFilter) {
       log?.debug?.("PRIVACY", `pseudonymised ${privacyFilter.size} value(s)`);
       if (privacyFilter.size > 0) notePath(rid, "XFORM.privacy-applied");
     }
-  });
+  }, privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming));
   measureSaverStage("privacy", privacyRan);
 
   // Token-saver flags accumulator for the single "⚙" log line below.
@@ -1210,7 +1214,7 @@ async function handleChatCoreAttempt({
 
   // PXPIPE: image bulky context (Claude-format bodies only), last saver before dispatch
   let pxpipeSummary = null;
-  if (pxpipeEnabled) await stageGuard.async("pxpipe", async () => {
+  await stageGuard.async("pxpipe", async () => {
     const pxpipeResult = await compressWithPxpipe(translatedBody, {
       enabled: tokenSaverEnabled,
       allowLossy: pxpipeAllowLossy,
@@ -1233,11 +1237,11 @@ async function handleChatCoreAttempt({
       /* stats must not break requests */
     }
     stageGuard.report("pxpipe", pxpipeSummary);
-  });
+  }, pxpipeEnabled);
   measureSaverStage("pxpipe", pxpipeEnabled);
 
   // Memory & Context Optimizer (Tool & Media Pruning, Compaction, Cache Anchoring, Handoffs)
-  if (tokenSaverEnabled && memorySettings) await stageGuard.async("mem", async () => {
+  await stageGuard.async("mem", async () => {
     // THE MODEL'S OWN WINDOW decides when history has to be cut, and the
     // capability table already knows it (1,000,000 for the Opus and Sonnet 5
     // class, and a conservative default for anything it has not heard of).
@@ -1276,7 +1280,7 @@ async function handleChatCoreAttempt({
       xf.push(`COMPACT:${memRes.stats.compaction.savedTokens}t`);
       notePath(rid, "XFORM.compact-applied");
     }
-  });
+  }, tokenSaverEnabled && memorySettings);
   measureSaverStage("mem", tokenSaverEnabled && memorySettings);
 
   // ---- Pressure-driven prefix rungs. A rung rewrites the cached prefix, so
@@ -1399,7 +1403,7 @@ async function handleChatCoreAttempt({
   // requests.
   const qacWillRun =
     tokenSaverEnabled && queryAwareCompressionEnabled && claudePrefixTarget && !!prefixMessages();
-  if (qacWillRun) stageGuard.sync("qac", () => {
+  stageGuard.sync("qac", () => {
     let qacMemo = sessionKey ? memoGet("qac", sessionKey) : null;
     if (sessionKey && !qacMemo) {
       qacMemo = new Set();
@@ -1428,7 +1432,7 @@ async function handleChatCoreAttempt({
         });
       }
     } else stageGuard.report("qac", { outcome: "skipped" });
-  });
+  }, qacWillRun);
   measureSaverStage("qac", qacWillRun);
 
   // Pair dropping: demand-driven, like the memory pruner. The deficit is how
@@ -1440,7 +1444,7 @@ async function handleChatCoreAttempt({
   // pairs first would spend them before the cheaper, larger reclaim ran.
   const pairsWillRun =
     tokenSaverEnabled && pairDropEnabled && claudePrefixTarget && !!prefixMessages();
-  if (pairsWillRun) stageGuard.sync("pairs", () => {
+  stageGuard.sync("pairs", () => {
     const pairsPressure = measurePrefixPressure();
     if (pairsPressure.deficitChars > 0 && mayDecideAnew()) {
       const res = dropOldestPairs(translatedBody.messages, {
@@ -1463,7 +1467,7 @@ async function handleChatCoreAttempt({
         });
       }
     } else stageGuard.report("pairs", { outcome: "skipped" });
-  });
+  }, pairsWillRun);
   measureSaverStage("pairs", pairsWillRun);
 
   // Epoch-aligned compaction cascade (#context-tuning): diet prunes expired
@@ -1492,7 +1496,7 @@ async function handleChatCoreAttempt({
   // never touched. Default off (dietEnabled).
   const dietWillRun = epochStageWanted && dietEnabled;
   let dietApplied = false;
-  if (dietWillRun && epochCutIndex > 0) stageGuard.sync("diet", () => {
+  stageGuard.sync("diet", () => {
     const res = pruneExpiredToolResults(translatedBody, {
       epochCutIndex,
       minAgeTurns: 8,
@@ -1509,7 +1513,7 @@ async function handleChatCoreAttempt({
         text: `pruned ${res.prunedBlocks} expired tool_result(s) (~${res.prunedChars} chars)`,
       });
     }
-  });
+  }, dietWillRun && epochCutIndex > 0);
   measureSaverStage("diet", dietApplied, undefined, dietWillRun && epochCutIndex > 0);
 
   // LLMLingua-2 selective compression: large natural-language-ish user/
@@ -1523,7 +1527,7 @@ async function handleChatCoreAttempt({
   const linguaWillRun = epochStageWanted && linguaEnabled;
   let linguaApplied = false;
   let linguaSkip = null;
-  if (linguaWillRun && epochCutIndex > 0) await stageGuard.async("lingua", async () => {
+  await stageGuard.async("lingua", async () => {
     const res = await compressBlobs(translatedBody, {
       epochCutIndex,
       endpoint: resolveLinguaEndpoint(),
@@ -1542,12 +1546,12 @@ async function handleChatCoreAttempt({
         text: `compressed ${res.compressedBlocks} blob(s) (~${res.savedChars} chars)`,
       });
     }
-  });
+  }, linguaWillRun && epochCutIndex > 0);
   measureSaverStage("lingua", linguaApplied, undefined, linguaWillRun && epochCutIndex > 0);
 
   const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
   let epochMicroApplied = false;
-  if (epochMicroWillRun && epochCutIndex > 0) stageGuard.sync("epochMicro", () => {
+  stageGuard.sync("epochMicro", () => {
     const res = microcompact(translatedBody, {
       epochCutIndex,
       keepLastTurns: 4,
@@ -1562,7 +1566,7 @@ async function handleChatCoreAttempt({
         text: `cleared ${res.clearedBlocks} block(s) (~${res.clearedChars} chars)`,
       });
     }
-  });
+  }, epochMicroWillRun && epochCutIndex > 0);
   measureSaverStage("epochMicro", epochMicroApplied, undefined, epochMicroWillRun && epochCutIndex > 0);
 
   const epochAutoWillRun = epochStageWanted && epochAutoEnabled;
@@ -1576,7 +1580,7 @@ async function handleChatCoreAttempt({
   if (epochAutoWillRun && epochCutIndex === 0) {
     epochAutoSkipReason = "epoch_boundary";
   }
-  if (epochAutoWillRun && epochCutIndex > 0) await stageGuard.async("epochAuto", async () => {
+  await stageGuard.async("epochAuto", async () => {
     // The model's own window from the capability table, same lookup the
     // memory ladder and pair dropping use.
     const epochWindowTokens =
@@ -1603,7 +1607,7 @@ async function handleChatCoreAttempt({
         epochAutoSkipReason = "window_pressure";
       }
     }
-  });
+  }, epochAutoWillRun && epochCutIndex > 0);
   measureSaverStage("epochAuto", epochAutoApplied, undefined, epochAutoWillRun && epochCutIndex > 0);
 
   // Embedding reorder: moves the most relevant historical pairs next to the
@@ -1615,7 +1619,7 @@ async function handleChatCoreAttempt({
   // debug line and leaves the prefix in order.
   const reorderWillRun =
     tokenSaverEnabled && embedReorderEnabled && claudePrefixTarget && !!prefixMessages();
-  if (reorderWillRun) await stageGuard.async("reorder", async () => {
+  await stageGuard.async("reorder", async () => {
     let reorderMemo = sessionKey ? memoGet("reorder", sessionKey) : null;
     if (sessionKey && !reorderMemo) {
       reorderMemo = { order: [] };
@@ -1653,7 +1657,7 @@ async function handleChatCoreAttempt({
         }
       }
     } else stageGuard.report("reorder", { outcome: "skipped" });
-  });
+  }, reorderWillRun);
   measureSaverStage("reorder", reorderWillRun);
 
   // Boundary note: after the prefix rungs reshaped history, one short note
@@ -1670,7 +1674,7 @@ async function handleChatCoreAttempt({
     prefixNotes.length > 0 &&
     !!prefixMessages();
   let midinjectApplied = false;
-  if (midinjectWillRun) stageGuard.sync("midinject", () => {
+  stageGuard.sync("midinject", () => {
     const noteText = composeBoundaryNote(prefixNotes);
     let insertIndex = -1;
     for (let i = translatedBody.messages.length - 1; i >= 0; i--) {
@@ -1685,7 +1689,7 @@ async function handleChatCoreAttempt({
       midinjectApplied = true;
       notePath(rid, "XFORM.midinject-applied");
     }
-  });
+  }, midinjectWillRun);
 
   measureSaverStage("midinject", midinjectApplied, undefined, midinjectWillRun);
 
@@ -1694,7 +1698,7 @@ async function handleChatCoreAttempt({
   // final anchoring and wire measurements then see the complete body.
   const handoffWillRun = tokenSaverEnabled && memorySettings?.memoryHandoffEnabled === true;
   let handoffApplications = [];
-  if (handoffWillRun) await stageGuard.async("handoff", async () => {
+  await stageGuard.async("handoff", async () => {
     const packets = await pendingShapingHandoffs(contextCapture.identity);
     callerSignal?.throwIfAborted();
     if (!packets.length) return;
@@ -1705,11 +1709,12 @@ async function handleChatCoreAttempt({
     if (pressure.over) throw Object.assign(new Error("handoff exceeds context allowance"), { code: "capacity_exceeded" });
     handoffApplications = result.applied;
     notePath(rid, "XFORM.handoff");
-  });
+  }, handoffWillRun);
   measureSaverStage("handoff", handoffWillRun);
   if (stageGuard.measurement("handoff", handoffWillRun, false).outcome !== "failed") contextHandoffs.push(...handoffApplications);
 
   if (xf.length && log?.line) log.line(reqTag, "⚙", xf.join(" · "));
+  const endFinalStage = stageGuard.start('final');
 
   // Pin cache breakpoints to the final body — every saver above can reshape
   // system/tools/messages, and a stale anchor costs a full prefix rewrite.
@@ -1762,6 +1767,7 @@ async function handleChatCoreAttempt({
   if (saverPrev || sid) {
     finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
+    endFinalStage();
     measureSaverStage("final", true, finalBodyBytes);
     if (contextScope) {
       const tracked = trackCacheEpoch(contextScope, finalSerialized);
@@ -1831,6 +1837,7 @@ async function handleChatCoreAttempt({
     logicalRequestId: { get: () => contextTelemetry.logicalRequestId },
   });
   await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+  endPreparationSpan?.('succeeded', contextTelemetry.requestId);
   // MCP context_status state: sid-keyed self-sizing snapshot for the
   // /api/v1/mcp tool. Written before dispatch so an upstream failure still
   // leaves fresh telemetry. The store swallows its own errors; this catch is
@@ -2117,6 +2124,7 @@ async function handleChatCoreAttempt({
   let providerResponseFormat = targetFormat;
   const mapTransportError = async (error) => {
     if (isLocalTransportPoolRefusal(error)) {
+      contextTelemetry.replayEvidence = { disposition: 'safe-rejection', source: 'transport-no-dispatch', status: null, observedAt: new Date().toISOString() };
       await releaseUndispatchedBudgetReservation(contextTelemetry?.budgetReservationId, error);
       trackPendingRequest(model, provider, connectionId, false, true);
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
@@ -2134,6 +2142,13 @@ async function handleChatCoreAttempt({
       return budgetErrorResult(error, rid);
     }
     if (contextTelemetry?.budgetReservationId) await markBudgetUncertain(contextTelemetry.budgetReservationId, "transport-outcome-unknown");
+    if (isFallbackDeadlineError(error)) {
+      trackPendingRequest(model, provider, connectionId, false, true);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
+      streamController.handleComplete();
+      reqSummary("failed", { rid, conn: connPrefix, status: 504, why: "fallback-deadline", ...saverFields });
+      return withSaverHeaders(createErrorResult(504, error.message, null, { safeToReplay: false }, rid), saverMeta);
+    }
     const isAntigravity = provider === "antigravity";
     const sinkError = isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : (error.message || String(error));
     if (callerSignal?.aborted && (isCallerAbortError(error) || error.name === "AbortError")) {
@@ -2199,10 +2214,18 @@ async function handleChatCoreAttempt({
   };
   const executeAttempt = async (args) => {
     executionSignal.throwIfAborted();
+    connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
     await requireBudgetDispatchCoverage(apiKey, executor.supportsBudgetDispatch === true);
     executionSignal.throwIfAborted();
+    connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
     let dispatches = 0;
-    return executor.execute({ ...args, beforeDispatch: async (wire = {}) => {
+    releaseFallbackPreparation?.();
+    const execute = async (signal, releaseHeaderBudget) => {
+      const endDispatch = contextIdentity.startSpan?.('dispatch');
+      try {
+      const result = await executor.execute({ ...args, signal, beforeDispatch: async (wire = {}) => {
+      signal?.throwIfAborted();
+      connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
       if (dispatches++ > 0) {
         contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
       }
@@ -2212,8 +2235,24 @@ async function handleChatCoreAttempt({
       contextTelemetry.structures = contextTelemetry.structures.filter((value) => value.boundary !== "physical-dispatch");
       if (structure) contextTelemetry.structures.push(structure);
       contextTelemetry.dispatchCoverage = "physical-dispatch";
+      contextTelemetry.replayEvidence = { disposition: 'unknown', source: 'dispatch-start', status: null, observedAt: new Date().toISOString() };
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
-    }, afterDispatch: (result) => observeBudgetResponse(contextTelemetry, result) });
+      connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
+    }, afterDispatch: async (evidence) => {
+      contextTelemetry.replayEvidence = replayResponseEvidence(evidence);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+      await observeBudgetResponse(contextTelemetry, evidence);
+    } });
+      // Internal rejected responses can precede another executor dispatch.
+      // Only the executor's final result transfers ownership to the stream.
+      releaseHeaderBudget?.();
+      endDispatch?.('succeeded', contextTelemetry.requestId);
+      return result;
+      } finally { endDispatch?.('unknown', contextTelemetry.requestId); }
+    };
+    return connectTimeout?.fallbackDeadline
+      ? connectTimeout.fallbackDeadline.run(execute, { signal: executionSignal, onLateResult: discardLateResponse })
+      : execute(executionSignal);
   };
   try {
     const result = await executeAttempt({
@@ -2247,37 +2286,36 @@ async function handleChatCoreAttempt({
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
     try {
-      // Mutate credentials after each successful refresh: rotating refresh_token
-      // providers (xAI/grok-cli) issue a new RT on every refresh; without this,
-      // refreshWithRetry's 2nd/3rd attempt reuses the already-consumed RT →
-      // invalid_grant → auth_failed retryable=false.
-      const newCredentials = await refreshWithRetry(
+      // Issued rotating-token redemption belongs to an independent owner.
+      // Its durable acknowledgement must complete even after this caller leaves.
+      const refresh = () => withRequestLifetime(undefined, () => refreshWithRetry(
         async () => {
+          executionSignal.throwIfAborted();
+          connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
           const result = await executor.refreshCredentials(credentials, log);
-          if (
-            result?.refreshToken &&
-            result.refreshToken !== credentials.refreshToken
-          ) {
-            if (result.accessToken)
-              credentials.accessToken = result.accessToken;
-            credentials.refreshToken = result.refreshToken;
+          if (!result) return result;
+          if (!onCredentialsRefreshed) return result;
+          try {
+            const stored = await onCredentialsRefreshed(result);
+            if (!stored || typeof stored !== "object") throw new Error('Missing credential acknowledgement');
+            return stored;
+          } catch {
+            const error = new Error('Credential persistence was not confirmed');
+            error.code = 'CREDENTIAL_PERSISTENCE_UNCONFIRMED';
+            error.retryable = false;
+            throw error;
           }
-          return result;
         },
         3,
         log,
-      );
+      ));
+      const newCredentials = connectTimeout?.fallbackDeadline
+        ? await connectTimeout.fallbackDeadline.run(refresh, { signal: executionSignal })
+        : await waitForPreparation(refresh(), executionSignal);
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         if (log?.line)
           log.line(reqTag, "🔑", `TOKEN REFRESHED · ${provider}/${model}`);
         Object.assign(credentials, newCredentials);
-        if (onCredentialsRefreshed) {
-          try {
-            await onCredentialsRefreshed(newCredentials);
-          } catch (e) {
-            log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`);
-          }
-        }
         try {
           try { Promise.resolve(providerResponse.body?.cancel()).catch(() => {}); } catch {}
           contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
@@ -2307,6 +2345,12 @@ async function handleChatCoreAttempt({
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
       }
     } catch (e) {
+      if (isFallbackDeadlineError(e) || executionSignal.aborted) return mapTransportError(e);
+      if (e?.code === 'CREDENTIAL_PERSISTENCE_UNCONFIRMED') {
+        try { Promise.resolve(providerResponse.body?.cancel()).catch(() => {}); } catch {}
+        log?.warn?.("TOKEN", "Credential persistence was not confirmed");
+        return mapTransportError(e);
+      }
       log?.warn?.(
         "TOKEN",
         `${provider.toUpperCase()} | refresh threw: ${provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : e.message}`,
@@ -2520,6 +2564,7 @@ async function handleChatCoreAttempt({
       status: `FAILED ${safeStatusCode}`,
     }).catch(() => {});
     const sinkMessage = provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : message;
+    contextTelemetry.replayEvidence = replayResponseEvidence({ response: providerResponse, payload: errorPayload });
     saveRequestDetail(
       buildRequestDetail({
         contextTelemetry,
@@ -2534,7 +2579,7 @@ async function handleChatCoreAttempt({
         pxpipe: pxpipeSummary,
         status: "error",
         rid,
-      }),
+      }, { terminalEvidence: classifyHttpTerminalEvidence(providerResponse) }),
     ).catch(() => {});
 
     const errMsg = provider === "antigravity"
@@ -2552,8 +2597,21 @@ async function handleChatCoreAttempt({
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
     // An executor may convert an accepted SSE failure to HTTP. Preserve its
     // explicit no-replay provenance instead of treating it as a rejection.
-    const safeToReplay = isReplaySafeRejection(providerResponse);
-    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay }, rid), saverMeta);
+    let safeAcrossAccounts = isSafeQuotaAccountRejection(providerResponse, errorPayload);
+    let safeToReplay = isReplaySafeRejection(providerResponse, errorPayload)
+      && (providerResponse.status !== HTTP_STATUS.RATE_LIMITED || safeAcrossAccounts);
+    // A complete body can prove rejection after BaseExecutor's bounded header
+    // observation expired. Publish that later proof to the same reservation
+    // before the coordinator is allowed to retry against another account.
+    if (safeToReplay && contextTelemetry?.budgetReservationId) {
+      try {
+        await observeBudgetResponse(contextTelemetry, { response: providerResponse, nonacceptance: "verified-provider-nonacceptance" });
+      } catch {
+        safeToReplay = false;
+        safeAcrossAccounts = false;
+      }
+    }
+    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay, safeAcrossAccounts }, rid), saverMeta);
   }
 
   const sharedCtx = {

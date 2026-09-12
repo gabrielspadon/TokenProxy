@@ -13,10 +13,11 @@
     font-family: var(--mono);
     font-size: var(--type-dense);
     color: var(--slate);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* An identifier reads left to right whatever the document direction. */
+    direction: ltr;
+    unicode-bidi: isolate;
   }
+
   .models-alias {
     min-width: 0;
   }
@@ -127,5 +128,39 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
     gap: 10px;
     align-items: end;
+  }
+}
+
+/* Owned hooks override shared unlayered board rules and keep model IDs readable. */
+[data-catalog-identity] {
+  min-width: 0;
+}
+[data-catalog-identity] > .models-id {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+[data-catalog-identity] > .models-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+/* An id that wraps makes rows unequal, so cells align to their tops. */
+[data-catalog-columns] {
+  align-items: start;
+}
+
+/* Keep all six tracks within the board at its row-layout breakpoint. */
+@container board (min-width: 901px) {
+  [data-models-catalog][data-advanced][data-compare='none'] [data-catalog-columns] {
+    /* This board declares compare="none", so its rows have six children. The
+       former 20 px comparison track shifted every cell and left Actions in an
+       80 px track while an unused 142 px track sat at the end. The action
+       controls then overflowed that smaller track by roughly their own width. */
+    grid-template-columns: 24px minmax(160px, 1.7fr) 80px minmax(160px, 1.5fr) minmax(80px, 0.5fr) 142px;
   }
 }

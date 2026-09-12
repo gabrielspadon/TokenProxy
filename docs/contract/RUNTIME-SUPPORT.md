@@ -17,6 +17,16 @@ This change does not replace the deployed Node 24 runtime. Parser-only tests on
 20.9.0 remain useful evidence about that isolated primitive, but cannot certify
 the application on a runtime its transport dependency does not support.
 
+The independent test package supports Node 22.22.2, Node 24.15.0 and supported
+newer even-numbered releases. Its current jsdom version no longer supports the
+old `node >=18` declaration. CI pins Node 24.15.0 and installs all three
+committed lockfiles with `npm ci` before running the isolated offline gate.
+
+The CLI runtime accepts a native better-sqlite3 install only after a child
+process loads it, opens an in-memory database and executes a query. The ABI
+stamp records that validation and the binary SHA-256. An npm exit code or native
+file header alone does not establish ABI compatibility.
+
 `tests/unit/node-version-floor-2362.test.js` executes the actual boot guard for
 18.20.4, 20.9.0, 20.18.0, 20.18.1 and 24.14.0, and checks both package declarations
 against the installed Next and Undici engine requirements.

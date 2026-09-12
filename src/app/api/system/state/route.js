@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getTrafficWindow } from "@/lib/db/repos/requestStatsRepo.js";
 import { getSpendWindow } from "@/lib/db/repos/usageRepo.js";
+import { getFailoverWindow } from "@/lib/db/repos/accountSwitchRepo.js";
 import { getUpstreamHealthSummary } from "@/lib/db/repos/connectionsRepo.js";
 
 export const dynamic = "force-dynamic";
@@ -26,12 +27,10 @@ export const revalidate = 0;
  * known window really is 0 req/s, but 0 errors out of 0 requests is not a rate
  * and 0 measured latencies is not a p95 — both of those are null.
  *
- * WHAT THIS SCHEMA CANNOT ANSWER TODAY.
- *  - failoverCount is permanently null. Combo and account fallback in
- *    open-sse/services/accountFallback.js mutate an in-memory account object
- *    (applyErrorState) and persist only the resulting connection state; no
- *    failover EVENT is written to any table, so there is nothing to count.
- *    Inferring one from consecutive error rows would be a fabricated number.
+ * MEASUREMENT LIMITS.
+ *  - failoverCount comes from append-only accountSwitches receipts. A first
+ *    pin and an operator-directed move remain visible but are not automatic
+ *    failovers; new trigger vocabulary is reported separately until classified.
  *  - latencyP95 is null whenever no row in the window carries a measured
  *    latency. requestStats.latencyTotal is 0 both for "instant" and for "never
  *    measured" (rows backfilled from usageHistory carry 0), so zeros are
@@ -86,12 +85,7 @@ export const SYSTEM_STATE_UNITS = {
 
 // Measures this schema can never answer, whatever the data. Exported so a
 // caller can hide the tile rather than render a permanent blank.
-export const UNANSWERABLE = ["failoverCount"];
-
-const NO_FAILOVER_SOURCE =
-  "no failover events are persisted: open-sse/services/accountFallback.js keeps " +
-  "fallback state in memory and writes only the resulting connection state, so " +
-  "there is no event table to count";
+export const UNANSWERABLE = [];
 
 function clampWindowSeconds(raw) {
   const parsed = Number.parseInt(raw ?? "", 10);
@@ -182,6 +176,16 @@ export async function GET(request) {
   }
   if (aborted(request)) return clientClosed();
 
+  let failovers = null;
+  let failoversError = null;
+  try {
+    failovers = await getFailoverWindow(from);
+  } catch (error) {
+    failoversError = error;
+    console.error("[system/state] accountSwitches unavailable");
+  }
+  if (aborted(request)) return clientClosed();
+
   let upstreams = null;
   let upstreamsError = null;
   try {
@@ -230,14 +234,34 @@ export async function GET(request) {
     }),
 
     failoverCount: measure(SYSTEM_STATE_UNITS.failoverCount, rolling, {
-      unavailable: NO_FAILOVER_SOURCE,
+      source: "accountSwitches",
+      index: "idx_as_at",
+      ...(failovers
+        ? {
+            value: failovers.failovers,
+            sampleCount: failovers.samples,
+            unknownTriggerCount: failovers.unknownTriggers,
+          }
+        : { unavailable: unavailableFrom(failoversError) }),
     }),
 
     spend: measure(SYSTEM_STATE_UNITS.spend, rolling, {
       source: "usageHistory",
       index: "idx_uh_ts",
-      ...(spend
-        ? { value: spend.spendUsd, sampleCount: spend.samples }
+      ...(spend && spend.spendUsd !== null
+        ? {
+            value: spend.spendUsd,
+            sampleCount: spend.pricedSamples,
+            unknownSampleCount: spend.unknownSamples,
+            evidenceKind: spend.evidenceKind,
+          }
+        : spend
+          ? {
+              sampleCount: 0,
+              unknownSampleCount: spend.unknownSamples,
+              evidenceKind: spend.evidenceKind,
+              unavailable: "no request in this window carries priced cost evidence",
+            }
         : { unavailable: unavailableFrom(spendError) }),
     }),
 

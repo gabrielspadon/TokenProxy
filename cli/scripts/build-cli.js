@@ -2,7 +2,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
+const { copyBuildIdentity } = require('../../scripts/build-identity.cjs');
 
 const cliDir = path.resolve(__dirname, "..");
 const appDir = path.resolve(cliDir, "..");
@@ -240,6 +241,7 @@ function buildCliPackage() {
   console.log("3️⃣  Copying Next.js standalone build to app/cli/app...");
   try {
     copyStandaloneBuild(appDir, buildDistDir, cliAppDir);
+    copyBuildIdentity(buildDistDir, cliAppDir);
   } catch (error) {
     console.error("❌ Next.js standalone build not found under .next/standalone");
     console.error("Expected either .next/standalone/server.js or .next/standalone/app/");
@@ -248,7 +250,28 @@ function buildCliPackage() {
   console.log("✅ Copied standalone build\n");
 
   // Worker entrypoints are loaded by path, outside the Next server bundle.
-  copyRecursive(path.join(appDir, "src/lib/db/analytics"), path.join(cliAppDir, "src/lib/db/analytics"));
+  // The analytics worker is loaded by path, so nothing traces its imports. This
+  // copied the analytics directory alone, which carries the .mjs query modules
+  // but not the sibling .js schema files they import, and the worker then threw
+  // ERR_MODULE_NOT_FOUND before its first message. Copy its exact closure, the
+  // same list next.config.mjs traces into the standalone output.
+  const analyticsClosure = JSON.parse(execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e",
+      "const { pathToFileURL } = await import('node:url'); const { ANALYTICS_WORKER_FILES } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(JSON.stringify(ANALYTICS_WORKER_FILES));",
+      path.join(appDir, "src/lib/db/analytics/runtimeFiles.mjs")],
+    { encoding: "utf8" },
+  ));
+  for (const entry of [...analyticsClosure, "./src/lib/db/analytics/runtimeFiles.mjs"]) {
+    // node_modules entries are already bundled by the Next trace; this list also
+    // covers source outside src/, so copy by relative path rather than by tree.
+    if (entry.startsWith("./node_modules/")) continue;
+    const source = path.join(appDir, entry);
+    const destination = path.join(cliAppDir, entry);
+    if (!fs.existsSync(source)) throw new Error(`analytics worker closure names a missing file: ${entry}`);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination);
+  }
   fs.mkdirSync(path.join(cliAppDir, "src/lib/pxpipe"), { recursive: true });
   fs.copyFileSync(path.join(appDir, "src/lib/pxpipe/worker.mjs"), path.join(cliAppDir, "src/lib/pxpipe/worker.mjs"));
 
@@ -256,6 +279,7 @@ function buildCliPackage() {
   const customServerSrc = path.join(appDir, "custom-server.js");
   if (fs.existsSync(customServerSrc)) {
     fs.copyFileSync(customServerSrc, path.join(cliAppDir, "custom-server.js"));
+    fs.copyFileSync(path.join(appDir, "live-safety-runtime.cjs"), path.join(cliAppDir, "live-safety-runtime.cjs"));
     console.log("✅ Copied custom-server.js\n");
   } else {
     console.error("❌ custom-server.js not found — without it no request can be proven local,");

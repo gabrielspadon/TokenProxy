@@ -16,6 +16,7 @@ const { DATA_FILE } = await import('../../src/lib/db/paths.js');
 const { getAdapter } = await import('../../src/lib/db/driver.js');
 const { getTrafficWindow } = await import('../../src/lib/db/repos/requestStatsRepo.js');
 const { getSpendWindow } = await import('../../src/lib/db/repos/usageRepo.js');
+const { getFailoverWindow } = await import('../../src/lib/db/repos/accountSwitchRepo.js');
 const { getUpstreamHealthCounts, getUpstreamHealthSummary, isConnectionDegraded } =
   await import('../../src/lib/db/repos/connectionsRepo.js');
 const { createProviderConnection } = await import('../../src/lib/db/repos/connectionsRepo.js');
@@ -38,6 +39,7 @@ beforeEach(() => {
   db.run(`DELETE FROM requestStats`);
   db.run(`DELETE FROM usageHistory`);
   db.run(`DELETE FROM providerConnections`);
+  db.run(`DELETE FROM accountSwitches`);
 });
 
 function insertStat(id, { minutesAgo, status = 'success', latency = 0 }) {
@@ -129,22 +131,43 @@ describe('getTrafficWindow against a real SQLite file', () => {
 });
 
 describe('getSpendWindow against a real SQLite file', () => {
-  it('sums cost inside the window only, and reports 0 for an empty window', async () => {
-    expect(await getSpendWindow(sinceIso)).toEqual({ spendUsd: 0, samples: 0 });
+  it('labels estimate-only spend and never turns unknown pricing into zero spend', async () => {
+    expect(await getSpendWindow(sinceIso)).toEqual({
+      spendUsd: null,
+      samples: 0,
+      pricedSamples: 0,
+      providerReportedUsd: null,
+      providerReportedSamples: 0,
+      estimatedUsd: null,
+      estimatedSamples: 0,
+      unknownSamples: 0,
+      evidenceKind: 'unknown',
+    });
 
-    const insert = (minutesAgo, cost) =>
+    const insert = (minutesAgo, cost, costSource, estimatedCostUsd = null) =>
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, cost, status)
-         VALUES(?, 'openai', 'gpt-4', ?, 'ok')`,
-        [new Date(now - minutesAgo * 60000).toISOString(), cost]
+        `INSERT INTO usageHistory(timestamp, provider, model, cost, status, costSource, estimatedCostUsd)
+         VALUES(?, 'openai', 'gpt-4', ?, 'ok', ?, ?)`,
+        [new Date(now - minutesAgo * 60000).toISOString(), cost, costSource, estimatedCostUsd]
       );
-    insert(10, 1.5);
-    insert(20, 2.25);
-    insert(300, 99); // outside the window
+    insert(10, 1.5, 'application-estimate', 1.5);
+    insert(20, 2.25, 'application-estimate', 2.25);
+    insert(5, 0, 'unknown');
+    insert(4, null, 'application-estimate');
+    insert(300, 99, 'provider-reported'); // outside the window
 
     const result = await getSpendWindow(sinceIso);
     expect(result.spendUsd).toBeCloseTo(3.75, 10);
-    expect(result.samples).toBe(2);
+    expect(result).toMatchObject({
+      samples: 4,
+      pricedSamples: 2,
+      providerReportedUsd: null,
+      providerReportedSamples: 0,
+      estimatedUsd: 3.75,
+      estimatedSamples: 2,
+      unknownSamples: 2,
+      evidenceKind: 'application-estimate',
+    });
   });
 
   it('is served by idx_uh_ts rather than a table scan', async () => {
@@ -158,6 +181,41 @@ describe('getSpendWindow against a real SQLite file', () => {
       .map((r) => r.detail)
       .join(' ');
     expect(plan).toMatch(/idx_uh_ts/);
+  });
+});
+
+describe('getFailoverWindow against a real SQLite file', () => {
+  it('counts exhaustion and unavailable switches without calling the first pin a failover', async () => {
+    const insert = (id, trigger, fromConnectionId, minutesAgo) =>
+      db.run(
+        `INSERT INTO accountSwitches(id, sessionHash, model, fromConnectionId, toConnectionId,
+           trigger, switchedAt) VALUES(?, 'session', 'model', ?, 'next', ?, ?)`,
+        [id, fromConnectionId, trigger, new Date(now - minutesAgo * 60000).toISOString()]
+      );
+    insert('first', 'first-pin', null, 30);
+    insert('exhausted', 'exhaustion', 'first', 20);
+    insert('unavailable', 'unavailable', 'next', 10);
+    insert('future-vocabulary', 'future-trigger', 'next', 5);
+    insert('old', 'exhaustion', 'first', 300);
+
+    expect(await getFailoverWindow(sinceIso)).toEqual({
+      failovers: 2,
+      knownNonFailovers: 1,
+      unknownTriggers: 1,
+      samples: 4,
+    });
+  });
+
+  it('uses the account switch timestamp index', async () => {
+    const plan = db
+      .all(
+        `EXPLAIN QUERY PLAN SELECT trigger, fromConnectionId
+         FROM accountSwitches WHERE switchedAt >= ?`,
+        [sinceIso]
+      )
+      .map((row) => row.detail)
+      .join(' ');
+    expect(plan).toMatch(/idx_as_at/);
   });
 });
 

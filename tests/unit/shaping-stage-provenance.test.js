@@ -49,8 +49,40 @@ describe('explicit shaping provenance', () => {
     guard.sync('rtk', () => { body.text = 'damaged'; throw new Error('secret payload'); });
     await guard.async('pxpipe', async () => { calls++; throw new DOMException('private', 'TimeoutError'); });
     expect(body).toEqual({ text: 'original' }); expect(calls).toBe(1);
-    expect(guard.measurement('rtk', true, false)).toEqual({ outcomeSource: 'execution', outcome: 'failed', errorCode: 'transform_exception' });
+    expect(guard.measurement('rtk', true, false)).toMatchObject({ outcomeSource: 'execution', outcome: 'failed', errorCode: 'transform_exception', durationSource: 'monotonic' });
     expect(guard.measurement('pxpipe', true, false).errorCode).toBe('service_timeout');
     expect(guard.measurement('schema', true, true).outcome).toBe('applied');
+  });
+
+  it('records monotonic execution duration for applied, unchanged, skipped and failed-open stages', async () => {
+    let tick = 100;
+    const guard = createStageGuard({ rollback() {}, monotonic: () => tick });
+    guard.sync('schema', () => { tick += 4; });
+    guard.sync('thinking', () => { tick += 2; });
+    guard.sync('privacy', () => { throw new Error('disabled stage ran'); }, false);
+    await guard.async('pxpipe', async () => { tick += 7; throw new Error('fixture failure'); });
+    const stages = [['schema', true, true], ['thinking', true, false], ['privacy', false, false], ['pxpipe', true, false]]
+      .map(([stage, ran, changed]) => ({ stage, in: 100, out: 100, ...guard.measurement(stage, ran, changed) }));
+    expect(stages.map((stage) => [stage.outcome, stage.durationMs, stage.durationSource]))
+      .toEqual([['applied', 4, 'monotonic'], ['unchanged', 2, 'monotonic'], ['skipped', 0, 'monotonic'], ['failed', 7, 'monotonic']]);
+    await saveRequestStats({ id: 'duration-proof', status: 'success', contextTelemetry: {
+      logicalRequestId: 'duration-logical', sessionHash: 'b'.repeat(64), attempt: 1, stages,
+    } });
+    const db = await getAdapter();
+    expect(db.all('SELECT durationMs,durationSource FROM contextStages WHERE requestId=? ORDER BY ordinal', ['duration-proof']))
+      .toEqual([4, 2, 0, 7].map((durationMs) => ({ durationMs, durationSource: 'monotonic' })));
+    expect(normalizeContextStages([{ stage: 'tools', in: 100, out: 100 }])[0])
+      .toMatchObject({ durationMs: null, durationSource: 'unknown' });
+    expect(() => normalizeContextStages([{ ...stages[0], durationMs: -1 }])).toThrow('Invalid stage duration');
+  });
+
+  it.each([false, null, undefined])('preserves an explicitly disabled stage gate %s', async (enabled) => {
+    let calls = 0;
+    const guard = createStageGuard({ rollback() {} });
+    guard.sync('schema', () => { calls++; }, enabled);
+    await guard.async('pxpipe', async () => { calls++; }, enabled);
+    expect(calls).toBe(0);
+    expect(guard.measurement('schema', false, false)).toMatchObject({ outcome: 'skipped', durationSource: 'monotonic' });
+    expect(guard.measurement('pxpipe', false, false)).toMatchObject({ outcome: 'skipped', durationSource: 'monotonic' });
   });
 });

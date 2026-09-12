@@ -2,26 +2,25 @@
 // No native build, no npm install. API mirrors betterSqliteAdapter.
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
+import { createTransactionController } from "./criticalTransaction.js";
+import { createCriticalAckJournal } from './criticalAckJournal.js';
+import { acquireNativeWriterAdmission } from './writerAdmission.js';
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 export async function createNodeSqliteAdapter(filePath) {
-  // Suppress "ExperimentalWarning: SQLite is an experimental feature" from node:sqlite.
-  // Stable enough for production use as of Node 22.x (RC quality).
-  const origEmit = process.emit;
-  process.emit = function (name, data, ...rest) {
-    if (name === "warning" && data?.name === "ExperimentalWarning" && /SQLite/i.test(data.message || "")) {
-      return false;
-    }
-    return origEmit.call(process, name, data, ...rest);
-  };
-
   // Dynamic import — fails on Node < 22.5 → driver.js falls back to sql.js
   const sqlite = await import("node:sqlite");
   const Database = sqlite.DatabaseSync;
-  const db = new Database(filePath);
-
-  db.exec(PRAGMA_SQL);
+  const admission = acquireNativeWriterAdmission(filePath);
+  let db;
+  try { db = new Database(filePath); db.exec(PRAGMA_SQL); }
+  catch (error) {
+    let closed = !db;
+    try { db?.close(); closed = true; } catch {}
+    if (closed) admission.release();
+    throw error;
+  }
 
   const stmtCache = new Map();
   function prepare(sql) {
@@ -33,6 +32,17 @@ export async function createNodeSqliteAdapter(filePath) {
     return stmt;
   }
 
+  const transactions = createTransactionController({
+    exec: (sql) => db.exec(sql),
+    readSynchronous: () => db.prepare("PRAGMA synchronous").get()?.synchronous,
+    isInTransaction: () => db.isTransaction,
+    acknowledgments: createCriticalAckJournal({ databaseFile: filePath, driver: 'node:sqlite', db: {
+      exec: (sql) => db.exec(sql),
+      get: (sql, params = []) => prepare(sql).get(...params),
+      run: (sql, params = []) => prepare(sql).run(...params),
+    } }),
+  });
+
   // Periodic WAL checkpoint to keep -wal/-shm small
   const checkpointTimer = setInterval(() => {
     // Never wait on an analytics snapshot from the request-serving thread.
@@ -43,7 +53,7 @@ export async function createNodeSqliteAdapter(filePath) {
   function gracefulClose() {
     try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
     try { stmtCache.clear(); } catch {}
-    try { db.close(); } catch {}
+    try { db.close(); admission.release(); } catch {}
   }
   registerShutdownFlusher(gracefulClose, 100);
 
@@ -61,18 +71,21 @@ export async function createNodeSqliteAdapter(filePath) {
     },
     exec(sql) { return db.exec(sql); },
     transaction(fn) {
-      // node:sqlite has no transaction wrapper. Use SAVEPOINT for nested support.
-      const sp = `sp_${Math.random().toString(36).slice(2)}`;
-      db.exec(`SAVEPOINT ${sp}`);
-      try {
-        const r = fn();
-        db.exec(`RELEASE ${sp}`);
-        return r;
-      } catch (e) {
-        try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
-        throw e;
-      }
+      return transactions.transaction(() => {
+        // node:sqlite has no transaction wrapper. Use SAVEPOINT for nested support.
+        const sp = `sp_${Math.random().toString(36).slice(2)}`;
+        db.exec(`SAVEPOINT ${sp}`);
+        try {
+          const r = fn();
+          db.exec(`RELEASE ${sp}`);
+          return r;
+        } catch (e) {
+          try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
+          throw e;
+        }
+      });
     },
+    criticalTransaction: transactions.criticalTransaction,
     checkpoint() { try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} },
     close() {
       clearInterval(checkpointTimer);

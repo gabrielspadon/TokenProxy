@@ -38,6 +38,7 @@ function boot(env) {
 beforeAll(() => {
   dir = fs.mkdtempSync(path.join(repoRoot, '.jwt-startup-test-'));
   fs.copyFileSync(path.join(repoRoot, 'custom-server.js'), path.join(dir, 'custom-server.js'));
+  fs.copyFileSync(path.join(repoRoot, 'live-safety-runtime.cjs'), path.join(dir, 'live-safety-runtime.cjs'));
   fs.writeFileSync(path.join(dir, 'server.js'), `console.log(${JSON.stringify(STARTED)});\n`);
 });
 
@@ -59,7 +60,7 @@ describe('JWT_SECRET is checked at startup (#1544)', () => {
   it('starts when the secret is in the environment', () => {
     const run = boot({ JWT_SECRET: 'x'.repeat(48) });
 
-    expect(run.status).toBe(0);
+    expect(run.status, run.stderr).toBe(0);
     expect(run.stdout).toContain(STARTED);
   });
 
@@ -69,7 +70,7 @@ describe('JWT_SECRET is checked at startup (#1544)', () => {
     fs.writeFileSync(path.join(dir, '.env'), `JWT_SECRET=${'y'.repeat(48)}\n`);
     try {
       const run = boot({});
-      expect(run.status).toBe(0);
+      expect(run.status, run.stderr).toBe(0);
       expect(run.stdout).toContain(STARTED);
     } finally {
       fs.rmSync(path.join(dir, '.env'), { force: true });

@@ -19,6 +19,7 @@ function Probe({ url='/api/evidence' }) {
 const render = async (url) => act(async()=>root.render(<StrictMode><ObservationProvider><Probe url={url}/></ObservationProvider></StrictMode>));
 beforeEach(()=>{
   globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+  window.localStorage.clear();
   vi.useFakeTimers();streams=[];messages=vi.fn();
   let sequence=0;
   vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({revision:++sequence}),{status:200})));
