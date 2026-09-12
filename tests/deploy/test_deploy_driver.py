@@ -3,6 +3,8 @@
 import importlib.util
 import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -397,6 +399,140 @@ class CutoverTests(unittest.TestCase):
         self.assertNotEqual(before, driver.tree_sha(self.candidate))
 
 
+class RollbackTransactionTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.live = self.root / "tokenproxy"
+        self.retained = self.root / ".tokenproxy-rollback-aaaaaaaaaaaa-1700000000-abcdef"
+        self.parked = self.root / ".tokenproxy-post-rollback-bbbbbbbbbbbb-1700000001-abcdef"
+        for package, sha in ((self.live, NEW_SHA), (self.retained, OLD_SHA)):
+            package.mkdir()
+            (package / "BUILD_SHA").write_text(sha)
+        self.actions = []
+        self.paused = False
+        self.running = True
+        self.start_old_failure = False
+        self.resume_failures = 0
+        self.front_pid = "front-1"
+        self.restart_front_after_resume = False
+        for name, value in (
+            ("PACKAGE", self.live),
+            ("require_no_backend_sockets", lambda: self.actions.append("sockets:empty")),
+            ("control", self.control),
+            ("service", self.service),
+            ("unit_state", self.unit),
+            ("wait_backend", self.wait_new),
+            ("verify_backend", self.wait_new),
+            ("wait_existing_backend", self.wait_old),
+            ("verify_existing_backend", self.verify_old),
+        ):
+            mock = patch.object(driver, name, value)
+            mock.start()
+            self.addCleanup(mock.stop)
+
+    def status(self):
+        return {
+            "activation_paused": self.paused,
+            "draining": False,
+            "backend_ready": True,
+            "public_ready": True,
+            "active": 0,
+            "dispatching": 0,
+            "queued": 0,
+        }
+
+    def control(self, action="status"):
+        self.actions.append("front:" + action)
+        if action == "pause":
+            self.paused = True
+        elif action == "resume":
+            if self.resume_failures:
+                self.resume_failures -= 1
+                raise TimeoutError("synthetic resume timeout before apply")
+            self.paused = False
+            if self.restart_front_after_resume:
+                self.front_pid = "front-2"
+        return self.status()
+
+    def unit(self, name):
+        if name == driver.FRONT:
+            return {"MainPID": self.front_pid, "ActiveState": "active"}
+        return {
+            "MainPID": "backend-1" if self.running else "0",
+            "ActiveState": "active" if self.running else "inactive",
+            "Environment": "TOKENPROXY_NO_UPDATE=1",
+        }
+
+    def service(self, action):
+        self.actions.append("backend:" + action)
+        self.running = action == "start"
+        if action == "start" and self.start_old_failure and driver.package_sha(self.live) == OLD_SHA:
+            self.start_old_failure = False
+            raise driver.GuardError("synthetic restored startup failure")
+
+    def wait_new(self, port, sha, _headers, *, features):
+        self.actions.append(f"new:{port}:{sha[0]}")
+        self.assertTrue(features)
+        self.assertEqual(driver.package_sha(self.live), sha)
+        return {"buildSha": sha[:12]}
+
+    def wait_old(self, port, sha, _headers):
+        self.actions.append(f"old:{port}:{sha[0]}")
+        self.assertEqual(driver.package_sha(self.live), sha)
+        return {"buildSha": sha[:12]}
+
+    def verify_old(self, port, sha, headers, _unit):
+        return self.wait_old(port, sha, headers)
+
+    def invoke(self):
+        return driver.cutover_transaction(
+            self.retained,
+            self.parked,
+            OLD_SHA,
+            NEW_SHA,
+            {},
+            "front-1",
+            incoming_legacy=True,
+            recovery_legacy=False,
+        )
+
+    def test_success_reopens_old_release_before_resume_then_verifies_the_front(self):
+        result = self.invoke()
+        self.assertTrue(result["deployed"])
+        self.assertEqual(driver.package_sha(self.live), OLD_SHA)
+        self.assertEqual(driver.package_sha(self.parked), NEW_SHA)
+        self.assertLess(self.actions.index("old:20127:a"), self.actions.index("front:resume"))
+        self.assertGreater(self.actions.index("old:20128:a"), self.actions.index("front:resume"))
+        self.assertFalse(self.paused)
+
+    def test_failed_old_start_restores_current_release_before_resuming(self):
+        self.start_old_failure = True
+        with self.assertRaisesRegex(driver.GuardError, "restored startup"):
+            self.invoke()
+        self.assertEqual(driver.package_sha(self.live), NEW_SHA)
+        self.assertEqual(driver.package_sha(self.retained), OLD_SHA)
+        self.assertIn("new:20127:b", self.actions)
+        self.assertLess(self.actions.index("new:20127:b"), self.actions.index("front:resume"))
+        self.assertFalse(self.paused)
+
+    def test_two_resume_transport_failures_still_leave_front_resumed(self):
+        self.resume_failures = 2
+        with self.assertRaisesRegex(driver.GuardError, "after resume"):
+            self.invoke()
+        self.assertEqual(self.actions.count("front:resume"), 3)
+        self.assertEqual(driver.package_sha(self.live), OLD_SHA)
+        self.assertFalse(self.paused)
+
+    def test_front_restart_after_resume_fails_identity_verification(self):
+        self.restart_front_after_resume = True
+        with self.assertRaisesRegex(driver.GuardError, "Front process changed after resume"):
+            self.invoke()
+        self.assertEqual(driver.package_sha(self.live), OLD_SHA)
+        self.assertFalse(self.paused)
+
+
 class FrontProvenanceTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -515,6 +651,236 @@ class DeploymentManifestTests(unittest.TestCase):
                 driver.validate_manifest(manifest, OLD_SHA)
 
 
+class RollbackPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.checkout = self.root / "checkout"
+        self.area = self.checkout / ".deploy-prep" / "candidate"
+        self.rollback_dir = self.area / "rollback-1700000000-abcdef"
+        self.rollback_dir.mkdir(parents=True)
+        self.live = self.root / "tokenproxy"
+        self.retained = self.root / ".tokenproxy-rollback-aaaaaaaaaaaa-1700000000-abcdef"
+        self.backup_package = self.rollback_dir / "package"
+        for package, sha in ((self.live, NEW_SHA), (self.retained, OLD_SHA)):
+            package.mkdir()
+            (package / "BUILD_SHA").write_text(sha)
+            (package / "payload").write_text(sha)
+        shutil.copytree(self.retained, self.backup_package)
+        self.database = self.rollback_dir / "data.sqlite"
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("CREATE TABLE retained (value TEXT)")
+            connection.execute("INSERT INTO retained VALUES ('readable')")
+        self.front = self.root / "front"
+        self.front.mkdir()
+        self.front_unit = self.root / "tokenproxy-front.service"
+        (self.front / "front-proxy.mjs").write_text("front-v1")
+        self.front_unit.write_text("unit-v1")
+        self.front_manifest = {
+            "schema": 1,
+            "sourceSha": OLD_SHA,
+            "files": {
+                "front-proxy.mjs": driver.file_sha(self.front / "front-proxy.mjs"),
+                "tokenproxy-front.service": driver.file_sha(self.front_unit),
+            },
+        }
+        self.plan = {
+            "schema": 1,
+            "candidateSha": NEW_SHA,
+            "candidateTreeSha256": driver.tree_sha(self.live),
+            "restoreSha": OLD_SHA,
+            "retainedPackage": str(self.retained),
+            "retainedTreeSha256": driver.tree_sha(self.retained),
+            "backupPackage": "package",
+            "backupPackageTreeSha256": driver.tree_sha(self.backup_package),
+            "backupDatabase": "data.sqlite",
+            "backupDatabaseSha256": driver.file_sha(self.database),
+            "front": self.front_manifest,
+        }
+        (self.rollback_dir / "rollback-plan.json").write_text(json.dumps(self.plan))
+        for name, value in (
+            ("CHECKOUT", self.checkout),
+            ("PACKAGE", self.live),
+            ("FRONT_PACKAGE", self.front),
+            ("FRONT_UNIT", self.front_unit),
+        ):
+            mock = patch.object(driver, name, value)
+            mock.start()
+            self.addCleanup(mock.stop)
+
+    def test_valid_plan_binds_current_retained_backup_database_and_front(self):
+        actual = driver.validate_rollback_plan(self.rollback_dir, NEW_SHA, OLD_SHA)
+        self.assertEqual(actual["candidateSha"], NEW_SHA)
+        self.assertEqual(actual["restoreSha"], OLD_SHA)
+        self.assertEqual(actual["retainedPackage"], str(self.retained))
+
+    def test_non_sqlite_backup_is_a_guarded_refusal(self):
+        self.database.write_bytes(b"not a sqlite database")
+        self.plan["backupDatabaseSha256"] = driver.file_sha(self.database)
+        (self.rollback_dir / "rollback-plan.json").write_text(json.dumps(self.plan))
+        with self.assertRaisesRegex(driver.GuardError, "database backup"):
+            driver.validate_rollback_plan(self.rollback_dir, NEW_SHA, OLD_SHA)
+
+    def test_malformed_backup_path_is_rejected_before_path_construction(self):
+        self.plan["backupPackage"] = 7
+        (self.rollback_dir / "rollback-plan.json").write_text(json.dumps(self.plan))
+        with self.assertRaisesRegex(driver.GuardError, "backup paths"):
+            driver.validate_rollback_plan(self.rollback_dir, NEW_SHA, OLD_SHA)
+
+    def test_backup_package_symlink_cannot_escape_the_rollback_directory(self):
+        shutil.rmtree(self.backup_package)
+        self.backup_package.symlink_to(self.retained, target_is_directory=True)
+        self.plan["backupPackageTreeSha256"] = driver.tree_sha(self.retained)
+        (self.rollback_dir / "rollback-plan.json").write_text(json.dumps(self.plan))
+        with self.assertRaisesRegex(driver.GuardError, "real directory"):
+            driver.validate_rollback_plan(self.rollback_dir, NEW_SHA, OLD_SHA)
+
+    def test_current_package_content_must_match_the_cutover_candidate(self):
+        (self.live / "payload").write_text("mutated after cutover")
+        with self.assertRaisesRegex(driver.GuardError, "current package content"):
+            driver.validate_rollback_plan(self.rollback_dir, NEW_SHA, OLD_SHA)
+
+    def test_cutover_records_an_immutable_rollback_plan_before_the_swap(self):
+        (self.rollback_dir / "rollback-plan.json").unlink()
+        manifest = {
+            "sha": NEW_SHA,
+            "expectedOldSha": OLD_SHA,
+            "treeSha256": driver.tree_sha(self.live),
+            "front": self.front_manifest,
+        }
+        actual = driver.create_rollback_plan(
+            self.rollback_dir,
+            self.retained,
+            driver.tree_sha(self.retained),
+            manifest,
+        )
+        recorded = json.loads((self.rollback_dir / "rollback-plan.json").read_text())
+        self.assertEqual(actual, recorded)
+        self.assertEqual(recorded["candidateSha"], NEW_SHA)
+        self.assertEqual(recorded["restoreSha"], OLD_SHA)
+        self.assertEqual(recorded["backupDatabaseSha256"], driver.file_sha(self.database))
+
+    def test_database_compatibility_runs_old_package_on_an_owned_current_clone(self):
+        current = self.root / "current.sqlite"
+        with sqlite3.connect(current) as connection:
+            connection.execute("CREATE TABLE current_shape (value TEXT)")
+            connection.execute("INSERT INTO current_shape VALUES ('post-cutover')")
+        attempt = self.rollback_dir / "attempt"
+        commands = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            return json.dumps({"passed": True, "buildSha": OLD_SHA[:12], "database": "reopened"})
+
+        with patch.object(driver, "run", run):
+            result = driver.qualify_database_reopen(self.retained, OLD_SHA, current, attempt)
+        clone = attempt / "data" / "data.sqlite"
+        self.assertEqual(result["database"], "reopened")
+        self.assertTrue(clone.is_file())
+        self.assertNotEqual(clone.stat().st_ino, current.stat().st_ino)
+        self.assertEqual(driver.file_sha(clone), driver.file_sha(current))
+        self.assertIn(str(self.retained), commands[0])
+        self.assertIn("reopen-inner", commands[0])
+
+    def test_rollback_proves_current_database_reopen_before_entering_the_pause(self):
+        current_database = self.root / "current-data.sqlite"
+        with sqlite3.connect(current_database) as connection:
+            connection.execute("CREATE TABLE post_cutover (value TEXT)")
+            connection.execute("INSERT INTO post_cutover VALUES ('preserve')")
+        auth = self.root / "auth.json"
+        auth.write_text('{"Cookie":"fixture"}')
+        auth.chmod(0o600)
+        actions = []
+
+        def compatible(package, sha, database, area):
+            actions.append("compatibility")
+            self.assertEqual(Path(package), self.retained)
+            self.assertEqual(sha, OLD_SHA)
+            driver.verify_database_readable(database)
+            self.assertTrue(Path(area).parent.is_dir())
+            return {"passed": True, "buildSha": OLD_SHA[:12], "database": "reopened"}
+
+        def transaction(*args, **kwargs):
+            actions.append("pause-transaction")
+            self.assertEqual(args[0], self.retained)
+            self.assertTrue(kwargs["incoming_legacy"])
+            self.assertFalse(kwargs["recovery_legacy"])
+            return {"deployed": True, "sha": OLD_SHA, "front": {"backend_ready": True}}
+
+        backend = {
+            "MainPID": "backend-1",
+            "ActiveState": "active",
+            "ExecStart": str(self.live / "app/custom-server.js"),
+            "WorkingDirectory": str(self.live / "app"),
+            "BindReadOnlyPaths": str(self.live) + ":/package",
+        }
+        front = {"MainPID": "front-1", "ActiveState": "active"}
+        with (
+            patch.object(driver, "DATABASE", current_database),
+            patch.object(driver, "require_quiet_front", lambda: actions.append("quiet")),
+            patch.object(driver, "fresh_units", return_value=(backend, front)),
+            patch.object(driver, "verify_backend", lambda *_args, **_kwargs: actions.append("current-version")),
+            patch.object(driver, "qualify_database_reopen", compatible),
+            patch.object(driver, "cutover_transaction", transaction),
+        ):
+            result = driver.rollback(
+                self.rollback_dir,
+                NEW_SHA,
+                OLD_SHA,
+                auth,
+                direct_backend_traffic_accounted=True,
+            )
+        self.assertTrue(result["rolledBack"])
+        self.assertFalse(result["deployed"])
+        self.assertLess(actions.index("compatibility"), actions.index("pause-transaction"))
+        self.assertEqual(result["sha"], OLD_SHA)
+        self.assertEqual(result["replacedSha"], NEW_SHA)
+
+    def test_retained_package_change_during_clone_test_refuses_before_pause(self):
+        current_database = self.root / "current-data.sqlite"
+        with sqlite3.connect(current_database) as connection:
+            connection.execute("CREATE TABLE current_shape (value TEXT)")
+        auth = self.root / "auth.json"
+        auth.write_text('{"Cookie":"fixture"}')
+        auth.chmod(0o600)
+        actions = []
+
+        def compatible(*_args):
+            (self.retained / "payload").write_text("changed during qualification")
+            return {"passed": True, "buildSha": OLD_SHA[:12], "database": "reopened"}
+
+        backend = {
+            "MainPID": "backend-1",
+            "ActiveState": "active",
+            "ExecStart": str(self.live / "app/custom-server.js"),
+            "WorkingDirectory": str(self.live / "app"),
+            "BindReadOnlyPaths": str(self.live) + ":/package",
+        }
+        front = {"MainPID": "front-1", "ActiveState": "active"}
+        with (
+            patch.object(driver, "DATABASE", current_database),
+            patch.object(driver, "require_quiet_front", lambda: actions.append("quiet")),
+            patch.object(driver, "fresh_units", return_value=(backend, front)),
+            patch.object(driver, "verify_backend", return_value={"buildSha": NEW_SHA[:12]}),
+            patch.object(driver, "qualify_database_reopen", compatible),
+            patch.object(
+                driver,
+                "cutover_transaction",
+                side_effect=AssertionError("pause transaction must not run"),
+            ),
+            self.assertRaisesRegex(driver.GuardError, "content changed"),
+        ):
+            driver.rollback(
+                self.rollback_dir,
+                NEW_SHA,
+                OLD_SHA,
+                auth,
+                direct_backend_traffic_accounted=True,
+            )
+        self.assertNotIn("pause", actions)
+
+
 class DeploymentEntrypointTests(unittest.TestCase):
     def test_stage_receives_the_manifest_pinned_previous_release(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -553,6 +919,45 @@ class DeploymentEntrypointTests(unittest.TestCase):
                 invoked.read_text().strip(),
                 f"{Path(__file__).parents[2] / 'scripts/deploy/deploy_driver.py'} "
                 f"stage --sha {NEW_SHA} --expected-old-sha {OLD_SHA}",
+            )
+
+    def test_explicit_rollback_subcommand_bypasses_staging_and_names_both_releases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            python = root / "python"
+            invoked = root / "python-invoked"
+            python.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >{invoked!s}\nexit 99\n")
+            python.chmod(0o755)
+            auth = root / "auth.json"
+            auth.write_text('{"Cookie":"fixture"}')
+            rollback_dir = root / "named-rollback"
+            result = subprocess.run(  # noqa: S603 - isolated fixed fixture
+                [
+                    "/usr/bin/bash",
+                    str(Path(__file__).parents[2] / "scripts/deploy/deploy-main.sh"),
+                    "rollback",
+                    "--rollback-dir",
+                    str(rollback_dir),
+                    "--expected-current-sha",
+                    NEW_SHA,
+                    "--restore-sha",
+                    OLD_SHA,
+                    "--operator-auth-file",
+                    str(auth),
+                    "--direct-backend-traffic-accounted",
+                ],
+                env={**os.environ, "TOKENPROXY_DEPLOY_PYTHON": str(python)},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 99)
+            self.assertEqual(
+                invoked.read_text().strip(),
+                f"{Path(__file__).parents[2] / 'scripts/deploy/deploy_driver.py'} rollback "
+                f"--rollback-dir {rollback_dir} --expected-current-sha {NEW_SHA} "
+                f"--restore-sha {OLD_SHA} --operator-auth-file {auth} "
+                "--direct-backend-traffic-accounted",
             )
 
 

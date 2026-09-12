@@ -221,6 +221,20 @@ def clean_environment(node, data):
     }
 
 
+def sandbox_auth_headers(environment):
+    def encode(raw):
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    payload = {
+        "authenticated": True,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 300,
+    }
+    unsigned = encode(b'{"alg":"HS256","typ":"JWT"}') + "." + encode(json.dumps(payload).encode())
+    token = unsigned + "." + encode(hmac.digest(environment["JWT_SECRET"].encode(), unsigned.encode(), "sha256"))
+    return {"Cookie": "auth_token=" + token}
+
+
 def auth_headers(path):
     info = Path(path).stat()
     require(
@@ -442,17 +456,7 @@ def smoke_inner(sha):
     env = clean_environment(RUNTIME_NODE, data)
     env.update({"PORT": "20199", "HOSTNAME": "127.0.0.1"})
 
-    def encode(raw):
-        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-    payload = {
-        "authenticated": True,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 300,
-    }
-    unsigned = encode(b'{"alg":"HS256","typ":"JWT"}') + "." + encode(json.dumps(payload).encode())
-    token = unsigned + "." + encode(hmac.digest(env["JWT_SECRET"].encode(), unsigned.encode(), "sha256"))
-    headers = {"Cookie": "auth_token=" + token}
+    headers = sandbox_auth_headers(env)
     resolve_script = """
       const {createRequire}=require('node:module');const fs=require('node:fs');
       const cli=createRequire('/package/cli.js');const app=createRequire('/package/app/package.json');
@@ -506,10 +510,69 @@ def smoke_inner(sha):
                 child.wait(timeout=5)
 
 
-def qualify(package, sha, area):
-    data = area / "smoke-data"
-    data.mkdir(mode=0o700)
-    command = [
+def verify_reopen_backend(port, sha, headers):
+    status, content = request_http(port, "/api/ready")
+    if status == 200:
+        require(json.loads(content).get("ready") is True, "Rollback clone readiness failed")
+    else:
+        require(status == 404, "Rollback clone returned an unsupported readiness response")
+        require(
+            request_json(port, "/api/health").get("ok") is True,
+            "Rollback clone legacy health failed",
+        )
+    version = request_json(port, "/api/version", headers)
+    require(version_matches(version, sha), "Rollback clone version does not match the retained package")
+    return version
+
+
+def reopen_inner(sha):
+    """Boot a retained package against only the disposable current-database clone."""
+    package, data = Path("/package"), Path("/data")
+    database = data / "data.sqlite"
+    verify_database_readable(database)
+    env = clean_environment(RUNTIME_NODE, data)
+    env.update({"PORT": "20199", "HOSTNAME": "127.0.0.1"})
+
+    headers = sandbox_auth_headers(env)
+    with (data / "reopen.log").open("wb") as log:
+        child = subprocess.Popen(  # noqa: S603 - fixed sandbox paths
+            [str(RUNTIME_NODE), str(package / "app/custom-server.js")],
+            cwd=package / "app",
+            env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        deadline = time.monotonic() + 20
+        try:
+            while True:
+                try:
+                    version = verify_reopen_backend(20199, sha, headers)
+                    break
+                except (OSError, ValueError, GuardError):
+                    if time.monotonic() >= deadline:
+                        raise GuardError(
+                            "Retained package cannot reopen the current production-shaped database clone"
+                        ) from None
+                    time.sleep(0.2)
+        finally:
+            child.terminate()
+            try:
+                child.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                child.kill()  # This is the owned scratch server, never production.
+                child.wait(timeout=5)
+    verify_database_readable(database)
+    return {
+        "passed": True,
+        "buildSha": version["buildSha"],
+        "database": "reopened",
+        "network": "isolated-loopback-only",
+        "productionDatabase": "snapshot-clone-only",
+    }
+
+
+def sandbox_command(package, data, action, sha):
+    return [
         "bwrap",
         "--unshare-net",
         "--unshare-pid",
@@ -549,12 +612,37 @@ def qualify(package, sha, area):
         "/driver.py",
         "/usr/bin/python3",
         "/driver.py",
-        "smoke-inner",
+        action,
         "--sha",
         sha,
     ]
+
+
+def qualify(package, sha, area):
+    data = area / "smoke-data"
+    data.mkdir(mode=0o700)
+    command = sandbox_command(package, data, "smoke-inner", sha)
     result = run(command, env={"PATH": "/usr/bin:/bin"}, timeout=90)
     return json.loads(result.splitlines()[-1])
+
+
+def qualify_database_reopen(package, sha, database_clone, area):
+    package = Path(package)
+    area = Path(area)
+    data = area / "data"
+    area.mkdir(mode=0o700)
+    data.mkdir(mode=0o700)
+    clone = data / "data.sqlite"
+    shutil.copy2(database_clone, clone)
+    os.chmod(clone, 0o600)
+    verify_database_readable(clone)
+    command = sandbox_command(package, data, "reopen-inner", sha)
+    result = json.loads(run(command, env={"PATH": "/usr/bin:/bin"}, timeout=90).splitlines()[-1])
+    require(
+        result.get("passed") is True and version_matches(result, sha),
+        "Retained package failed the production-shaped database reopen test",
+    )
+    return result
 
 
 def stage(sha, expected_old_sha):
@@ -739,6 +827,121 @@ def validate_manifest(path, expected_old_sha=None):
     return manifest
 
 
+def verify_database_readable(path):
+    database = Path(path)
+    require(database.is_file() and not database.is_symlink(), "Rollback database backup is missing")
+    connection = sqlite3.connect(
+        "file:" + urllib.parse.quote(str(database)) + "?mode=ro",
+        uri=True,
+    )
+    try:
+        try:
+            result = connection.execute("PRAGMA quick_check").fetchone()
+        except sqlite3.DatabaseError as error:
+            raise GuardError("Rollback database backup failed integrity validation") from error
+        require(result and result[0] == "ok", "Rollback database backup failed integrity validation")
+    finally:
+        connection.close()
+
+
+def create_rollback_plan(backup_dir, retained_package, retained_digest, manifest):
+    backup_dir = Path(backup_dir)
+    plan_path = backup_dir / "rollback-plan.json"
+    require(not plan_path.exists(), "Rollback plan already exists")
+    backup_package = backup_dir / "package"
+    backup_database = backup_dir / "data.sqlite"
+    verify_database_readable(backup_database)
+    plan = {
+        "schema": 1,
+        "candidateSha": validate_sha(manifest["sha"]),
+        "candidateTreeSha256": manifest["treeSha256"],
+        "restoreSha": validate_sha(manifest["expectedOldSha"]),
+        "retainedPackage": str(retained_package),
+        "retainedTreeSha256": retained_digest,
+        "backupPackage": "package",
+        "backupPackageTreeSha256": tree_sha(backup_package),
+        "backupDatabase": "data.sqlite",
+        "backupDatabaseSha256": file_sha(backup_database),
+        "front": manifest["front"],
+        "createdAt": int(time.time()),
+    }
+    write_json(plan_path, plan)
+    return plan
+
+
+def validate_rollback_plan(path, expected_current_sha, restore_sha):
+    rollback_dir = Path(path)
+    preparation_root = (CHECKOUT / ".deploy-prep").resolve()
+    require(
+        rollback_dir.is_dir()
+        and not rollback_dir.is_symlink()
+        and rollback_dir.resolve().is_relative_to(preparation_root),
+        "Rollback directory is outside the owned preparation area",
+    )
+    plan_path = rollback_dir / "rollback-plan.json"
+    require(plan_path.is_file() and not plan_path.is_symlink(), "Rollback plan is missing")
+    plan = json.loads(plan_path.read_text())
+    require(plan.get("schema") == 1, "Unsupported rollback plan")
+    require(
+        validate_sha(plan.get("candidateSha", "")) == validate_sha(expected_current_sha),
+        "Rollback plan candidate differs from the installed release",
+    )
+    require(
+        validate_sha(plan.get("restoreSha", "")) == validate_sha(restore_sha),
+        "Rollback plan restore release differs from the request",
+    )
+    require(
+        PACKAGE.is_dir() and not PACKAGE.is_symlink() and package_sha(PACKAGE) == expected_current_sha,
+        "Installed package differs from the expected current release",
+    )
+    require(
+        tree_sha(PACKAGE) == plan.get("candidateTreeSha256"),
+        "Installed current package content differs from the cutover candidate",
+    )
+    retained = Path(plan.get("retainedPackage", ""))
+    require(
+        retained.is_dir()
+        and not retained.is_symlink()
+        and retained.parent.resolve() == PACKAGE.parent.resolve()
+        and re.fullmatch(
+            rf"\.tokenproxy-rollback-{re.escape(restore_sha[:12])}-[0-9]+-[0-9a-f]{{6}}",
+            retained.name,
+        ),
+        "Named retained package is outside the package rollback boundary",
+    )
+    require(
+        plan.get("backupPackage") == "package" and plan.get("backupDatabase") == "data.sqlite",
+        "Rollback backup paths are invalid",
+    )
+    backup_package = rollback_dir / plan["backupPackage"]
+    backup_database = rollback_dir / plan["backupDatabase"]
+    require(
+        backup_package.is_dir()
+        and not backup_package.is_symlink()
+        and backup_package.resolve().parent == rollback_dir.resolve(),
+        "Rollback package backup must be a real directory inside the rollback directory",
+    )
+    require(
+        package_sha(retained) == restore_sha and package_sha(backup_package) == restore_sha,
+        "Rollback package build identity changed",
+    )
+    retained_digest = tree_sha(retained)
+    backup_digest = tree_sha(backup_package)
+    require(
+        retained_digest == plan.get("retainedTreeSha256")
+        and backup_digest == plan.get("backupPackageTreeSha256")
+        and retained_digest == backup_digest,
+        "Rollback package content changed",
+    )
+    verify_database_readable(backup_database)
+    require(
+        file_sha(backup_database) == plan.get("backupDatabaseSha256"),
+        "Rollback database backup checksum changed",
+    )
+    verify_front_provenance(plan.get("front") or {})
+    return plan
+
+
 def require_no_backend_sockets() -> None:
     deadline = time.monotonic() + 0.750
     refusal = "Established backend sockets did not settle before the paused gate deadline; resuming immediately"
@@ -763,7 +966,17 @@ def require_no_backend_sockets() -> None:
         time.sleep(min(0.050, remaining))
 
 
-def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
+def cutover_transaction(
+    candidate,
+    old,
+    sha,
+    old_sha,
+    headers,
+    front_pid,
+    *,
+    incoming_legacy=False,
+    recovery_legacy=True,
+):
     """Only this function pauses/stops/swaps. Failure after resume never kills new traffic."""
     require_quiet_front()
     paused = False
@@ -774,6 +987,16 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
     started = time.monotonic()
     pause_deadline = None
     resumed_at = None
+
+    def wait_release(port, release_sha, *, legacy):
+        if legacy:
+            return wait_existing_backend(port, release_sha, headers)
+        return wait_backend(port, release_sha, headers, features=True)
+
+    def verify_release(port, release_sha, *, legacy):
+        if legacy:
+            return verify_existing_backend(port, release_sha, headers, unit_state(BACKEND))
+        return verify_backend(port, release_sha, headers, features=True)
 
     def require_pause_budget():
         require(
@@ -805,7 +1028,7 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
             candidate.rename(PACKAGE)
             new_placed = True
             service("start")
-            wait_backend(20127, sha, headers, features=True)
+            wait_release(20127, sha, legacy=incoming_legacy)
             require_pause_budget()
             require(
                 unit_state(FRONT).get("MainPID") == front_pid,
@@ -816,7 +1039,11 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
             control("resume")
             resumed_at = time.monotonic()
             paused = False
-        verify_backend(20128, sha, headers, features=True)
+        verify_release(20128, sha, legacy=incoming_legacy)
+        require(
+            unit_state(FRONT).get("MainPID") == front_pid,
+            "Front process changed after resume",
+        )
         final = control()
         require(
             final.get("activation_paused") is False and final.get("backend_ready") is True,
@@ -836,12 +1063,12 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
             "pauseToResumeSeconds": resumed_at - (pause_deadline - PAUSE_BUDGET_SECONDS),
             "front": final,
         }
-    except BaseException:
+    except BaseException as error:
         if resumed:
             # New generations may already exist. Never roll them back blindly.
             with contextlib.suppress(OSError, GuardError):
                 control("resume")
-            raise GuardError("Validation failed after resume; backend left running for inspection") from None
+            raise GuardError(f"Validation failed after resume; backend left running for inspection; {error}") from None
         # Reconcile from the filesystem as well as flags. SIGALRM can arrive
         # after an atomic rename returns but before the following assignment.
         if old_moved or old.exists():
@@ -856,11 +1083,11 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
             old.rename(PACKAGE)
         if not backend_usable:
             service("start")
-            wait_existing_backend(20127, old_sha, headers)
+            wait_release(20127, old_sha, legacy=recovery_legacy)
             backend_usable = True
         raise
     finally:
-        if paused and not resumed and backend_usable:
+        if paused and backend_usable:
             control("resume")
 
 
@@ -921,9 +1148,12 @@ def cutover(
         current_front["MainPID"] == front["MainPID"],
         "Front process changed during preparation",
     )
+    rollback_plan = create_rollback_plan(backup_dir, old, old_digest, manifest)
     try:
         result = cutover_transaction(candidate, old, manifest["sha"], expected_old_sha, headers, front["MainPID"])
         result["backup"] = str(backup_dir)
+        result["rollbackPlan"] = str(backup_dir / "rollback-plan.json")
+        result["restoreSha"] = rollback_plan["restoreSha"]
         result["directBackendTraffic"] = "operator-attested direct-caller inventory"
         write_json(backup_dir / "result.json", result)
         return result
@@ -936,6 +1166,90 @@ def cutover(
                 "installedSha": package_sha(PACKAGE) if PACKAGE.exists() else None,
                 "candidate": str(candidate),
                 "oldPackage": str(old),
+                "databaseRestored": False,
+                "rollbackPlan": str(backup_dir / "rollback-plan.json"),
+            },
+        )
+        raise
+
+
+def rollback(
+    rollback_dir,
+    expected_current_sha,
+    restore_sha,
+    authentication,
+    *,
+    direct_backend_traffic_accounted=False,
+):
+    require(
+        direct_backend_traffic_accounted,
+        "The operator must first account for inference callers bypassing the front on port 20127",
+    )
+    require_quiet_front()
+    validate_sha(expected_current_sha)
+    validate_sha(restore_sha)
+    plan = validate_rollback_plan(rollback_dir, expected_current_sha, restore_sha)
+    headers = auth_headers(authentication)
+    _backend, front = fresh_units()
+    verify_backend(20127, expected_current_sha, headers, features=True)
+    stamp = f"{int(time.time())}-{secrets.token_hex(3)}"
+    attempt = Path(rollback_dir) / f"rollback-attempt-{stamp}"
+    attempt.mkdir(mode=0o700)
+    current_database = attempt / "current-data.sqlite"
+    try:
+        snapshot_database(current_database)
+        compatibility = qualify_database_reopen(
+            Path(plan["retainedPackage"]),
+            restore_sha,
+            current_database,
+            attempt / "reopen",
+        )
+        plan = validate_rollback_plan(rollback_dir, expected_current_sha, restore_sha)
+        require(
+            package_sha(PACKAGE) == expected_current_sha,
+            "Installed package changed during rollback compatibility qualification",
+        )
+        _, current_front = fresh_units()
+        require(
+            current_front["MainPID"] == front["MainPID"],
+            "Front process changed during rollback compatibility qualification",
+        )
+        parked = PACKAGE.parent / f".tokenproxy-post-rollback-{expected_current_sha[:12]}-{stamp}"
+        require(not parked.exists(), "Post-rollback package path already exists")
+        result = cutover_transaction(
+            Path(plan["retainedPackage"]),
+            parked,
+            restore_sha,
+            expected_current_sha,
+            headers,
+            front["MainPID"],
+            incoming_legacy=True,
+            recovery_legacy=False,
+        )
+        result.update(
+            {
+                "deployed": False,
+                "rolledBack": True,
+                "recovered": True,
+                "replacedSha": expected_current_sha,
+                "sha": restore_sha,
+                "rollbackDir": str(rollback_dir),
+                "postRollbackPackage": str(parked),
+                "databaseCompatibility": compatibility,
+                "databaseRestored": False,
+                "directBackendTraffic": "operator-attested direct-caller inventory",
+            }
+        )
+        write_json(attempt / "result.json", result)
+        return result
+    except BaseException:
+        write_json(
+            attempt / "result.json",
+            {
+                "rolledBack": False,
+                "expectedCurrentSha": expected_current_sha,
+                "restoreSha": restore_sha,
+                "installedSha": package_sha(PACKAGE) if PACKAGE.exists() else None,
                 "databaseRestored": False,
             },
         )
@@ -968,8 +1282,24 @@ def main():
         required=True,
         help="Operator attestation that inference bypassing the front on 20127 is absent or accounted for",
     )
+    recovery = subcommands.add_parser(
+        "rollback",
+        help="Restore one manifest-pinned retained package after a resumed cutover",
+    )
+    recovery.add_argument("--rollback-dir", required=True)
+    recovery.add_argument("--expected-current-sha", required=True)
+    recovery.add_argument("--restore-sha", required=True)
+    recovery.add_argument("--operator-auth-file", required=True)
+    recovery.add_argument(
+        "--direct-backend-traffic-accounted",
+        action="store_true",
+        required=True,
+        help="Operator attestation that inference bypassing the front on 20127 is absent or accounted for",
+    )
     smoke = subcommands.add_parser("smoke-inner", help=argparse.SUPPRESS)
     smoke.add_argument("--sha", required=True)
+    reopen = subcommands.add_parser("reopen-inner", help=argparse.SUPPRESS)
+    reopen.add_argument("--sha", required=True)
     args = parser.parse_args()
     if args.action == "stage":
         result = stage(args.sha, args.expected_old_sha)
@@ -980,12 +1310,24 @@ def main():
             args.operator_auth_file,
             direct_backend_traffic_accounted=args.direct_backend_traffic_accounted,
         )
+    elif args.action == "rollback":
+        result = rollback(
+            args.rollback_dir,
+            args.expected_current_sha,
+            args.restore_sha,
+            args.operator_auth_file,
+            direct_backend_traffic_accounted=args.direct_backend_traffic_accounted,
+        )
     else:
         require(
             Path("/package").is_dir() and Path("/data").is_dir(),
             "Internal smoke requires its sandbox",
         )
-        result = smoke_inner(validate_sha(args.sha))
+        if args.action == "reopen-inner":
+            require(Path("/data/data.sqlite").is_file(), "Internal reopen requires its database clone")
+            result = reopen_inner(validate_sha(args.sha))
+        else:
+            result = smoke_inner(validate_sha(args.sha))
     print(json.dumps(result))
 
 
