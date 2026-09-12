@@ -194,6 +194,56 @@ describe("Codex permanently invalid OAuth state (#3194)", () => {
 });
 
 describe("Claude organization OAuth rejection", () => {
+  it("persists quarantine and excludes only the rejected account from active selection", async () => {
+    const rejected = await connectionsRepo.createProviderConnection({
+      provider: "claude",
+      authType: "oauth",
+      accessToken: "rejected-test-token",
+      email: "rejected@example.test",
+    });
+    const healthy = await connectionsRepo.createProviderConnection({
+      provider: "claude",
+      authType: "oauth",
+      accessToken: "healthy-test-token",
+      email: "healthy@example.test",
+    });
+    const otherProviderBefore = await connectionsRepo.getProviderConnections({ provider: "codex" });
+    dbMocks.getProviderConnections.mockImplementationOnce(connectionsRepo.getProviderConnections);
+    dbMocks.updateProviderConnection.mockImplementationOnce(connectionsRepo.updateProviderConnection);
+
+    await markAccountUnavailable(
+      rejected.id,
+      403,
+      "[403]: OAuth authentication is currently not allowed for this organization.",
+      "claude",
+      "claude-opus-5",
+    );
+
+    const persisted = await connectionsRepo.getProviderConnectionById(rejected.id);
+    expect(persisted).toMatchObject({ isActive: false, testStatus: "reauth_required", errorCode: 403 });
+    const candidates = await connectionsRepo.getProviderConnections({ provider: "claude", isActive: true });
+    expect(candidates.map((connection) => connection.id)).toEqual([healthy.id]);
+    expect(await connectionsRepo.getProviderConnectionById(healthy.id)).toEqual(healthy);
+    expect(await connectionsRepo.getProviderConnections({ provider: "codex" })).toEqual(otherProviderBefore);
+  });
+
+  it.each([
+    ["claude", 401],
+    ["codex", 403],
+    ["other-provider", 403],
+  ])("does not quarantine the Claude marker for %s status %i", async (provider, status) => {
+    await markAccountUnavailable(
+      "other-account",
+      status,
+      "OAuth authentication is currently not allowed for this organization.",
+      provider,
+      "other-model",
+    );
+
+    expect(dbMocks.updateProviderConnection).toHaveBeenCalled();
+    expect(dbMocks.updateProviderConnection.mock.calls[0][1].isActive).toBeUndefined();
+  });
+
   it("quarantines the account-wide 403 instead of repeatedly dispatching it", async () => {
     const result = await markAccountUnavailable(
       "claude-a",
