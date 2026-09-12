@@ -88,10 +88,10 @@ async function pick(label) {
 // a person (tests/unit/account-state-taxonomy.test.js).
 it('keeps unknown health separate from recorded unhealthy accounts', async () => {
   await render();
-  await pick('auto-paused');
+  await pick('cooldown');
   expect(board().textContent).toContain('Research');
   expect(board().textContent).not.toContain('Personal');
-  await pick('auto-paused');
+  await pick('cooldown');
   await pick('unknown');
   expect(board().textContent).toContain('Personal');
   expect(board().textContent).not.toContain('Research');
@@ -110,10 +110,10 @@ it('does not present disabled or unqualified accounts as observed unhealthy', as
     isActive: false,
   });
   await render();
-  await pick('needs you');
+  await pick('unknown');
   expect(board().textContent).not.toContain('Never validated');
-  await pick('needs you');
-  await pick('paused by you');
+  await pick('unknown');
+  await pick('paused');
   expect(board().textContent).toContain('Never validated');
 });
 

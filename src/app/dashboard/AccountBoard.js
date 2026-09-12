@@ -903,7 +903,7 @@ export function AccountBoard({
             ? 'Reading accounts\u2026'
             : advanced
               ? 'Edits save on Enter or blur'
-              : 'Advanced view adds priority, drain and auto-pause'}
+              : 'Priority, drain and auto-pause controls are available'}
         </Text>
       </div>
       <div className={styles.toolbar}>

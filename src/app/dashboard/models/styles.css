@@ -154,9 +154,13 @@
   align-items: start;
 }
 
-/* Keep all seven tracks within the board at its row-layout breakpoint. */
+/* Keep all six tracks within the board at its row-layout breakpoint. */
 @container board (min-width: 901px) {
-  [data-catalog-columns] {
-    grid-template-columns: 24px 20px minmax(160px, 1.7fr) 80px minmax(160px, 1.5fr) minmax(80px, 0.5fr) 142px;
+  [data-models-catalog][data-advanced][data-compare='none'] [data-catalog-columns] {
+    /* This board declares compare="none", so its rows have six children. The
+       former 20 px comparison track shifted every cell and left Actions in an
+       80 px track while an unused 142 px track sat at the end. The action
+       controls then overflowed that smaller track by roughly their own width. */
+    grid-template-columns: 24px minmax(160px, 1.7fr) 80px minmax(160px, 1.5fr) minmax(80px, 0.5fr) 142px;
   }
 }
