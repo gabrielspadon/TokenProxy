@@ -26,8 +26,8 @@
      id costs one line on the longest rows and reaches keyboard and touch users
      with no new tab stop. Scoped to the catalog board so the plans board and
      every other board keep the shared single-line geometry. */
-  [data-models-catalog] .identityText > .models-id,
-  [data-models-catalog] .identityText > small.models-id {
+  [data-models-catalog] small.models-id,
+  [data-models-catalog] .models-id {
     overflow-wrap: anywhere;
     white-space: normal;
     overflow: visible;
@@ -43,20 +43,11 @@
   /* Rows are no longer uniform height once an id wraps, so the row's own
      content decides it and the cells align to their tops rather than floating
      on a centre line. */
-  [data-models-catalog] .main {
-    align-items: start;
-    padding-block: 6px;
-  }
   /* The shared advanced row gives the identity column minmax(180px, 1fr) and
      the alias column minmax(170px, 0.9fr), so an empty alias input held nearly
      as much width as the identifier it sat beside. Rebalancing hands that width
      to the identifier, which shortens how often a wrap is needed at all. Track
      count and order are unchanged, so the header still lines up with its cells. */
-  [data-models-catalog] .head,
-  [data-models-catalog] .main {
-    grid-template-columns: 24px 20px minmax(260px, 1.6fr) 100px minmax(300px, 1.7fr) minmax(120px, 0.5fr) 142px;
-  }
-
   /* The alias input held a wide track for a value that is usually empty and is
      always short. Narrowing it returns that width to the identifier column. */
   [data-models-catalog] .models-alias {
@@ -177,5 +168,45 @@
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
     gap: 10px;
     align-items: end;
+  }
+}
+
+
+/* board.module.css hashes its class names, so the grid and row rules cannot be
+   reached by their source names, and @layer components would lose to unlayered
+   module rules anyway. These selectors key off markup this page owns and sit
+   outside the layer so they actually apply. Scoped to the catalog board: the
+   plans board keeps the shared geometry. */
+[data-models-catalog] [class*='identityText'] {
+  min-width: 0;
+}
+[data-models-catalog] [class*='identityText'] > small.models-id {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+[data-models-catalog] [class*='identityText'] > .models-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+/* An id that wraps makes rows unequal, so cells align to their tops. */
+[data-models-catalog] [class*='main'] {
+  align-items: start;
+}
+/* The shared advanced row gave the alias column nearly as much width as the
+   identifier beside it, for a value that is usually empty and always short.
+   Same track count and order, so the header still lines up with its cells. */
+[data-models-catalog] [class*='head'],
+[data-models-catalog] [class*='main'] {
+  grid-template-columns: 24px 20px minmax(260px, 1.7fr) 100px minmax(280px, 1.5fr) minmax(120px, 0.5fr) 142px;
+}
+@media (max-width: 760px) {
+  [data-models-catalog] [class*='head'],
+  [data-models-catalog] [class*='main'] {
+    grid-template-columns: none;
   }
 }
