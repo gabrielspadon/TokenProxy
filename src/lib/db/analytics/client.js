@@ -46,6 +46,7 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
       queueDurationMs: Math.max(0, (job.startedAt ?? monotonic()) - job.enqueuedAt),
       executionDurationMs: Math.max(0, monotonic() - (job.startedAt ?? job.enqueuedAt)),
       serviceDeadlineMs: timeoutMs,
+      delivery: 'computed',
     };
     if (!error && job.subscribers.size && job.epoch === cacheEpoch && job.version !== null && job.version === version()) {
       const bytes = Buffer.byteLength(JSON.stringify(result));
@@ -109,7 +110,11 @@ export function createContextAnalyticsClient({ file, driver, timeoutMs = QUERY_T
     const key = JSON.stringify([scope, canonical(query), dataVersion, cacheEpoch]);
     const cached = cache.get(key);
     for (const [id, entry] of cache) if (now() - entry.at >= cacheTtlMs) dropCache(id);
-    if (cached && now() - cached.at < cacheTtlMs) return Promise.resolve(structuredClone(cached.result));
+    if (cached && now() - cached.at < cacheTtlMs) {
+      const result=structuredClone(cached.result);
+      result.freshness={...result.freshness,delivery:'cache-hit',cacheAgeMs:Math.max(0,now()-cached.at)};
+      return Promise.resolve(result);
+    }
     let job = jobs.get(key);
     if (!job && (queue.length >= maxQueued || queue.filter(item => item.scope === scope).length >= Math.max(1, Math.ceil(maxQueued / 2)))) return Promise.reject(unavailable());
     if (job?.subscribers.size >= MAX_SUBSCRIBERS) return Promise.reject(unavailable());

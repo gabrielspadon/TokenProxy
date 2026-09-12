@@ -65,6 +65,7 @@ it('worker reuse includes canonical filters, authorization, exact page and chang
   const q={operation:'activity',filter:{page:1,from:'2026-09-08',provider:'mock'}};
   const first=client.run(q,{authorizedScope:'admin'});worker.respond();await first;
   const same=await client.run({filter:{provider:'mock',from:'2026-09-08',page:1},operation:'activity'},{authorizedScope:'admin'});
+  expect(same.freshness.delivery).toBe('cache-hit');
   same.items.push('mutated');expect((await client.run(q,{authorizedScope:'admin'})).items).toEqual([0]);expect(worker.messages).toHaveLength(1);
   for(const [scope,page,v] of [['other',1,'v1'],['admin',2,'v1'],['admin',1,'v2']]){version=v;const next=client.run({...q,filter:{...q.filter,page}},{authorizedScope:scope});worker.respond(worker.messages.length-1);await next;}
   expect(worker.messages).toHaveLength(4);client.invalidate();expect(client.status().cached).toBe(0);await client.close();
