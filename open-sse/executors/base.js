@@ -362,7 +362,8 @@ export class BaseExecutor {
         // 429 proof. A second inspection can cross the deadline differently
         // and retry while the first attempt still holds uncertain exposure.
         const replaySafe = await canReplay(response);
-        await notifyDispatchResponse(afterDispatch, response, replaySafe ? "verified-provider-nonacceptance" : undefined);
+        await notifyDispatchResponse(afterDispatch, response,
+          response.status === 429 && replaySafe ? "verified-provider-nonacceptance" : undefined);
         deadline.clear();
         if (signal?.aborted) { cancelBody(response); signal.throwIfAborted(); }
         const ct = response.headers?.get?.("content-type") || "";
