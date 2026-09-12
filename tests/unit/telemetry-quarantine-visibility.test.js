@@ -1,4 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
+import { rmSync } from "node:fs";
+import initSqlJs from "sql.js";
 import { describe, expect, it } from "vitest";
 import { telemetryFilterSql } from "../../src/lib/db/analytics/telemetryFilter.mjs";
 
@@ -86,7 +88,8 @@ describe("telemetry quarantine visibility", () => {
   });
 
   it("tracks quarantine insert, update and delete, and a reopened connection", () => {
-    const path = `${process.env.DATA_DIR ?? "/tmp"}/quarantine-visibility-${process.pid}.sqlite`;
+    // Unique per process and per run so a future parallel runner cannot collide.
+    const path = `${process.env.DATA_DIR ?? "/tmp"}/quarantine-visibility-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
     const create = () => {
       const db = new DatabaseSync(path);
       db.exec(`CREATE TABLE IF NOT EXISTS usageHistory(id INTEGER PRIMARY KEY,dataOrigin TEXT,sourceUsageId INTEGER);
@@ -113,8 +116,69 @@ describe("telemetry quarantine visibility", () => {
       expect(visibleUsage(db)).toEqual([1, 2, 3]);
     } finally {
       db.close();
-      require("node:fs").rmSync(path, { force: true });
+      rmSync(path, { force: true });
     }
+  });
+
+  it("keeps leading-zero text ids distinct from their numeric lookalike", () => {
+    const db = fixture();
+    // rowId is TEXT. Quarantining the exact string "07" must not hide row 7,
+    // and CAST(7 AS TEXT) is "7", never "07". A numeric comparison anywhere in
+    // this predicate would collapse the two and hide the wrong row.
+    db.exec(`INSERT INTO telemetryQuarantineReceipts VALUES('r','active');
+      INSERT INTO telemetryQuarantineRows VALUES('r','usageHistory','07');
+      INSERT INTO usageHistory VALUES(7,NULL,NULL);
+      INSERT INTO requestStats VALUES('07',NULL,NULL),('7',NULL,NULL);`);
+    expect(visibleUsage(db)).toEqual([7]);
+
+    // Same string on the requestStats side hides "07" and leaves "7" visible.
+    db.exec("INSERT INTO telemetryQuarantineRows VALUES('r','requestStats','07')");
+    expect(visibleRequests(db)).toEqual(['7']);
+    db.close();
+  });
+
+  it("keeps a requestStats row with a NULL id visible", () => {
+    const db = new DatabaseSync(":memory:");
+    // requestStats.id is nullable in this arm, and CAST(NULL AS TEXT) is NULL,
+    // so a NOT IN comparison would be unknown and drop the row. The id IS NULL
+    // arm is what reproduces the old NOT EXISTS answer of visible.
+    db.exec(`CREATE TABLE usageHistory(id INTEGER PRIMARY KEY,dataOrigin TEXT,sourceUsageId INTEGER);
+      CREATE TABLE requestStats(id TEXT,dataOrigin TEXT,sourceUsageId INTEGER);
+      CREATE TABLE telemetryQuarantineReceipts(id TEXT PRIMARY KEY,state TEXT NOT NULL);
+      CREATE TABLE telemetryQuarantineRows(receiptId TEXT NOT NULL,sourceTable TEXT NOT NULL,rowId TEXT NOT NULL,PRIMARY KEY(receiptId,sourceTable,rowId));
+      INSERT INTO telemetryQuarantineReceipts VALUES('r','active');
+      INSERT INTO telemetryQuarantineRows VALUES('r','requestStats','rs-1');
+      INSERT INTO requestStats VALUES(NULL,NULL,NULL),('rs-1',NULL,NULL),('rs-2',NULL,NULL);`);
+    const rows = db.prepare(`SELECT id FROM requestStats WHERE ${telemetryFilterSql("requestStats", "requestStats")}`).all().map((r) => r.id);
+    expect(rows).toEqual([null, "rs-2"]);
+    db.close();
+  });
+
+  it("executes the optimized predicate on SQL.js, not only node:sqlite", async () => {
+    // Version support is not execution proof. SQL.js is the pure-WASM fallback
+    // in the driver chain, so the same predicate text runs here for real.
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run(`CREATE TABLE usageHistory(id INTEGER PRIMARY KEY,dataOrigin TEXT,sourceUsageId INTEGER);
+      CREATE TABLE requestStats(id TEXT PRIMARY KEY,dataOrigin TEXT,sourceUsageId INTEGER);
+      CREATE TABLE telemetryQuarantineReceipts(id TEXT PRIMARY KEY,state TEXT NOT NULL);
+      CREATE TABLE telemetryQuarantineRows(receiptId TEXT NOT NULL,sourceTable TEXT NOT NULL,rowId TEXT NOT NULL,PRIMARY KEY(receiptId,sourceTable,rowId));
+      INSERT INTO telemetryQuarantineReceipts VALUES('r-a','active'),('r-b','reverted');
+      INSERT INTO telemetryQuarantineRows VALUES('r-a','usageHistory','1'),('r-b','usageHistory','2'),('r-a','usageHistory','07');
+      INSERT INTO usageHistory VALUES(1,NULL,NULL),(2,NULL,NULL),(3,'test',NULL),(4,'import',NULL),(7,NULL,NULL);
+      INSERT INTO requestStats VALUES('rs-from-1',NULL,1),('rs-from-2',NULL,2);`);
+    const ids = (sql) => { const r = db.exec(sql); return r.length ? r[0].values.map((v) => v[0]) : []; };
+
+    // Active receipt hides 1, reverted leaves 2, test origin hidden, import
+    // visible, and "07" does not hide numeric 7.
+    expect(ids(`SELECT id FROM usageHistory WHERE ${telemetryFilterSql("usageHistory", "usageHistory")} ORDER BY id`)).toEqual([2, 4, 7]);
+    // Backfill arm: the request sourced from quarantined usage row 1 is hidden.
+    expect(ids(`SELECT id FROM requestStats WHERE ${telemetryFilterSql("requestStats", "requestStats")} ORDER BY id`)).toEqual(["rs-from-2"]);
+    // The plan carries no per-row correlated subquery on this engine either.
+    const plan = db.exec(`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM usageHistory WHERE ${telemetryFilterSql("usageHistory", "usageHistory")}`);
+    const steps = plan[0].values.map((row) => String(row[row.length - 1]));
+    expect(steps.some((step) => /CORRELATED SCALAR SUBQUERY/.test(step))).toBe(false);
+    db.close();
   });
 
   it("builds the membership set once instead of once per population row", () => {
@@ -125,7 +189,12 @@ describe("telemetry quarantine visibility", () => {
     const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) FROM usageHistory WHERE ${telemetryFilterSql("usageHistory", "usageHistory")}`).all().map((r) => r.detail);
     expect(plan.some((step) => /CORRELATED SCALAR SUBQUERY/.test(step))).toBe(false);
     expect(plan.some((step) => /LIST SUBQUERY/.test(step))).toBe(true);
+    // Connect the plan to semantics: all 500 rows exist, exactly one is
+    // quarantined, so the predicate must return 499. A set-build that silently
+    // matched nothing would still produce the LIST SUBQUERY plan above.
     expect(db.prepare("SELECT COUNT(*) AS n FROM usageHistory").get().n).toBe(500);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM usageHistory WHERE ${telemetryFilterSql("usageHistory", "usageHistory")}`).get().n).toBe(499);
+    expect(visibleUsage(db)).not.toContain(1);
     db.close();
   });
 });
