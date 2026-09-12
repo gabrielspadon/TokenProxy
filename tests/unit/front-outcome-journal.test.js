@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getAdapter } from '../../src/lib/db/driver.js';
-import { ingestFrontOutcomeJournal, startFrontOutcomeJournalIngestion, stopFrontOutcomeJournalIngestion } from '../../src/lib/db/repos/frontOutcomeJournalRepo.js';
+import { ingestFrontOutcomeJournal, readFrontObservationJournal, startFrontOutcomeJournalIngestion, stopFrontOutcomeJournalIngestion } from '../../src/lib/db/repos/frontOutcomeJournalRepo.js';
 import { canStartFrontOutcomeJournal } from '../../src/instrumentation.js';
 
 const CLOCK = '11111111-1111-4111-8111-111111111111';
@@ -56,6 +56,18 @@ function terminal({ clockDomain = CLOCK, state = 'succeeded', total = 20 } = {})
     queueDurationMs: 2, preheadersDurationMs: 7, streamDurationMs: 11, endToEndDurationMs: total,
     dataOrigin: 'production', originReceiptId: null };
 }
+
+it('validates signed dispatch booleans strictly while preserving legacy absence',()=>{
+  for(const value of [true,false,undefined]) {
+    const event=terminal();if(value!==undefined)event.backendDispatched=value;
+    const directory=journal([event]);
+    expect(readFrontObservationJournal({directory,keyringPath:keyringPath(directory)}).segments[0].events[0].backendDispatched).toBe(value);
+  }
+  for(const value of [null,0,1,'false']) {
+    const directory=journal([{...terminal(),backendDispatched:value}]);
+    expect(()=>readFrontObservationJournal({directory,keyringPath:keyringPath(directory)})).toThrow('backend dispatch evidence');
+  }
+});
 
 function segment(directory) {
   return path.join(directory, `private-${CLOCK}-00000000.jsonl`);

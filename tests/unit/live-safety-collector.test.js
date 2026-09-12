@@ -51,6 +51,19 @@ it('retains missing, ambiguous and unknown attempt proof as unresolved and rejec
   expect(replay([{...row(1),replayDisposition:null},row(2)]).unresolvedAttempts.length).toBeGreaterThan(0);
   expect(()=>replay([row(1),row(1)])).toThrow('duplicate');
 });
+it('counts only signed non-dispatched cancellation or queue refusal as proven no attempt',()=>{
+  const request={logicalRequestId:null,start:{firstObservedAt:START},terminal:{terminalReason:'caller-cancelled',backendDispatched:false}};
+  const input={requests:[request],end:{attempts:[],captureEndedAt:END}};
+  expect(deriveReplayAudit(input)).toMatchObject({logicalRequests:1,physicalAttempts:0,provedNoDispatch:1,unresolvedAttempts:[]});
+  delete request.terminal.backendDispatched;
+  expect(deriveReplayAudit(input).unresolvedAttempts).toHaveLength(1);
+  request.terminal.backendDispatched=true;
+  expect(deriveReplayAudit(input).unresolvedAttempts).toHaveLength(1);
+  request.terminal={terminalReason:'backend-unavailable',backendDispatched:true};
+  expect(deriveReplayAudit(input).unresolvedAttempts).toHaveLength(1);
+  request.terminal={terminalReason:'caller-cancelled',backendDispatched:false};request.logicalRequestId='logical';input.end.attempts=[row(1)];
+  expect(deriveReplayAudit(input).unresolvedAttempts).toContainEqual({logicalRequestId:'logical',reason:'front-backend-dispatch-disagreement'});
+});
 it('matches monotonic front eviction counters to signed terminal evidence including older ingress',()=>{
   const begin={status:{terminal_counts:{'queue-timeout':2}}},end={active:{clockDomain:'clock'},status:{terminal_counts:{'queue-timeout':2},terminal_window_started_at:START}};
   const input={begin,end,before:[],after:[]};

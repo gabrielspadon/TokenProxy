@@ -93,6 +93,7 @@ function validateEvent(record, label, keyring) {
   if (record.kind === 'process-start') return { type: 'process-start', record };
   if (record.observationVersion !== undefined && (record.observationVersion !== 1 || !REQUEST_CLASSES.has(record.requestClass)
     || (record.kind === 'terminal' && !TERMINAL_REASONS.has(record.terminalReason)))) fail(`${label} observation extension`);
+  if (record.backendDispatched !== undefined && (record.kind !== 'terminal' || typeof record.backendDispatched !== 'boolean')) fail(`${label} backend dispatch evidence`);
   assertId(record.frontIngressId, `${label} frontIngressId`);
   if (record.kind === 'start') {
     assertId(record.logicalRequestId, `${label} logicalRequestId`, true);

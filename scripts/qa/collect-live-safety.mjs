@@ -28,7 +28,7 @@ export function candidateFrontSources(root,sha) {
 
 export function deriveReplayAudit({requests,end}) {
   const attempts=new Map(), ids=new Set(), unresolvedAttempts=[], unsafeReplays=[];
-  let physicalAttempts=0;
+  let physicalAttempts=0,provedNoDispatch=0;
   for(const row of end.attempts) {
     if(ids.has(row.id)) fail('duplicate backend attempt'); ids.add(row.id);
     const list=attempts.get(row.logicalRequestId)||[];list.push(row);attempts.set(row.logicalRequestId,list);
@@ -36,10 +36,12 @@ export function deriveReplayAudit({requests,end}) {
   for(const request of requests) {
     const rows=(attempts.get(request.logicalRequestId)||[]).sort((a,b)=>a.attempt-b.attempt);
     if(!rows.length) {
-      if(!['admission-timeout','backend-unavailable'].includes(request.terminal?.terminalReason))
+      if(request.terminal?.backendDispatched===false && ['admission-timeout','caller-cancelled'].includes(request.terminal?.terminalReason)) provedNoDispatch++;
+      else
         unresolvedAttempts.push({logicalRequestId:request.logicalRequestId,reason:'missing-attempts'});
       continue;
     }
+    if(request.terminal?.backendDispatched===false) unresolvedAttempts.push({logicalRequestId:request.logicalRequestId,reason:'front-backend-dispatch-disagreement'});
     let previous;
     for(const [index,row] of rows.entries()) {
       if(row.attempt!==index+1 || row.contextTelemetryError) unresolvedAttempts.push({id:row.id,reason:'ambiguous-attempt-order'});
@@ -60,7 +62,7 @@ export function deriveReplayAudit({requests,end}) {
       previous=row;
     }
   }
-  return {logicalRequests:requests.length,physicalAttempts,unsafeReplays,unresolvedAttempts,
+  return {logicalRequests:requests.length,physicalAttempts,provedNoDispatch,unsafeReplays,unresolvedAttempts,
     countScope:'physical-dispatch-intents',unobservable:[]};
 }
 
