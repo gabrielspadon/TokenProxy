@@ -132,7 +132,7 @@ export async function containerMain(argv = process.argv.slice(2)) {
     if (seededSchemaVersion > schemaVersion || seededLayoutVersion > layoutVersion) fail("fixture schema is newer than the image");
     const dataDir = realpathSync(join(runRoot, "data"));
     const containerEnv = privateEnvironment(runRoot, { DATA_DIR: "/app/data", HOME: "/tmp/qa-home", TMPDIR: "/tmp", PORT: "20128", HOSTNAME: "0.0.0.0" });
-    const permittedEnv = ["DATA_DIR", "HOME", "TMPDIR", "PORT", "HOSTNAME", "NODE_ENV", "NEXT_TELEMETRY_DISABLED", "TOKENPROXY_NO_UPDATE", "MODEL_CATALOG_SYNC", "MODEL_CAPABILITY_OVERRIDES", "JWT_SECRET", "API_KEY_SECRET", "MACHINE_ID_SALT", "DB_ENCRYPTION_KEY", "INITIAL_PASSWORD"];
+    const permittedEnv = ["DATA_DIR", "HOME", "TMPDIR", "PORT", "HOSTNAME", "NODE_ENV", "NEXT_TELEMETRY_DISABLED", "TOKENPROXY_NO_UPDATE", "TOKENPROXY_TELEMETRY_ORIGIN", "MODEL_CATALOG_SYNC", "MODEL_CAPABILITY_OVERRIDES", "JWT_SECRET", "API_KEY_SECRET", "MACHINE_ID_SALT", "DB_ENCRYPTION_KEY", "INITIAL_PASSWORD"];
     const envFile = join(runRoot, "container.env");
     writeFileSync(envFile, `${permittedEnv.map((key) => `${key}=${containerEnv[key]}`).join("\n")}\n`, { mode: 0o600 });
     const gatewayId = await docker(["container", "create", "--name", `tp-qa-gateway-${owner}`, "--label", `${LABEL}=${owner}`, "--network", networkId, "--publish", "127.0.0.1::20128", "--mount", `type=bind,src=${dataDir},dst=/app/data`, "--env-file", envFile, imageId]);
