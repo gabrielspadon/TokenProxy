@@ -161,7 +161,7 @@ export const STAGES = {
   },
   tools: {
     async run(body, ctx) {
-      if (!Array.isArray(body.tools) || body.tools.length === 0) return;
+      if (!Array.isArray(body.tools) || body.tools.length === 0) return { outcome: 'skipped', reason: 'no-tools' };
       const { tools } = dedupeTools(body.tools, { clientTool: undefined, model: body.model });
       body.tools = tools;
       const td = ctx.settings.toolDisclosure;
@@ -170,13 +170,15 @@ export const STAGES = {
         const { tools: disclosed, stats } = disclosureTools(body.tools, body, ctx.connectionId, td);
         if (stats) body.tools = disclosed;
       }
+      return null;
     },
   },
   schema: {
     async run(body) {
-      if (!Array.isArray(body.tools)) return;
+      if (!Array.isArray(body.tools)) return { outcome: 'skipped', reason: 'no-tools' };
       const d = distillToolSchemas(body.tools, { allowLossy: false });
       if (d.savedBytes > 0) body.tools = d.tools;
+      return d.savedBytes > 0 ? { outcome: 'applied' } : { outcome: 'skipped', reason: 'no-safe-savings' };
     },
   },
   thinking: {
@@ -186,7 +188,9 @@ export const STAGES = {
         body.messages = res.messages;
         for (const n of res.notes) if (typeof n?.turn === "number") ctx.prefixTurnIndices.push(n.turn);
         ctx.note({ kind: "thinking", text: `stripped ${res.stripped} reasoning block(s)` });
+        return { outcome: 'applied' };
       }
+      return { outcome: 'skipped', reason: 'no-eligible-thinking' };
     },
   },
   qac: {
@@ -194,13 +198,15 @@ export const STAGES = {
       const memo = memoFor(QAC_MEMO, ctx.connectionId, () => new Set());
       const scoreNew = pressureOf(body, ctx).over && (!ctx.order.includes("mem") || ctx.memStats?.budget?.overAfter === true);
       const query = lastUserQuery(body.messages);
-      if (!query.trim() && !memo.size) return;
+      if (!query.trim() && !memo.size) return { outcome: 'skipped', reason: 'no-query-or-memo' };
       const res = compressPrefixByQuery(body.messages, { query, keepRecentTurns: 2, memo, scoreNew });
       if (res.compressed > 0) {
         body.messages = res.messages;
         if (res.added > 0) ctx.prefixRewritten = true;
         ctx.note({ kind: "qac", text: `compressed ${res.compressed} low-relevance turn(s)` });
+        return { outcome: 'applied' };
       }
+      return { outcome: 'skipped', reason: 'no-low-relevance-turns' };
     },
   },
   reorder: {
@@ -208,7 +214,7 @@ export const STAGES = {
       const memo = memoFor(REORDER_MEMO, ctx.connectionId, () => ({ order: [] }));
       const recompute = ctx.prefixRewritten;
       const query = lastUserQuery(body.messages);
-      if (!((recompute && query.trim()) || (!recompute && memo.order.length > 0))) return;
+      if (!((recompute && query.trim()) || (!recompute && memo.order.length > 0))) return { outcome: 'skipped', reason: 'stable-prefix-order' };
       const res = await withMockFetch(() => reorderByRelevance(body.messages, {
         query, embedUrl: "http://mock/v1/embeddings", embedModel: "mock", keepRecentTurns: 2, memo, recompute,
       }));
@@ -216,13 +222,16 @@ export const STAGES = {
       if (res.moved > 0) {
         body.messages = res.messages;
         if (!res.replayed) ctx.note({ kind: "reorder", text: `reordered ${res.moved} pair(s) by relevance` });
+        return { outcome: 'applied' };
       }
+      return { outcome: res.error ? 'failed' : 'skipped', reason: res.error ? 'embedding-error' : 'already-relevant-order' };
     },
   },
   rtk: {
     async run(body) {
       body.messages = structuredClone(body.messages);
-      compressMessages(body, true, { allowLossy: false });
+      const result = compressMessages(body, true, { allowLossy: false });
+      return result?.hits?.length > 0 ? { outcome: 'applied' } : { outcome: 'skipped', reason: 'no-safe-filter-match' };
     },
   },
   privacy: {
@@ -262,15 +271,20 @@ export const STAGES = {
           enabled: true, url: "http://offline.invalid", model: "offline", format: "claude",
           contextPressure: pressureOf(body, ctx), allowLossy: false,
         });
-        if (ctx.headroomStats) ctx.prefixRewritten = true;
+        if (ctx.headroomStats) {
+          ctx.prefixRewritten = true;
+          return { outcome: 'applied' };
+        }
+        return { outcome: 'skipped', reason: 'wrapper-not-applied' };
       } finally { globalThis.fetch = realFetch; }
     },
   },
   inject: {
     async run(body, ctx) {
       body.system = structuredClone(body.system);
-      injectCaveman(body, "claude", ctx.settings.cavemanLevel || "full");
-      injectPonytail(body, "claude", ctx.settings.ponytailLevel || "full");
+      const caveman = injectCaveman(body, "claude", ctx.settings.cavemanLevel || "full");
+      const ponytail = injectPonytail(body, "claude", ctx.settings.ponytailLevel || "full");
+      return caveman || ponytail ? { outcome: 'applied' } : { outcome: 'skipped', reason: 'already-present' };
     },
   },
   mem: {
@@ -286,19 +300,22 @@ export const STAGES = {
   pairs: {
     async run(body, ctx) {
       const p = pressureOf(body, ctx);
-      if (p.deficitChars <= 0 || !(!ctx.order.includes("mem") || ctx.memStats?.budget?.overAfter === true)) return;
+      if (p.deficitChars <= 0) return { outcome: 'skipped', reason: 'within-context-budget' };
+      if (!(!ctx.order.includes("mem") || ctx.memStats?.budget?.overAfter === true)) return { outcome: 'skipped', reason: 'memory-stage-relieved-pressure' };
       const chunk = Math.max(1, Math.ceil((p.budget - p.target) * 3.8));
       const res = dropOldestPairs(body.messages, { deficitChars: Math.ceil(p.deficitChars / chunk) * chunk, keepRecentTurns: 6 });
       if (res.droppedPairs > 0) {
         body.messages = res.messages;
         ctx.prefixRewritten = true;
         ctx.note({ kind: "pairs", text: `dropped ${res.droppedPairs} pair(s) (~${res.savedChars} chars)` });
+        return { outcome: 'applied' };
       }
+      return { outcome: 'skipped', reason: 'no-eligible-pairs' };
     },
   },
   midinject: {
     async run(body, ctx) {
-      if (ctx.prefixNotes.length === 0) return;
+      if (ctx.prefixNotes.length === 0) return { outcome: 'skipped', reason: 'no-prefix-notes' };
       const noteText = composeBoundaryNote(ctx.prefixNotes);
       let insertIndex = -1;
       for (let i = body.messages.length - 1; i >= 0; i--) {
@@ -306,6 +323,7 @@ export const STAGES = {
       }
       const res = injectBoundaryNote(body.messages, insertIndex, noteText);
       if (res.injected) body.messages = res.messages;
+      return res.injected ? { outcome: 'applied' } : { outcome: 'skipped', reason: 'no-valid-boundary' };
     },
   },
 };
@@ -340,9 +358,17 @@ export async function runPipeline(entryBody, order, ctx) {
   for (const name of order) {
     const stage = STAGES[name];
     if (!stage) throw new Error(`unknown stage ${name}`);
-    await stage.run(body, ctx);
+    const receipt = await stage.run(body, ctx);
     const at = bytes(body);
-    ledger.push({ stage: name, beforeBytes: prev, afterBytes: at, deltaBytes: at - prev, outcome: at === prev ? 'unchanged' : 'applied' });
+    const observedOutcome = at === prev ? 'unchanged' : 'applied';
+    ledger.push({
+      stage: name,
+      beforeBytes: prev,
+      afterBytes: at,
+      deltaBytes: at - prev,
+      outcome: receipt?.outcome || observedOutcome,
+      ...(receipt?.reason ? { reason: receipt.reason } : {}),
+    });
     if (at !== prev) deltas[name] = at - prev;
     prev = at;
   }
