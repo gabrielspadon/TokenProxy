@@ -108,10 +108,15 @@ describe("refreshAccessToken — legacy generic path (no profile)", () => {
   afterEach(() => { global.fetch = originalFetch; });
 
   it("still works for an unprofiled provider via config.refreshUrl/clientId/clientSecret", async () => {
+    const { PROVIDERS } = await import("open-sse/providers/index.js");
+    const unprofiled = Object.entries(PROVIDERS)
+      .find(([, p]) => p?.refreshUrl && p?.clientId)?.[0];
+    expect(unprofiled, "no provider carries refreshUrl + clientId").toBeTruthy();
+
     const fm = mockFetchOnce({ access_token: "gen-acc", expires_in: 3600 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
 
-    await refreshAccessToken("cline", "gen-old", {}, console);
+    await refreshAccessToken(unprofiled, "gen-old", {}, console);
 
     const body = new URLSearchParams(fm.mock.calls[0][1].body);
     expect(body.get("grant_type")).toBe("refresh_token");

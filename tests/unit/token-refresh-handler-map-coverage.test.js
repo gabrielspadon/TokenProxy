@@ -54,8 +54,6 @@ const HANDLER_KEYS = [
   'xai',
   'grok-cli',
   'gcli',
-  'cline',
-  'clinepass',
   'codebuddy-cn',
   'codebuddy-intl',
   'trae',

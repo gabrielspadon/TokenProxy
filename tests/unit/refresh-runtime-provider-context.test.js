@@ -1,7 +1,7 @@
 import {beforeEach,it,expect,vi} from 'vitest';
 vi.mock('open-sse/utils/proxyFetch.js',()=>({proxyAwareFetch:vi.fn()}));
 import {proxyAwareFetch} from 'open-sse/utils/proxyFetch.js';
-import {refreshAccessToken,refreshClineToken,refreshKiroToken} from 'open-sse/services/tokenRefresh/providers.js';
+import {refreshAccessToken,refreshKiroToken} from 'open-sse/services/tokenRefresh/providers.js';
 import {refreshProviderCredentials} from 'open-sse/services/oauthCredentialManager.js';
 let n=0;const fresh=()=>`context-${++n}`;
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
@@ -14,10 +14,11 @@ it('refuses a generic direct refresh under a changed proxy without a second rede
  await expect(refreshAccessToken('claude',token,{providerSpecificData:{connectionProxyEnabled:true,connectionProxyUrl:'http://proxy-b.invalid'}},null)).rejects.toMatchObject({code:'REFRESH_CONTEXT_CONFLICT'});
  d.resolve(response());await a;expect(proxyAwareFetch).toHaveBeenCalledTimes(1);
 });
-it('coalesces Cline direct calls and refuses a conflicting transport',async()=>{
- const token=fresh(),d=deferred(),proxy={connectionProxyEnabled:true,connectionProxyUrl:'http://proxy.invalid'};proxyAwareFetch.mockReturnValue(d.promise);
- const a=refreshClineToken(token,proxy),b=refreshClineToken(token,{...proxy});await flush();
- await expect(refreshClineToken(token,{...proxy,strictProxy:true})).rejects.toMatchObject({code:'REFRESH_CONTEXT_CONFLICT'});
+it('coalesces direct calls on one transport and refuses a conflicting one',async()=>{
+ const token=fresh(),d=deferred(),psd={authMethod:'social',region:'us-east-1',profileArn:'known'};
+ const proxy={connectionProxyEnabled:true,connectionProxyUrl:'http://proxy.invalid'};proxyAwareFetch.mockReturnValue(d.promise);
+ const a=refreshKiroToken(token,psd,null,proxy),b=refreshKiroToken(token,psd,null,{...proxy});await flush();
+ await expect(refreshKiroToken(token,psd,null,{...proxy,strictProxy:true})).rejects.toMatchObject({code:'REFRESH_CONTEXT_CONFLICT'});
  d.resolve(response());expect(await a).toEqual(await b);expect(proxyAwareFetch).toHaveBeenCalledTimes(1);
 });
 it('does not reuse Kiro credentials under different client registration metadata',async()=>{

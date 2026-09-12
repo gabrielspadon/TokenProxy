@@ -1,5 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
+// Resolved lazily INSIDE the test: a top-level import of the registry pulls in
+// the real proxyFetch before vi.mock hoists, which silently unmocks the module
+// this file depends on. The subject is the generic PATH, not any one provider.
+async function genericProvider() {
+  const { PROVIDERS } = await import('../../open-sse/providers/index.js');
+  const id = Object.entries(PROVIDERS).find(([, p]) => p?.refreshUrl && p?.clientId)?.[0];
+  if (!id) throw new Error('no provider carries refreshUrl + clientId');
+  return id;
+}
+
 // Issue #2703. A connection pinned to a proxy must stay pinned for its token
 // refreshes. Refreshing over the host's own egress tells the provider the real
 // address of a router the user deliberately put behind a proxy, and no amount
@@ -47,7 +57,7 @@ describe("token refresh honours the connection proxy (#2703)", () => {
 
     // A provider whose oauth block carries a token endpoint, so the generic
     // path actually reaches the network rather than returning early.
-    await mod.refreshAccessToken("cline", "rt-with-proxy", credentials, null);
+    await mod.refreshAccessToken(await genericProvider(), "rt-with-proxy", credentials, null);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].proxyOptions).toMatchObject({
@@ -58,7 +68,7 @@ describe("token refresh honours the connection proxy (#2703)", () => {
   });
 
   it("passes null options when the connection carries no provider data", async () => {
-    await mod.refreshAccessToken("cline", "rt-no-data", {}, null);
+    await mod.refreshAccessToken(await genericProvider(), "rt-no-data", {}, null);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].proxyOptions).toBeNull();

@@ -12,7 +12,6 @@ const BRANDS = {
   'oai-cc': ['oai-cc', 'Codex', 'openai'],
   gemini: ['gemini', 'Gemini', 'gemini'],
   google: ['gemini', 'Google', 'gemini'],
-  deepseek: ['deepseek', 'DeepSeek', 'deepseek'],
   groq: ['groq', 'Groq', 'groq'],
   openrouter: ['openrouter', 'OpenRouter', 'openrouter'],
   kimi: ['kimi', 'Kimi', 'kimi'],

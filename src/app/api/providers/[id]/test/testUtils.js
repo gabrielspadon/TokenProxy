@@ -28,11 +28,9 @@ import {
   ANTIGRAVITY_CONFIG,
   KIRO_CONFIG,
   CLAUDE_CONFIG,
-  CLINE_CONFIG,
   KILOCODE_CONFIG,
   KIMCHI_CONFIG,
 } from "@/lib/oauth/constants/oauth";
-import { buildClineHeaders } from "@/shared/utils/clineAuth";
 import { FETCH_CONNECT_TIMEOUT_MS, PROBE_MAX_TOKENS } from "open-sse/config/runtimeConfig.js";
 import { assertValidAwsRegion } from "open-sse/config/awsRegions.js";
 
@@ -113,7 +111,6 @@ const OAUTH_TEST_CONFIG = {
     authHeader: "Authorization",
     authPrefix: "Bearer ",
   },
-  cline: { refreshable: true },
   gitlab: {
     // Test by hitting the GitLab user API — requires api or read_user scope
     url: "https://gitlab.com/api/v4/user",
@@ -186,17 +183,6 @@ export function classifyOAuthProbeResult(res, config, bodyText = "") {
   }
 
   return { valid: true, error: null, soft: false };
-}
-
-async function probeClineAccessToken(accessToken, effectiveProxy = null) {
-  const res = await fetchWithConnectionProxy("https://api.cline.bot/api/v1/users/me", {
-    method: "GET",
-    headers: buildClineHeaders(accessToken, {
-      Accept: "application/json",
-    }),
-  }, effectiveProxy);
-
-  return res;
 }
 
 const CLOUD_CODE_ASSIST_TEST_URL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
@@ -320,29 +306,6 @@ async function refreshOAuthToken(connection, effectiveProxy = null) {
       return { accessToken: data.accessToken, expiresIn: data.expiresIn || 3600, refreshToken: data.refreshToken || refreshToken };
     }
 
-    if (provider === "cline") {
-      const response = await fetchWithConnectionProxy(CLINE_CONFIG.refreshUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          refreshToken,
-          grantType: "refresh_token",
-          clientType: "extension",
-        }),
-      }, effectiveProxy);
-      if (!response.ok) return null;
-      const payload = await response.json();
-      const data = payload?.data || payload;
-      const expiresIn = data?.expiresAt
-        ? Math.max(1, Math.floor((new Date(data.expiresAt).getTime() - Date.now()) / 1000))
-        : 3600;
-      return {
-        accessToken: data?.accessToken,
-        expiresIn,
-        refreshToken: data?.refreshToken || refreshToken,
-      };
-    }
-
     return null;
   } catch (err) {
     console.log(`Error refreshing ${provider} token:`, err.message);
@@ -401,31 +364,6 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
     }
 
     return { valid: false, error: initial.error, refreshed };
-  }
-
-  if (connection.provider === "cline") {
-    const tryProbe = async (token) => {
-      const res = await probeClineAccessToken(token, effectiveProxy);
-      if (res.ok) return { valid: true, error: null, refreshed, newTokens };
-      if (res.status === 401) return { valid: false, error: "Token invalid or revoked", refreshed };
-      if (res.status === 403) return { valid: false, error: "Access denied", refreshed };
-      return { valid: false, error: `API returned ${res.status}`, refreshed };
-    };
-
-    const initial = await tryProbe(accessToken);
-    if (initial.valid || initial.error !== "Token invalid or revoked" || !connection.refreshToken) {
-      return initial;
-    }
-
-    const tokens = await refreshOAuthToken(connection, effectiveProxy);
-    if (!tokens?.accessToken) {
-      return { valid: false, error: "Token invalid or revoked", refreshed: false };
-    }
-
-    refreshed = true;
-    newTokens = tokens;
-    accessToken = tokens.accessToken;
-    return await tryProbe(accessToken);
   }
 
   try {
@@ -775,10 +713,6 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         }, effectiveProxy);
         const valid = credentialConfirmedByStatus(res.status);
         return { valid, error: valid ? null : "Invalid API key" };
-      }
-      case "deepseek": {
-        const res = await fetchWithConnectionProxy("https://api.deepseek.com/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
       case "groq": {
         const res = await fetchWithConnectionProxy("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);

@@ -144,42 +144,6 @@ describe('refreshCopilotToken', () => {
   });
 });
 
-describe('refreshClineToken', () => {
-  it("posts the JSON contract cline's endpoint requires and workos-prefixes the access token", async () => {
-    const fm = mockFetchOnce({ data: { accessToken: 'raw-acc', refreshToken: 'cl-new' } });
-    const { refreshClineToken } = await loadProviders();
-
-    const out = await refreshClineToken('cl-old', null, console);
-
-    const body = JSON.parse(fm.mock.calls[0][1].body);
-    expect(body).toEqual({
-      refreshToken: 'cl-old',
-      grantType: 'refresh_token',
-      clientType: 'extension',
-    });
-    expect(out.accessToken).toBe('workos:raw-acc');
-    expect(out.refreshToken).toBe('cl-new');
-  });
-
-  it('does not double-prefix an already workos-prefixed token', async () => {
-    mockFetchOnce({ data: { accessToken: 'workos:acc' } });
-    const { refreshClineToken } = await loadProviders();
-    const out = await refreshClineToken('cl-old', null, console);
-    expect(out.accessToken).toBe('workos:acc');
-    expect(out.refreshToken).toBe('cl-old'); // no rotation → keep old
-  });
-
-  it('derives a positive expiresIn from the ISO expiresAt', async () => {
-    mockFetchOnce({
-      data: { accessToken: 'a', expiresAt: new Date(Date.now() + 90_000).toISOString() },
-    });
-    const { refreshClineToken } = await loadProviders();
-    const out = await refreshClineToken('cl-old', null, console);
-    expect(out.expiresIn).toBeGreaterThan(80);
-    expect(out.expiresIn).toBeLessThanOrEqual(90);
-  });
-});
-
 describe('refreshKiroToken (social path)', () => {
   it('posts only the refreshToken and maps the camelCase reply', async () => {
     const fm = mockFetchOnce({ accessToken: 'k-acc', refreshToken: 'k-new', expiresIn: 3600 });

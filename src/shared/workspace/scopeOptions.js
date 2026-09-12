@@ -10,7 +10,6 @@ export const POPULAR_PROVIDERS = [
   'gemini',
   'gemini-cli',
   'github',
-  'deepseek',
   'xai',
   'openrouter',
   'ollama',

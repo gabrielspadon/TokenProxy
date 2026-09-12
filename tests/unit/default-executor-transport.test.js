@@ -440,13 +440,6 @@ describe('DefaultExecutor.buildHeaders — registry-declared hooks run before au
     expect(h[cfg.auth.header]).toBe(expected);
   });
 
-  it('clineHeaders: a plain API key rides Authorization without the session-token prefix (#2333)', () => {
-    const id = providerWithHook('clineHeaders');
-    expect(id).toBeTruthy();
-    const h = new DefaultExecutor(id).buildHeaders({ apiKey: 'plain-key' }, true);
-    expect(h['Authorization']).toBe('Bearer plain-key');
-  });
-
   it('kilocodeOrg: org header only when the connection carries an orgId', () => {
     const id = providerWithHook('kilocodeOrg');
     expect(id).toBeTruthy();
@@ -559,21 +552,6 @@ describe('DefaultExecutor.refreshCredentials — provider-specific refreshers', 
     const sent = Object.fromEntries(init.body);
     expect(sent.client_id).toBe(cfg.clientId);
     expect(sent.grant_type).toBe('refresh_token');
-  });
-
-  it('cline: routes through the shared refresher and returns the workos-prefixed token', async () => {
-    fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ data: { accessToken: 'cat', refreshToken: 'crt2' } }), {
-        status: 200,
-      })
-    );
-    const out = await new DefaultExecutor('cline').refreshCredentials(
-      { refreshToken: 'crt' },
-      null
-    );
-    expect(out.accessToken).toContain('cat');
-    expect(out.refreshToken).toBe('crt2');
-    expect(fetchMock.mock.calls[0][0]).toBe(PROVIDERS.cline.refreshUrl);
   });
 
   it('kilocode: device-code flow has no refresh, returns null without any call', async () => {
@@ -773,14 +751,12 @@ describe('DefaultExecutor.refreshCredentials — remaining grant rows', () => {
     });
   }
 
-  for (const provider of ['clinepass', 'kimi-coding']) {
+  for (const provider of ['kimi-coding']) {
     it(`${provider}: shares its sibling's refresher and maps the token response`, async () => {
       fetchMock.mockResolvedValueOnce(
         new Response(
           JSON.stringify(
-            provider === 'clinepass'
-              ? { data: { accessToken: 'cat', refreshToken: 'crt2' } }
-              : { access_token: 'kat', refresh_token: 'krt2', expires_in: 5 }
+            { access_token: 'kat', refresh_token: 'krt2', expires_in: 5 }
           ),
           { status: 200 }
         )

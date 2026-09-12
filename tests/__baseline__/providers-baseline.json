@@ -181,41 +181,6 @@
     "clientId": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     "tokenUrl": "https://api.anthropic.com/v1/oauth/token"
   },
-  "cline": {
-    "baseUrl": "https://api.cline.bot/api/v1/chat/completions",
-    "headers": {
-      "HTTP-Referer": "https://cline.bot",
-      "X-Title": "Cline"
-    },
-    "tokenUrl": "https://api.cline.bot/api/v1/auth/token",
-    "refreshUrl": "https://api.cline.bot/api/v1/auth/refresh",
-    "auth": {
-      "combined": true,
-      "header": "Authorization",
-      "scheme": "bearer",
-      "hooks": [
-        "clineHeaders"
-      ]
-    },
-    "format": "openai"
-  },
-  "clinepass": {
-    "baseUrl": "https://api.cline.bot/api/v1/chat/completions",
-    "headers": {
-      "HTTP-Referer": "https://cline.bot",
-      "X-Title": "Cline"
-    },
-    "auth": {
-      "combined": true,
-      "header": "Authorization",
-      "scheme": "bearer",
-      "hooks": [
-        "clineHeaders"
-      ]
-    },
-    "format": "openai",
-    "tokenUrl": "https://api.cline.bot/api/v1/auth/token"
-  },
   "cloudflare-ai": {
     "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions",
     "thinkingFormat": "openai",
@@ -318,38 +283,6 @@
   "deepgram": {
     "baseUrl": "https://api.deepgram.com/v1/listen",
     "format": "openai"
-  },
-  "deepseek": {
-    "baseUrl": "https://api.deepseek.com/chat/completions",
-    "validateUrl": "https://api.deepseek.com/models",
-    "reasoningInject": {
-      "scope": "all"
-    },
-    "format": "openai",
-    "transports": [
-      {
-        "format": "openai",
-        "baseUrl": "https://api.deepseek.com/chat/completions",
-        "auth": {
-          "combined": true,
-          "header": "Authorization",
-          "scheme": "bearer"
-        }
-      },
-      {
-        "format": "claude",
-        "baseUrl": "https://api.deepseek.com/anthropic/v1/messages",
-        "headers": {
-          "Anthropic-Version": "2023-06-01",
-          "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14"
-        },
-        "auth": {
-          "combined": true,
-          "header": "x-api-key",
-          "scheme": "raw"
-        }
-      }
-    ]
   },
   "devin": {
     "baseUrl": "https://server.codeium.com/exa.api_server_pb.ApiServerService/GetChatMessage",

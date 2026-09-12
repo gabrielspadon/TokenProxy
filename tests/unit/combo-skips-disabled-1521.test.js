@@ -15,43 +15,43 @@ describe("a combo skips members the operator disabled (#1521)", () => {
   beforeEach(() => { disabled = {}; throws = false; });
 
   it("drops a disabled member", async () => {
-    disabled = { ds: ["deepseek-v4-pro"] };
-    expect(await (await load())(["ds/deepseek-v4-pro", "cx/gpt-5.5"], "c"))
+    disabled = { bm: ["kimi-k2"] };
+    expect(await (await load())(["bm/kimi-k2", "cx/gpt-5.5"], "c"))
       .toEqual(["cx/gpt-5.5"]);
   });
 
   it("returns the list untouched when nothing is disabled", async () => {
     disabled = { other: ["x"] };
-    const models = ["ds/deepseek-v4-pro", "cx/gpt-5.5"];
+    const models = ["bm/kimi-k2", "cx/gpt-5.5"];
     expect(await (await load())(models, "c")).toEqual(models);
   });
 
   it("does not resurrect disabled members when the entire combo is disabled", async () => {
-    disabled = { ds: ["deepseek-v4-pro"] };
-    expect(await (await load())(["ds/deepseek-v4-pro"], "c")).toEqual([]);
+    disabled = { bm: ["kimi-k2"] };
+    expect(await (await load())(["bm/kimi-k2"], "c")).toEqual([]);
   });
 
   it("matches the exact provider alias, not a prefix or a superstring", async () => {
-    disabled = { d: ["deepseek-v4-pro"], dsx: ["deepseek-v4-pro"] };
-    expect(await (await load())(["ds/deepseek-v4-pro", "cx/gpt-5.5"], "c"))
-      .toEqual(["ds/deepseek-v4-pro", "cx/gpt-5.5"]);
+    disabled = { b: ["kimi-k2"], bmx: ["kimi-k2"] };
+    expect(await (await load())(["bm/kimi-k2", "cx/gpt-5.5"], "c"))
+      .toEqual(["bm/kimi-k2", "cx/gpt-5.5"]);
   });
 
   it("resolves a bare model name before checking its provider policy", async () => {
-    disabled = { ds: ["deepseek-v4-pro"] };
-    expect(await (await load())(["deepseek-v4-pro", "cx/gpt-5.5"], "c"))
+    disabled = { bm: ["kimi-k2"] };
+    expect(await (await load())(["kimi-k2", "cx/gpt-5.5"], "c"))
       .toEqual(["cx/gpt-5.5"]);
   });
 
   it("never fails a route because the disabled list is unreadable", async () => {
     throws = true;
-    const models = ["ds/deepseek-v4-pro"];
+    const models = ["bm/kimi-k2"];
     expect(await (await load())(models, "c")).toEqual(models);
   });
 
   it("survives a malformed disabled map", async () => {
     disabled = null;
-    const models = ["ds/deepseek-v4-pro"];
+    const models = ["bm/kimi-k2"];
     expect(await (await load())(models, "c")).toEqual(models);
   });
 });

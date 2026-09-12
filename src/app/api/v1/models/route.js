@@ -81,27 +81,6 @@ const LIVE_MODEL_RESOLVERS = {
     });
     return result?.models?.length ? { models: result.models } : null;
   },
-  clinepass: async (conn) => {
-    const result = await (await import("open-sse/services/clinepassModels.js")).resolveClinepassModels({
-      accessToken: conn.accessToken,
-      apiKey: conn.apiKey,
-    });
-    return result?.models?.length ? { models: result.models } : null;
-  },
-  cline: async (conn) => {
-    const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
-    const result = await (await import("open-sse/services/clineModels.js")).resolveClineModels({
-      log: console,
-      proxyOptions: {
-        connectionProxyEnabled: proxy?.connectionProxyEnabled === true,
-        connectionProxyUrl: proxy?.connectionProxyUrl || "",
-        connectionNoProxy: proxy?.connectionNoProxy || "",
-        vercelRelayUrl: proxy?.vercelRelayUrl || "",
-        strictProxy: proxy?.strictProxy === true,
-      },
-    });
-    return result?.models?.length ? { models: result.models } : null;
-  },
   "grok-cli": async (conn) => {
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
     const result = await (await import("open-sse/services/grokCliModels.js")).resolveGrokCliModels({
@@ -678,7 +657,7 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
           object: "model",
           owned_by: outputAlias,
         };
-        // Live-catalog resolvers (kiro/qoder/github/clinepass) mostly only return
+        // Live-catalog resolvers (kiro/qoder/github) mostly only return
         // { id, name } — no per-model capability data. Fall back to the same
         // pattern-matched capabilities the dashboard uses (useModelCaps.js) so
         // dynamically-discovered LLM models still surface vision/reasoning/search/tools.
