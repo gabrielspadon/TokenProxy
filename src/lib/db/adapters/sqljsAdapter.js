@@ -5,6 +5,7 @@ import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 
 let SQL = null;
+const POST_RENAME_PUBLICATION = Symbol("sqljs.postRenamePublication");
 
 async function loadSql() {
   if (SQL) return SQL;
@@ -51,6 +52,15 @@ export async function createSqlJsAdapter(filePath) {
         const directory = fs.openSync(dirname(filePath), "r");
         try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
       }
+    } catch (error) {
+      // renameSync has already made the exported database authoritative. A
+      // later directory open/fsync/close error makes crash durability
+      // uncertain, but rolling the live adapter back would make it disagree
+      // with the database every new reader can already open.
+      if (published && error && (typeof error === "object" || typeof error === "function")) {
+        error[POST_RENAME_PUBLICATION] = true;
+      }
+      throw error;
     } finally {
       if (fd !== null) {
         try { fs.closeSync(fd); } catch {}
@@ -222,6 +232,10 @@ export async function createSqlJsAdapter(filePath) {
     } catch (error) {
       if (open) {
         try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
+      }
+      if (error?.[POST_RENAME_PUBLICATION]) {
+        dirty = false;
+        throw error;
       }
       try { db.close(); } catch {}
       db = new SQLLib.Database(before);

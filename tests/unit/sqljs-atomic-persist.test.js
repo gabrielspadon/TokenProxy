@@ -135,6 +135,37 @@ describe("sqljs atomic persist", () => {
     adapter.close();
   });
 
+  it.runIf(process.platform !== "win32")("keeps live and reopened state aligned when directory sync fails after publication", async () => {
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v TEXT)");
+    adapter.run("INSERT INTO t VALUES (?)", ["before"]);
+    adapter.flush();
+
+    let syncCall = 0;
+    const realFsyncSync = fs.fsyncSync.bind(fs);
+    const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => {
+      syncCall += 1;
+      if (syncCall === 2) {
+        throw Object.assign(new Error("fixture directory fsync failure"), { code: "EIO" });
+      }
+      return realFsyncSync(fd);
+    });
+    try {
+      expect(() => adapter.criticalTransaction(() => {
+        adapter.run("INSERT INTO t VALUES (?)", ["published-before-error"]);
+      })).toThrow(expect.objectContaining({ code: "EIO" }));
+    } finally {
+      fsync.mockRestore();
+    }
+
+    const expected = [{ v: "before" }, { v: "published-before-error" }];
+    expect(adapter.all("SELECT v FROM t ORDER BY rowid")).toEqual(expected);
+    const reopened = await createSqlJsAdapter(dbPath);
+    expect(reopened.all("SELECT v FROM t ORDER BY rowid")).toEqual(expected);
+    reopened.close();
+    adapter.close();
+  });
+
   it("does not acknowledge while an injected storage sync is delayed", async () => {
     const adapter = await createSqlJsAdapter(dbPath);
     adapter.exec("CREATE TABLE t (v TEXT)");
