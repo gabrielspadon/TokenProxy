@@ -5,12 +5,20 @@ const digest = (value) => createHash("sha256").update(JSON.stringify(value)).dig
 const redact = (value) => digest(value);
 const VALUE_BEARING_CONTROLS = new Set(["reasoning_effort", "reasoning", "thinking", "temperature", "top_p", "stop", "tool_choice", "parallel_tool_calls", "response_format", "seed"]);
 
+const budgetEffort = (budget) =>
+  budget <= 4096 ? "low" : budget <= 16384 ? "medium" : budget <= 28672 ? "high" : "xhigh";
+
 function mappedControl(key, value) {
   if (key === "reasoning") return { key: "reasoning_effort", value: value?.effort };
   if (key === "thinking") {
+    // Declared from observed translation, not from budgetToLevel. A Claude
+    // thinking budget is resolved through the unified thinking intent and then
+    // clamped against the target model's declared effort ladder, so a small
+    // budget arrives as "none" rather than the "minimal" the raw threshold
+    // table would suggest. Verified with the capability override the gateway
+    // fixture itself sets (reasoning: true) on the fixture model.
     const budget = Number(value?.budget_tokens);
-    const effort = budget <= 0 ? "none" : budget <= 768 ? "minimal" : budget <= 4096 ? "low" : budget <= 16384 ? "medium" : budget <= 28672 ? "high" : "xhigh";
-    return { key: "reasoning_effort", value: effort };
+    return { key: "reasoning_effort", value: budget <= 768 ? "none" : budgetEffort(budget) };
   }
   return { key, value };
 }
@@ -150,6 +158,10 @@ function collectResponseFunctionCall(item, shape, role) {
 /** Redacted, ordered, value-bearing semantic evidence at provider ingress. */
 export function semanticShape(body) {
   const shape = { roles: [], text: [], tools: [], toolCalls: [], toolResults: [], reasoning: [], images: [], controls: [], ordered: [] };
+  // The declared output budget is not a VALUE_BEARING_CONTROL, so without this
+  // an upstream raise (adjustMaxTokens turns 32 into 32000 when tools are
+  // present) is invisible to the receipt entirely.
+  shape.outputBudget = body?.max_tokens ?? body?.max_output_tokens ?? null;
   if (body?.system !== undefined) {
     const role = addMessage(shape, "system");
     textParts(body.system, shape, role);
@@ -190,7 +202,7 @@ export function semanticShape(body) {
 
 export function semanticReceipt(body) {
   const shape = semanticShape(body);
-  return { shape, digest: digest(shape) };
+  return { shape, digest: digest(shape), outputBudget: shape.outputBudget };
 }
 
 function requireSubsequence(expected, actual, label) {
@@ -203,15 +215,84 @@ function requireSubsequence(expected, actual, label) {
   }
 }
 
-/** Require source semantics in order at the upstream, without retaining values. */
-export function assertSemanticPreserved(sourceBody, receipt, label) {
+/**
+ * Atoms whose COUNT changes what the model is asked to do. An ordered
+ * subsequence proves nothing was dropped or altered, but says nothing about
+ * what was inserted between the atoms it matched, so an injected system turn,
+ * a duplicated user turn, a forged tool result and a forged image all satisfy
+ * it. Multiplicity is what denies those.
+ */
+const inflationSensitive = (atom) =>
+  (atom.kind === "text" && (atom.role === "user" || atom.role === "system"))
+  || atom.kind === "tool_call"
+  || atom.kind === "tool_result"
+  || atom.kind === "image";
+
+const countAtoms = (atoms) => atoms.filter(inflationSensitive).reduce((counts, atom) => {
+  const key = JSON.stringify(atom);
+  return counts.set(key, (counts.get(key) || 0) + 1);
+}, new Map());
+
+function requireNoInflation(expected, actual, label) {
+  const allowed = countAtoms(expected);
+  for (const [key, count] of countAtoms(actual)) {
+    const permitted = allowed.get(key) || 0;
+    assert.ok(
+      count <= permitted,
+      `${label} inflated provider semantics: ${key} appears ${count} times, source permits ${permitted}`,
+    );
+  }
+}
+
+/**
+ * A declared transform names the ONE conversion permitted to introduce a
+ * control for a given cell, so an intentional change is explicit and anything
+ * else fails. Bound per call site; never a blanket exemption.
+ */
+function requireDeclaredControls(expected, actual, label, allowedControlKeys) {
+  const sourceControls = new Map(expected.controls.map(({ key, value }) => [key, JSON.stringify(value)]));
+  for (const { key, value } of actual.controls || []) {
+    if (sourceControls.has(key)) {
+      assert.equal(JSON.stringify(value), sourceControls.get(key), `${label} mutated control ${key}`);
+      continue;
+    }
+    assert.ok(allowedControlKeys.includes(key), `${label} introduced undeclared control ${key}`);
+  }
+}
+
+/**
+ * Require source semantics in order at the upstream, without retaining values,
+ * AND deny inflation plus undeclared control or output-budget changes.
+ *
+ * options.allowedControlKeys lists control keys a declared provider transform
+ * may introduce for THIS cell. options.outputBudget is
+ * { source, upstream, declaredTransform }; the two may differ only when a
+ * transform is named.
+ */
+export function assertSemanticPreserved(sourceBody, receipt, label, options = {}) {
   assert.equal(receipt?.digest, digest(receipt?.shape), `${label} semantic digest integrity`);
   const expected = semanticShape(sourceBody);
   const actual = receipt.shape;
   const ordered = actual?.ordered || [];
   requireSubsequence(expected.ordered.filter((atom) => atom.kind !== "control"), ordered, label);
+  // A control may be absent upstream ONLY where a transform declares the gate
+  // that drops it (applyThinking removes a reasoning control for a model whose
+  // capabilities do not include reasoning). Anything else must arrive intact.
+  const gatedKeyDigests = new Set((options.gatedControlKeys || []).map((key) => redact(key)));
   for (const control of expected.ordered.filter((atom) => atom.kind === "control")) {
+    if (gatedKeyDigests.has(control.value?.key?.digest)) continue;
     requireSubsequence([control], ordered, label);
+  }
+  requireNoInflation(expected.ordered, ordered, label);
+  requireDeclaredControls(expected, actual, label, options.allowedControlKeys || []);
+  if (options.outputBudget) {
+    const { source, upstream, declaredTransform = null } = options.outputBudget;
+    if (source !== upstream) {
+      assert.ok(
+        declaredTransform,
+        `${label} changed the output budget ${source} -> ${upstream} with no declared transform`,
+      );
+    }
   }
   return { expected, actual };
 }

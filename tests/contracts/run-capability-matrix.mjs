@@ -10,6 +10,13 @@ import { assertSemanticPreserved } from "./provider-semantic.mjs";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const manifestPath = `${root}/tests/contracts/capabilities.json`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
+// The endpoint a fixture is posted to determines its client format, which is
+// what a declared provider transform is keyed on.
+const ENDPOINT_SOURCE_FORMAT = Object.freeze({
+  "/v1/chat/completions": "openai",
+  "/v1/messages": "claude",
+  "/v1/responses": "openai-responses",
+});
 const loadJson = async (path) => JSON.parse(await readFile(path.startsWith("/") ? path : `${root}/${path}`, "utf8"));
 const CONTROLLED_USAGE = Object.freeze({
   chat: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 },
@@ -234,10 +241,32 @@ async function setStubOutcome(controlUrl, outcome, label) {
   assert.equal(response.status, 200, "provider stub control write");
 }
 
-function assertLatestSemanticReceipt(control, label, fixture) {
+const declaredOutputBudget = (body) => body?.max_tokens ?? body?.max_output_tokens ?? null;
+
+/**
+ * Resolve the transforms the manifest declares for ONE cell. A transform is
+ * matched on its exact source and target, so it licenses only the conversion
+ * it names and never acts as a blanket exemption.
+ */
+function cellTransforms(manifest, entry, target) {
+  const source = ENDPOINT_SOURCE_FORMAT[entry.endpoint];
+  return (manifest.providerTransforms || [])
+    .filter((transform) => transform.source === source && transform.target === target && transform.kind === "request");
+}
+
+function assertLatestSemanticReceipt(control, label, fixture, manifest, entry, target) {
   const receipt = control.semanticReceipts?.at(-1);
   assert.equal(receipt?.label, label, `${label} provider semantic receipt label`);
-  assertSemanticPreserved(fixture, receipt.semantic, label);
+  const transforms = manifest ? cellTransforms(manifest, entry, target) : [];
+  const budgetTransform = transforms.find(({ transform }) => transform === "output-budget-raised") || null;
+  assertSemanticPreserved(fixture, receipt.semantic, label, {
+    allowedControlKeys: transforms.flatMap(({ introducesControls }) => introducesControls || []),
+    outputBudget: {
+      source: declaredOutputBudget(fixture),
+      upstream: receipt.semantic?.shape?.outputBudget ?? declaredOutputBudget(fixture),
+      declaredTransform: budgetTransform?.id || null,
+    },
+  });
 }
 
 /**
@@ -252,6 +281,10 @@ export async function runCapabilityMatrix({
   providerControlUrl,
   authorization = null,
   model = null,
+  // The capability fixture upstream is an openai-compatible node, so every
+  // cell lands on this target. A declared transform is matched against it, so
+  // a transform for another target never licenses anything here.
+  providerTargetFormat = "openai",
 }) {
   assert.equal(typeof gatewayBaseUrl, "string", "gatewayBaseUrl is required");
   assert.equal(typeof providerControlUrl, "string", "providerControlUrl is required");
@@ -297,7 +330,7 @@ export async function runCapabilityMatrix({
     const providerAfter = await readControl(providerControlUrl);
     assert.equal(providerAfter.ingressCount, providerBefore.ingressCount + 1, `${entry.id} did not reach provider ingress exactly once`);
     assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount + 1, `${entry.id} did not reach provider exactly once`);
-    assertLatestSemanticReceipt(providerAfter, entry.id, fixture);
+    assertLatestSemanticReceipt(providerAfter, entry.id, fixture, manifest, entry, providerTargetFormat);
     primary.dispatched += 1;
     primary.passed += 1;
   }
@@ -308,7 +341,7 @@ export async function runCapabilityMatrix({
   await setStubOutcome(providerControlUrl, "success", "outcome-success");
   const success = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   assert.equal(success.response.status, 200);
-  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-success", body);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-success", body, manifest, sample, providerTargetFormat);
   await setStubOutcome(providerControlUrl, "provider-error", "outcome-provider-error");
   const providerError = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   const providerErrorExpected = manifest.fixtureExpectations.outcomes["provider-error"];
@@ -319,7 +352,7 @@ export async function runCapabilityMatrix({
     providerErrorExpected.error,
     "provider error classification",
   );
-  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-provider-error", body);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-provider-error", body, manifest, sample, providerTargetFormat);
   await setStubOutcome(providerControlUrl, "transport-abrupt", "outcome-transport-abrupt");
   const abrupt = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   const transportAbruptExpected = manifest.fixtureExpectations.outcomes["transport-abrupt"];
@@ -330,7 +363,7 @@ export async function runCapabilityMatrix({
     transportAbruptExpected.error,
     "abrupt transport classification",
   );
-  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-transport-abrupt", body);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-transport-abrupt", body, manifest, sample, providerTargetFormat);
   const finalProvider = await readControl(providerControlUrl);
   const expectedSemanticLabels = [
     ...manifest.primaryEndpoints.filter((entry) => entry.expected.upstreamDispatch).map((entry) => entry.id),

@@ -3924,7 +3924,8 @@
       "transform": "tool-call-identity-dropped",
       "detail": "Vertex rejects functionCall.id and functionResponse.id, so both are removed.",
       "owner": "open-sse/translator/request/openai-to-vertex.js",
-      "consequence": "Parallel calls to one tool name are distinguishable only by array order at the provider."
+      "consequence": "Parallel calls to one tool name are distinguishable only by array order at the provider.",
+      "introducesControls": []
     },
     {
       "id": "ollama-tool-result-keyed-by-name",
@@ -3934,7 +3935,8 @@
       "transform": "tool-call-identity-dropped",
       "detail": "Ollama carries no tool_call_id; each result is re-keyed to tool_name.",
       "owner": "open-sse/translator/request/openai-to-ollama.js",
-      "consequence": "Parallel calls to one tool name collapse onto one key at the provider."
+      "consequence": "Parallel calls to one tool name collapse onto one key at the provider.",
+      "introducesControls": []
     },
     {
       "id": "claude-tool-cycle-output-budget-raised",
@@ -3944,7 +3946,12 @@
       "transform": "output-budget-raised",
       "detail": "adjustMaxTokens raises max_tokens to DEFAULT_MIN_TOKENS when tools are present, so the fixture 32 becomes 32000.",
       "owner": "open-sse/translator/formats/maxTokens.js",
-      "consequence": "The client-declared output budget is not the budget the provider receives."
+      "consequence": "The client-declared output budget is not the budget the provider receives.",
+      "introducesControls": [],
+      "appliesToScenarios": [
+        "tool-cycle",
+        "parallel-tools"
+      ]
     },
     {
       "id": "responses-instructions-become-system-message",
@@ -3954,7 +3961,35 @@
       "transform": "responses-only-field-removed",
       "detail": "instructions becomes one leading system message; the Responses-only property is removed after translation.",
       "owner": "open-sse/translator/request/openai-responses.js",
-      "consequence": "None; the system text is carried exactly once and the Responses-only field is not forwarded."
+      "consequence": "None; the system text is carried exactly once and the Responses-only field is not forwarded.",
+      "introducesControls": []
+    },
+    {
+      "id": "claude-thinking-mapped-to-reasoning-effort",
+      "source": "claude",
+      "target": "openai",
+      "kind": "request",
+      "transform": "control-key-mapped",
+      "detail": "A Claude thinking budget is resolved through the unified thinking intent and clamped against the target model effort ladder, arriving as reasoning_effort.",
+      "owner": "open-sse/translator/concerns/thinkingUnified.js",
+      "introducesControls": [
+        "reasoning_effort"
+      ],
+      "consequence": "A budget at or below 768 arrives as \"none\" rather than \"minimal\"; verified under the gateway fixture capability override."
+    },
+    {
+      "id": "reasoning-control-gated-on-model-capability",
+      "source": "*",
+      "target": "openai",
+      "kind": "request",
+      "transform": "control-dropped-by-capability-gate",
+      "detail": "applyThinking drops a reasoning control for a model whose declared capabilities do not include reasoning.",
+      "owner": "open-sse/translator/index.js",
+      "introducesControls": [],
+      "gatesControls": [
+        "reasoning_effort"
+      ],
+      "consequence": "A client-declared reasoning effort does not reach a non-reasoning model; verified against gpt-5 (high) versus fixture-model (absent)."
     }
   ]
 }
