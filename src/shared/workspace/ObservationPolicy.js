@@ -1,23 +1,70 @@
 'use client';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+
+export const OBSERVATION_MODE_KEY = 'tokenproxy.observation-mode';
+export const OBSERVATION_MODES = ['summary', 'live', 'paused'];
+export const DEFAULT_OBSERVATION_MODE = 'summary';
+
+// The stored value is the internal enum, unchanged, so a preference written by
+// an earlier build still reads back. Anything else -- absent, malformed, a
+// value another tab or a hand edit put there -- resolves to the default, which
+// is the mode that reads nothing on its own.
+export function readStoredMode(storage) {
+  try {
+    const raw = storage?.getItem(OBSERVATION_MODE_KEY);
+    return OBSERVATION_MODES.includes(raw) ? raw : DEFAULT_OBSERVATION_MODE;
+  } catch {
+    return DEFAULT_OBSERVATION_MODE;
+  }
+}
 
 const ObservationContext = createContext(null);
 export function ObservationProvider({ children }) {
-  const [mode, setMode] = useState('summary');
+  // The server and the first client render both produce the default. Reading
+  // storage during render would make them disagree (React hydration #418), so
+  // the stored choice arrives in an effect and `hydrated` gates it.
+  const [mode, setModeState] = useState(DEFAULT_OBSERVATION_MODE);
+  const [hydrated, setHydrated] = useState(false);
   const [historical, setHistorical] = useState(false);
   const [snapshot, setSnapshot] = useState(false);
   const [revision, setRevision] = useState(0);
   const [pausedAt, setPausedAt] = useState(null);
+
+  useEffect(() => {
+    setModeState(readStoredMode(window.localStorage));
+    setHydrated(true);
+    // Another tab's write applies here; a cleared or corrupted key falls back
+    // to the default rather than leaving this tab on a mode nobody chose.
+    const sync = (event) => {
+      if (event.key !== null && event.key !== OBSERVATION_MODE_KEY) return;
+      const next = readStoredMode(window.localStorage);
+      setModeState((current) => (current === next ? current : next));
+      // A restored pause carries no original timestamp, so none is claimed.
+      setPausedAt(null);
+    };
+    window.addEventListener('storage', sync);
+    return () => window.removeEventListener('storage', sync);
+  }, []);
+
+  const setMode = useCallback((next) => {
+    if (!OBSERVATION_MODES.includes(next)) return;
+    setModeState(next);
+    try {
+      window.localStorage.setItem(OBSERVATION_MODE_KEY, next);
+    } catch {
+      // Persistence is best effort. The session still honours the choice.
+    }
+    setPausedAt(next === 'paused' ? new Date().toISOString() : null);
+  }, []);
+  const refresh = useCallback(() => setRevision((previous) => previous + 1), []);
+
   const value = useMemo(() => ({
-    mode, historical, snapshot, revision, pausedAt,
-    background: mode === 'live' && !historical && !snapshot,
-    setMode(next) {
-      if (!['summary','live','paused'].includes(next)) return;
-      setMode(next);setPausedAt(next === 'paused' ? new Date().toISOString() : null);
-    },
-    setHistorical, setSnapshot,
-    refresh: () => setRevision(previous => previous + 1),
-  }), [mode, historical, snapshot, revision, pausedAt]);
+    mode, historical, snapshot, revision, pausedAt, hydrated,
+    // Background work stays off until the stored mode is known. Hydrating into
+    // Live for one frame would open a subscription the operator had paused.
+    background: hydrated && mode === 'live' && !historical && !snapshot,
+    setMode, setHistorical, setSnapshot, refresh,
+  }), [mode, historical, snapshot, revision, pausedAt, hydrated, setMode, refresh]);
   return <ObservationContext.Provider value={value}>{children}</ObservationContext.Provider>;
 }
 

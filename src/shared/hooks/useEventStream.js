@@ -7,6 +7,8 @@ import { useObservationPolicy } from '@/shared/workspace/ObservationPolicy';
 export function useEventStream(url, onMessage) {
   const observations = useObservationPolicy();
   const background = observations?.background ?? true;
+  // `background` is already false until the provider has read the stored mode,
+  // so a stored Paused never gets a transient EventSource during hydration.
   const [state, setState] = useState({ status: "connecting", lastDataAt: null, failures: 0 });
   const handler = useRef(onMessage);
   useEffect(() => { handler.current = onMessage; });
