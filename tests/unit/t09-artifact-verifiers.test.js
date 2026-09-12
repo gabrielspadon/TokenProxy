@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { shutdownExitAccepted } from "../../scripts/qa/verify-standalone.mjs";
+
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const STANDALONE_VERIFIER = join(REPO_ROOT, "scripts/qa/verify-standalone.mjs");
 const CLI_VERIFIER = join(REPO_ROOT, "scripts/qa/verify-cli-package.mjs");
@@ -135,6 +137,57 @@ function run(script, args) {
   });
 }
 
+describe("T09 owned-shutdown exit acceptance", () => {
+  // Next exits 128 + signal on its own SIGTERM handler
+  // (next/dist/server/lib/start-server.js:367-376, Next 16.3.4), so the one
+  // accepted nonzero value is the code for the signal this verifier sent.
+  it("accepts 143 after the verifier asked the artifact to stop", () => {
+    expect(shutdownExitAccepted({ exitCode: 143, signal: null, shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(true);
+  });
+
+  it("accepts a plain zero exit so a launcher that swallows the signal still passes", () => {
+    expect(shutdownExitAccepted({ exitCode: 0, signal: null, shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(true);
+  });
+
+  it("accepts the signal itself when the platform reports termination rather than a code", () => {
+    expect(shutdownExitAccepted({ exitCode: null, signal: "SIGTERM", shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(true);
+  });
+
+  it("rejects 143 when no shutdown was requested, because the artifact died on its own", () => {
+    expect(shutdownExitAccepted({ exitCode: 143, signal: null, shutdownRequested: false, signalSent: null, forced: false })).toBe(false);
+  });
+
+  it("rejects any other nonzero exit after an owned shutdown", () => {
+    for (const exitCode of [1, 2, 7, 130, 137, 142, 144, 255]) {
+      expect(shutdownExitAccepted({ exitCode, signal: null, shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(false);
+    }
+  });
+
+  it("rejects a forced kill even when the code matches the signal convention", () => {
+    expect(shutdownExitAccepted({ exitCode: 143, signal: null, shutdownRequested: true, signalSent: "SIGTERM", forced: true })).toBe(false);
+    expect(shutdownExitAccepted({ exitCode: 0, signal: null, shutdownRequested: true, signalSent: "SIGTERM", forced: true })).toBe(false);
+  });
+
+  it("rejects an absent signalSent even when shutdown was requested", () => {
+    for (const signalSent of [null, undefined, "", "SIGWINCH", 15]) {
+      expect(shutdownExitAccepted({ exitCode: 143, signal: null, shutdownRequested: true, signalSent, forced: false })).toBe(false);
+      // The null === null case: without a recognized signalSent, no exit code is excused.
+      expect(shutdownExitAccepted({ exitCode: 9, signal: null, shutdownRequested: true, signalSent, forced: false })).toBe(false);
+    }
+  });
+
+  it("rejects an unrecognized delivered signal and a mismatched 128+signal code", () => {
+    expect(shutdownExitAccepted({ exitCode: null, signal: "SIGQUIT", shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(false);
+    expect(shutdownExitAccepted({ exitCode: 130, signal: null, shutdownRequested: true, signalSent: "SIGINT", forced: false })).toBe(true);
+    expect(shutdownExitAccepted({ exitCode: 143, signal: null, shutdownRequested: true, signalSent: "SIGINT", forced: false })).toBe(false);
+  });
+
+  it("rejects a signal the verifier never sent", () => {
+    expect(shutdownExitAccepted({ exitCode: null, signal: "SIGKILL", shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(false);
+    expect(shutdownExitAccepted({ exitCode: 130, signal: null, shutdownRequested: true, signalSent: "SIGTERM", forced: false })).toBe(false);
+  });
+});
+
 describe("T09 standalone artifact verifier", () => {
   it("refuses a nonempty artifact directory without adding or replacing evidence", () => {
     const fixture = makeFixture();
@@ -167,7 +220,7 @@ describe("T09 standalone artifact verifier", () => {
     expect(receipt.starts.every(runReceipt => runReceipt.health.ok && runReceipt.readiness.ready)).toBe(true);
     expect(receipt.starts.every(runReceipt => runReceipt.healthStatus === 200 && runReceipt.readinessStatus === 200 && runReceipt.versionStatus === 200)).toBe(true);
     expect(receipt.starts.every(runReceipt => runReceipt.version.buildSha === SHA)).toBe(true);
-    expect(receipt.starts.every(runReceipt => runReceipt.cleanup.listenerGone === true && runReceipt.cleanup.graceful === true && runReceipt.cleanup.exitCode === 0)).toBe(true);
+    expect(receipt.starts.every(runReceipt => runReceipt.cleanup.listenerGone === true && runReceipt.cleanup.graceful === true && runReceipt.cleanup.exitCode === 0 && runReceipt.cleanup.exitAccepted === true && runReceipt.cleanup.shutdownRequested === true && runReceipt.cleanup.signalSent === "SIGTERM")).toBe(true);
     expect(JSON.parse(readFileSync(join(fixture.artifacts, "run", "data", "db", "fixture-state.json"), "utf8"))).toEqual({ boots: 2, seeded: true });
   });
 
@@ -228,6 +281,6 @@ describe("T09 CLI package verifier", () => {
     expect(receipt.pack.filename).toMatch(/tokenproxy-fixture-cli-7\.8\.9\.tgz$/);
     expect(receipt.pack.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(receipt.starts).toHaveLength(2);
-    expect(receipt.starts.every(runReceipt => runReceipt.cleanup.listenerGone === true && runReceipt.cleanup.graceful === true && runReceipt.cleanup.exitCode === 0)).toBe(true);
+    expect(receipt.starts.every(runReceipt => runReceipt.cleanup.listenerGone === true && runReceipt.cleanup.graceful === true && runReceipt.cleanup.exitCode === 0 && runReceipt.cleanup.exitAccepted === true && runReceipt.cleanup.shutdownRequested === true && runReceipt.cleanup.signalSent === "SIGTERM")).toBe(true);
   });
 });

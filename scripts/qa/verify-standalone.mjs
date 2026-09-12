@@ -331,12 +331,47 @@ async function portIsClosed(port, timeoutMs = 5_000) {
   return false;
 }
 
+// Next intentionally exits 128 + the signal number from its own SIGTERM handler
+// (node_modules/next/dist/server/lib/start-server.js:371-375, Next 16.3.4), so a
+// server that stopped exactly as asked reports 143 rather than 0. The packaged
+// launcher forwards the same signal and propagates that code. Accept it only for
+// the signal this verifier actually delivered.
+const SHUTDOWN_SIGNAL = "SIGTERM";
+const SIGNAL_NUMBERS = { SIGTERM: 15, SIGINT: 2 };
+
+export function shutdownExitAccepted({ exitCode, signal, shutdownRequested, signalSent, forced }) {
+  if (forced === true) return false;
+  // A clean zero is accepted on its own; the caller still gates on graceful,
+  // listener and process-tree ownership separately.
+  if (exitCode === 0 && (signal === null || signal === undefined)) return true;
+  // Everything below is an exception granted BECAUSE a signal was delivered, so
+  // an absent or unrecognized signal takes the refusing path. Without this,
+  // signal === signalSent holds when both are null and would accept any code.
+  if (shutdownRequested !== true) return false;
+  if (typeof signalSent !== "string" || !Object.hasOwn(SIGNAL_NUMBERS, signalSent)) return false;
+  if (signal === signalSent) return true;
+  if (signal !== null && signal !== undefined) return false;
+  return exitCode === 128 + SIGNAL_NUMBERS[signalSent];
+}
+
 async function cleanupOwned(child, ownership) {
-  const result = { graceful: false, forced: false, listenerGone: false, exitCode: child.exitCode, signal: child.signalCode };
+  const result = {
+    graceful: false,
+    forced: false,
+    listenerGone: false,
+    exitCode: child.exitCode,
+    signal: child.signalCode,
+    shutdownRequested: false,
+    signalSent: null,
+  };
   const ownedTree = processTree(ownership.root);
   if (child.exitCode === null && child.signalCode === null) {
     if (!sameIdentity(procIdentity(ownership.root.pid), ownership.root)) fail("refusing cleanup because the spawned process identity changed");
-    child.kill("SIGTERM");
+    // kill() returns false when the signal could not be delivered, so record
+    // what was actually sent rather than what was attempted.
+    const delivered = child.kill(SHUTDOWN_SIGNAL);
+    result.shutdownRequested = delivered;
+    result.signalSent = delivered ? SHUTDOWN_SIGNAL : null;
     let exit = await waitForExit(child, 5_000);
     if (!exit) {
       if (!sameIdentity(procIdentity(ownership.root.pid), ownership.root)) fail("refusing forced cleanup because the spawned process identity changed");
@@ -350,6 +385,7 @@ async function cleanupOwned(child, ownership) {
   }
   result.listenerGone = await portIsClosed(ownership.port);
   result.processesGone = ownedTree.every((identity) => !sameIdentity(procIdentity(identity.pid), identity));
+  result.exitAccepted = shutdownExitAccepted(result);
   return result;
 }
 
@@ -573,8 +609,8 @@ export async function qualifyStartedArtifact({
       });
       receipt.starts.push(run);
       if (run.error) fail(run.error);
-      if (run.cleanup?.listenerGone !== true || run.cleanup?.processesGone !== true || run.cleanup?.graceful !== true || run.cleanup?.forced === true || run.cleanup?.exitCode !== 0) {
-        fail(`artifact ${run.label} did not stop cleanly`);
+      if (run.cleanup?.listenerGone !== true || run.cleanup?.processesGone !== true || run.cleanup?.graceful !== true || run.cleanup?.forced === true || run.cleanup?.exitAccepted !== true) {
+        fail(`artifact ${run.label} did not stop cleanly with exit code ${run.cleanup?.exitCode ?? "null"} signal ${run.cleanup?.signal ?? "null"}`);
       }
       const schemaVersion = readSchemaVersion(database);
       const layoutVersion = readSchemaVersion(database, "backupSchemaVersion");
