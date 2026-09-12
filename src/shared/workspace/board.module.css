@@ -608,8 +608,25 @@
   white-space: nowrap;
 }
 
-.cardState { display: flex; align-items: center; gap: 8px; margin-top: var(--card-gap); }
-.cardAttempts { color: var(--slate); font-size: var(--type-dense); white-space: nowrap; }
+/* WRAPS RATHER THAN OVERFLOWS. This row carries the state word, the evidence
+   band, the attempts string and the hidden-window count. It was a nowrap flex
+   row, so on a narrow card it grew wider than the card and the last item ran
+   off the edge: viewed at 1440 compact, the Cooldown card read "Activity unav"
+   with the rest gone. Nothing was clipping the text node itself, which is why a
+   per-node overflow check could not see it; the row was the thing overflowing.
+   Wrapping costs a line and keeps every value. */
+.cardState {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  margin-top: var(--card-gap);
+  min-width: 0;
+}
+.cardAttempts { color: var(--slate); font-size: var(--type-dense); min-width: 0; }
+/* The spacer only earns its width when everything sits on one line. Once the
+   row wraps it would push the attempts string onto a line of its own. */
+.cardState .spacer { flex: 1 1 0; min-width: 0; }
 /* How much the reading is worth, said in words. No colour: it is a caveat on
    the figure above, not a fourth severity competing with the meters. */
 .cardBand {
@@ -668,6 +685,22 @@
 .cardWindows:empty { display: none; }
 .cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) minmax(40px, auto) minmax(0, auto); }
 .cardWindows .lineReset { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* WRAP, DO NOT HIDE. `.lineReset` carries an ellipsis, and below roughly 250px
+   of card the quota line's four columns squeeze it until it cuts: measured at
+   1440 with the denser stops, "passed" rendered as "p..." at compact (210px
+   cards) and "in 4d 0h" was cut at dense (228px). The reset is the thing an
+   operator is waiting on, so it takes its own full-width row under the meter
+   and keeps its tail. The card grows one line rather than dropping a value,
+   which is what "denser" is allowed to cost.
+
+   Keyed on the CARD's inline size, not on a density stop, because the cause is
+   the width: any stop or viewport producing a narrow card gets the same
+   treatment without a new rule. */
+.card { container: card / inline-size; }
+@container card (max-width: 250px) {
+  .cardWindows .line { grid-template-columns: minmax(0, 1fr) minmax(44px, 1.1fr) minmax(34px, auto); }
+  .cardWindows .lineReset { grid-column: 1 / -1; overflow: visible; text-overflow: clip; text-align: end; }
+}
 .cardWindows .meter { height: 7px; border-radius: 4px; }
 .cardWindows .fill { border-radius: 4px; }
 .card .detail { padding: 8px 0 0; margin-top: 8px; }
