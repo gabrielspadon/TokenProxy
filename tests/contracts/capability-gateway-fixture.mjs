@@ -11,6 +11,18 @@ const guardPath = fileURLToPath(new URL("../qa/gateway-performance/guard.cjs", i
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+/**
+ * The capabilities this fixture declares for its model. This is the ONE owned
+ * source of that fact: it configures the started gateway below, and the
+ * capability predicate in run-capability-matrix.mjs is evaluated against it.
+ * A capability-conditional transform must never be resolved from whether a
+ * control happened to arrive, which would make the check circular.
+ */
+export const FIXTURE_MODEL_ID = "fixture-model";
+export const FIXTURE_MODEL_CAPABILITIES = Object.freeze({
+  [FIXTURE_MODEL_ID]: Object.freeze({ vision: true, reasoning: true }),
+});
+
 function parseProcStat(pid, stat) {
   const close = stat.lastIndexOf(")");
   if (close < 0) throw new Error(`cannot parse /proc/${pid}/stat`);
@@ -202,7 +214,7 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
     DB_ENCRYPTION_KEY: "capability-gateway-fixture-db-key",
     JWT_SECRET: "capability-fixture-jwt-secret",
     INITIAL_PASSWORD: "capability-fixture-password",
-    MODEL_CAPABILITY_OVERRIDES: JSON.stringify({ "fixture-model": { vision: true, reasoning: true } }),
+    MODEL_CAPABILITY_OVERRIDES: JSON.stringify(FIXTURE_MODEL_CAPABILITIES),
     NEXT_TELEMETRY_DISABLED: "1",
   };
   const seed = spawn(process.execPath, ["--require", guardPath, seedPath], {

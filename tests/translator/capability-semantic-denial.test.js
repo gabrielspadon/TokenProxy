@@ -5,6 +5,8 @@ import "./registerAll.js";
 import { assertSemanticPreserved, semanticReceipt } from "../contracts/provider-semantic.mjs";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
+import { cellTransforms } from "../contracts/run-capability-matrix.mjs";
+import { FIXTURE_MODEL_CAPABILITIES, FIXTURE_MODEL_ID } from "../contracts/capability-gateway-fixture.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const loadJson = async (path) => JSON.parse(await readFile(`${root}/${path}`, "utf8"));
@@ -136,7 +138,8 @@ describe("declared transforms are scenario-bound and measured", () => {
     const manifest = await loadJson("tests/contracts/capabilities.json");
     const mapped = manifest.providerTransforms.find(({ id }) => id === "claude-thinking-mapped-to-reasoning-effort");
     expect(mapped.appliesToScenarios).toEqual(["reasoning"]);
-    expect(mapped.expectsControls).toEqual([{ key: "reasoning_effort", value: "none" }]);
+    // mapsControl is the single owner of the expected target control.
+    expect(mapped.mapsControl.to).toEqual({ key: "reasoning_effort", value: "none" });
 
     const body = await fixture("claude/reasoning");
     expect(body.thinking.budget_tokens).toBe(16);
@@ -163,6 +166,95 @@ describe("declared transforms are scenario-bound and measured", () => {
   });
 });
 
+describe("capability predicate is evaluated, not assumed", () => {
+  const entry = { endpoint: "/v1/messages", scenario: "reasoning" };
+  const gateId = "reasoning-control-gated-on-model-capability";
+  const resolve = async (capabilities) => {
+    const manifest = await loadJson("tests/contracts/capabilities.json");
+    return cellTransforms(manifest, entry, "openai", capabilities).map(({ id }) => id);
+  };
+
+  it("declares the fixture model reasoning-capable, and the gateway is configured from it", () => {
+    expect(FIXTURE_MODEL_CAPABILITIES[FIXTURE_MODEL_ID].reasoning).toBe(true);
+  });
+
+  it("withholds the gate from a reasoning-capable model, so a dropped control cannot pass", async () => {
+    expect(await resolve({ reasoning: true })).not.toContain(gateId);
+  });
+
+  it("grants the gate only where the model declares reasoning false", async () => {
+    expect(await resolve({ reasoning: false })).toContain(gateId);
+  });
+
+  it.each([
+    ["absent", {}],
+    ["undefined model", undefined],
+    ["unknown, non-boolean", { reasoning: "maybe" }],
+  ])("withholds the gate on %s capability evidence", async (label, capabilities) => {
+    expect(await resolve(capabilities)).not.toContain(gateId);
+  });
+
+  it("denies a dropped reasoning control under the real fixture capabilities", async () => {
+    const source = { messages: [{ role: "user", content: "u" }], reasoning_effort: "high" };
+    const dropped = { messages: source.messages };
+    const gates = (await resolve(FIXTURE_MODEL_CAPABILITIES[FIXTURE_MODEL_ID]))
+      .includes(gateId) ? ["reasoning_effort"] : [];
+    expect(gates).toEqual([]);
+    expect(() => assertSemanticPreserved(source, semanticReceipt(dropped), "capable-drop", {
+      gatedControlKeys: gates,
+    })).toThrow(/lost ordered semantic/);
+  });
+});
+
+describe("a mapping waives its source only with a proven replacement", () => {
+  const MAPPING = {
+    id: "claude-thinking-mapped-to-reasoning-effort",
+    from: { key: "thinking", value: { type: "enabled", budget_tokens: 16 } },
+    to: { key: "reasoning_effort", value: "none" },
+  };
+  const source = { messages: [{ role: "user", content: "u" }], thinking: { type: "enabled", budget_tokens: 16 } };
+
+  it("accepts the mapping when the exact replacement is present", () => {
+    const upstreamBody = { messages: source.messages, reasoning_effort: "none" };
+    expect(() => assertSemanticPreserved(source, semanticReceipt(upstreamBody), "mapped", {
+      mappedControls: [MAPPING],
+    })).not.toThrow();
+  });
+
+  it("rejects a mapping whose replacement never arrived", () => {
+    const droppedEntirely = { messages: source.messages };
+    expect(() => assertSemanticPreserved(source, semanticReceipt(droppedEntirely), "no-replacement", {
+      mappedControls: [MAPPING],
+    })).toThrow(/never reached the provider/);
+  });
+
+  it("rejects a replacement carrying a value the mapping does not predict", () => {
+    const wrongValue = { messages: source.messages, reasoning_effort: "high" };
+    expect(() => assertSemanticPreserved(source, semanticReceipt(wrongValue), "wrong-value", {
+      mappedControls: [MAPPING],
+    })).toThrow(/does not predict/);
+  });
+
+  it("rejects a mapping whose source precondition does not match the fixture", () => {
+    const otherBudget = { messages: source.messages, thinking: { type: "enabled", budget_tokens: 4096 } };
+    const upstreamBody = { messages: source.messages, reasoning_effort: "none" };
+    expect(() => assertSemanticPreserved(otherBudget, semanticReceipt(upstreamBody), "wrong-precondition", {
+      mappedControls: [MAPPING],
+    })).toThrow(/source precondition/);
+  });
+
+  it("declares the mapping separately from the capability gate", async () => {
+    const manifest = await loadJson("tests/contracts/capabilities.json");
+    const mapping = manifest.providerTransforms.find(({ id }) => id === MAPPING.id);
+    const gate = manifest.providerTransforms.find(({ id }) => id === "reasoning-control-gated-on-model-capability");
+    expect(mapping.mapsControl).toEqual(MAPPING);
+    expect(mapping.requiresTargetCapability).toEqual({ reasoning: true });
+    expect(mapping.gatesControls).toBeUndefined();
+    expect(gate.requiresTargetCapability).toEqual({ reasoning: false });
+    expect(gate.appliesWhen).toBeUndefined();
+  });
+});
+
 describe("legitimate primary translations", () => {
   it("accepts all 15 under their own per-cell declarations", async () => {
     const manifest = await loadJson("tests/contracts/capabilities.json");
@@ -176,10 +268,9 @@ describe("legitimate primary translations", () => {
         const raised = sent.max_tokens !== sourceBudget;
         assertSemanticPreserved(body, semanticReceipt(sent), `${source}/${scenario}`, {
           declaredControls: [],
-          // Offline the fixture model has no reasoning capability, so a
-          // reasoning control is gated away by applyThinking. mappedControl no
-          // longer guesses a budget conversion, so a Claude body still carries
-          // its own `thinking` key here.
+          // Offline these bodies are translated for a model with no capability
+          // declaration, so a reasoning control is dropped. That is the gate's
+          // own condition, stated explicitly per cell rather than blanket.
           gatedControlKeys: ["reasoning_effort", "reasoning", "thinking"],
           outputBudget: {
             source: sourceBudget,

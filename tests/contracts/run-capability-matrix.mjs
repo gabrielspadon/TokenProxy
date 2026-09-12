@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { describeTranslationRoute } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { assertSemanticPreserved } from "./provider-semantic.mjs";
+import { FIXTURE_MODEL_CAPABILITIES, FIXTURE_MODEL_ID } from "./capability-gateway-fixture.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const manifestPath = `${root}/tests/contracts/capabilities.json`;
@@ -248,7 +249,7 @@ const declaredOutputBudget = (body) => body?.max_tokens ?? body?.max_output_toke
  * matched on its exact source and target, so it licenses only the conversion
  * it names and never acts as a blanket exemption.
  */
-function cellTransforms(manifest, entry, target) {
+export function cellTransforms(manifest, entry, target, modelCapabilities) {
   const source = ENDPOINT_SOURCE_FORMAT[entry.endpoint];
   return (manifest.providerTransforms || []).filter((transform) => {
     if (transform.kind !== "request" || transform.target !== target) return false;
@@ -257,21 +258,42 @@ function cellTransforms(manifest, entry, target) {
     if (transform.source !== "*" && transform.source !== source) return false;
     // A transform scoped to named scenarios applies ONLY to those, so the
     // Claude text cell never inherits the tool-cycle budget exemption.
-    return !transform.appliesToScenarios || transform.appliesToScenarios.includes(entry.scenario);
+    if (transform.appliesToScenarios && !transform.appliesToScenarios.includes(entry.scenario)) return false;
+    return satisfiesCapabilityPredicate(transform, modelCapabilities);
   });
 }
 
-function assertLatestSemanticReceipt(control, label, fixture, manifest, entry, target) {
+/**
+ * A capability-conditional transform applies only where the target model's
+ * DECLARED capabilities match its stated requirement. Absent or non-boolean
+ * evidence grants nothing: a gate that cannot be shown to apply must not
+ * license a missing control.
+ */
+function satisfiesCapabilityPredicate(transform, modelCapabilities) {
+  const required = transform.requiresTargetCapability;
+  if (!required) return true;
+  for (const [capability, expected] of Object.entries(required)) {
+    const declared = modelCapabilities?.[capability];
+    if (typeof declared !== "boolean" || declared !== expected) return false;
+  }
+  return true;
+}
+
+function assertLatestSemanticReceipt(control, label, fixture, manifest, entry, target, modelCapabilities) {
   const receipt = control.semanticReceipts?.at(-1);
   assert.equal(receipt?.label, label, `${label} provider semantic receipt label`);
-  const transforms = manifest ? cellTransforms(manifest, entry, target) : [];
+  const transforms = manifest ? cellTransforms(manifest, entry, target, modelCapabilities) : [];
   const budgetTransform = transforms.find(({ transform }) => transform === "output-budget-raised") || null;
   const sourceBudget = declaredOutputBudget(fixture);
   assertSemanticPreserved(fixture, receipt.semantic, label, {
     // Each declared control carries the exact value the transform predicts, so
     // a declaration cannot license an arbitrary new key.
     declaredControls: transforms.flatMap(({ expectsControls }) => expectsControls || []),
+    // Only a transform whose capability predicate HELD contributes a gate.
     gatedControlKeys: transforms.flatMap(({ gatesControls }) => gatesControls || []),
+    // A mapping waives its source control only when its exact replacement is
+    // proven present, so a rename can never hide a silent drop.
+    mappedControls: transforms.flatMap(({ mapsControl }) => mapsControl ? [mapsControl] : []),
     outputBudget: {
       source: sourceBudget,
       // No fallback. A receipt with no budget evidence must fail rather than
@@ -304,6 +326,9 @@ export async function runCapabilityMatrix({
   // cell lands on this target. A declared transform is matched against it, so
   // a transform for another target never licenses anything here.
   providerTargetFormat = "openai",
+  // Evaluated against the SAME declaration that configures the started gateway,
+  // never inferred from which controls happened to arrive.
+  modelCapabilities = FIXTURE_MODEL_CAPABILITIES[FIXTURE_MODEL_ID],
 }) {
   assert.equal(typeof gatewayBaseUrl, "string", "gatewayBaseUrl is required");
   assert.equal(typeof providerControlUrl, "string", "providerControlUrl is required");
@@ -349,7 +374,7 @@ export async function runCapabilityMatrix({
     const providerAfter = await readControl(providerControlUrl);
     assert.equal(providerAfter.ingressCount, providerBefore.ingressCount + 1, `${entry.id} did not reach provider ingress exactly once`);
     assert.equal(providerAfter.providerDispatchCount, providerBefore.providerDispatchCount + 1, `${entry.id} did not reach provider exactly once`);
-    assertLatestSemanticReceipt(providerAfter, entry.id, fixture, manifest, entry, providerTargetFormat);
+    assertLatestSemanticReceipt(providerAfter, entry.id, fixture, manifest, entry, providerTargetFormat, modelCapabilities);
     primary.dispatched += 1;
     primary.passed += 1;
   }
@@ -360,7 +385,7 @@ export async function runCapabilityMatrix({
   await setStubOutcome(providerControlUrl, "success", "outcome-success");
   const success = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   assert.equal(success.response.status, 200);
-  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-success", body, manifest, sample, providerTargetFormat);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-success", body, manifest, sample, providerTargetFormat, modelCapabilities);
   await setStubOutcome(providerControlUrl, "provider-error", "outcome-provider-error");
   const providerError = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   const providerErrorExpected = manifest.fixtureExpectations.outcomes["provider-error"];
@@ -371,7 +396,7 @@ export async function runCapabilityMatrix({
     providerErrorExpected.error,
     "provider error classification",
   );
-  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-provider-error", body, manifest, sample, providerTargetFormat);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-provider-error", body, manifest, sample, providerTargetFormat, modelCapabilities);
   await setStubOutcome(providerControlUrl, "transport-abrupt", "outcome-transport-abrupt");
   const abrupt = await send(gatewayBaseUrl, sample, outcomeBody, authorization, gatewayReceipt);
   const transportAbruptExpected = manifest.fixtureExpectations.outcomes["transport-abrupt"];
@@ -382,7 +407,7 @@ export async function runCapabilityMatrix({
     transportAbruptExpected.error,
     "abrupt transport classification",
   );
-  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-transport-abrupt", body, manifest, sample, providerTargetFormat);
+  assertLatestSemanticReceipt(await readControl(providerControlUrl), "outcome-transport-abrupt", body, manifest, sample, providerTargetFormat, modelCapabilities);
   const finalProvider = await readControl(providerControlUrl);
   const expectedSemanticLabels = [
     ...manifest.primaryEndpoints.filter((entry) => entry.expected.upstreamDispatch).map((entry) => entry.id),

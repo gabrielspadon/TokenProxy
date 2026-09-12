@@ -3972,18 +3972,30 @@
       "target": "openai",
       "kind": "request",
       "transform": "control-key-mapped",
-      "detail": "The claude/reasoning fixture declares thinking.budget_tokens 16. Measured through the unified thinking path under the gateway fixture capability override, it arrives as reasoning_effort \"none\". Declared for this fixture only; the conversion is model-dependent and no generic threshold is claimed here.",
+      "detail": "The claude/reasoning fixture declares thinking {type enabled, budget_tokens 16}. Measured under the fixture model capability declaration (reasoning true), it arrives as reasoning_effort \"none\". Declared for this fixture only; no generic budget threshold is claimed.",
       "owner": "open-sse/translator/concerns/thinkingUnified.js",
       "consequence": "A client thinking budget does not reach the provider as a budget; it arrives as a clamped discrete effort.",
       "appliesToScenarios": [
         "reasoning"
       ],
-      "expectsControls": [
-        {
+      "expectsControls": [],
+      "mapsControl": {
+        "id": "claude-thinking-mapped-to-reasoning-effort",
+        "from": {
+          "key": "thinking",
+          "value": {
+            "type": "enabled",
+            "budget_tokens": 16
+          }
+        },
+        "to": {
           "key": "reasoning_effort",
           "value": "none"
         }
-      ]
+      },
+      "requiresTargetCapability": {
+        "reasoning": true
+      }
     },
     {
       "id": "reasoning-control-gated-on-model-capability",
@@ -3991,7 +4003,7 @@
       "target": "openai",
       "kind": "request",
       "transform": "control-dropped-by-capability-gate",
-      "detail": "applyThinking drops a reasoning control for a model whose declared capabilities do not include reasoning. The client key may be reasoning_effort, reasoning or thinking depending on the source format. Measured: gpt-5 keeps \"high\"; a model without the capability drops it entirely.",
+      "detail": "applyThinking drops a reasoning control for a model whose declared capabilities do not include reasoning. Applies only where the target model declares reasoning false; absent or unknown capability evidence grants no exemption.",
       "owner": "open-sse/translator/index.js",
       "gatesControls": [
         "reasoning_effort",
@@ -4000,7 +4012,9 @@
       ],
       "consequence": "A client-declared reasoning effort does not reach a non-reasoning model; verified against gpt-5 (high) versus fixture-model (absent).",
       "expectsControls": [],
-      "appliesWhen": "target model capabilities exclude reasoning"
+      "requiresTargetCapability": {
+        "reasoning": false
+      }
     }
   ]
 }

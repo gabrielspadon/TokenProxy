@@ -271,10 +271,14 @@ function requireDeclaredControls(expected, actual, label, declaredControls) {
  * Require source semantics in order at the upstream, without retaining values,
  * AND deny inflation plus undeclared control or output-budget changes.
  *
- * options.allowedControlKeys lists control keys a declared provider transform
- * may introduce for THIS cell. options.outputBudget is
- * { source, upstream, declaredTransform }; the two may differ only when a
- * transform is named.
+ * options.declaredControls names each control a transform expects at the
+ * provider, with its exact value. options.gatedControlKeys names keys a
+ * capability-conditional transform may drop, and is supplied ONLY when that
+ * transform's capability predicate held. options.mappedControls names a
+ * source-to-target rename, whose source atom is waived only once its exact
+ * replacement is proven present. options.outputBudget is
+ * { source, upstream, declaredTransform }; the two may differ only when the
+ * named transform predicts that exact change.
  */
 export function assertSemanticPreserved(sourceBody, receipt, label, options = {}) {
   assert.equal(receipt?.digest, digest(receipt?.shape), `${label} semantic digest integrity`);
@@ -282,16 +286,41 @@ export function assertSemanticPreserved(sourceBody, receipt, label, options = {}
   const actual = receipt.shape;
   const ordered = actual?.ordered || [];
   requireSubsequence(expected.ordered.filter((atom) => atom.kind !== "control"), ordered, label);
-  // A control may be absent upstream ONLY where a transform declares the gate
-  // that drops it (applyThinking removes a reasoning control for a model whose
-  // capabilities do not include reasoning). Anything else must arrive intact.
+  // A source control may be absent upstream in exactly two cases, each of
+  // which must be earned. A capability gate whose predicate HELD may drop its
+  // key. A declared mapping may replace its key, but only once the exact
+  // replacement is shown present, so a rename can never conceal a drop.
   const gatedKeyDigests = new Set((options.gatedControlKeys || []).map((key) => redact(key)));
+  const mappings = options.mappedControls || [];
+  const upstreamControls = new Map((actual.controls || []).map(({ key, value }) => [key, JSON.stringify(value)]));
+  const mappedSourceDigests = new Set();
+  for (const mapping of mappings) {
+    assert.equal(
+      JSON.stringify(semanticShape({ [mapping.from.key]: mapping.from.value }).controls[0]?.value),
+      JSON.stringify(expected.controls.find(({ key }) => key === mapping.from.key)?.value),
+      `${label} mapping ${mapping.id} source precondition ${mapping.from.key} does not match this fixture`,
+    );
+    assert.ok(
+      upstreamControls.has(mapping.to.key),
+      `${label} mapping ${mapping.id} waived ${mapping.from.key} but ${mapping.to.key} never reached the provider`,
+    );
+    assert.equal(
+      upstreamControls.get(mapping.to.key),
+      JSON.stringify(redactedValue(mapping.to.value)),
+      `${label} mapping ${mapping.id} produced ${mapping.to.key} with a value it does not predict`,
+    );
+    mappedSourceDigests.add(redact(mapping.from.key));
+  }
   for (const control of expected.ordered.filter((atom) => atom.kind === "control")) {
-    if (gatedKeyDigests.has(control.value?.key?.digest)) continue;
+    const keyDigest = control.value?.key?.digest;
+    if (gatedKeyDigests.has(keyDigest) || mappedSourceDigests.has(keyDigest)) continue;
     requireSubsequence([control], ordered, label);
   }
   requireNoInflation(expected.ordered, ordered, label);
-  requireDeclaredControls(expected, actual, label, options.declaredControls || []);
+  requireDeclaredControls(expected, actual, label, [
+    ...(options.declaredControls || []),
+    ...mappings.map(({ to }) => to),
+  ]);
   if (options.outputBudget) {
     const { source, upstream, declaredTransform = null } = options.outputBudget;
     assert.notEqual(
