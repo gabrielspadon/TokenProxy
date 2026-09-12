@@ -7,15 +7,52 @@
 // /etc/hosts` or a real DNS lookup.
 import net from "node:net";
 import cp from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const LOOPBACK = /^(127\.|::1$|::ffff:127\.|localhost$|0\.0\.0\.0$)/i;
 
 const realConnect = net.Socket.prototype.connect;
+function isWithin(root, candidate) {
+  const fromRoot = relative(root, candidate);
+  return fromRoot === "" || (!isAbsolute(fromRoot) && fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`));
+}
+
+function assertAllowedUnixSocket(path) {
+  const runRoot = process.env.TOKENPROXY_TEST_RUN_ROOT;
+  let owned = false;
+  if (typeof path === "string" && path && !path.includes("\0") && isAbsolute(path) && runRoot) {
+    try {
+      const canonicalRoot = realpathSync(resolve(runRoot));
+      const canonicalPath = existsSync(path)
+        ? realpathSync(path)
+        : join(realpathSync(dirname(path)), basename(path));
+      owned = isWithin(canonicalRoot, canonicalPath);
+    } catch {
+      owned = false;
+    }
+  }
+  if (!owned) {
+    throw new Error(
+      `[real-io-guard] blocked a filesystem Unix socket outside the runner-owned root: ${JSON.stringify(path)}. ` +
+        `Create test listeners below TOKENPROXY_TEST_RUN_ROOT.`,
+    );
+  }
+}
+
 function assertAllowedConnection(args) {
   const opts = typeof args[0] === "object" && args[0] !== null ? args[0] : {};
-  const host = opts.host ?? (typeof args[0] === "string" ? args[0] : opts.path ? undefined : args[1]);
-  // A UNIX socket (opts.path) and a host-less connect (fd reuse) are not network egress.
+  if (opts.path !== undefined) {
+    assertAllowedUnixSocket(opts.path);
+    return;
+  }
+  if (typeof args[0] === "string") {
+    assertAllowedUnixSocket(args[0]);
+    return;
+  }
+  const host = opts.host ?? args[1];
+  // A host-less connect is an existing file-descriptor reuse, not network egress.
   if (host !== undefined && !LOOPBACK.test(String(host))) {
     throw new Error(
       `[real-io-guard] blocked a real network connection to "${host}". ` +

@@ -24,6 +24,7 @@
       "keeps direct-config test state outside the fake production home"
     ],
     "tests/fixtures/offline-runner/environment-probe.test.js": [
+      "allows only runner-owned filesystem Unix sockets",
       "blocks raw sockets and child-process egress",
       "does not inherit provider or proxy credentials",
       "uses only the runner-owned home, tmp and data roots"

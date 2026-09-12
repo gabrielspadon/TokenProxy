@@ -1,7 +1,7 @@
 import net from "node:net";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { expect, it } from "vitest";
 
 it("uses only the runner-owned home, tmp and data roots", () => {
@@ -38,4 +38,42 @@ it("blocks raw sockets and child-process egress", async () => {
     socket.once("error", () => resolvePromise());
     socket.once("timeout", () => { socket.destroy(); resolvePromise(); });
   })).resolves.toBeUndefined();
+});
+
+it("allows only runner-owned filesystem Unix sockets", async () => {
+  const runRoot = resolve(process.env.TOKENPROXY_TEST_RUN_ROOT);
+  const outside = mkdtempSync(join(dirname(runRoot), "tokenproxy-outside-socket-"));
+  const outsidePath = join(outside, "listener.sock");
+  const outsideServer = net.createServer();
+  await new Promise((resolvePromise, reject) => {
+    outsideServer.once("error", reject);
+    outsideServer.listen(outsidePath, resolvePromise);
+  });
+
+  try {
+    let escapedSocket;
+    expect(() => {
+      escapedSocket = net.connect({ path: outsidePath });
+      escapedSocket.destroy();
+    }).toThrow(/real-io-guard.*outside the runner-owned root/);
+  } finally {
+    await new Promise((resolvePromise) => outsideServer.close(resolvePromise));
+    rmSync(outside, { recursive: true, force: true });
+  }
+
+  const ownedPath = join(runRoot, "tmp", "owned-listener.sock");
+  const ownedServer = net.createServer((socket) => socket.end());
+  await new Promise((resolvePromise, reject) => {
+    ownedServer.once("error", reject);
+    ownedServer.listen(ownedPath, resolvePromise);
+  });
+  try {
+    await expect(new Promise((resolvePromise, reject) => {
+      const socket = net.connect({ path: ownedPath });
+      socket.once("connect", () => { socket.destroy(); resolvePromise(); });
+      socket.once("error", reject);
+    })).resolves.toBeUndefined();
+  } finally {
+    await new Promise((resolvePromise) => ownedServer.close(resolvePromise));
+  }
 });
