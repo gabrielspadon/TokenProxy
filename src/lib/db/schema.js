@@ -23,6 +23,7 @@ import { COST_LEDGER_TABLES } from './costLedgerSchema.js';
 import { NOTIFICATION_DELIVERY_TABLES, PROJECT_NOTIFICATION_COLUMNS } from './notificationDeliverySchema.js';
 import { NOTIFICATION_AUTOMATION_TABLES } from './notificationAutomationSchema.js';
 import { CONTEXT_STAGE_OUTCOME_COLUMNS } from './contextStageOutcomeSchema.js';
+import { TELEMETRY_ORIGIN_COLUMNS, TELEMETRY_OUTCOME_TABLES } from './telemetryOutcomeSchema.js';
 import {
   PROJECT_TABLES,
   USAGE_PROJECT_COLUMNS,
@@ -48,7 +49,8 @@ import {
 // 29 = controlled compatibility scopes and retained operator evaluation sets.
 // 34 = queryable non-secret connection identity (accountId, plan,
 // organizationId) captured at OAuth sign-in; secrets stay in the blob.
-export const SCHEMA_VERSION = 34;
+// 35 = trusted telemetry origins, logical/client outcomes, timing and reversible quarantine.
+export const SCHEMA_VERSION = 35;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -98,6 +100,7 @@ export const TABLES = {
   ...ACCESS_PROFILE_TABLES,
   ...KEY_ROTATION_TABLES,
   ...COST_LEDGER_TABLES,
+  ...TELEMETRY_OUTCOME_TABLES,
   _meta: {
     columns: {
       key: 'TEXT PRIMARY KEY',
@@ -209,6 +212,7 @@ export const TABLES = {
   },
   usageHistory: {
     columns: {
+      ...TELEMETRY_ORIGIN_COLUMNS,
       id: 'INTEGER PRIMARY KEY AUTOINCREMENT',
       timestamp: 'TEXT NOT NULL',
       provider: 'TEXT',
@@ -343,6 +347,7 @@ export const TABLES = {
   },
   requestStats: {
     columns: {
+      ...TELEMETRY_ORIGIN_COLUMNS,
       ...REQUEST_IDENTITY_COLUMNS,
       id: 'TEXT PRIMARY KEY',
       timestamp: 'TEXT NOT NULL',
