@@ -223,6 +223,16 @@ describe('exchangeOidcCode', () => {
     await expect(exchangeOidcCode({ ...base, clientSecret: 's' })).rejects.toThrow('code expired');
   });
 
+  it('redacts the submitted client secret from provider-controlled errors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      error: 'invalid_client',
+      error_description: 'credential fixture-client-secret was rejected',
+    }, false, 401)));
+    const failure = await exchangeOidcCode({ ...base, clientSecret: 'fixture-client-secret' }).catch((error) => error);
+    expect(failure.message).not.toContain('fixture-client-secret');
+    expect(failure.message).toContain('[REDACTED]');
+  });
+
   it('falls back to a status-coded message when the error body is not JSON', async () => {
     vi.stubGlobal(
       'fetch',
@@ -280,8 +290,19 @@ describe('probeOidcClientSecret', () => {
           jsonResponse({ error: 'invalid_client', error_description: 'bad secret' }, false, 401)
         )
     );
-    const out = await probeOidcClientSecret({ ...base, clientSecret: 's' });
+    const out = await probeOidcClientSecret({ ...base, clientSecret: 'fixture-secret' });
     expect(out).toMatchObject({ tested: true, valid: false, message: 'bad secret' });
+    expect(JSON.stringify(out)).not.toContain('fixture-secret');
+  });
+
+  it('redacts the submitted client secret from probe diagnostics', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      error: 'invalid_client',
+      error_description: 'fixture-probe-secret is invalid',
+    }, false, 401)));
+    const out = await probeOidcClientSecret({ ...base, clientSecret: 'fixture-probe-secret' });
+    expect(JSON.stringify(out)).not.toContain('fixture-probe-secret');
+    expect(out.message).toContain('[REDACTED]');
   });
 
   it('treats invalid_grant as secret accepted (only the test code is bogus)', async () => {

@@ -16,6 +16,12 @@ function trimTrailingSlashes(value) {
   return (value || "").trim().replace(/\/+$/, "");
 }
 
+function safeProviderMessage(message, secret, fallback) {
+  const text = typeof message === "string" ? message : "";
+  if (secret && text.includes(secret)) return `${fallback} [REDACTED]`;
+  return text || fallback;
+}
+
 // OIDC Core 1.0 section 3.1.2.1 makes "openid" the value that marks an
 // authorization request as an OIDC one. Drop it and a compliant provider runs a
 // plain OAuth2 flow and issues no id_token, which the callback then rejects with
@@ -157,7 +163,11 @@ export async function exchangeOidcCode({
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = data?.error_description || data?.error || `OIDC token exchange failed (${res.status})`;
+    const message = safeProviderMessage(
+      data?.error_description || data?.error,
+      clientSecret,
+      `OIDC token exchange failed (${res.status})`,
+    );
     throw new Error(message);
   }
 
@@ -197,13 +207,13 @@ export async function probeOidcClientSecret({
   const data = await res.json().catch(() => ({}));
   const error = (data?.error || "").toLowerCase();
   const errorDescription = data?.error_description || data?.error || "";
+  const safeDescription = safeProviderMessage(errorDescription, clientSecret, "OIDC token endpoint response contained credential material.");
 
   if (res.ok) {
     return {
       tested: true,
       valid: true,
       message: "Client secret was accepted by the token endpoint.",
-      raw: data,
     };
   }
 
@@ -211,8 +221,7 @@ export async function probeOidcClientSecret({
     return {
       tested: true,
       valid: false,
-      message: errorDescription || "Client secret is not valid.",
-      raw: data,
+      message: safeDescription || "Client secret is not valid.",
     };
   }
 
@@ -221,15 +230,13 @@ export async function probeOidcClientSecret({
       tested: true,
       valid: true,
       message: "Client secret was accepted; the token exchange failed only because the test authorization code is invalid.",
-      raw: data,
     };
   }
 
   return {
     tested: true,
     valid: null,
-    message: errorDescription || `Token endpoint responded with ${res.status}`,
-    raw: data,
+    message: safeDescription || `Token endpoint responded with ${res.status}`,
   };
 }
 
