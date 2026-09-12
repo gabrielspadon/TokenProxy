@@ -68,6 +68,30 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+describe('non-OAuth request credential validation', () => {
+  it.each(['apikey', 'cookie', 'none'])('accepts an unchanged %s account without refreshing it', async (authType) => {
+    const connection = { id: 'direct-account', provider: 'openai-compatible', authType, isActive: true, apiKey: 'fixture-key' };
+    getProviderConnectionById.mockResolvedValue(connection);
+    shouldRefreshCredentials.mockReturnValue(false);
+    const result = await checkAndRefreshToken(connection.provider, {
+      ...connection, connectionId: connection.id, _connection: connection,
+    });
+    expect(result.apiKey).toBe('fixture-key');
+    expect(result._connection).toEqual(connection);
+    expect(refreshProviderCredentials).not.toHaveBeenCalled();
+    expect(updateProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it.each([{ force: true }, { requireCurrent: true }])('rejects an API-key account used as an OAuth refresh target %j', async (options) => {
+    const connection = { id: 'direct-account', provider: 'openai-compatible', authType: 'apikey', isActive: true, apiKey: 'fixture-key' };
+    getProviderConnectionById.mockResolvedValue(connection);
+    await expect(checkAndRefreshToken(connection.provider, connection, options)).rejects.toMatchObject({
+      code: 'CREDENTIAL_SELECTION_CHANGED',
+    });
+    expect(refreshProviderCredentials).not.toHaveBeenCalled();
+  });
+});
+
 describe('updateProviderCredentials — issue record on rotation', () => {
   it('stamps refreshTokenIssuedAt and Fp on a genuine rotation', async () => {
     getProviderConnectionById.mockResolvedValue({

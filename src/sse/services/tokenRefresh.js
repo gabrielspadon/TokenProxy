@@ -351,7 +351,7 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
   }
   if (stored && (
     !isCompatibleCredentialSelection(selected, stored, { connectionId: creds.connectionId, provider })
-    || stored.authType && stored.authType !== "oauth"
+    || (options.force || options.requireCurrent) && stored.authType && stored.authType !== "oauth"
   )) {
     throw credentialSelectionChanged();
   }
