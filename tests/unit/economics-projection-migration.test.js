@@ -45,6 +45,32 @@ const rerunMigration = () => runMigrationOnce({ ...db });
 const projectionCount = () => db.get('SELECT COUNT(*) AS count FROM usageEconomicsProjection').count;
 
 describe('migration-governed economics projection', () => {
+  it.each(DRIVERS)('upgrades v3 cache defaults without rewriting source evidence using %s', async driver => {
+    db.close();
+    db = await open(driver, path.join(directory, `${driver.replaceAll(':', '-')}-presence.sqlite`));
+    await runMigrationOnce(db);
+    db.run('INSERT INTO usageHistory(timestamp,promptTokens,completionTokens,tokens) VALUES(?,?,?,?)',
+      ['2026-01-01T00:00:00.000Z', 20000, 500, JSON.stringify({ cached_tokens: 12000,
+        cache_creation_input_tokens: 0, cache_read_tokens_present: true, cache_write_tokens_present: false })]);
+    const source = db.all('SELECT * FROM usageHistory');
+    db.run('UPDATE usageEconomicsProjection SET cacheWrite=0,uncachedInput=8000,missingTokenDetail=0');
+    for (const [key, value] of [['economicsProjectionVersion', '3'], ['schemaVersion', '6'], ['backupSchemaVersion', '39']]) {
+      db.run('UPDATE _meta SET value=? WHERE key=?', [value, key]);
+    }
+    const failing = { ...db, exec(sql) {
+      if (sql.trimStart().startsWith('INSERT OR REPLACE INTO usageEconomicsProjection')) throw new Error('cache presence rebuild failure');
+      return db.exec(sql);
+    } };
+    await expect(runMigrationOnce(failing)).rejects.toThrow('cache presence rebuild failure');
+    expect(db.get('SELECT cacheWrite FROM usageEconomicsProjection').cacheWrite).toBe(0);
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('3');
+    expect(db.all('SELECT * FROM usageHistory')).toEqual(source);
+    await runMigrationOnce({ ...db });
+    expect(db.get('SELECT cacheWrite,uncachedInput,missingTokenDetail FROM usageEconomicsProjection'))
+      .toMatchObject({ cacheWrite: null, uncachedInput: null, missingTokenDetail: 1 });
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('4');
+    expect(db.all('SELECT * FROM usageHistory')).toEqual(source);
+  });
   it.each(['provider', 'model', 'account', 'session', 'logical-request', 'client-project', 'client', 'task'])('preserves summary values when reusing complete %s groups', groupBy => {
     for (const [index, cost, latency] of [[0, 0.1, 10], [1, 0.2, 20], [2, null, 90], [3, 0.3, null], [4, null, null]]) {
       const id = `rollup-${index}`;
@@ -107,7 +133,7 @@ describe('migration-governed economics projection', () => {
   });
   it('backfills and transactionally maintains exact economics semantics', () => {
     expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(36);
-    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'")?.value).toBe('3');
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'")?.value).toBe('4');
     seedEconomicsCorrectness(db);
     const result = query();
     expect(result.summary).toMatchObject(ECONOMICS_ORACLE.summary);
@@ -130,7 +156,7 @@ describe('migration-governed economics projection', () => {
     expect(projectionCount()).toBe(5);
     db.run("UPDATE _meta SET value='0' WHERE key='economicsProjectionVersion'");
     expect(query()).toEqual(result);
-    db.run("UPDATE _meta SET value='3' WHERE key='economicsProjectionVersion'");
+    db.run("UPDATE _meta SET value='4' WHERE key='economicsProjectionVersion'");
 
     db.run("UPDATE requestStats SET model='conflicting-model' WHERE id=?", ['oracle-linked-initial']);
     expect(query().summary).toMatchObject({ linkedRequestRows: 1, conflictingRequestRows: 2 });
@@ -185,8 +211,8 @@ describe('migration-governed economics projection', () => {
     expect(query()).toEqual(expected);
     const types = Object.fromEntries(db.all('PRAGMA table_info(usageEconomicsProjection)').map(row => [row.name, row.type]));
     expect(types).toMatchObject({ cacheRead: 'BLOB', cacheWrite: 'BLOB', uncachedInput: 'BLOB' });
-    expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('6');
-    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('3');
+    expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('7');
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('4');
   });
 
   it('repairs an equal-count orphan projection row independently', async () => {
@@ -258,6 +284,6 @@ describe('migration-governed economics projection', () => {
     expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('0');
     await rerunMigration();
     expect(projectionCount()).toBe(5);
-    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('3');
+    expect(db.get("SELECT value FROM _meta WHERE key='economicsProjectionVersion'").value).toBe('4');
   });
 });

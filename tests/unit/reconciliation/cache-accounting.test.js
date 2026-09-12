@@ -141,8 +141,8 @@ describe("G2 cache aliases resolve at one point", () => {
     // is a normalization point of its own, and drifts the moment a provider
     // adds a spelling that only usageTracking knows about.
     expect(usageRepoSource).not.toMatch(/cache_read_input_tokens/);
-    expect(usageRepoSource).not.toMatch(/cache_read_tokens/);
-    expect(usageRepoSource).not.toMatch(/cache_write_tokens/);
+    expect(usageRepoSource).not.toMatch(/cache_read_tokens\b/);
+    expect(usageRepoSource).not.toMatch(/cache_write_tokens\b/);
     expect(usageRepoSource).not.toMatch(/cache_write_input_tokens/);
     expect(usageRepoSource).not.toMatch(/cache_creation_tokens/);
   });

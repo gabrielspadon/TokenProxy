@@ -1,7 +1,7 @@
 import { setMetaSync } from './helpers/metaStore.js';
 import { telemetryFilterSql } from './analytics/telemetryFilter.mjs';
 
-export const ECONOMICS_PROJECTION_VERSION = 3;
+export const ECONOMICS_PROJECTION_VERSION = 4;
 export const ECONOMICS_PROJECTION_META_KEY = 'economicsProjectionVersion';
 export const ECONOMICS_FLAGS = Object.freeze({
   linked: 1,
@@ -130,13 +130,14 @@ const requestRef = field => `CASE WHEN ${requestIdentity} AND length(r.${field})
 const identityRef = field => `CASE WHEN ${durableIdentity} THEN ${retainedRef(field)} ELSE ${requestRef(field)} END`;
 const prompt = `CASE WHEN ${token('input_tokens_present')}=0 THEN NULL ELSE ${quantity('u.promptTokens')} END`;
 const output = `CASE WHEN ${token('output_tokens_present')}=0 THEN NULL ELSE ${quantity('u.completionTokens')} END`;
-const cacheRead = quantity(token('cached_tokens'));
-const cacheWrite = quantity(token('cache_creation_input_tokens'));
+const cacheRead = `CASE WHEN ${token('cache_read_tokens_present')}=0 THEN NULL ELSE ${quantity(token('cached_tokens'))} END`;
+const cacheWrite = `CASE WHEN ${token('cache_write_tokens_present')}=0 THEN NULL ELSE ${quantity(token('cache_creation_input_tokens'))} END`;
 const invalidTokenDetail = `CASE WHEN json_valid(u.tokens) THEN CASE WHEN json_type(u.tokens)='object' THEN 0 ELSE 1 END ELSE 1 END`;
 const invalidTokens = `CASE WHEN ${invalidTokenDetail} OR NOT ${validToken('u.promptTokens')} OR NOT ${validToken('u.completionTokens')}
   OR (json_type(${safeTokens},'$.cached_tokens') IS NOT NULL AND NOT ${validToken(token('cached_tokens'))})
   OR (json_type(${safeTokens},'$.cache_creation_input_tokens') IS NOT NULL AND NOT ${validToken(token('cache_creation_input_tokens'))}) THEN 1 ELSE 0 END`;
-const missingTokenDetail = `CASE WHEN NOT ${validToken(token('cached_tokens'))} OR NOT ${validToken(token('cache_creation_input_tokens'))} THEN 1 ELSE 0 END`;
+const missingTokenDetail = `CASE WHEN ${token('cache_read_tokens_present')}=0 OR ${token('cache_write_tokens_present')}=0
+  OR NOT ${validToken(token('cached_tokens'))} OR NOT ${validToken(token('cache_creation_input_tokens'))} THEN 1 ELSE 0 END`;
 const requestLink = `CASE WHEN u.requestId IS NULL THEN 'unattributed' WHEN ${exact} THEN 'linked'
   WHEN EXISTS(SELECT 1 FROM requestStats request_match WHERE request_match.id=u.requestId
     AND ${telemetryFilterSql('requestStats', 'request_match')}) THEN 'conflict' ELSE 'unavailable' END`;

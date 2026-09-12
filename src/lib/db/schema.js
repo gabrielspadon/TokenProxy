@@ -56,7 +56,7 @@ import {
 // 37 = preserve integer/real token storage classes in the economics projection.
 // 38 = durable semantic terminal evidence and explicit usage backfill provenance.
 // 39 = origin-preserving economics projection with reversible visibility joins.
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;

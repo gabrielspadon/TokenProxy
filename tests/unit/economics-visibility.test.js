@@ -54,7 +54,7 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
   const rawRead = patch => db.transaction(() => {
     db.run("UPDATE _meta SET value='0' WHERE key='economicsProjectionVersion'");
     const result = read(patch);
-    db.run("UPDATE _meta SET value='3' WHERE key='economicsProjectionVersion'");
+    db.run("UPDATE _meta SET value='4' WHERE key='economicsProjectionVersion'");
     return result;
   });
   const removeProjectionOrigin = () => {
@@ -229,8 +229,8 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
     expect(sourceRows()).toEqual(source);
     await runMigrationOnce({ ...db });
     expect(economicsProjectionReady(db, { verifyIntegrity: true })).toBe(true);
-    expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('6');
-    expect(db.get("SELECT value FROM _meta WHERE key='backupSchemaVersion'").value).toBe('39');
+    expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('7');
+    expect(db.get("SELECT value FROM _meta WHERE key='backupSchemaVersion'").value).toBe('40');
     expect(db.get('SELECT COUNT(*) AS count FROM usageEconomicsProjection').count).toBe(8);
     expect(db.get('SELECT typeof(cacheRead) AS type FROM usageEconomicsProjection WHERE id=1').type).toBe('real');
     expect(read()).toEqual(expected);

@@ -127,6 +127,34 @@ describe('analytical workspace read contract', () => {
     expect(read({view:'economics',connectionId:'personal'}).summary).toMatchObject({cacheReadTokens:null,cacheWriteTokens:null,
       uncachedInputTokens:null,invalidTokenRows:0,missingTokenDetailRows:1,cacheReadFraction:null});
   });
+  it('honors recorded cache presence in activity without hiding reported zero', () => {
+    native.exec('ALTER TABLE requestStats ADD COLUMN cacheReadPresent INTEGER; ALTER TABLE requestStats ADD COLUMN cacheWritePresent INTEGER');
+    native.prepare('UPDATE requestStats SET cachedTokens=600,cacheCreationTokens=0,cacheReadPresent=1,cacheWritePresent=0 WHERE id=?').run('r1');
+    const missing = read({ connectionId: 'personal' });
+    expect(missing.summary).toMatchObject({ cacheReadTokens: 600, cacheReadFraction: 0.6,
+      cacheWriteTokens: null, cacheWriteSamples: 0, uncachedInputTokens: null, missingTokenDetailRows: 1 });
+    expect(missing.items[0]).toMatchObject({ cacheWriteTokens: null, uncachedInputTokens: null });
+    native.prepare('UPDATE requestStats SET cacheWritePresent=1 WHERE id=?').run('r1');
+    expect(read({ connectionId: 'personal' }).summary).toMatchObject({ cacheWriteTokens: 0, cacheWriteSamples: 1,
+      uncachedInputTokens: 400, missingTokenDetailRows: 0 });
+    native.prepare('UPDATE requestStats SET cacheReadPresent=0 WHERE id=?').run('r1');
+    expect(read({ connectionId: 'personal' }).summary).toMatchObject({ cacheReadTokens: null, cacheReadFraction: null,
+      cacheReadSamples: 0, uncachedInputTokens: null });
+  });
+  it('honors completion-ledger presence flags while retaining older recorded quantities', () => {
+    const write = native.prepare('UPDATE usageHistory SET tokens=? WHERE id=1');
+    write.run(JSON.stringify({ cached_tokens: 600, cache_creation_input_tokens: 0,
+      cache_read_tokens_present: true, cache_write_tokens_present: false }));
+    expect(read({ view: 'economics', connectionId: 'personal' }).summary).toMatchObject({ cacheReadTokens: 600,
+      cacheReadFraction: 0.6, cacheWriteTokens: null, cacheWriteSamples: 0, uncachedInputTokens: null, missingTokenDetailRows: 1 });
+    write.run(JSON.stringify({ cached_tokens: 600, cache_creation_input_tokens: 0,
+      cache_read_tokens_present: true, cache_write_tokens_present: true }));
+    expect(read({ view: 'economics', connectionId: 'personal' }).summary).toMatchObject({ cacheWriteTokens: 0,
+      cacheWriteSamples: 1, uncachedInputTokens: 400, missingTokenDetailRows: 0 });
+    write.run(JSON.stringify({ cached_tokens: 600, cache_creation_input_tokens: 100 }));
+    expect(read({ view: 'economics', connectionId: 'personal' }).summary).toMatchObject({ cacheWriteTokens: 100,
+      cacheWriteSamples: 1, uncachedInputTokens: 300 });
+  });
   it('sorts the complete filtered population before pagination and filters outcomes', () => {
     expect(read({sortBy:'inputTokens',sortDirection:'desc',pageSize:1}).items[0].id).toBe('r1');
     expect(read({sortBy:'inputTokens',sortDirection:'asc',pageSize:1,page:2}).items[0].id).toBe('r3');

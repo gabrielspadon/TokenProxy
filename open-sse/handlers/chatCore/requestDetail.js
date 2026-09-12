@@ -3,7 +3,7 @@ import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../
 import { recordCostLedgerForRequest } from "../../../src/lib/db/repos/costLedgerRepo.js";
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
 import { COLORS } from "../../utils/stream.js";
-import { canonicalizeUsage, clampReasoningTokens } from "../../utils/usageTracking.js";
+import { canonicalizeUsage, clampReasoningTokens, resolveCacheTokens } from "../../utils/usageTracking.js";
 import { priceUsage, usageQuantityPresence } from "../../../src/lib/db/repos/usagePricing.js";
 
 const OPTIONAL_PARAMS = [
@@ -115,12 +115,13 @@ export function buildRequestDetail(base, overrides = {}) {
  */
 export function doneFields({ usage, latency }) {
   const u = usage || {};
+  const cache = resolveCacheTokens(u);
   const fields = {
     t: latency?.total ?? 0,
     in: u.prompt_tokens ?? u.input_tokens ?? 0,
     out: u.completion_tokens ?? u.output_tokens ?? 0,
-    cr: u.cache_read_input_tokens ?? u.cached_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0,
-    cw: u.cache_creation_input_tokens ?? 0,
+    cr: cache.read ?? 0,
+    cw: cache.write ?? 0,
   };
   // Only observed, cache-inclusive input can calibrate the next request.
   // The display fields above preserve the provider convention.
@@ -136,8 +137,9 @@ export function formatDoneLine({ usage, latency }) {
   const u = usage || {};
   const inTok = u.prompt_tokens ?? u.input_tokens ?? 0;
   const outTok = u.completion_tokens ?? u.output_tokens ?? 0;
-  const cacheRead = u.cache_read_input_tokens ?? u.cached_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0;
-  const cacheCreate = u.cache_creation_input_tokens ?? 0;
+  const cache = resolveCacheTokens(u);
+  const cacheRead = cache.read ?? 0;
+  const cacheCreate = cache.write ?? 0;
   let inStr = `IN ${inTok}`;
   if (cacheRead || cacheCreate) {
     const parts = [];

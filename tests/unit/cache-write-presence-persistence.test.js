@@ -33,6 +33,8 @@ function detail(id, tokens, patch = {}) {
 }
 
 async function turnFor(id) {
+  // Expose this owned request fixture to the public analytics filter.
+  db.run("UPDATE requestStats SET dataOrigin='unknown' WHERE id=?", [id]);
   // contextSessions.id autoincrements across the whole file, so resolve it
   // from the row rather than assuming 1 after a per-test delete.
   const sessionId = db.get("SELECT contextSessionId FROM requestStats WHERE id=?", [id]).contextSessionId;
