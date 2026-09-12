@@ -235,7 +235,8 @@ describe("OAuth live-catalog credential publication", () => {
       errorLabel: "Catalog unavailable",
     });
 
-    await expect(resolve(original)).resolves.toEqual({ models: [{ id: "gpt-5.6-sol" }] });
+    const signal = new AbortController().signal;
+    await expect(resolve(original, { signal })).resolves.toEqual({ models: [{ id: "gpt-5.6-sol" }] });
     expect(refreshMocks.updateProviderCredentials).toHaveBeenCalledWith(
       original.id,
       expect.objectContaining({
@@ -246,7 +247,7 @@ describe("OAuth live-catalog credential publication", () => {
       { expectedCredentials: original },
     );
     expect(observedExpected.credentialRevisionId).toBe("revision-old");
-    expect(fetchFn).toHaveBeenNthCalledWith(2, "fixture-authoritative-access", authoritative);
+    expect(fetchFn).toHaveBeenNthCalledWith(2, "fixture-authoritative-access", authoritative, signal);
     expect(original).toEqual(authoritative);
   });
 
