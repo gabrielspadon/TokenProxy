@@ -111,7 +111,32 @@ describe("translation route completeness", () => {
 
   it("keeps same-format identity valid without a registered conversion edge", () => {
     const body = { model: "m", messages: [{ role: "user", content: "hello" }] };
-    expect(translateRequest(FORMATS.KIRO, FORMATS.KIRO, "m", body)).toBe(body);
+    expect(translateRequest(FORMATS.KIRO, FORMATS.KIRO, "m", body)).toEqual(body);
     expect(translateResponse(FORMATS.VERTEX, FORMATS.VERTEX, null, {})).toEqual([]);
+  });
+
+  it("keeps supported request and response source values immutable", () => {
+    const body = {
+      model: "m",
+      messages: [
+        { role: "assistant", tool_calls: [{ type: "function", function: { name: "lookup", arguments: "{}" } }] },
+        { role: "user", content: "continue" },
+      ],
+    };
+    const originalBody = structuredClone(body);
+    translateRequest(FORMATS.OPENAI, FORMATS.CLAUDE, "m", body, true, null, "anthropic");
+    expect(body).toEqual(originalBody);
+
+    const chunk = {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "call_1", name: "lookup_ide", input: {} },
+    };
+    const originalChunk = structuredClone(chunk);
+    const [translated] = translateResponse(FORMATS.CLAUDE, FORMATS.CLAUDE, chunk, {
+      toolNameMap: new Map([["lookup_ide", "lookup"]]),
+    });
+    expect(chunk).toEqual(originalChunk);
+    expect(translated.content_block.name).toBe("lookup");
   });
 });

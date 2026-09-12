@@ -107,7 +107,10 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   ensureInitialized();
   requireTranslationRoute(sourceFormat, targetFormat, "request");
   assertTranslationContent(sourceFormat, targetFormat, body);
-  let result = body;
+  // Translation normalizes tool transactions and provider-specific envelopes.
+  // Work on a private JSON value so routing probes, logs and fallback policy
+  // can still inspect the exact client request after a successful conversion.
+  let result = structuredClone(body);
 
   // Null blocks are malformed, but must not abort routes with no media strip configured.
   // Do this before generic normalization walks content blocks for tool IDs.
@@ -246,17 +249,18 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   ensureInitialized();
   requireTranslationRoute(targetFormat, sourceFormat, "response");
+  const sourceChunk = chunk == null ? chunk : structuredClone(chunk);
   // If same format, return as-is — except the tool name may still be cloaked:
   // translateRequest() suffixes client tools for OAuth-cloaked Claude providers
   // even when no format conversion is needed, so a streamed tool_use block must
   // be decloaked here or the client sees an unknown ("_ide"-suffixed) tool.
   if (sourceFormat === targetFormat) {
-    if (chunk == null) return [];
-    decloakClaudePassthroughToolUse(chunk, sourceFormat, state?.toolNameMap);
-    return [chunk];
+    if (sourceChunk == null) return [];
+    decloakClaudePassthroughToolUse(sourceChunk, sourceFormat, state?.toolNameMap);
+    return [sourceChunk];
   }
 
-  let results = [chunk];
+  let results = [sourceChunk];
   let openaiResults = null; // Store OpenAI intermediate results
 
   // Direct route: if a response translator is registered for this exact
@@ -265,7 +269,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   // OpenAI-shaped chunks, so this converts them straight to Claude SSE).
   const directFn = responseRegistry.get(`${targetFormat}:${sourceFormat}`);
   if (directFn) {
-    const converted = directFn(chunk, state);
+    const converted = directFn(sourceChunk, state);
     return converted ? (Array.isArray(converted) ? converted : [converted]) : [];
   }
 
@@ -274,7 +278,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
     const toOpenAI = responseRegistry.get(`${targetFormat}:${FORMATS.OPENAI}`);
     if (toOpenAI) {
       results = [];
-      const converted = toOpenAI(chunk, state);
+      const converted = toOpenAI(sourceChunk, state);
       if (converted) {
         results = Array.isArray(converted) ? converted : [converted];
         openaiResults = results; // Store OpenAI intermediate
