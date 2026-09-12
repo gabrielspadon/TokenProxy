@@ -25,14 +25,15 @@ import { useEventStream } from '../../src/shared/hooks/useEventStream';
 let container, root, policy, opened;
 
 function Probe({ url = '/api/probe', stream = null }) {
-  policy = useObservationPolicy();
+  const currentPolicy = useObservationPolicy();
   const resource = useResource(url, { interval: 15000 });
   const state = useEventStream(stream, () => {});
   useEffect(() => {
+    policy = currentPolicy;
     void resource;
     void state;
-  });
-  return <span>{policy.mode}</span>;
+  }, [currentPolicy, resource, state]);
+  return <span>{currentPolicy.mode}</span>;
 }
 async function mount(props = {}) {
   await act(async () => {

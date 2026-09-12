@@ -38,8 +38,16 @@ export function ObservationProvider({ children }) {
   const [pausedAt, setPausedAt] = useState(null);
 
   useEffect(() => {
-    setModeState(readStoredMode());
-    setHydrated(true);
+    let mounted = true;
+    const restored = readStoredMode();
+    // Finish hydration after the effect has subscribed. This keeps the server
+    // and first client render identical without forcing a synchronous second
+    // render from inside the effect body.
+    Promise.resolve().then(() => {
+      if (!mounted) return;
+      setModeState(restored);
+      setHydrated(true);
+    });
     // Another tab's write applies here; a cleared or corrupted key falls back
     // to the default rather than leaving this tab on a mode nobody chose.
     const sync = (event) => {
@@ -50,7 +58,10 @@ export function ObservationProvider({ children }) {
       setPausedAt(null);
     };
     window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
+    return () => {
+      mounted = false;
+      window.removeEventListener('storage', sync);
+    };
   }, []);
 
   const setMode = useCallback((next) => {
