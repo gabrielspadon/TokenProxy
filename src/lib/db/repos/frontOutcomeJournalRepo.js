@@ -1,8 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR } from '../../dataDir.js';
-import { getAdapter } from '../driver.js';
 import { registerShutdownFlusher } from '../../shutdown.js';
 
 const MAX_SEGMENT_BYTES = 16 * 1024 * 1024;
@@ -18,6 +16,9 @@ const RECEIPT = /^[a-f0-9]{64}$/;
 const KEY_ID = /^[a-f0-9]{32}$/;
 const ORIGINS = new Set(['production', 'test', 'import', 'unknown']);
 const STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted', 'unknown']);
+const REQUEST_CLASSES = new Set(['inference', 'discovery', 'health', 'other', 'unknown']);
+const TERMINAL_REASONS = new Set(['backend-response-complete', 'caller-cancelled', 'admission-timeout', 'backend-unavailable',
+  'backend-stream-aborted', 'backend-stream-error', 'catalog-timeout', 'catalog-too-large', 'unknown']);
 // The front namespaces each rotated segment with its active clock domain.
 // The numeric-only form remains readable for the earliest draft fixture.
 const SEGMENT = /^private-(?:[0-9]{6,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9]{8})\.jsonl$/i;
@@ -90,6 +91,8 @@ function duration(value, label) {
 function validateEvent(record, label, keyring) {
   assertBase(record, label, keyring);
   if (record.kind === 'process-start') return { type: 'process-start', record };
+  if (record.observationVersion !== undefined && (record.observationVersion !== 1 || !REQUEST_CLASSES.has(record.requestClass)
+    || (record.kind === 'terminal' && !TERMINAL_REASONS.has(record.terminalReason)))) fail(`${label} observation extension`);
   assertId(record.frontIngressId, `${label} frontIngressId`);
   if (record.kind === 'start') {
     assertId(record.logicalRequestId, `${label} logicalRequestId`, true);
@@ -160,6 +163,47 @@ function checkpointKey(directory, name) {
 
 function checksum(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
+}
+
+// Offline evidence sampling shares the importer's receipt and filesystem
+// boundary. No writer adapter is loaded and no key material leaves this module.
+export function readFrontObservationJournal({ directory, keyringPath }) {
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700
+    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail('observation directory');
+  const { keyring } = readKeyring(keyringPath);
+  const active = parseActiveClock(directory, keyring);
+  const names = fs.readdirSync(directory).filter((name) => SEGMENT.test(name)).sort();
+  if (!names.length) fail('empty observation journal');
+  let bytes = 0;
+  const segments = names.map((name) => {
+    const read = readSegment(directory, name, null, keyring);
+    bytes += read.stat.size;
+    if (bytes > 256 * 1024 * 1024) fail('observation exceeds 256 MiB');
+    return { name, bytes: read.nextOffset, sha256: read.prefixSha256, pendingBytes: read.pendingBytes,
+      events: read.events.map(({ record }) => record) };
+  });
+  if (parseActiveClock(directory, keyring).receiptId !== active.receiptId
+    || fs.readdirSync(directory).filter((name) => SEGMENT.test(name)).sort().join('\n') !== names.join('\n')) fail('observation changed during capture');
+  return { active, segments };
+}
+
+export function signFrontObservation(snapshot, keyringPath) {
+  const { keyring } = readKeyring(keyringPath);
+  const record = { ...snapshot, authKeyId: keyring.activeKeyId };
+  delete record.receiptId;
+  return { ...record, receiptId: createHmac('sha256', keyring.keys[keyring.activeKeyId]).update(canonicalReceipt(record)).digest('hex') };
+}
+
+export function verifyFrontObservation(snapshot, keyringPath) {
+  const { keyring } = readKeyring(keyringPath);
+  assertReceipt(snapshot, 'observation snapshot', keyring);
+  assertBase(snapshot.active, 'observation active clock', keyring);
+  for (const segment of snapshot.segments || []) {
+    if (!SEGMENT.test(segment.name || '') || !RECEIPT.test(segment.sha256 || '')) fail('observation segment');
+    for (const event of segment.events || []) validateEvent(event, 'observation event', keyring);
+  }
+  return snapshot;
 }
 
 function readKeyring(file) {
@@ -394,6 +438,7 @@ export async function ingestFrontOutcomeJournal({
   directory,
   keyringPath,
 } = {}) {
+  const [{ DATA_DIR }, { getAdapter }] = await Promise.all([import('../../dataDir.js'), import('../driver.js')]);
   // The front unit's default is DATA_DIR/front-telemetry.  An explicit null
   // remains the operator and test seam that disables this optional import.
   const journalDirectory = directory === null ? null : directory || process.env.TOKENPROXY_FRONT_TELEMETRY_DIR || path.join(DATA_DIR, 'front-telemetry');
