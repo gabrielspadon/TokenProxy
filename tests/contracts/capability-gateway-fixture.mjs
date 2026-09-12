@@ -60,36 +60,38 @@ async function listeningSocketInodes(port) {
   return inodes;
 }
 
-async function listeningProcessIdentities(port) {
+async function processOwnsListeningSocket(identity, port) {
   const inodes = await listeningSocketInodes(port);
-  if (!inodes.size) return [];
-  const processes = await readdir("/proc", { withFileTypes: true });
-  const listeners = [];
-  for (const process of processes) {
-    if (!process.isDirectory() || !/^\d+$/.test(process.name)) continue;
-    const pid = Number(process.name);
-    let fds;
+  if (!inodes.size || !sameIdentity(await readProcessIdentity(identity.pid), identity)) return false;
+  let fds;
+  try { fds = await readdir(`/proc/${identity.pid}/fd`); } catch { return false; }
+  for (const fd of fds) {
     try {
-      fds = await readdir(`/proc/${pid}/fd`);
-    } catch {
-      continue;
-    }
-    let ownsListeningSocket = false;
-    for (const fd of fds) {
-      try {
-        const link = await readlink(`/proc/${pid}/fd/${fd}`);
-        const match = /^socket:\[(\d+)\]$/.exec(link);
-        if (match && inodes.has(match[1])) {
-          ownsListeningSocket = true;
-          break;
-        }
-      } catch {}
-    }
-    if (!ownsListeningSocket) continue;
-    const identity = await readProcessIdentity(pid);
-    if (identity) listeners.push(identity);
+      const link = await readlink(`/proc/${identity.pid}/fd/${fd}`);
+      const match = /^socket:\[(\d+)\]$/.exec(link);
+      if (match && inodes.has(match[1])) return true;
+    } catch {}
   }
-  return listeners;
+  return false;
+}
+
+async function fixtureProcessTree(rootIdentity) {
+  const tree = [];
+  const pending = [rootIdentity];
+  const seen = new Set();
+  while (pending.length) {
+    const expected = pending.pop();
+    if (seen.has(expected.pid)) continue;
+    seen.add(expected.pid);
+    const identity = await readProcessIdentity(expected.pid);
+    if (!identity || (expected.pid === rootIdentity.pid && !sameIdentity(identity, rootIdentity))) continue;
+    tree.push(identity);
+    try {
+      const children = (await readFile(`/proc/${identity.pid}/task/${identity.pid}/children`, "utf8")).trim().split(/\s+/).filter(Boolean).map(Number);
+      pending.push(...children.map((pid) => ({ pid })));
+    } catch {}
+  }
+  return tree;
 }
 
 async function waitForExit(child, timeoutMs) {
@@ -103,11 +105,11 @@ async function assertOwnedGateway(ownership, { requireChild = true } = {}) {
   if (requireChild && !sameIdentity(currentChild, ownership.child)) {
     throw new Error("refusing to signal gateway because the spawned child identity changed");
   }
-  const listeners = await listeningProcessIdentities(ownership.port);
-  if (!listeners.some((listener) => sameIdentity(listener, ownership.listener))) {
+  const listenerOwnsPort = await processOwnsListeningSocket(ownership.listener, ownership.port);
+  if (!listenerOwnsPort) {
     throw new Error("refusing to signal gateway because its captured listener no longer owns the port");
   }
-  return { currentChild, listeners };
+  return { currentChild, listenerOwnsPort };
 }
 
 /**
@@ -123,10 +125,11 @@ export async function captureGatewayOwnership(child, port, expectedChild = null)
     throw new Error("gateway child identity changed before ownership capture");
   }
   if (identity.pgid !== identity.pid) throw new Error("gateway child must lead its own process group");
-  const listeners = await listeningProcessIdentities(port);
-  const listener = listeners.find((candidate) => candidate.pgid === identity.pgid && candidate.cgroup === identity.cgroup);
+  const tree = await fixtureProcessTree(identity);
+  const listener = (await Promise.all(tree.map(async (candidate) => (await processOwnsListeningSocket(candidate, port)) ? candidate : null)))
+    .find((candidate) => candidate && candidate.pgid === identity.pgid && candidate.cgroup === identity.cgroup);
   if (!listener) throw new Error("gateway listener is not owned by the spawned child group");
-  return { child: identity, listener, port };
+  return { child: identity, listener, port, capturedTree: tree };
 }
 
 /**
@@ -137,17 +140,17 @@ export async function stopOwnedGateway(child, ownership) {
   await assertOwnedGateway(ownership);
   process.kill(-ownership.child.pgid, "SIGTERM");
   let exitCode = await waitForExit(child, 3000);
-  const activeListeners = await listeningProcessIdentities(ownership.port);
-  if (exitCode === null || activeListeners.some((listener) => sameIdentity(listener, ownership.listener))) {
+  const listenerStillOwnsPort = await processOwnsListeningSocket(ownership.listener, ownership.port);
+  if (exitCode === null || listenerStillOwnsPort) {
     await assertOwnedGateway(ownership, { requireChild: exitCode === null });
     process.kill(-ownership.child.pgid, "SIGKILL");
     exitCode = await waitForExit(child, 3000);
   }
   if (exitCode === null) throw new Error("owned gateway group did not exit after SIGKILL");
-  if ((await listeningProcessIdentities(ownership.port)).length) {
-    throw new Error("gateway port remains occupied after owned group cleanup");
-  }
-  return exitCode;
+  const listenerGone = !sameIdentity(await readProcessIdentity(ownership.listener.pid), ownership.listener)
+    && !(await processOwnsListeningSocket(ownership.listener, ownership.port));
+  if (!listenerGone) throw new Error("captured gateway listener remains after owned group cleanup");
+  return { exitCode, listenerGone };
 }
 
 async function waitForChildIdentity(child) {
@@ -236,10 +239,11 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
       ownership,
       buildOutput: resolvedBuildOutput,
       async close() {
-        const processExitCode = child.exitCode === null ? await stopOwnedGateway(child, ownership) : child.exitCode;
+        const stop = child.exitCode === null ? await stopOwnedGateway(child, ownership) : { exitCode: child.exitCode, listenerGone: !sameIdentity(await readProcessIdentity(ownership.listener.pid), ownership.listener) };
         await Promise.all([rm(dataDir, { recursive: true, force: true }), rm(resolvedBuildOutput, { recursive: true, force: true })]);
         const cleanup = {
-          processExitCode,
+          processExitCode: stop.exitCode,
+          listenerGone: stop.listenerGone,
           dataDirRemoved: !existsSync(dataDir),
           buildOutputRemoved: !existsSync(resolvedBuildOutput),
           buildOutput: resolvedBuildOutput,

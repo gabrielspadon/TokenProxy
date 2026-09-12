@@ -4,6 +4,7 @@ import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { startProviderStub } from "../contracts/provider-stub.mjs";
+import { assertSemanticPreserved, semanticReceipt } from "../contracts/provider-semantic.mjs";
 import {
   captureGatewayOwnership,
   startCapabilityGateway,
@@ -51,6 +52,23 @@ async function reserveLoopbackPort() {
 }
 
 describe("capability matrix runner", () => {
+  it("binds roles, content order, and control values in semantic receipts", () => {
+    const source = {
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "second", reasoning_content: "because" },
+      ],
+      reasoning_effort: "high",
+    };
+    expect(() => assertSemanticPreserved(source, semanticReceipt({
+      messages: [
+        { role: "assistant", content: "first", reasoning_content: "because" },
+        { role: "user", content: "second" },
+      ],
+      reasoning_effort: "low",
+    }), "swapped-semantic-fixture")).toThrow();
+  });
+
   it("cleanup targets only its captured child group when an unrelated next-server exists", async () => {
     const owned = await startOwnedHttpProcess("capability-owned-gateway");
     const unrelated = await startOwnedHttpProcess("next-server");
@@ -113,6 +131,7 @@ describe("capability matrix runner", () => {
       gateway = null;
       expect(cleanup).toMatchObject({
         processExitCode: 0,
+        listenerGone: true,
         dataDirRemoved: true,
         buildOutputRemoved: true,
         ownership: {

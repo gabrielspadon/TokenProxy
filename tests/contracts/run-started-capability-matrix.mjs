@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { startCapabilityGateway } from "./capability-gateway-fixture.mjs";
 import { startProviderStub } from "./provider-stub.mjs";
+import { cleanOwnedTreeBinding } from "./receipt-tree-binding.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const matrixRunner = fileURLToPath(new URL("./run-capability-matrix.mjs", import.meta.url));
-const gitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const treeBinding = cleanOwnedTreeBinding(root);
 
 async function reserveLoopbackPort() {
   const server = net.createServer();
@@ -71,7 +72,7 @@ try {
   process.stdout.write(`${JSON.stringify({
     schema: "tokenproxy-t07-started-next-matrix-v3",
     startedAt,
-    gitSha,
+    treeBinding,
     command,
     node: process.version,
     report,
