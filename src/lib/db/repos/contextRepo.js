@@ -6,6 +6,7 @@ import { getSettings } from "./settingsRepo.js";
 
 import { normalizeContextIdentity, saveContextStructures } from "./contextEvidenceRepo.js";
 import { STAGE_OUTCOMES, STAGE_ERROR_CODES } from "../../../../open-sse/utils/stageOutcome.js";
+import { resolveCacheTokens } from "../../../../open-sse/utils/usageTracking.js";
 import { saveHandoffApplications } from './shapingHandoffsRepo.js';
 
 const DAY_MS = 86400000;
@@ -70,8 +71,13 @@ export function saveContextMetrics(db, detail) {
   const u = detail.tokens;
   const hasUsage = u && present(u.prompt_tokens, u.input_tokens, u.completion_tokens, u.output_tokens, u.cached_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens);
   const source = detail.status === "pending" || !hasUsage ? "missing" : u.estimated ? "estimated" : "provider";
-  const cacheRead = present(u?.cached_tokens, u?.cache_read_input_tokens, u?.prompt_tokens_details?.cached_tokens, u?.input_tokens_details?.cached_tokens);
-  const cacheWrite = present(u?.cache_creation_input_tokens, u?.cache_write_tokens);
+  // Canonical alias table, not a local key list: a nested spelling (OpenAI's
+  // input_tokens_details.cache_write_tokens) was missed here and persisted as
+  // cacheWritePresent=0. Read from RAW tokens, since canonicalizeUsage
+  // synthesizes 0 and cannot distinguish absent from reported zero.
+  const cache = u && typeof u === "object" ? resolveCacheTokens(u) : { read: undefined, write: undefined };
+  const cacheRead = present(cache.read);
+  const cacheWrite = present(cache.write);
   const metrics = {
     contextTelemetryError: null, contextSessionId: sessionId, logicalRequestId: short(c.logicalRequestId, 128),
     requestedModel: short(c.requestedModel), clientTool: short(c.clientTool, 60), contextEstimate: number(c.contextEstimate),

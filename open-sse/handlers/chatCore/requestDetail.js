@@ -37,17 +37,14 @@ export function extractUsageFromResponse(responseBody) {
       cached_tokens: responseBody.usage.input_tokens_details?.cached_tokens,
       cache_read_input_tokens: responseBody.usage.cache_read_input_tokens,
       cache_creation_input_tokens: responseBody.usage.cache_creation_input_tokens,
-      // A Responses body also matches this branch, since it too reports
-      // input_tokens. Forward the details OBJECT so resolveCacheTokens sees
-      // every nested spelling it knows, rather than lifting one key out here.
-      // Assigning a flat alias with an undefined value would create an own
-      // property and trip canonicalizeUsage's alias-dropped log on every
-      // Claude request.
+      // A Responses body matches this branch too (both report input_tokens).
+      // Forward the object so resolveCacheTokens sees every nested spelling.
+      // A flat alias would add an own key with an undefined value and trip the
+      // alias-dropped log on every Claude request.
       ...(responseBody.usage.input_tokens_details && typeof responseBody.usage.input_tokens_details === "object"
         ? { input_tokens_details: responseBody.usage.input_tokens_details }
         : {}),
-      // Claude spells thinking; Responses spells reasoning. Take whichever the
-      // body carried, clamped to the completion total either way.
+      // Claude spells thinking, Responses spells reasoning; accept either.
       reasoning_tokens: clampReasoningTokens(
         responseBody.usage.output_tokens_details?.thinking_tokens
           ?? responseBody.usage.output_tokens_details?.reasoning_tokens,
@@ -65,7 +62,7 @@ export function extractUsageFromResponse(responseBody) {
       prompt_tokens: responseBody.usage.prompt_tokens,
       completion_tokens: responseBody.usage.completion_tokens,
       cached_tokens: responseBody.usage.prompt_tokens_details?.cached_tokens,
-      // Same reason as the branch above: forward the object, resolve centrally.
+      // As above: forward the object, resolve centrally.
       ...(responseBody.usage.prompt_tokens_details && typeof responseBody.usage.prompt_tokens_details === "object"
         ? { prompt_tokens_details: responseBody.usage.prompt_tokens_details }
         : {}),

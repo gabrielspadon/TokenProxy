@@ -9,17 +9,11 @@ import { extractUsageFromResponse } from "../../open-sse/handlers/chatCore/reque
 // input-token counts, latency, and realized cost", and the three cost functions
 // computing ordinary_input_tokens = input_tokens - cached_tokens - cache_write_tokens).
 //
-// CACHE_WRITE_NESTED in usageTracking.js listed only the `cache_creation_tokens`
-// spelling under input_tokens_details/prompt_tokens_details. The flat
-// `cache_write_tokens` key was already handled, so a provider putting the count
-// at the TOP level worked, but the nested form OpenAI documents fell through to
-// 0. Raw upstream bodies are not retained, so this states what the parser drops,
-// not what any past request actually reported.
-//
-// OpenAI accounting is INCLUSIVE: input_tokens already counts both the cached
-// and the newly written tokens, so recognizing the write must NOT change
-// prompt_tokens. That is the second assertion in each case below and is what
-// separates this fix from forcing Anthropic's exclusive convention onto OpenAI.
+// CACHE_WRITE_NESTED listed only the `cache_creation_tokens` spelling, so the
+// nested form OpenAI documents fell through to 0. Raw upstream bodies are not
+// retained, so this states what the parser drops, not what any past request
+// reported. OpenAI accounting is INCLUSIVE, so recognizing the write must not
+// change prompt_tokens.
 describe("OpenAI nested cache_write_tokens", () => {
   const DOCUMENTED_USAGE = {
     input_tokens: 20000,
