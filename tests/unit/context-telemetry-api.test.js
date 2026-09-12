@@ -7,6 +7,7 @@ const {getAdapter}=await import("../../src/lib/db/driver.js");
 const {saveRequestStats}=await import("../../src/lib/db/repos/requestStatsRepo.js");
 const {getContextOverview}=await import("../../src/lib/db/repos/contextRepo.js");
 const {ContextAnalyticsError}=await import("../../src/lib/db/analytics/client.js");
+const {createVisibleTelemetryFixture}=await import("../fixtures/visible-telemetry.mjs");
 let db,id,cookie;
 const req=(path,{method="GET",operator=false,local=false,inference=false,body}={})=>({url:`http://localhost${path}`,method,
  headers:new Headers({...local?{"x-tp-peer-token":"context-peer-fixture","x-tp-real-ip":"127.0.0.1"}:{},...inference?{authorization:"Bearer synthetic-context-inference-key"}:{}}),
@@ -14,7 +15,8 @@ const req=(path,{method="GET",operator=false,local=false,inference=false,body}={
 beforeAll(async()=>{
  db=await getAdapter();cookie=await createDashboardAuthToken();
  db.run(`INSERT INTO apiKeys(id,key,name,isActive,createdAt) VALUES(?,?,?,?,?)`,["context-key","synthetic-context-inference-key","fixture",1,new Date().toISOString()]);
- await saveRequestStats({id:"api-fixture",provider:"fixture",model:"fixture",status:"success",tokens:null,contextTelemetry:{sessionHash:"a".repeat(32),identitySource:"routing",stages:[]}});
+ const visible=createVisibleTelemetryFixture(db,"context-telemetry-api");
+ await visible(()=>saveRequestStats({id:"api-fixture",provider:"fixture",model:"fixture",status:"success",tokens:null,contextTelemetry:{sessionHash:"a".repeat(32),identitySource:"routing",stages:[]}}));
  id=(await getContextOverview()).sessions[0].id;
 });
 describe("context operator API boundary",()=>{

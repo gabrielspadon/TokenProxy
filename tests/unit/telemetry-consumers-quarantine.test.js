@@ -41,7 +41,8 @@ beforeEach(() => {
     const requestId = randomUUID(), provider = `provider-${index}`;
     const identity = { clientKeyId: keyId, clientRef: ref(String(index + 1)), projectRef: ref('a'), clientSessionRef: ref(String(index + 1)), clientIdentitySource: 'client-reported' };
     const usage = insert('usageHistory', { timestamp: at, provider, model: 'fixture-model', connectionId: 'fixture-connection', apiKey: key,
-      requestId, dataOrigin: origin, promptTokens: 10, completionTokens: 5, cost: 1, status: 'ok', tokens: '{"prompt_tokens":10,"completion_tokens":5}', ...identity });
+      requestId, dataOrigin: origin, promptTokens: 10, completionTokens: 5, cost: 1, costSource: 'provider-reported', reportedCostUsd: 1,
+      status: 'ok', tokens: '{"prompt_tokens":10,"completion_tokens":5}', ...identity });
     insert('requestStats', { id: requestId, timestamp: at, provider, model: 'fixture-model', connectionId: 'fixture-connection',
       dataOrigin: origin, status: 'success', promptTokens: 10, completionTokens: 5, latencyTotal: 100, contextSessionId: sessionId, clientTool: provider, ...identity });
     insert('projectBindings', { id: randomUUID(), projectId, apiKeyId: keyId, clientRef: identity.clientRef, projectRef: identity.projectRef, createdAt: at });

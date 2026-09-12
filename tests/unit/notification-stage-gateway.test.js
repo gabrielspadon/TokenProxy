@@ -9,6 +9,7 @@ const { handleChatCore } = await import('../../open-sse/handlers/chatCore.js');
 const { getAdapter } = await import('@/lib/db/driver.js');
 const { createRule, evaluateEnabledRules } = await import('@/lib/db/repos/notificationRulesRepo.js');
 const { drainNotifications } = await import('@/lib/notifications/delivery.js');
+const { createVisibleTelemetryFixture } = await import('../fixtures/visible-telemetry.mjs');
 
 it('links a real gateway transformation failure to an evaluated alert and one retained delivery', async () => {
   const db = await getAdapter();
@@ -22,7 +23,8 @@ it('links a real gateway transformation failure to an evaluated alert and one re
     id: 'fixture', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'ok' }],
     stop_reason: 'end_turn', usage: { input_tokens: 100, output_tokens: 1 },
   }) }));
-  const response = await handleChatCore({
+  const visible = createVisibleTelemetryFixture(db, 'notification-stage-gateway');
+  const response = await visible(async () => { const result = await handleChatCore({
     body: { model: 'claude-3-5-sonnet-20241022', stream: false, max_tokens: 8,
       messages: [{ role: 'user', content: 'Synthetic request' }] },
     modelInfo: { provider: 'anthropic-compatible-audit', model: 'claude-3-5-sonnet-20241022' },
@@ -30,8 +32,8 @@ it('links a real gateway transformation failure to an evaluated alert and one re
     contextTelemetry: { logicalRequestId: 'notification-stage-fixture' }, contextStructureEnabled: false,
     headroomEnabled: true, headroomUrl: 'http://localhost:8787',
     log: { debug() {}, info() {}, warn() {}, error() {} },
-  });
-  expect(response.success).toBe(true); await response.response.text();
+  }); expect(result.success).toBe(true); await result.response.text(); return result; });
+  expect(response.success).toBe(true);
   expect(state.execute).toHaveBeenCalledTimes(1);
   const stage = db.get("SELECT * FROM contextStages WHERE stage='headroom' AND outcome='failed'");
   expect(stage).toMatchObject({ outcomeSource: 'execution', errorCode: 'transform_exception' });
