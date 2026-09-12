@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, customFetch, jwtVerify } from "jose";
 import { getSettings } from "@/lib/localDb";
-import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
+import { assertPublicUrl, fetchPublicUrl } from "@/shared/utils/ssrfGuard.js";
 
 export const OIDC_COOKIE_NAMES = {
   state: "oidc_state",
@@ -80,7 +80,10 @@ export async function fetchOidcDiscovery(issuerUrl) {
   const trimmed = trimTrailingSlashes(issuerUrl);
   assertPublicUrl(trimmed);
   const discoveryUrl = `${trimmed}/.well-known/openid-configuration`;
-  const res = await fetch(discoveryUrl, { cache: "no-store" });
+  // Discovery is credential-free and may follow public redirects used by
+  // enterprise IdP front doors. The dispatcher validates every resolved and
+  // redirected socket address, so a DNS change cannot cross into a private net.
+  const res = await fetchPublicUrl(discoveryUrl, { cache: "no-store", redirect: "follow" });
   if (!res.ok) {
     throw new Error(`Failed to load OIDC discovery document from ${discoveryUrl}`);
   }
@@ -142,8 +145,12 @@ export async function exchangeOidcCode({
     body.set("client_secret", clientSecret);
   }
 
-  const res = await fetch(tokenEndpoint, {
+  // The request body contains the client secret. Never replay it through a
+  // 307/308 redirect. Administrators must configure the IdP's final public
+  // token endpoint, while direct enterprise IdP endpoints remain supported.
+  const res = await fetchPublicUrl(tokenEndpoint, {
     method: "POST",
+    redirect: "error",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
@@ -180,8 +187,9 @@ export async function probeOidcClientSecret({
     code_verifier: "__oidc_test_invalid_verifier__",
   });
 
-  const res = await fetch(tokenEndpoint, {
+  const res = await fetchPublicUrl(tokenEndpoint, {
     method: "POST",
+    redirect: "error",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
@@ -232,7 +240,11 @@ export async function verifyOidcIdToken({
   jwksUri,
   nonce,
 }) {
-  const jwks = createRemoteJWKSet(new URL(jwksUri));
+  assertPublicUrl(jwksUri);
+  // jose deliberately uses redirect:"manual" for remote JWKS. Its custom
+  // fetch still needs our dispatcher so DNS rebinding cannot reach a private
+  // address after the initial URL-string check.
+  const jwks = createRemoteJWKSet(new URL(jwksUri), { [customFetch]: fetchPublicUrl });
   const { payload } = await jwtVerify(idToken, jwks, {
     issuer,
     audience,

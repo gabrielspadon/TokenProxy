@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import crypto from 'node:crypto';
 
+const { joseCustomFetch } = vi.hoisted(() => ({ joseCustomFetch: Symbol('jose.customFetch') }));
 vi.mock('jose', () => ({
+  customFetch: joseCustomFetch,
   createRemoteJWKSet: vi.fn(() => '__jwks__'),
   jwtVerify: vi.fn(),
 }));
@@ -117,7 +119,7 @@ describe('fetchOidcDiscovery', () => {
     expect(out).toEqual(doc);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://idp.example.com/.well-known/openid-configuration',
-      { cache: 'no-store' }
+      expect.objectContaining({ cache: 'no-store', dispatcher: expect.anything() })
     );
   });
 
@@ -132,6 +134,14 @@ describe('fetchOidcDiscovery', () => {
     await expect(fetchOidcDiscovery('http://localhost:8080')).rejects.toThrow();
     await expect(fetchOidcDiscovery('http://169.254.169.254')).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the socket-level public-only dispatcher so redirects and DNS changes stay guarded', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ issuer: 'https://idp.example.com' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await fetchOidcDiscovery('https://idp.example.com');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'follow' });
+    expect(fetchMock.mock.calls[0][1].dispatcher).toBeTruthy();
   });
 });
 
@@ -226,6 +236,21 @@ describe('exchangeOidcCode', () => {
     );
     await expect(exchangeOidcCode({ ...base, clientSecret: 's' })).rejects.toThrow(/502/);
   });
+
+  it('rejects private token endpoints before delivering the client secret', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(exchangeOidcCode({ ...base, tokenEndpoint: 'http://127.0.0.1/token', clientSecret: 's' }))
+      .rejects.toThrow(/Blocked/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses token redirects and uses the socket-level public-only dispatcher', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id_token: 't' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await exchangeOidcCode({ ...base, clientSecret: 's' });
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'error', dispatcher: expect.anything() });
+  });
 });
 
 describe('probeOidcClientSecret', () => {
@@ -276,6 +301,18 @@ describe('probeOidcClientSecret', () => {
     const out = await probeOidcClientSecret({ ...base, clientSecret: 's' });
     expect(out).toMatchObject({ tested: true, valid: null });
   });
+
+  it('rejects private endpoints without delivering the probe secret and refuses redirects', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(probeOidcClientSecret({ ...base, tokenEndpoint: 'http://169.254.169.254/token', clientSecret: 's' }))
+      .rejects.toThrow(/Blocked/);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValue(jsonResponse({ error: 'invalid_grant' }, false, 400));
+    await probeOidcClientSecret({ ...base, clientSecret: 's' });
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'error', dispatcher: expect.anything() });
+  });
 });
 
 describe('verifyOidcIdToken', () => {
@@ -289,7 +326,10 @@ describe('verifyOidcIdToken', () => {
       nonce: 'n1',
     });
     expect(payload).toEqual({ sub: 'user-1' });
-    expect(createRemoteJWKSet).toHaveBeenCalledWith(new URL('https://idp.example.com/jwks'));
+    expect(createRemoteJWKSet).toHaveBeenCalledWith(
+      new URL('https://idp.example.com/jwks'),
+      expect.objectContaining({ [joseCustomFetch]: expect.any(Function) }),
+    );
     expect(jwtVerify).toHaveBeenCalledWith('tok', '__jwks__', {
       issuer: 'https://idp.example.com',
       audience: 'client-1',
@@ -307,6 +347,14 @@ describe('verifyOidcIdToken', () => {
         jwksUri: 'https://idp.example.com/jwks',
       })
     ).rejects.toThrow(/signature/);
+  });
+
+  it('rejects a private JWKS URL before creating a remote resolver', async () => {
+    await expect(verifyOidcIdToken({
+      idToken: 'tok', issuer: 'https://idp.example.com', audience: 'a',
+      jwksUri: 'http://localhost/jwks', nonce: 'n',
+    })).rejects.toThrow(/Blocked/);
+    expect(createRemoteJWKSet).not.toHaveBeenCalled();
   });
 });
 
