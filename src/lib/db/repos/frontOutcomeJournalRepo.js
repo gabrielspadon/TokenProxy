@@ -20,6 +20,7 @@ const STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted', 'unkn
 // The front namespaces each rotated segment with its active clock domain.
 // The numeric-only form remains readable for the earliest draft fixture.
 const SEGMENT = /^private-(?:[0-9]{6,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9]{8})\.jsonl$/i;
+const completedSegmentCache = globalThis.__tokenproxyFrontOutcomeJournalCompletedSegments ??= new Map();
 
 function fail(message) {
   throw new Error(`Invalid front outcome journal: ${message}`);
@@ -117,13 +118,17 @@ function validateEvent(record, label, keyring) {
   fail(`${label} kind`);
 }
 
+function assertOwnedRegularStat(stat, label, maxBytes = MAX_SEGMENT_BYTES) {
+  if (!stat.isFile() || stat.size > maxBytes || (stat.mode & 0o777) !== 0o600
+    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail(`${label} must be an owned mode-0600 regular file`);
+}
+
 function openOwnedRegular(file, label, maxBytes = MAX_SEGMENT_BYTES) {
   let fd;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > maxBytes || (stat.mode & 0o777) !== 0o600
-      || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail(`${label} must be an owned mode-0600 regular file`);
+    assertOwnedRegularStat(stat, label, maxBytes);
     return { fd, stat };
   } catch (error) {
     if (fd !== undefined) fs.closeSync(fd);
@@ -162,7 +167,7 @@ function readKeyring(file) {
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700
     || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail('journal keyring directory');
   const { content } = readOwnedFile(file, 'journal keyring', MAX_LINE_BYTES);
-  return parseKeyring(content);
+  return { keyring: parseKeyring(content), fingerprint: checksum(content) };
 }
 
 function parseActiveClock(directory, keyring) {
@@ -200,6 +205,51 @@ function readSegment(directory, name, checkpoint, keyring) {
   return { stat, events, nextOffset, prefixSha256: checksum(content.subarray(0, nextOffset)), pendingBytes: pending.length - completeLength };
 }
 
+function cacheKey(directory, name) {
+  return `${directory}\u0000${name}`;
+}
+
+function sameCheckpoint(checkpoint, cached) {
+  return checkpoint && checkpoint.dev === cached.dev && checkpoint.ino === cached.ino
+    && checkpoint.offset === cached.offset && checkpoint.prefixSha256 === cached.prefixSha256;
+}
+
+function cachedCompletedSegment(directory, name, checkpoint, keyringFingerprint) {
+  const key = cacheKey(directory, name);
+  const cached = completedSegmentCache.get(key);
+  if (!cached || cached.keyringFingerprint !== keyringFingerprint || !sameCheckpoint(checkpoint, cached)) {
+    completedSegmentCache.delete(key);
+    return null;
+  }
+  try {
+    const stat = fs.lstatSync(path.join(directory, name));
+    assertOwnedRegularStat(stat, `segment ${name}`);
+    if (stat.dev !== cached.dev || stat.ino !== cached.ino || stat.size !== cached.size
+      || stat.mtimeMs !== cached.mtimeMs || stat.ctimeMs !== cached.ctimeMs) {
+      completedSegmentCache.delete(key);
+      return null;
+    }
+    return { stat, events: [], nextOffset: cached.offset, prefixSha256: cached.prefixSha256, pendingBytes: 0, cached: true };
+  } catch {
+    completedSegmentCache.delete(key);
+    return null;
+  }
+}
+
+function cacheCompletedSegment(directory, name, data, keyringFingerprint) {
+  if (data.pendingBytes || data.nextOffset !== data.stat.size) return;
+  completedSegmentCache.set(cacheKey(directory, name), {
+    dev: data.stat.dev,
+    ino: data.stat.ino,
+    size: data.stat.size,
+    mtimeMs: data.stat.mtimeMs,
+    ctimeMs: data.stat.ctimeMs,
+    offset: data.nextOffset,
+    prefixSha256: data.prefixSha256,
+    keyringFingerprint,
+  });
+}
+
 function same(value, expected) {
   return (value ?? null) === (expected ?? null);
 }
@@ -210,8 +260,9 @@ function collectOperations(db, active, segmentData) {
     .map((row) => [row.logicalRequestId, row.frontIngressId]));
   const operations = [];
   const ordered = segmentData.flatMap(({ name, events }) => events.map((event, ordinal) => ({ event, name, ordinal })))
-    .sort((a, b) => a.event.record.recordedAt.localeCompare(b.event.record.recordedAt)
-      || a.name.localeCompare(b.name) || a.ordinal - b.ordinal);
+    .sort((a, b) => a.event.record.clockDomain === b.event.record.clockDomain
+      ? a.name.localeCompare(b.name) || a.ordinal - b.ordinal
+      : a.event.record.recordedAt.localeCompare(b.event.record.recordedAt) || a.name.localeCompare(b.name) || a.ordinal - b.ordinal);
   for (const { event } of ordered) {
     const record = event.record;
     if (event.type === 'process-start') continue;
@@ -345,10 +396,13 @@ export async function ingestFrontOutcomeJournal({
   const resolvedDirectory = fs.realpathSync(journalDirectory);
   const resolvedKeyring = keyringPath || process.env.TOKENPROXY_FRONT_TELEMETRY_KEYRING
     || path.join(path.dirname(resolvedDirectory), 'front-telemetry-auth', 'keyring.json');
-  const keyring = readKeyring(resolvedKeyring);
+  const { keyring, fingerprint: keyringFingerprint } = readKeyring(resolvedKeyring);
   const active = parseActiveClock(resolvedDirectory, keyring);
   const db = await getAdapter();
   const names = fs.readdirSync(resolvedDirectory).filter((name) => SEGMENT.test(name)).sort();
+  const activePrefix = `private-${active.clockDomain}-`;
+  const activeTail = names.filter((name) => name.startsWith(activePrefix)).at(-1) || names.at(-1);
+  const cacheCandidates = [];
   const segmentData = names.map((name) => {
     const previous = db.get('SELECT value FROM _meta WHERE key=?', [checkpointKey(resolvedDirectory, name)]);
     let checkpoint = null;
@@ -357,16 +411,21 @@ export async function ingestFrontOutcomeJournal({
       if (!Number.isInteger(checkpoint.offset) || checkpoint.offset < 0 || !Number.isInteger(checkpoint.dev) || !Number.isInteger(checkpoint.ino)
         || !RECEIPT.test(checkpoint.prefixSha256 || '')) fail(`checkpoint ${name}`);
     }
-    return { name, ...readSegment(resolvedDirectory, name, checkpoint, keyring) };
+    const cached = name === activeTail ? null : cachedCompletedSegment(resolvedDirectory, name, checkpoint, keyringFingerprint);
+    if (cached) return { name, ...cached };
+    const data = readSegment(resolvedDirectory, name, checkpoint, keyring);
+    if (name !== activeTail && !data.pendingBytes && data.nextOffset === data.stat.size) cacheCandidates.push({ name, data });
+    return { name, ...data };
   });
   const operations = collectOperations(db, active, segmentData);
   let interrupted = 0;
   db.transaction(() => {
     interrupted = writeOperations(db, active, operations);
-    for (const data of segmentData) if (data.nextOffset > 0) db.run('INSERT INTO _meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+    for (const data of segmentData) if (!data.cached && data.nextOffset > 0) db.run('INSERT INTO _meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
       [checkpointKey(resolvedDirectory, data.name), JSON.stringify({ dev: data.stat.dev, ino: data.stat.ino, offset: data.nextOffset,
         prefixSha256: data.prefixSha256 })]);
   });
+  for (const { name, data } of cacheCandidates) cacheCompletedSegment(resolvedDirectory, name, data, keyringFingerprint);
   const events = segmentData.reduce((total, data) => total + data.events.length, 0);
   return { enabled: true, events, segments: segmentData.filter((data) => data.events.length).length,
     pendingBytes: segmentData.reduce((total, data) => total + data.pendingBytes, 0), activeClockDomain: active.clockDomain, interrupted };

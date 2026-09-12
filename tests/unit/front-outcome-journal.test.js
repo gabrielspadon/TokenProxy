@@ -186,6 +186,45 @@ it('allows the producer rounding envelope but rejects material timing drift', as
   await expect(ingestFrontOutcomeJournal({ directory: inconsistent })).rejects.toThrow('timing total');
 });
 
+it('preserves segment order for a clock domain when wall-clock timestamps move backward', async () => {
+  const directory = journal([
+    { schemaVersion: 2, kind: 'start', clockDomain: CLOCK, recordedAt: '2026-09-12T12:00:00.020Z', frontIngressId: INGRESS,
+      logicalRequestId: LOGICAL, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+    { ...terminal(), recordedAt: '2026-09-12T12:00:00.010Z', terminalAt: '2026-09-12T12:00:00.010Z' },
+  ]);
+
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 2, interrupted: 0 });
+  expect(db.get('SELECT state FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toMatchObject({ state: 'succeeded' });
+});
+
+it('caches authenticated completed segments and invalidates them when the keyring changes', async () => {
+  const nextClock = '44444444-4444-4444-8444-444444444444';
+  const directory = journal([
+    { schemaVersion: 2, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: LOGICAL, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+    terminal(),
+  ]);
+  const activeSegment = path.join(directory, `private-${nextClock}-00000000.jsonl`);
+  const keyring = JSON.parse(fs.readFileSync(keyringPath(directory), 'utf8'));
+  fs.writeFileSync(path.join(directory, 'active-clock.json'), JSON.stringify(signed({ schemaVersion: 2, clockDomain: nextClock, recordedAt: '2026-09-12T12:01:00.000Z' }, keyring)), { mode: 0o600 });
+  fs.writeFileSync(activeSegment, `${JSON.stringify(signed({ schemaVersion: 2, kind: 'process-start', clockDomain: nextClock, recordedAt: '2026-09-12T12:01:00.000Z' }, keyring))}\n`, { mode: 0o600 });
+  const historical = segment(directory);
+
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 3, segments: 2 });
+  const open = vi.spyOn(fs, 'openSync');
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 0, segments: 0 });
+  expect(open.mock.calls.some(([file]) => file === historical)).toBe(false);
+
+  open.mockClear();
+  const nextId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  keyring.activeKeyId = nextId;
+  keyring.keys[nextId] = Buffer.alloc(32, 9).toString('base64');
+  fs.writeFileSync(keyringPath(directory), JSON.stringify(keyring), { mode: 0o600 });
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 0, segments: 0 });
+  expect(open.mock.calls.some(([file]) => file === historical)).toBe(true);
+  open.mockRestore();
+});
+
 it('runs an initial and recurring journal import without overlapping a stalled import', async () => {
   vi.useFakeTimers();
   let resolve;
