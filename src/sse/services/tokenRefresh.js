@@ -149,7 +149,7 @@ function persistenceReason(error) {
 
 function isUncertainCriticalWrite(error) {
   return String(error?.code || "").startsWith("CRITICAL_TRANSACTION_")
-    && (error?.commitState === "committed" || error?.commitState === "uncertain");
+    && error?.commitState === "committed";
 }
 
 /**

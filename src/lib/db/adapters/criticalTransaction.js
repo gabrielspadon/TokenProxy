@@ -5,8 +5,8 @@ function criticalError(code, message, details = {}) {
 }
 
 function synchronousMode(readSynchronous) {
-  const value = Number(readSynchronous());
-  if (!Number.isInteger(value) || value < 0 || value > 3) {
+  const value = readSynchronous();
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 3) {
     throw criticalError(
       "CRITICAL_TRANSACTION_SYNC_UNVERIFIED",
       "SQLite synchronous mode could not be verified",
@@ -19,6 +19,11 @@ function isThenable(value) {
   return value !== null
     && (typeof value === "object" || typeof value === "function")
     && typeof value.then === "function";
+}
+
+function isNativeAsyncFunction(fn) {
+  const tag = Object.prototype.toString.call(fn);
+  return tag === "[object AsyncFunction]" || tag === "[object AsyncGeneratorFunction]";
 }
 
 /**
@@ -47,6 +52,12 @@ export function createTransactionController({ exec, readSynchronous, isInTransac
 
   function criticalTransaction(fn) {
     if (typeof fn !== "function") throw new TypeError("criticalTransaction requires a function");
+    if (isNativeAsyncFunction(fn)) {
+      throw criticalError(
+        "CRITICAL_TRANSACTION_ASYNC",
+        "A critical SQLite transaction callback must be synchronous",
+      );
+    }
     if (criticalActive || transactionDepth > 0 || isInTransaction?.()) {
       throw criticalError(
         "CRITICAL_TRANSACTION_NESTED",

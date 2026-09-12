@@ -156,4 +156,34 @@ describe('credential redemption publication ownership',()=>{
   await expect(manager.refreshProviderCredentials('codex',credentials,null,{expectedCredentials:credentials,onCredentialsRefreshed:publish})).rejects.toMatchObject({code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED'});
   vi.doUnmock('open-sse/services/tokenRefresh.js');vi.resetModules();
  });
+
+ it('does not cache or deliver a replacement after uncertain COMMIT acknowledgement',async()=>{
+  vi.resetModules();
+  const refreshTokenByProvider=vi.fn(async()=>({accessToken:'visible-but-unacknowledged',refreshToken:'rotated'}));
+  vi.doMock('open-sse/services/tokenRefresh.js',()=>({
+   getEffectiveRefreshLeadMs:()=>300000,
+   isUnrecoverableRefreshError:value=>!!value?.error,
+   refreshTokenByProvider,
+  }));
+  const manager=await import('open-sse/services/oauthCredentialManager.js');
+  const credentials={id:fresh(),provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:fresh(),credentialRevisionId:fresh()};
+  let visible=null;
+  const publish=vi.fn(async replacement=>{
+   visible={...credentials,...replacement,credentialRevisionId:fresh()};
+   throw Object.assign(new Error('commit result uncertain'),{
+    code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED',
+    commitState:'uncertain',
+   });
+  });
+  const options={expectedCredentials:credentials,onCredentialsRefreshed:publish};
+  await expect(manager.refreshProviderCredentials('codex',credentials,null,options)).rejects.toMatchObject({
+   code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED',
+  });
+  expect(visible.accessToken).toBe('visible-but-unacknowledged');
+  await expect(manager.refreshProviderCredentials('codex',credentials,null,options)).rejects.toMatchObject({
+   code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED',
+  });
+  expect(publish).toHaveBeenCalledTimes(2);
+  vi.doUnmock('open-sse/services/tokenRefresh.js');vi.resetModules();
+ });
 });

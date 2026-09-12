@@ -10,6 +10,7 @@ import {refreshProviderCredentials} from 'open-sse/services/oauthCredentialManag
 import {waitForRefresh} from 'open-sse/services/tokenRefresh/credentialRevision.js';
 import {getProjectIdForConnection} from 'open-sse/services/projectId.js';
 import {checkAndRefreshToken} from '@/sse/services/tokenRefresh.js';
+import {createTransactionController} from '@/lib/db/adapters/criticalTransaction.js';
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 const original={id:'synthetic',provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:'one-use',providerSpecificData:{strictProxy:true}};
@@ -46,9 +47,25 @@ describe.each(['node','better'])('native %s critical transaction boundary',kind=
   db.exec('PRAGMA synchronous=EXTRA');
   expect(()=>db.criticalTransaction(()=>db.transaction(()=>{}))).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_NESTED'}));
   expect(()=>db.transaction(()=>db.criticalTransaction(()=>{}))).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_NESTED'}));
-  expect(()=>db.criticalTransaction(async()=>{db.run('INSERT INTO critical_probe(id,value) VALUES(1,?)',['must-rollback']);})).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_ASYNC'}));
+  let callbackStarted=false;
+  expect(()=>db.criticalTransaction(async()=>{
+   callbackStarted=true;
+   await Promise.resolve();
+   db.run('INSERT INTO critical_probe(id,value) VALUES(1,?)',['must-never-run']);
+  })).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_ASYNC'}));
+  await Promise.resolve();
+  expect(callbackStarted).toBe(false);
   expect(db.get('SELECT value FROM critical_probe WHERE id=1')).toBeUndefined();
   expect(db.get('PRAGMA synchronous').synchronous).toBe(3);
+ });
+});
+
+describe('critical transaction verification',()=>{
+ it.each([null,false,true,'1','2'])('rejects non-numeric synchronous state %#',value=>{
+  const exec=vi.fn();
+  const db=createTransactionController({exec,readSynchronous:()=>value,isInTransaction:()=>false});
+  expect(()=>db.criticalTransaction(()=>{})).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_SYNC_UNVERIFIED'}));
+  expect(exec).not.toHaveBeenCalled();
  });
 });
 describe('refresh persistence revision and stop boundary',()=>{
@@ -77,6 +94,25 @@ describe('refresh persistence revision and stop boundary',()=>{
    _connection:winner,
   });
   expect(updateProviderConnection).toHaveBeenCalledTimes(1);
+ });
+ it('rejects a visible candidate when COMMIT acknowledgement is uncertain',async()=>{
+  let visible=original;
+  getProviderConnectionById.mockImplementation(async()=>visible);
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed(
+   {accessToken:'visible-but-unacknowledged',refreshToken:'rotated'},
+   {expectedCredentials:options.expectedCredentials},
+  ));
+  updateProviderConnection.mockImplementation(async(_id,updates)=>{
+   visible={...original,...updates,credentialRevisionId:'visible-revision'};
+   throw Object.assign(new Error('commit result uncertain'),{
+    code:'CRITICAL_TRANSACTION_COMMIT_UNCERTAIN',
+    commitState:'uncertain',
+   });
+  });
+  await expect(checkAndRefreshToken('codex',original,{force:true})).rejects.toMatchObject({
+   code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED',
+  });
+  expect(visible.accessToken).toBe('visible-but-unacknowledged');
  });
  it('persists a refresh completing after consumer cancellation',async()=>{
   const controller=new AbortController(),d=deferred();refreshProviderCredentials.mockImplementation((_provider,_credentials,_log,options)=>waitForRefresh(d.promise.then(value=>options.onCredentialsRefreshed(value,{expectedCredentials:options.expectedCredentials})),options.signal));
