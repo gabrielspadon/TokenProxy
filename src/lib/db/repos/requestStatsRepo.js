@@ -1,6 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { saveContextMetrics, shouldIgnorePending, cleanupContext, retentionDays } from "./contextRepo.js";
 import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
+import { normalizeTerminalEvidence } from "../terminalEvidence.js";
 
 // Full-history statistics source. One row per request (id is the requestDetail
 // id, shared across the streaming start/complete upsert), written
@@ -97,12 +98,14 @@ export function buildStatsWhere(filter = {}) {
 export async function saveRequestStats(detail) {
   if (!detail || typeof detail !== "object" || !detail.id) return;
   try {
+    const terminalEvidence = normalizeTerminalEvidence(detail.terminalEvidence, detail.status);
     const db = await getAdapter();
     const tokens = canonicalizeUsage(detail.tokens) || {};
     const latency = detail.latency || {};
     const { persistUsagePricing } = await import("./usagePricing.js");
     db.transaction(() => {
       const existing = db.get(`SELECT * FROM requestStats WHERE id=?`, [detail.id]);
+      if (detail.status === "pending" && existing?.terminalObservedAt) return;
       if (shouldIgnorePending(existing, detail)) return;
       const timestamp = detail.timestamp || new Date().toISOString();
       const values = {
@@ -160,6 +163,8 @@ export async function saveRequestStats(detail) {
         db.run(`DELETE FROM contextStages WHERE requestId=?`, [detail.id]);
         db.run(`DELETE FROM contextStructures WHERE requestId=?`, [detail.id]);
       }
+      if (terminalEvidence) db.run(`UPDATE requestStats SET terminalState=?,terminalReason=?,terminalSource=?,terminalObservedAt=? WHERE id=?`,
+        [terminalEvidence.terminalState, terminalEvidence.terminalReason, terminalEvidence.terminalSource, terminalEvidence.terminalObservedAt, detail.id]);
     });
     await maybeCleanup(db);
   } catch (e) {

@@ -357,7 +357,7 @@ describe("post-transform SSE terminal contract", () => {
       expect.any(Object),
       expect.any(Object),
       expect.any(Number),
-      { aborted: true },
+      { aborted: true, terminalEvidence: { state: "cancelled", reason: "caller-cancelled", source: "gateway-stream" } },
     );
   });
 });

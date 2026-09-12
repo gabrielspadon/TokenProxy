@@ -404,6 +404,8 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   }
 
   let antigravityRequestSuccessNotified = false;
+  const providerTerminalObserver = createSseTerminalObserver(targetFormat);
+  let emittedTerminalObserver = null;
   let pendingCompletion = null;
   let completionDelivered = false;
   const notifyAntigravitySuccess = (...args) => {
@@ -419,6 +421,9 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   };
   const captureTransformCompletion = (...args) => {
     if (args[3]?.aborted) {
+      args[3] = { ...args[3], terminalEvidence: callerSignal?.aborted
+        ? { state: "cancelled", reason: "caller-cancelled", source: "gateway-stream" }
+        : { state: "unknown", reason: "stream-interrupted", source: "gateway-stream" } };
       onStreamComplete?.(...args);
       return;
     }
@@ -427,18 +432,32 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   const deliverNormalCompletion = () => {
     if (completionDelivered || !pendingCompletion) return;
     completionDelivered = true;
+    const providerOutcome = providerTerminalObserver?.outcome();
+    const emittedOutcome = emittedTerminalObserver?.outcome();
+    const terminalEvidence = providerOutcome?.state === "failed"
+      ? { ...providerOutcome, source: "provider-stream" }
+      : emittedOutcome?.state === "failed"
+        ? { state: "failed", reason: "stream-error-event", source: "gateway-stream" }
+        : providerOutcome?.state === "succeeded" && emittedOutcome?.state === "succeeded"
+          ? { ...providerOutcome, source: "provider-stream" }
+          : { state: "unknown", reason: providerOutcome?.state === "unknown" ? providerOutcome.reason
+            : emittedOutcome?.state === "unknown" ? emittedOutcome.reason : "unsupported-terminal", source: "gateway-stream" };
+    pendingCompletion[3] = { ...pendingCompletion[3], terminalEvidence };
     onStreamComplete?.(...pendingCompletion);
-    notifyAntigravitySuccess(...pendingCompletion);
+    if (terminalEvidence.state === "succeeded" || terminalEvidence.reason === "unsupported-terminal") notifyAntigravitySuccess(...pendingCompletion);
   };
   const completionAwareController = {
     ...streamController,
     handleComplete: () => {
       streamController?.handleComplete?.();
       try { deliverNormalCompletion(); }
-      finally { Promise.resolve(reqLogger?.close?.()).catch(() => {}); }
+      finally { providerTerminalObserver?.release(); Promise.resolve(reqLogger?.close?.()).catch(() => {}); }
     },
+    handleError: (error) => { providerTerminalObserver?.release(); streamController?.handleError?.(error); },
+    handleDisconnect: (reason) => { providerTerminalObserver?.release(); streamController?.handleDisconnect?.(reason); },
   };
   const { transformStream, emittedFormat } = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, customToolNames, responsesToolNameMap, model, connectionId, body, onStreamComplete: captureTransformCompletion, apiKey, streamState });
+  emittedTerminalObserver = createSseTerminalObserver(emittedFormat, () => resolvePartialUsage(streamState, body, sourceFormat));
 
   // Responses passthrough: synthesize response.failed + [DONE] if the stream aborts/stalls before a terminal event
   const isResponsesPassthrough = emittedFormat === FORMATS.OPENAI_RESPONSES;
@@ -451,13 +470,15 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
   const wrappedResponse = {
     ...providerResponse,
-    body: responseBodyStream,
+    body: providerTerminalObserver ? responseBodyStream.pipeThrough(new TransformStream({
+      transform(chunk, controller) { providerTerminalObserver.observe(chunk); controller.enqueue(chunk); },
+    })) : responseBodyStream,
     headers: providerResponse.headers,
   };
   const transformedBody = pipeWithDisconnect(wrappedResponse, transformStream, completionAwareController, {
     onAbortTerminal,
     stallTimeoutMs,
-    terminalObserver: createSseTerminalObserver(emittedFormat, () => resolvePartialUsage(streamState, body, sourceFormat)),
+    terminalObserver: emittedTerminalObserver,
     callerSignal,
   });
 
@@ -578,7 +599,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     }
   };
 
-  const onStreamComplete = (contentObj, usage, ttftAt, { aborted = false } = {}) => {
+  const onStreamComplete = (contentObj, usage, ttftAt, { aborted = false, terminalEvidence = null } = {}) => {
     if (completed) return;
     completed = true;
     const latency = {
@@ -616,9 +637,10 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       providerResponse: safeContent,
       response: { content: safeContent, thinking: safeThinking, type: "streaming" },
       pxpipe,
-      status: aborted ? "aborted" : "success",
+      status: aborted ? "aborted" : terminalEvidence?.state === "failed" ? "error"
+        : terminalEvidence?.state === "unknown" ? "unknown" : "success",
       rid,
-    }, { id: streamDetailId })).catch(() => {
+    }, { id: streamDetailId, terminalEvidence })).catch(() => {
       decide("ACCT", "detail-write-failed", { rid, phase: "update" });
     });
 
@@ -629,8 +651,10 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     if (usage?.estimated) decide("STREAM", "usage-estimated", { rid, conn: connPrefix(), why: "provider-omitted-usage" });
     if (aborted) {
       reqSummary("failed", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, status: 499, why: "aborted" });
-    } else {
+    } else if (!terminalEvidence || terminalEvidence.state === "succeeded") {
       reqSummary("ok", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, row: streamDetailId, ...doneFields({ usage, latency }) });
+    } else {
+      reqSummary("failed", { ...saverFields, rid, conn: connPrefix(), route, fmt, sel, status: 502, why: terminalEvidence.reason });
     }
 
     if (!contentObj?.content?.trim?.() && !contentObj?.thinking?.trim?.() && !hasOutputTokens(usage)) {
@@ -641,6 +665,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
     if (
       provider === "antigravity"
       && !aborted
+      && (!terminalEvidence || terminalEvidence.state === "succeeded" || terminalEvidence.reason === "unsupported-terminal")
       && (contentObj?.content?.trim?.() || contentObj?.thinking?.trim?.() || hasOutputTokens(usage))
     ) {
       notifyTerminalVerificationSuccess(notifyTerminal, connectionId, log);
@@ -674,7 +699,10 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       pxpipe,
       status: "cancelled",
       rid,
-    }, { id: streamDetailId })).catch(() => {
+    }, { id: streamDetailId, terminalEvidence:
+      ["client_disconnect", "client_disconnected", "caller_abort"].includes(reason)
+        ? { state: "cancelled", reason: "caller-cancelled", source: "gateway-stream" }
+        : { state: "unknown", reason: "stream-interrupted", source: "gateway-stream" } })).catch(() => {
       decide("ACCT", "detail-write-failed", { rid, phase: "finalize" });
     });
 
