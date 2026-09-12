@@ -289,12 +289,14 @@ describe('logs, spend, health', () => {
     expect(parts[2]).toBe(parts[2].toUpperCase());
   });
 
-  it('getSpendWindow reports the sample count with the sum', async () => {
+  it('getSpendWindow reports priced and unknown coverage beside the sum', async () => {
     const w = await getSpendWindow(iso(60));
     expect(w.samples).toBe(
       db.get(`SELECT COUNT(*) AS c FROM usageHistory WHERE timestamp >= ?`, [iso(60)]).c
     );
-    expect(w.spendUsd).toBeGreaterThanOrEqual(0);
+    expect(w.pricedSamples + w.unknownSamples).toBe(w.samples);
+    if (w.pricedSamples) expect(w.spendUsd).toBeGreaterThanOrEqual(0);
+    else expect(w.spendUsd).toBeNull();
     expect((await getSpendWindow(new Date(now + 3600000).toISOString())).samples).toBe(0);
   });
 

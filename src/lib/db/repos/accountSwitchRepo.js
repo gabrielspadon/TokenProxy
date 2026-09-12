@@ -2,6 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
 import { parseJson, stringifyJson } from '../helpers/jsonCol.js';
 
+const FAILOVER_TRIGGERS = new Set([
+  'exhaustion',
+  'unavailable',
+  'model-failure',
+  'drain',
+  'reset',
+  'reset-repin',
+]);
+const NON_FAILOVER_TRIGGERS = new Set([
+  'first-pin',
+  'initial-pin',
+  'operator-pin',
+  'operator-reassignment',
+]);
+
 // Switch receipts (Account Scheduling Contract rule 8): why a session left one
 // account for another, kept after the quota windows the decision rested on have
 // moved on. Append-only — a receipt is evidence about a moment, so amending one
@@ -112,4 +127,29 @@ export async function getSwitchById(id) {
   const db=await getAdapter();
   const row=db.get('SELECT id,model,fromConnectionId,toConnectionId,trigger,reason,windows,switchedAt FROM accountSwitches WHERE id=?',[id]);
   return row ? {...row,windows:parseJson(row.windows,null)} : null;
+}
+
+// A failover is a recorded move away from an account for one of the closed
+// runtime failure/depletion reasons. First assignments and operator-directed
+// moves remain visible but do not inflate the automatic failover count. A new
+// trigger is reported as unknown until its semantics are deliberately added.
+export async function getFailoverWindow(sinceIso) {
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT trigger, fromConnectionId FROM accountSwitches WHERE switchedAt >= ?`,
+    [sinceIso]
+  );
+  let failovers = 0;
+  let knownNonFailovers = 0;
+  let unknownTriggers = 0;
+  for (const row of rows) {
+    if (row.fromConnectionId == null || NON_FAILOVER_TRIGGERS.has(row.trigger)) {
+      knownNonFailovers += 1;
+    } else if (FAILOVER_TRIGGERS.has(row.trigger)) {
+      failovers += 1;
+    } else {
+      unknownTriggers += 1;
+    }
+  }
+  return { failovers, knownNonFailovers, unknownTriggers, samples: rows.length };
 }

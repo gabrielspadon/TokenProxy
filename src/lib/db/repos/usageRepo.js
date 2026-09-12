@@ -1344,20 +1344,52 @@ export async function getRecentLogs(limit = 200) {
 
 // ─── System state (read-only) ────────────────────────────────────────────────
 // Backs the `spend` measure of GET /api/system/state. usageHistory is the only
-// table carrying a cost column; `cost` is the USD figure calculateCost() wrote
-// at ingest, so a model with no pricing entry contributes 0 to the sum rather
-// than making the sum unknown — `samples` is returned so the caller can say how
-// much traffic the figure covers.
+// table carrying cost evidence. A legacy scalar 0 with no costSource is not
+// proof of a free request: only explicitly provider-reported or rate-card
+// estimated rows contribute to spend, and the unknown population is returned
+// beside the total.
 // Plan: SEARCH usageHistory USING INDEX idx_uh_ts (timestamp>?).
 export async function getSpendWindow(sinceIso) {
   const db = await getAdapter();
   const row =
     db.get(
-      `SELECT COALESCE(SUM(cost), 0) AS spendUsd, COUNT(*) AS samples
+      `SELECT COUNT(*) AS samples,
+              SUM(CASE WHEN costSource='provider-reported' AND COALESCE(reportedCostUsd,cost) IS NOT NULL THEN 1 ELSE 0 END) AS providerReportedSamples,
+              SUM(CASE WHEN costSource='application-estimate' AND COALESCE(estimatedCostUsd,cost) IS NOT NULL THEN 1 ELSE 0 END) AS estimatedSamples,
+              SUM(CASE WHEN costSource='provider-reported' THEN COALESCE(reportedCostUsd,cost) END) AS providerReportedUsd,
+              SUM(CASE WHEN costSource='application-estimate' THEN COALESCE(estimatedCostUsd,cost) END) AS estimatedUsd,
+              SUM(CASE WHEN costSource IS NULL OR costSource NOT IN ('provider-reported','application-estimate')
+                OR (costSource='provider-reported' AND COALESCE(reportedCostUsd,cost) IS NULL)
+                OR (costSource='application-estimate' AND COALESCE(estimatedCostUsd,cost) IS NULL)
+                THEN 1 ELSE 0 END) AS unknownSamples
        FROM usageHistory WHERE timestamp >= ?`,
       [sinceIso]
     ) || {};
-  return { spendUsd: row.spendUsd || 0, samples: row.samples || 0 };
+  const samples = row.samples || 0;
+  const providerReportedSamples = row.providerReportedSamples || 0;
+  const estimatedSamples = row.estimatedSamples || 0;
+  const pricedSamples = providerReportedSamples + estimatedSamples;
+  const providerReportedUsd = providerReportedSamples ? row.providerReportedUsd ?? null : null;
+  const estimatedUsd = estimatedSamples ? row.estimatedUsd ?? null : null;
+  const spendUsd = pricedSamples ? (providerReportedUsd || 0) + (estimatedUsd || 0) : null;
+  const evidenceKind = providerReportedSamples && estimatedSamples
+    ? 'mixed'
+    : providerReportedSamples
+      ? 'provider-reported'
+      : estimatedSamples
+        ? 'application-estimate'
+        : 'unknown';
+  return {
+    spendUsd,
+    samples,
+    pricedSamples,
+    providerReportedUsd,
+    providerReportedSamples,
+    estimatedUsd,
+    estimatedSamples,
+    unknownSamples: row.unknownSamples || 0,
+    evidenceKind,
+  };
 }
 
 // ─── Provider health (read-only) ─────────────────────────────────────────────

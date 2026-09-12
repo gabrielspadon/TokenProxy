@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => ({
   getTrafficWindow: vi.fn(),
   getSpendWindow: vi.fn(),
+  getFailoverWindow: vi.fn(),
   getUpstreamHealthSummary: vi.fn(),
   // dashboardGuard dependencies (auth refusal case)
   getSettings: vi.fn(),
@@ -30,6 +31,9 @@ vi.mock('@/lib/db/repos/requestStatsRepo.js', () => ({
 }));
 vi.mock('@/lib/db/repos/usageRepo.js', () => ({
   getSpendWindow: mocks.getSpendWindow,
+}));
+vi.mock('@/lib/db/repos/accountSwitchRepo.js', () => ({
+  getFailoverWindow: mocks.getFailoverWindow,
 }));
 vi.mock('@/lib/db/repos/connectionsRepo.js', () => ({
   getUpstreamHealthSummary: mocks.getUpstreamHealthSummary,
@@ -82,7 +86,21 @@ function emptyTraffic() {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getTrafficWindow.mockResolvedValue(busyTraffic());
-  mocks.getSpendWindow.mockResolvedValue({ spendUsd: 4.25, samples: 1800 });
+  mocks.getSpendWindow.mockResolvedValue({
+    spendUsd: 4.25,
+    samples: 1800,
+    pricedSamples: 1700,
+    providerReportedSamples: 0,
+    estimatedSamples: 1700,
+    unknownSamples: 100,
+    evidenceKind: 'application-estimate',
+  });
+  mocks.getFailoverWindow.mockResolvedValue({
+    failovers: 2,
+    knownNonFailovers: 1,
+    unknownTriggers: 1,
+    samples: 4,
+  });
   mocks.getUpstreamHealthSummary.mockResolvedValue({
     total: 46,
     connected: 6,
@@ -156,6 +174,11 @@ describe('GET /api/system/state — shape, units and windows', () => {
     expect(body.measures.latencyP95.value).toBe(2400);
     expect(body.measures.latencyP95.sampleCount).toBe(1200);
     expect(body.measures.spend.value).toBe(4.25);
+    expect(body.measures.spend.evidenceKind).toBe('application-estimate');
+    expect(body.measures.spend.sampleCount).toBe(1700);
+    expect(body.measures.spend.unknownSampleCount).toBe(100);
+    expect(body.measures.failoverCount.value).toBe(2);
+    expect(body.measures.failoverCount.unknownTriggerCount).toBe(1);
     expect(body.measures.connectedUpstreams.value).toBe(6);
     expect(body.measures.degradedUpstreams.value).toBe(2);
     // Degraded includes persisted failures on disabled connections, so its
@@ -195,18 +218,25 @@ describe('GET /api/system/state — shape, units and windows', () => {
 });
 
 describe('the null contract — unanswerable is null, never zero', () => {
-  it('always reports failoverCount as null with a stated reason', async () => {
+  it('reports semantic failovers while keeping unknown triggers visible', async () => {
     const body = await (await GET(routeRequest())).json();
-    expect(body.measures.failoverCount.value).toBeNull();
-    expect(typeof body.measures.failoverCount.unavailable).toBe('string');
-    expect(body.measures.failoverCount.unavailable.length).toBeGreaterThan(0);
-    expect(body.unanswerable).toContain('failoverCount');
-    expect(UNANSWERABLE).toContain('failoverCount');
+    expect(body.measures.failoverCount).toMatchObject({
+      value: 2,
+      sampleCount: 4,
+      unknownTriggerCount: 1,
+      source: 'accountSwitches',
+      index: 'idx_as_at',
+      unavailable: null,
+    });
+    expect(body.unanswerable).not.toContain('failoverCount');
+    expect(UNANSWERABLE).not.toContain('failoverCount');
   });
 
   it('returns null error rate on an empty database rather than a 0 that reads as healthy', async () => {
     mocks.getTrafficWindow.mockResolvedValue(emptyTraffic());
-    mocks.getSpendWindow.mockResolvedValue({ spendUsd: 0, samples: 0 });
+    mocks.getSpendWindow.mockResolvedValue({ spendUsd: null, samples: 0, pricedSamples: 0,
+      providerReportedSamples: 0, estimatedSamples: 0, unknownSamples: 0, evidenceKind: 'unknown' });
+    mocks.getFailoverWindow.mockResolvedValue({ failovers: 0, knownNonFailovers: 0, unknownTriggers: 0, samples: 0 });
     mocks.getUpstreamHealthSummary.mockResolvedValue({
       total: 0,
       connected: 0,
@@ -220,11 +250,13 @@ describe('the null contract — unanswerable is null, never zero', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    // Measured zeroes: no request in a known window really is 0 req/s and $0.
+    // Measured zeroes: no request in a known window really is 0 req/s.
     expect(body.measures.throughput.value).toBe(0);
-    expect(body.measures.spend.value).toBe(0);
+    expect(body.measures.spend.value).toBeNull();
+    expect(body.measures.spend.evidenceKind).toBe('unknown');
     expect(body.measures.connectedUpstreams.value).toBe(0);
     expect(body.measures.degradedUpstreams.value).toBe(0);
+    expect(body.measures.failoverCount.value).toBe(0);
 
     // Unanswerable: 0 errors out of 0 requests is not a rate, and no measured
     // latency sample is not a p95 of zero.
@@ -274,16 +306,18 @@ describe('partial source failure degrades to null, never to a 500', () => {
     expect(body.freshness.state).toBe('unknown');
 
     expect(body.measures.spend.value).toBe(4.25);
+    expect(body.measures.failoverCount.value).toBe(2);
     expect(body.measures.connectedUpstreams.value).toBe(6);
     expect(body.measures.degradedUpstreams.value).toBe(2);
     expect(body.unanswerable).toEqual(
-      expect.arrayContaining(['throughput', 'errorRate', 'latencyP95', 'failoverCount'])
+      expect.arrayContaining(['throughput', 'errorRate', 'latencyP95'])
     );
   });
 
   it('survives every source failing at once and still answers 200 with a full shape', async () => {
     mocks.getTrafficWindow.mockRejectedValue(new Error('no stats'));
     mocks.getSpendWindow.mockRejectedValue(new Error('no usage'));
+    mocks.getFailoverWindow.mockRejectedValue(new Error('no switches'));
     mocks.getUpstreamHealthSummary.mockRejectedValue(new Error('no connections'));
 
     const res = await GET(routeRequest());
@@ -319,6 +353,7 @@ describe('abort propagation', () => {
     expect(res.status).toBe(499);
     expect(mocks.getTrafficWindow).not.toHaveBeenCalled();
     expect(mocks.getSpendWindow).not.toHaveBeenCalled();
+    expect(mocks.getFailoverWindow).not.toHaveBeenCalled();
     expect(mocks.getUpstreamHealthSummary).not.toHaveBeenCalled();
   });
 
@@ -333,6 +368,7 @@ describe('abort propagation', () => {
     expect(res.status).toBe(499);
     expect(mocks.getTrafficWindow).toHaveBeenCalledTimes(1);
     expect(mocks.getSpendWindow).not.toHaveBeenCalled();
+    expect(mocks.getFailoverWindow).not.toHaveBeenCalled();
     expect(mocks.getUpstreamHealthSummary).not.toHaveBeenCalled();
   });
 });
