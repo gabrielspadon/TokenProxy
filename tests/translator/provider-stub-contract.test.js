@@ -67,6 +67,8 @@ describe("capability matrix runner", () => {
       ],
       reasoning_effort: "low",
     }), "swapped-semantic-fixture")).toThrow();
+    expect(() => assertSemanticPreserved(source, semanticReceipt({ messages: source.messages }), "missing-control-fixture")).toThrow();
+    expect(() => assertSemanticPreserved({ reasoning: { effort: "high" } }, semanticReceipt({ reasoning_effort: "low" }), "mapped-control-fixture")).toThrow();
   });
 
   it("cleanup targets only its captured child group when an unrelated next-server exists", async () => {

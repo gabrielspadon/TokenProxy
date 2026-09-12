@@ -202,7 +202,7 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
     DB_ENCRYPTION_KEY: "capability-gateway-fixture-db-key",
     JWT_SECRET: "capability-fixture-jwt-secret",
     INITIAL_PASSWORD: "capability-fixture-password",
-    MODEL_CAPABILITY_OVERRIDES: JSON.stringify({ "fixture-model": { vision: true } }),
+    MODEL_CAPABILITY_OVERRIDES: JSON.stringify({ "fixture-model": { vision: true, reasoning: true } }),
     NEXT_TELEMETRY_DISABLED: "1",
   };
   const seed = spawn(process.execPath, ["--require", guardPath, seedPath], {
@@ -249,6 +249,7 @@ export async function startCapabilityGateway({ providerBaseUrl, port = 20211 } =
           buildOutput: resolvedBuildOutput,
           ownership,
         };
+        if (cleanup.listenerGone !== true) throw new Error("fixture cleanup did not prove its captured listener is gone");
         if (!cleanup.dataDirRemoved || !cleanup.buildOutputRemoved) throw new Error("fixture cleanup left an owned path behind");
         return cleanup;
       },

@@ -4,6 +4,9 @@ import { execFileSync } from "node:child_process";
 export const OWNED_SOURCE_PATHS = Object.freeze([
   "open-sse/translator/formats/openai.js",
   "open-sse/translator/request/openai-responses.js",
+  "open-sse/utils/usageTracking.js",
+  "src/app/api/v1/responses/route.js",
+  "src/sse/handlers/chat.js",
   "tests/contracts",
   "tests/translator/capability-cli-authorization.test.js",
   "tests/translator/capability-stream-contract.test.js",

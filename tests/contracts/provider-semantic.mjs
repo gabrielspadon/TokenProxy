@@ -5,6 +5,16 @@ const digest = (value) => createHash("sha256").update(JSON.stringify(value)).dig
 const redact = (value) => digest(value);
 const VALUE_BEARING_CONTROLS = new Set(["reasoning_effort", "reasoning", "thinking", "temperature", "top_p", "stop", "tool_choice", "parallel_tool_calls", "response_format", "seed"]);
 
+function mappedControl(key, value) {
+  if (key === "reasoning") return { key: "reasoning_effort", value: value?.effort };
+  if (key === "thinking") {
+    const budget = Number(value?.budget_tokens);
+    const effort = budget <= 0 ? "none" : budget <= 768 ? "minimal" : budget <= 4096 ? "low" : budget <= 16384 ? "medium" : budget <= 28672 ? "high" : "xhigh";
+    return { key: "reasoning_effort", value: effort };
+  }
+  return { key, value };
+}
+
 function canonicalJson(value) {
   if (typeof value !== "string") return value;
   try { return JSON.parse(value); } catch { return value; }
@@ -171,8 +181,8 @@ export function semanticShape(body) {
   }
   for (const [key, value] of Object.entries(body || {})) {
     if (!VALUE_BEARING_CONTROLS.has(key) || value === undefined) continue;
-    const control = { key, value };
-    shape.controls.push({ key, value: redactedValue(value) });
+    const control = mappedControl(key, value);
+    shape.controls.push({ key: control.key, value: redactedValue(control.value) });
     addAtom(shape, null, "control", control);
   }
   return shape;
@@ -201,8 +211,7 @@ export function assertSemanticPreserved(sourceBody, receipt, label) {
   const ordered = actual?.ordered || [];
   requireSubsequence(expected.ordered.filter((atom) => atom.kind !== "control"), ordered, label);
   for (const control of expected.ordered.filter((atom) => atom.kind === "control")) {
-    const sameKey = ordered.some((atom) => atom.kind === "control" && JSON.stringify(atom.value?.key) === JSON.stringify(control.value?.key));
-    if (sameKey) requireSubsequence([control], ordered, label);
+    requireSubsequence([control], ordered, label);
   }
   return { expected, actual };
 }
