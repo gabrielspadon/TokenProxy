@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 vi.hoisted(() => { process.env.JWT_SECRET = "usage-attribution-fixture-signing-secret-0123456789"; });
 const mocks = vi.hoisted(() => ({ execute: vi.fn(), refresh: vi.fn(), fetch: vi.fn(), executor: null, noAuth: true }));
 vi.mock("../../open-sse/executors/index.js", () => ({ getExecutor: () => mocks.executor || ({ noAuth: mocks.noAuth, execute: mocks.execute, refreshCredentials: mocks.refresh }) }));
@@ -11,6 +12,12 @@ const { createDashboardAuthToken } = await import("../../src/lib/auth/dashboardS
 const { getAdapter } = await import("../../src/lib/db/driver.js");
 const { updatePricing } = await import("../../src/lib/db/repos/pricingRepo.js");
 const db = await getAdapter();
+const visibleFixture = createVisibleTelemetryFixture(db, 'usage-attribution-pipeline');
+const completeFixture = input => visibleFixture(async () => {
+  const result = await handleChatCore(input);
+  await result.response.text();
+  return result;
+});
 let token;
 beforeAll(async () => { token = await createDashboardAuthToken(); });
 afterAll(async () => { await globalThis._contextAnalytics?.client.close(); delete globalThis._contextAnalytics; });
@@ -44,7 +51,7 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
       await updatePricing({ openrouter: { "gpt-4o": { input: 200, output: 400 } } });
       return { response: completion() };
     });
-    const result = await handleChatCore(args()); await result.response.text();
+    await completeFixture(args());
     const [row] = await persisted();
     expect(row.requestId).toBe(before.id);
     const money = await query({ view: "economics", requestId: before.id, pageSize: "1" });
@@ -62,7 +69,7 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
     mocks.execute.mockImplementation(async () => ({ response: new Response(stream, { headers: { "content-type": "text/event-stream" } }) }));
     for (const streaming of [true, false]) {
       const a = args(); a.body.stream = streaming;
-      const result = await handleChatCore(a); expect(result.success).toBe(true); await result.response.text();
+      const result = await completeFixture(a); expect(result.success).toBe(true);
     }
     const rows = await persisted(2);
     expect(new Set(rows.map(r => r.requestId)).size).toBe(2);
@@ -71,7 +78,7 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
   it("separates a rejected authentication attempt from its successful retry without a second charge", async () => {
     mocks.noAuth = false; mocks.refresh.mockResolvedValue({ accessToken: "refreshed-synthetic" });
     mocks.execute.mockResolvedValueOnce({ response: Response.json({ error: { message: "expired" } }, { status: 401 }) }).mockResolvedValueOnce({ response: completion() });
-    const result = await handleChatCore(args()); await result.response.text();
+    await completeFixture(args());
     const [row] = await persisted();
     const stats = db.all("SELECT * FROM requestStats ORDER BY attempt");
     expect(stats).toHaveLength(2); expect(stats.map(r => r.attempt)).toEqual([1, 2]);
@@ -85,7 +92,10 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
     mocks.execute.mockImplementation(async () => ({ response: completion() }));
     const request = new Request("http://localhost/v1/chat/completions");
     const a = args(request), b = args(request), c = args();
-    await Promise.all([a,b,c].map(async value => { const result = await handleChatCore(value); await result.response.text(); }));
+    await visibleFixture(() => Promise.all([a,b,c].map(async input => {
+      const result = await handleChatCore(input);
+      await result.response.text();
+    })));
     const rows = await persisted(3);
     expect(new Set(rows.map(r => r.requestId)).size).toBe(3);
     expect(rows.filter(r => r.logicalRequestId === a.contextTelemetry.logicalRequestId).map(r => r.attempt).sort()).toEqual([1,2]);
@@ -100,7 +110,7 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
       expect(row.dispatchCoverage).toBe("physical-dispatch");
       return dispatched.length === 1 ? Response.json({ error: { message: "temporarily unavailable" } }, { status: 503, headers: { 'x-tokenproxy-replay-safe': 'true' } }) : completion();
     });
-    const result = await handleChatCore(args()); await result.response.text();
+    await completeFixture(args());
     const [row] = await persisted();
     expect(dispatched).toHaveLength(2); expect(new Set(dispatched).size).toBe(2);
     expect(row.requestId).toBe(dispatched[1]);
@@ -109,7 +119,7 @@ describe("mock dispatch through exact accounting and actual analytics worker", (
   });
   it("records failed dispatch rate coverage without inventing billed usage", async () => {
     mocks.execute.mockRejectedValue(new Error("fixture connection failure"));
-    const result = await handleChatCore(args()); expect(result.success).toBe(false);
+    const result = await completeFixture(args()); expect(result.success).toBe(false);
     const data = await query({ view: "activity" });
     expect(data.summary).toMatchObject({ attempts: 1, failed: 1, rateSnapshotRows: 1 });
     expect((await query({ view: "economics" })).summary.records).toBe(0);

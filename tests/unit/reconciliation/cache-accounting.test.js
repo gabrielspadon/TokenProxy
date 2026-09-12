@@ -16,6 +16,7 @@ import {
   resolveCacheTokens,
 } from "../../../open-sse/utils/usageTracking.js";
 import { calculateCostFromTokens } from "../../../open-sse/providers/pricing.js";
+import { createVisibleTelemetryFixture } from '../../fixtures/visible-telemetry.mjs';
 
 const usageRepoSource = fs.readFileSync(
   new URL("../../../src/lib/db/repos/usageRepo.js", import.meta.url),
@@ -25,6 +26,8 @@ const usageRepoSource = fs.readFileSync(
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;
+let visibleFixture;
+const saveVisibleUsage = entry => visibleFixture(() => db.saveRequestUsage(entry));
 
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenproxy-g2-cache-"));
@@ -32,6 +35,7 @@ beforeAll(async () => {
   vi.resetModules();
   db = await import("@/lib/db/index.js");
   await db.initDb();
+  visibleFixture = createVisibleTelemetryFixture(await (await import('../../../src/lib/db/driver.js')).getAdapter(), 'cache-accounting');
 });
 
 afterAll(() => {
@@ -157,7 +161,7 @@ describe("G2 canonical cache values carry through every consumer", () => {
       // Deliberately NOT pre-canonicalized: saveRequestUsage is the boundary
       // that normalizes, so a caller handing it raw provider usage must produce
       // the same rows as one that canonicalized first.
-      await db.saveRequestUsage({
+      await saveVisibleUsage({
         provider: "anthropic",
         model,
         connectionId,

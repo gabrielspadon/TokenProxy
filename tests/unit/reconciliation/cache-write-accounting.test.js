@@ -17,11 +17,14 @@ import {
   canonicalizeUsage,
 } from "../../../open-sse/utils/usageTracking.js";
 import { toResponsesUsage } from "../../../open-sse/translator/concerns/usage.js";
+import { createVisibleTelemetryFixture } from '../../fixtures/visible-telemetry.mjs';
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;
 let switches;
+let visibleFixture;
+const saveVisibleUsage = entry => visibleFixture(() => db.saveRequestUsage(entry));
 
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenproxy-cache-write-"));
@@ -30,6 +33,7 @@ beforeAll(async () => {
   db = await import("@/lib/db/index.js");
   switches = await import("@/lib/db/repos/accountSwitchRepo.js");
   await db.initDb();
+  visibleFixture = createVisibleTelemetryFixture(await (await import('../../../src/lib/db/driver.js')).getAdapter(), 'cache-write-accounting');
 });
 
 afterAll(() => {
@@ -111,7 +115,7 @@ describe("cache-write aliases normalize to the identical canonical pair", () => 
   it("produces identical per-account cache-write totals across all three spellings", async () => {
     const model = "claude-sonnet-4-6";
     for (const [label, raw] of Object.entries(CACHE_WRITE_SPELLINGS)) {
-      await db.saveRequestUsage({
+      await saveVisibleUsage({
         provider: "anthropic",
         model,
         connectionId: CACHE_WRITE_IDS[label],
@@ -184,7 +188,7 @@ describe("account switch keeps a cache-read drop visible instead of blending it"
     const afterSwitch = new Date(Date.now() + 5 * 60_000).toISOString();
 
     // Pre-switch: the outgoing account has a warm cache.
-    await db.saveRequestUsage({
+    await saveVisibleUsage({
       provider: "anthropic",
       model,
       connectionId: fromConnectionId,
@@ -207,7 +211,7 @@ describe("account switch keeps a cache-read drop visible instead of blending it"
 
     // Immediately after: first request on the new account is a cache miss —
     // zero read, full cache-creation cost for the same-size content.
-    await db.saveRequestUsage({
+    await saveVisibleUsage({
       provider: "anthropic",
       model,
       connectionId: toConnectionId,

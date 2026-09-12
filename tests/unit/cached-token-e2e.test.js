@@ -6,10 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { canonicalizeUsage } from "../../open-sse/utils/usageTracking.js";
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;
+let visibleFixture;
+const saveVisibleUsage = entry => visibleFixture(() => db.saveRequestUsage(entry));
 
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenproxy-cached-e2e-"));
@@ -17,6 +20,7 @@ beforeAll(async () => {
   vi.resetModules();
   db = await import("@/lib/db/index.js");
   await db.initDb();
+  visibleFixture = createVisibleTelemetryFixture(await (await import('../../src/lib/db/driver.js')).getAdapter(), 'cached-token-e2e');
 });
 
 afterAll(() => {
@@ -27,6 +31,12 @@ afterAll(() => {
 
 describe("cached-token end-to-end (persist + aggregate + cost)", () => {
   it("Claude cache usage: canonical prompt is inclusive, cached persisted, cost correct", async () => {
+    // This pre-existing synthetic row must remain hidden when the owned
+    // operation below exposes its single row for public-analytics assertions.
+    await db.saveRequestUsage({ provider: 'unexposed-fixture', model: 'fixture-model', connectionId: 'unexposed-fixture',
+      tokens: { prompt_tokens: 999, completion_tokens: 1, cached_tokens: 900 }, status: 'ok' });
+    const adapter = await (await import('../../src/lib/db/driver.js')).getAdapter();
+    expect(adapter.get('SELECT dataOrigin FROM usageHistory WHERE connectionId=?', ['unexposed-fixture']).dataOrigin).toBe('test');
     // Raw Claude usage (cache-EXCLUSIVE prompt): input 100, cache_read 200, cache_creation 30, output 50
     const canonical = canonicalizeUsage({
       prompt_tokens: 100,
@@ -36,7 +46,7 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     });
     expect(canonical.prompt_tokens).toBe(330); // inclusive
 
-    await db.saveRequestUsage({
+    await saveVisibleUsage({
       provider: "anthropic",
       model: "claude-sonnet-4-6",
       connectionId: "c-cache",
@@ -49,6 +59,8 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(stats.totalCachedTokens).toBe(200);
     expect(stats.totalPromptTokens).toBe(330);
     expect(stats.byProvider.anthropic.cachedTokens).toBe(200);
+    expect(stats.byProvider['unexposed-fixture']).toBeUndefined();
+    expect(adapter.get('SELECT dataOrigin FROM usageHistory WHERE connectionId=?', ['unexposed-fixture']).dataOrigin).toBe('test');
 
     // Cost: nonCached=330-200-30=100 @3 + cached 200 @0.30 + creation 30 @3.75 + output 50 @15
     const expected = (100 * 3 + 200 * 0.3 + 30 * 3.75 + 50 * 15) / 1_000_000;
@@ -68,7 +80,7 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(canonical.prompt_tokens).toBe(1000);
     expect(canonical.cached_tokens).toBe(600);
 
-    await db.saveRequestUsage({
+    await saveVisibleUsage({
       provider: "openai",
       model: "gpt-4o",
       connectionId: "c-oai",
@@ -89,7 +101,7 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
       cost_in_usd: 0.123,
     });
 
-    await db.saveRequestUsage({
+    await saveVisibleUsage({
       provider: "unpriced-provider",
       model: "upstream-priced-model",
       connectionId: "c-exact",
@@ -107,7 +119,7 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
   it("Today stats count input/output-shaped usage", async () => {
     const before = await db.getUsageStats("today");
 
-    await db.saveRequestUsage({
+    await saveVisibleUsage({
       provider: "anthropic",
       model: "claude-sonnet-4-6",
       connectionId: "c-input-output",
