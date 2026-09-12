@@ -33,9 +33,13 @@ export async function createSqlJsAdapter(filePath) {
     }
     const tmp = filePath + ".tmp";
     let fd = null;
+    let createdTemp = false;
     let published = false;
     try {
-      fd = fs.openSync(tmp, "w", 0o600);
+      const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+        | (fs.constants.O_NOFOLLOW || 0);
+      fd = fs.openSync(tmp, flags, 0o600);
+      createdTemp = true;
       fs.fchmodSync(fd, 0o600);
       fs.writeFileSync(fd, data);
       fs.fsyncSync(fd);
@@ -51,7 +55,7 @@ export async function createSqlJsAdapter(filePath) {
       if (fd !== null) {
         try { fs.closeSync(fd); } catch {}
       }
-      if (!published) {
+      if (createdTemp && !published) {
         try { fs.unlinkSync(tmp); } catch {}
       }
     }

@@ -69,6 +69,17 @@ describe("sqljs atomic persist", () => {
     expect(fs.existsSync(dbPath + ".tmp")).toBe(false);
   });
 
+  it.runIf(process.platform !== "win32")("never follows a hostile snapshot symlink", async () => {
+    const victim = path.join(tempDir, "victim");
+    fs.writeFileSync(victim, "do-not-overwrite");
+    fs.symlinkSync(victim, dbPath + ".tmp");
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v INTEGER)");
+    expect(() => adapter.flush()).toThrow();
+    expect(fs.readFileSync(victim, "utf8")).toBe("do-not-overwrite");
+    expect(fs.lstatSync(dbPath + ".tmp").isSymbolicLink()).toBe(true);
+  });
+
   it("publishes a critical transaction before returning without requiring close", async () => {
     const adapter = await createSqlJsAdapter(dbPath);
     adapter.exec("CREATE TABLE t (v TEXT)");

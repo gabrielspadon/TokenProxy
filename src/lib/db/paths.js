@@ -20,10 +20,14 @@ const isPosix = process.platform !== "win32";
 // Best-effort: a Docker bind mount may be owned by another uid, and failing to
 // tighten permissions must never prevent the app from starting.
 export function chmodQuiet(target, mode) {
-  if (!isPosix) return;
+  if (!isPosix) return null;
   try {
     fs.chmodSync(target, mode);
-  } catch {}
+    return true;
+  } catch (error) {
+    console.warn(`[DB] Could not tighten permissions for ${target}: ${error?.code || "UNKNOWN"}`);
+    return false;
+  }
 }
 
 // The data directory is mode 0700 and its files 0600, which is right for a
