@@ -112,7 +112,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
       const errText = parsed.message;
       log?.error?.("SEARCH", `${provider.id} ${resp.status}: ${errText.slice(0, 200)}`);
       return { success: false, status: resp.status, error: `${provider.id} returned ${resp.status}: ${errText.slice(0, 200)}`,
-        failureMetadata: { safeToReplay: isReplaySafeRejection(resp) }, resetsAtMs: parsed.resetsAtMs };
+        failureMetadata: { safeToReplay: isReplaySafeRejection(resp, parsed.errorPayload) }, resetsAtMs: parsed.resetsAtMs };
     }
     const data = await resp.json();
     const normalized = normalizeSearchResponse(provider.id, data, params.query, params.searchType);

@@ -544,7 +544,7 @@ export async function handleChatSearch({
   if (!resp.ok) {
     const parsed = await parseUpstreamError(resp);
     return { success: false, status: resp.status, error: parsed.message, resetsAtMs: parsed.resetsAtMs,
-      failureMetadata: { safeToReplay: isReplaySafeRejection(resp) } };
+      failureMetadata: { safeToReplay: isReplaySafeRejection(resp, parsed.errorPayload) } };
   }
   let data;
   try {

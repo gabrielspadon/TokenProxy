@@ -79,10 +79,12 @@ export default {
     });
 
     if (!result.response.ok) {
-      const { message: text, resetsAtMs } = await parseUpstreamError(result.response);
+      const { message: text, resetsAtMs, errorPayload } = await parseUpstreamError(result.response);
       const error = new Error(text || `HTTP ${result.response.status}`);
       error.status = result.response.status;
-      error.failureMetadata = { safeToReplay: isReplaySafeRejection(result.response) };
+      error.failureMetadata = {
+        safeToReplay: isReplaySafeRejection(result.response, errorPayload),
+      };
       error.resetsAtMs = resetsAtMs;
       throw error;
     }

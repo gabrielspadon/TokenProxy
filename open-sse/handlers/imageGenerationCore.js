@@ -178,10 +178,12 @@ export async function handleImageGenerationCore({
   }
 
   if (!providerResponse.ok) {
-    const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse);
+    const { statusCode, message, resetsAtMs, errorPayload } = await parseUpstreamError(providerResponse);
     const errMsg = formatProviderError(new Error(message), statusCode);
     log?.debug?.("IMAGE", `Provider error: ${errMsg}`);
-    return createErrorResult(statusCode, errMsg, resetsAtMs, { safeToReplay: isReplaySafeRejection(providerResponse) });
+    return createErrorResult(statusCode, errMsg, resetsAtMs, {
+      safeToReplay: isReplaySafeRejection(providerResponse, errorPayload),
+    });
   }
 
   // Parse provider response — adapter may override (codex SSE / async polling / binary)

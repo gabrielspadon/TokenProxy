@@ -75,7 +75,9 @@ export default {
     let res = await ttsRequest(text, voiceId, token);
 
     // 429/403: invalidate cache and retry once
-    if ((res.status === 429 || res.status === 403) && isReplaySafeRejection(res) && !extractRetryAfterDeadline(res)) {
+    // This branch has not consumed a complete error body. A 429 therefore has
+    // no canonical account-quota proof and must fail closed in replaySafety.
+    if ((res.status === 429 || res.status === 403) && isReplaySafeRejection(res, null) && !extractRetryAfterDeadline(res)) {
       discardResponseBody(res);
       cache.token = null;
       cache.tokenTime = 0;
