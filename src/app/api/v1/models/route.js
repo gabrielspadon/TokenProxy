@@ -31,6 +31,7 @@ import { buildCodexCatalog } from "@/lib/codexCatalog";
 // Authenticated OpenAI/Codex catalogs, shared with the provider detail route (#2654).
 import { detectClientTool } from "open-sse/utils/clientDetector.js";
 import {
+  classifyCatalogFailure,
   getPublicModelCatalogState,
   readLiveCatalog,
   refreshLiveCatalog,
@@ -38,6 +39,7 @@ import {
   resetPublicModelCatalogForTests,
   startPublicModelCatalogRefresh,
 } from "./catalogSnapshot.js";
+import { credentialRevision } from "open-sse/services/tokenRefresh/credentialRevision.js";
 
 // Provider catalog clients may include response bodies or request URLs in
 // diagnostic arguments. The public refresh path records provider and error
@@ -50,11 +52,17 @@ const SAFE_CATALOG_LOG = Object.freeze({
   warn() {},
 });
 
+async function readCurrentProviderConnection(connectionId) {
+  const localDb = await import("@/lib/localDb");
+  if (!Object.prototype.hasOwnProperty.call(localDb, "getProviderConnectionById")) return null;
+  return localDb.getProviderConnectionById(connectionId);
+}
+
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
-  kiro: async (conn) => {
+  kiro: async (conn, _proxyOptions, signal) => {
     let credentialPersistenceFailed = false;
     const result = await (await import("open-sse/services/kiroModels.js")).resolveKiroModels({
       accessToken: conn.accessToken,
@@ -62,6 +70,7 @@ const LIVE_MODEL_RESOLVERS = {
       providerSpecificData: conn.providerSpecificData || {}
     }, {
       log: SAFE_CATALOG_LOG,
+      signal,
       onCredentialsRefreshed: async (refreshed) => {
         if (!refreshed?.accessToken) return;
         const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
@@ -73,11 +82,9 @@ const LIVE_MODEL_RESOLVERS = {
           credentialPersistenceFailed = true;
           throw new Error("Kiro catalog credential persistence failed");
         }
-        conn.accessToken = refreshed.accessToken;
-        if (refreshed.refreshToken) conn.refreshToken = refreshed.refreshToken;
-        if (refreshed.expiresIn) {
-          conn.expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
-        }
+        const current = await readCurrentProviderConnection(conn.id);
+        if (!current) throw new Error("Kiro catalog connection disappeared");
+        Object.assign(conn, current);
       },
     });
     if (credentialPersistenceFailed) throw new Error("Kiro catalog credential persistence failed");
@@ -96,15 +103,15 @@ const LIVE_MODEL_RESOLVERS = {
       models: result.models.map((m) => ({ id: m.id, name: m.name })),
     };
   },
-  kimchi: async (conn) => {
+  kimchi: async (conn, _proxyOptions, signal) => {
     const result = await (await import("open-sse/services/kimchiModels.js")).resolveKimchiModels({
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: SAFE_CATALOG_LOG });
+    }, { log: SAFE_CATALOG_LOG, signal });
     return result?.models?.length ? { models: result.models } : null;
   },
-  github: async (conn) => {
+  github: async (conn, _proxyOptions, signal) => {
     let credentialPersistenceFailed = false;
     const result = await (await import("open-sse/services/copilotModels.js")).resolveCopilotModels({
       accessToken: conn.accessToken,
@@ -112,6 +119,7 @@ const LIVE_MODEL_RESOLVERS = {
       providerSpecificData: conn.providerSpecificData || {}
     }, {
       log: SAFE_CATALOG_LOG,
+      signal,
       onCredentialsRefreshed: async (refreshed) => {
         const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           copilotToken: refreshed.copilotToken,
@@ -122,26 +130,23 @@ const LIVE_MODEL_RESOLVERS = {
           credentialPersistenceFailed = true;
           throw new Error("GitHub catalog credential persistence failed");
         }
-        conn.providerSpecificData = {
-          ...(conn.providerSpecificData || {}),
-          ...(refreshed.copilotToken ? { copilotToken: refreshed.copilotToken } : {}),
-          ...(refreshed.copilotTokenExpiresAt
-            ? { copilotTokenExpiresAt: refreshed.copilotTokenExpiresAt }
-            : {}),
-        };
+        const current = await readCurrentProviderConnection(conn.id);
+        if (!current) throw new Error("GitHub catalog connection disappeared");
+        Object.assign(conn, current);
       },
     });
     if (credentialPersistenceFailed) throw new Error("GitHub catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
-  "grok-cli": async (conn) => {
+  "grok-cli": async (conn, _proxyOptions, signal) => {
     let credentialPersistenceFailed = false;
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
     const result = await (await import("open-sse/services/grokCliModels.js")).resolveGrokCliModels({
       ...conn,
       connectionId: conn.id,
     }, {
-      log: console,
+      log: SAFE_CATALOG_LOG,
+      signal,
       proxyOptions: {
         connectionProxyEnabled: proxy.connectionProxyEnabled === true,
         connectionProxyUrl: proxy.connectionProxyUrl || "",
@@ -158,28 +163,19 @@ const LIVE_MODEL_RESOLVERS = {
           credentialPersistenceFailed = true;
           throw new Error("Grok catalog credential persistence failed");
         }
-        if (refreshed.accessToken) conn.accessToken = refreshed.accessToken;
-        if (refreshed.refreshToken) conn.refreshToken = refreshed.refreshToken;
-        if (refreshed.providerSpecificData) {
-          conn.providerSpecificData = {
-            ...(conn.providerSpecificData || {}),
-            ...refreshed.providerSpecificData,
-          };
-        }
-        if (refreshed.expiresAt) conn.expiresAt = refreshed.expiresAt;
-        else if (refreshed.expiresIn) {
-          conn.expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
-        }
+        const current = await readCurrentProviderConnection(conn.id);
+        if (!current) throw new Error("Grok catalog connection disappeared");
+        Object.assign(conn, current);
       },
     });
     if (credentialPersistenceFailed) throw new Error("Grok catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
-  cursor: async (conn, proxyOptions) => {
+  cursor: async (conn, proxyOptions, signal) => {
     const result = await (await import("open-sse/services/cursorModels.js")).resolveCursorModels({
       accessToken: conn.accessToken,
       providerSpecificData: conn.providerSpecificData || {},
-    }, { log: SAFE_CATALOG_LOG, proxyOptions });
+    }, { log: SAFE_CATALOG_LOG, proxyOptions, signal });
     return result?.models?.length ? { models: result.models } : null;
   },
   zed: async (conn) => {
@@ -207,8 +203,8 @@ const LIVE_MODEL_RESOLVERS = {
   // and every downstream client still read the static registry (#2654). Both
   // resolve per connection and fail open to that registry, so an expired key or
   // a slow upstream costs a stale listing rather than an empty one.
-  openai: async (conn) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveOpenAIModels(conn),
-  codex: async (conn) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveCodexModels(conn),
+  openai: async (conn, _proxyOptions, signal) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveOpenAIModels(conn, { signal }),
+  codex: async (conn, _proxyOptions, signal) => (await import("@/app/api/providers/[id]/models/liveCatalog.js")).resolveLiveCodexModels(conn, { signal }),
 };
 
 function cursorSnapshotOwner(connection) {
@@ -326,7 +322,11 @@ function withContextWindow(entry) {
  *   listing turns it on. localOnly uses only persisted and static catalogues,
  *   so operator inventory reads never resolve provider or proxy-sidecar models.
  */
-export async function buildModelsList(kindFilter, { thinkingVariants = false, localOnly = false } = {}) {
+export async function buildModelsList(kindFilter, {
+  thinkingVariants = false,
+  localOnly = false,
+  refreshSignal,
+} = {}) {
   let connections = [];
   // The static-catalogue dump below is a fail-open for an unreadable connection
   // store, and it was gated on `connections.length === 0`, which is also what a
@@ -570,9 +570,15 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
       // Settle both now so a rejection cannot surface as an unhandled one while
       // the loop is still working through the providers ahead of this one.
       const live = wantsLive
-        ? refreshLiveCatalog(providerId, conn, () => Promise.resolve(cursorProxy).then(
-          (proxyOptions) => LIVE_MODEL_RESOLVERS[providerId](conn, proxyOptions),
-        ))
+        ? refreshLiveCatalog(providerId, conn, (signal) => Promise.resolve(cursorProxy).then(
+          (proxyOptions) => LIVE_MODEL_RESOLVERS[providerId](conn, proxyOptions, signal),
+        ), {
+          currentRevision: async () => {
+            const current = await readCurrentProviderConnection(conn.id);
+            return current ? credentialRevision(current) : null;
+          },
+          signal: refreshSignal,
+        })
         : cachedLive
         ? Promise.resolve(cachedLive)
         : null;
@@ -658,7 +664,7 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
         if (resolved.error) {
           const err = resolved.error;
           if (isRequiredProxyUnavailableError(err)) throw err;
-          console.log(`Live model fetch failed for ${providerId} type=${err?.name || "Error"}`);
+          console.log(`Live model fetch failed for ${providerId} class=${classifyCatalogFailure(err)}`);
         } else {
           const live = resolved.value;
           if (live?.models?.length) {
@@ -974,14 +980,14 @@ export { getPublicModelCatalogState, resetPublicModelCatalogForTests };
 
 export function refreshPublicModelCatalog(options) {
   return refreshPublicModelCatalogWith(
-    () => buildModelsList([LLM_KIND], { thinkingVariants: true }),
+    (signal) => buildModelsList([LLM_KIND], { thinkingVariants: true, refreshSignal: signal }),
     options,
   );
 }
 
 export function startPublicModelCatalogScheduler(options) {
   startPublicModelCatalogRefresh(
-    () => buildModelsList([LLM_KIND], { thinkingVariants: true }),
+    (signal) => buildModelsList([LLM_KIND], { thinkingVariants: true, refreshSignal: signal }),
     options,
   );
 }

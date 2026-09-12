@@ -38,8 +38,8 @@ export async function register() {
     try {
       const { startPublicModelCatalogScheduler } = await import("@/app/api/v1/models/route.js");
       startPublicModelCatalogScheduler();
-    } catch (e) {
-      console.warn("[model-list] background refresh start failed:", e?.message);
+    } catch {
+      console.warn("[model-list] background refresh start failed class=initialization");
     }
 
     // Webhook delivery watches signals the router already emits; it has to be

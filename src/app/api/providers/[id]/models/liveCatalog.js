@@ -33,8 +33,15 @@ export const parseOpenAIStyleModels = (data) => {
   return data?.data || data?.models || data?.results || [];
 };
 
-const catalogSignal = () =>
-  (typeof AbortSignal?.timeout === "function" ? AbortSignal.timeout(CATALOG_TIMEOUT_MS) : undefined);
+const catalogSignal = (ownerSignal) => {
+  const timeout = typeof AbortSignal?.timeout === "function"
+    ? AbortSignal.timeout(CATALOG_TIMEOUT_MS)
+    : null;
+  if (ownerSignal && timeout && typeof AbortSignal.any === "function") {
+    return AbortSignal.any([ownerSignal, timeout]);
+  }
+  return ownerSignal || timeout || undefined;
+};
 
 const entryId = (entry) => entry?.id || entry?.slug || entry?.model || entry?.name || "";
 const entryName = (entry, id) => entry?.display_name || entry?.displayName || entry?.name || id;
@@ -136,14 +143,14 @@ export const parseCodexModels = (data) => normalizeCodexCatalog(parseOpenAIStyle
 
 // Generic custom resolver for OAuth providers that need refresh-on-401 + token persist.
 // Receives a `fetchFn(token)` and returns parsed models or throws.
-export const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) => async (connection) => {
+export const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) => async (connection, { signal } = {}) => {
   const { accessToken, refreshToken } = connection;
   if (!accessToken) {
     return { error: "No valid token found", status: 401 };
   }
   let warning;
   try {
-    let response = await fetchFn(accessToken, connection);
+    let response = await fetchFn(accessToken, connection, signal);
     if (!response.ok && (response.status === 401 || response.status === 403) && refreshToken) {
       const refreshed = await refreshFn(connection);
       if (
@@ -170,7 +177,7 @@ export const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) 
         // Install the full durable revision only after acknowledgement so its
         // credentialRevisionId and provider evidence match that comparison.
         Object.assign(connection, authoritative);
-        response = await fetchFn(authoritative.accessToken, connection);
+        response = await fetchFn(authoritative.accessToken, connection, signal);
       }
     }
     if (response.ok) {
@@ -190,7 +197,7 @@ export const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) 
 
 export const codexModelsResolver = buildOAuthResolver({
   refreshFn: (conn) => refreshCodexToken(conn.refreshToken),
-  fetchFn: (token) => fetch(CODEX_MODELS_URL, {
+  fetchFn: (token, _connection, signal) => fetch(CODEX_MODELS_URL, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -198,7 +205,7 @@ export const codexModelsResolver = buildOAuthResolver({
       "Authorization": `Bearer ${token}`,
       "originator": "codex_cli_rs"
     },
-    signal: catalogSignal()
+    signal: catalogSignal(signal)
   }),
   parseFn: parseCodexModels,
   errorLabel: "Failed to fetch Codex models"
@@ -208,14 +215,14 @@ export const codexModelsResolver = buildOAuthResolver({
  * Authenticated OpenAI catalog for one connection.
  * @returns {Promise<Array<object>|null>} normalized entries, or null to keep static.
  */
-export async function fetchOpenAICatalog(connection) {
+export async function fetchOpenAICatalog(connection, { signal } = {}) {
   const token = connection?.apiKey || connection?.accessToken;
   if (!token) return null;
   try {
     const response = await fetch(OPENAI_MODELS_URL, {
       method: "GET",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-      signal: catalogSignal()
+      signal: catalogSignal(signal)
     });
     if (!response.ok) {
       console.log(`Failed to fetch OpenAI models (falling back to static): ${response.status}`);
@@ -223,8 +230,8 @@ export async function fetchOpenAICatalog(connection) {
     }
     const models = normalizeOpenAICatalog(parseOpenAIStyleModels(await response.json()));
     return models.length ? models : null;
-  } catch (error) {
-    console.log(`Failed to fetch OpenAI models (falling back to static) type=${error?.name || "Error"}`);
+  } catch {
+    console.log("Failed to fetch OpenAI models (falling back to static) class=request-failed");
     return null;
   }
 }
@@ -247,16 +254,16 @@ export function withStaticMediaModels(providerId, live) {
 /**
  * /v1/models resolver for an authenticated OpenAI API-key connection.
  */
-export async function resolveLiveOpenAIModels(connection) {
-  const models = await fetchOpenAICatalog(connection);
+export async function resolveLiveOpenAIModels(connection, { signal } = {}) {
+  const models = await fetchOpenAICatalog(connection, { signal });
   return models ? { models: withStaticMediaModels("openai", models) } : null;
 }
 
 /**
  * /v1/models resolver for an authenticated Codex OAuth connection.
  */
-export async function resolveLiveCodexModels(connection) {
-  const result = await codexModelsResolver(connection);
+export async function resolveLiveCodexModels(connection, { signal } = {}) {
+  const result = await codexModelsResolver(connection, { signal });
   if (!result?.models?.length) return null;
   return { models: withStaticMediaModels("codex", result.models) };
 }
