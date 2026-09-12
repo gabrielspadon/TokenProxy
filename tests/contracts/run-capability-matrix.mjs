@@ -250,8 +250,15 @@ const declaredOutputBudget = (body) => body?.max_tokens ?? body?.max_output_toke
  */
 function cellTransforms(manifest, entry, target) {
   const source = ENDPOINT_SOURCE_FORMAT[entry.endpoint];
-  return (manifest.providerTransforms || [])
-    .filter((transform) => transform.source === source && transform.target === target && transform.kind === "request");
+  return (manifest.providerTransforms || []).filter((transform) => {
+    if (transform.kind !== "request" || transform.target !== target) return false;
+    // A wildcard source is deliberate and is used only by a gate that is not
+    // specific to a client format. Everything else matches exactly.
+    if (transform.source !== "*" && transform.source !== source) return false;
+    // A transform scoped to named scenarios applies ONLY to those, so the
+    // Claude text cell never inherits the tool-cycle budget exemption.
+    return !transform.appliesToScenarios || transform.appliesToScenarios.includes(entry.scenario);
+  });
 }
 
 function assertLatestSemanticReceipt(control, label, fixture, manifest, entry, target) {
@@ -259,12 +266,24 @@ function assertLatestSemanticReceipt(control, label, fixture, manifest, entry, t
   assert.equal(receipt?.label, label, `${label} provider semantic receipt label`);
   const transforms = manifest ? cellTransforms(manifest, entry, target) : [];
   const budgetTransform = transforms.find(({ transform }) => transform === "output-budget-raised") || null;
+  const sourceBudget = declaredOutputBudget(fixture);
   assertSemanticPreserved(fixture, receipt.semantic, label, {
-    allowedControlKeys: transforms.flatMap(({ introducesControls }) => introducesControls || []),
+    // Each declared control carries the exact value the transform predicts, so
+    // a declaration cannot license an arbitrary new key.
+    declaredControls: transforms.flatMap(({ expectsControls }) => expectsControls || []),
+    gatedControlKeys: transforms.flatMap(({ gatesControls }) => gatesControls || []),
     outputBudget: {
-      source: declaredOutputBudget(fixture),
-      upstream: receipt.semantic?.shape?.outputBudget ?? declaredOutputBudget(fixture),
-      declaredTransform: budgetTransform?.id || null,
+      source: sourceBudget,
+      // No fallback. A receipt with no budget evidence must fail rather than
+      // silently borrow the fixture's own value and compare equal.
+      upstream: receipt.semantic?.shape?.outputBudget,
+      declaredTransform: budgetTransform
+        ? {
+            id: budgetTransform.id,
+            sourceBudget: budgetTransform.sourceBudget,
+            expectedBudget: budgetTransform.expectedBudget,
+          }
+        : null,
     },
   });
 }

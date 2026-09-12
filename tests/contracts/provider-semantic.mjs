@@ -5,21 +5,14 @@ const digest = (value) => createHash("sha256").update(JSON.stringify(value)).dig
 const redact = (value) => digest(value);
 const VALUE_BEARING_CONTROLS = new Set(["reasoning_effort", "reasoning", "thinking", "temperature", "top_p", "stop", "tool_choice", "parallel_tool_calls", "response_format", "seed"]);
 
-const budgetEffort = (budget) =>
-  budget <= 4096 ? "low" : budget <= 16384 ? "medium" : budget <= 28672 ? "high" : "xhigh";
-
 function mappedControl(key, value) {
+  // `reasoning` -> `reasoning_effort` is a structural rename carrying the same
+  // value, so it is safe to compute. A Claude `thinking` budget is NOT: the
+  // resulting effort depends on the target model's declared ladder, so it is
+  // left verbatim here and a transform must declare the exact expected upstream
+  // control for the cell it applies to. Guessing a threshold from one fixture
+  // would encode a mapping this contract has not measured.
   if (key === "reasoning") return { key: "reasoning_effort", value: value?.effort };
-  if (key === "thinking") {
-    // Declared from observed translation, not from budgetToLevel. A Claude
-    // thinking budget is resolved through the unified thinking intent and then
-    // clamped against the target model's declared effort ladder, so a small
-    // budget arrives as "none" rather than the "minimal" the raw threshold
-    // table would suggest. Verified with the capability override the gateway
-    // fixture itself sets (reasoning: true) on the fixture model.
-    const budget = Number(value?.budget_tokens);
-    return { key: "reasoning_effort", value: budget <= 768 ? "none" : budgetEffort(budget) };
-  }
   return { key, value };
 }
 
@@ -222,8 +215,9 @@ function requireSubsequence(expected, actual, label) {
  * a duplicated user turn, a forged tool result and a forged image all satisfy
  * it. Multiplicity is what denies those.
  */
+const EMPTY_TEXT_DIGEST = redact("");
 const inflationSensitive = (atom) =>
-  (atom.kind === "text" && (atom.role === "user" || atom.role === "system"))
+  (atom.kind === "text" && atom.role !== "tool" && atom.value?.digest !== EMPTY_TEXT_DIGEST)
   || atom.kind === "tool_call"
   || atom.kind === "tool_result"
   || atom.kind === "image";
@@ -249,14 +243,27 @@ function requireNoInflation(expected, actual, label) {
  * control for a given cell, so an intentional change is explicit and anything
  * else fails. Bound per call site; never a blanket exemption.
  */
-function requireDeclaredControls(expected, actual, label, allowedControlKeys) {
+function requireDeclaredControls(expected, actual, label, declaredControls) {
   const sourceControls = new Map(expected.controls.map(({ key, value }) => [key, JSON.stringify(value)]));
+  const declared = new Map(declaredControls.map(({ key, value }) => [key, JSON.stringify(redactedValue(value))]));
   for (const { key, value } of actual.controls || []) {
+    const encoded = JSON.stringify(value);
     if (sourceControls.has(key)) {
-      assert.equal(JSON.stringify(value), sourceControls.get(key), `${label} mutated control ${key}`);
+      assert.equal(encoded, sourceControls.get(key), `${label} mutated control ${key}`);
       continue;
     }
-    assert.ok(allowedControlKeys.includes(key), `${label} introduced undeclared control ${key}`);
+    assert.ok(declared.has(key), `${label} introduced undeclared control ${key}`);
+    assert.equal(
+      encoded,
+      declared.get(key),
+      `${label} introduced control ${key} with a value no declared transform expects`,
+    );
+  }
+  // A declared control must actually arrive; a declaration that never
+  // materialises is a stale contract, not a satisfied one.
+  const arrived = new Set((actual.controls || []).map(({ key }) => key));
+  for (const { key } of declaredControls) {
+    assert.ok(arrived.has(key), `${label} declared control ${key} never reached the provider`);
   }
 }
 
@@ -284,13 +291,36 @@ export function assertSemanticPreserved(sourceBody, receipt, label, options = {}
     requireSubsequence([control], ordered, label);
   }
   requireNoInflation(expected.ordered, ordered, label);
-  requireDeclaredControls(expected, actual, label, options.allowedControlKeys || []);
+  requireDeclaredControls(expected, actual, label, options.declaredControls || []);
   if (options.outputBudget) {
     const { source, upstream, declaredTransform = null } = options.outputBudget;
+    assert.notEqual(
+      upstream,
+      undefined,
+      `${label} receipt carried no output budget evidence`,
+    );
     if (source !== upstream) {
       assert.ok(
         declaredTransform,
         `${label} changed the output budget ${source} -> ${upstream} with no declared transform`,
+      );
+      // The named transform must predict this exact budget. Any other value is
+      // an unexplained change wearing a declaration.
+      assert.equal(
+        upstream,
+        declaredTransform.expectedBudget,
+        `${label} budget ${upstream} does not match ${declaredTransform.id} expected ${declaredTransform.expectedBudget}`,
+      );
+      assert.equal(
+        source,
+        declaredTransform.sourceBudget,
+        `${label} source budget ${source} does not match the precondition ${declaredTransform.sourceBudget} of ${declaredTransform.id}`,
+      );
+    } else {
+      assert.equal(
+        declaredTransform,
+        null,
+        `${label} named a budget transform but the budget did not change`,
       );
     }
   }

@@ -3925,7 +3925,7 @@
       "detail": "Vertex rejects functionCall.id and functionResponse.id, so both are removed.",
       "owner": "open-sse/translator/request/openai-to-vertex.js",
       "consequence": "Parallel calls to one tool name are distinguishable only by array order at the provider.",
-      "introducesControls": []
+      "expectsControls": []
     },
     {
       "id": "ollama-tool-result-keyed-by-name",
@@ -3936,7 +3936,7 @@
       "detail": "Ollama carries no tool_call_id; each result is re-keyed to tool_name.",
       "owner": "open-sse/translator/request/openai-to-ollama.js",
       "consequence": "Parallel calls to one tool name collapse onto one key at the provider.",
-      "introducesControls": []
+      "expectsControls": []
     },
     {
       "id": "claude-tool-cycle-output-budget-raised",
@@ -3944,14 +3944,16 @@
       "target": "openai",
       "kind": "request",
       "transform": "output-budget-raised",
-      "detail": "adjustMaxTokens raises max_tokens to DEFAULT_MIN_TOKENS when tools are present, so the fixture 32 becomes 32000.",
+      "detail": "adjustMaxTokens raises max_tokens to DEFAULT_MIN_TOKENS when tools are present. Measured on the claude tool-cycle and parallel-tools fixtures: 32 becomes 32000.",
       "owner": "open-sse/translator/formats/maxTokens.js",
       "consequence": "The client-declared output budget is not the budget the provider receives.",
-      "introducesControls": [],
       "appliesToScenarios": [
         "tool-cycle",
         "parallel-tools"
-      ]
+      ],
+      "sourceBudget": 32,
+      "expectedBudget": 32000,
+      "expectsControls": []
     },
     {
       "id": "responses-instructions-become-system-message",
@@ -3962,7 +3964,7 @@
       "detail": "instructions becomes one leading system message; the Responses-only property is removed after translation.",
       "owner": "open-sse/translator/request/openai-responses.js",
       "consequence": "None; the system text is carried exactly once and the Responses-only field is not forwarded.",
-      "introducesControls": []
+      "expectsControls": []
     },
     {
       "id": "claude-thinking-mapped-to-reasoning-effort",
@@ -3970,12 +3972,18 @@
       "target": "openai",
       "kind": "request",
       "transform": "control-key-mapped",
-      "detail": "A Claude thinking budget is resolved through the unified thinking intent and clamped against the target model effort ladder, arriving as reasoning_effort.",
+      "detail": "The claude/reasoning fixture declares thinking.budget_tokens 16. Measured through the unified thinking path under the gateway fixture capability override, it arrives as reasoning_effort \"none\". Declared for this fixture only; the conversion is model-dependent and no generic threshold is claimed here.",
       "owner": "open-sse/translator/concerns/thinkingUnified.js",
-      "introducesControls": [
-        "reasoning_effort"
+      "consequence": "A client thinking budget does not reach the provider as a budget; it arrives as a clamped discrete effort.",
+      "appliesToScenarios": [
+        "reasoning"
       ],
-      "consequence": "A budget at or below 768 arrives as \"none\" rather than \"minimal\"; verified under the gateway fixture capability override."
+      "expectsControls": [
+        {
+          "key": "reasoning_effort",
+          "value": "none"
+        }
+      ]
     },
     {
       "id": "reasoning-control-gated-on-model-capability",
@@ -3983,13 +3991,16 @@
       "target": "openai",
       "kind": "request",
       "transform": "control-dropped-by-capability-gate",
-      "detail": "applyThinking drops a reasoning control for a model whose declared capabilities do not include reasoning.",
+      "detail": "applyThinking drops a reasoning control for a model whose declared capabilities do not include reasoning. The client key may be reasoning_effort, reasoning or thinking depending on the source format. Measured: gpt-5 keeps \"high\"; a model without the capability drops it entirely.",
       "owner": "open-sse/translator/index.js",
-      "introducesControls": [],
       "gatesControls": [
-        "reasoning_effort"
+        "reasoning_effort",
+        "reasoning",
+        "thinking"
       ],
-      "consequence": "A client-declared reasoning effort does not reach a non-reasoning model; verified against gpt-5 (high) versus fixture-model (absent)."
+      "consequence": "A client-declared reasoning effort does not reach a non-reasoning model; verified against gpt-5 (high) versus fixture-model (absent).",
+      "expectsControls": [],
+      "appliesWhen": "target model capabilities exclude reasoning"
     }
   ]
 }
