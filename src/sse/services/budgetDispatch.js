@@ -1,5 +1,6 @@
 import { getAdapter } from "../../lib/db/driver.js";
 import { isReplaySafeRejection } from "../../../open-sse/utils/replaySafety.js";
+import { inspectErrorBody } from "../../../open-sse/utils/inspectErrorBody.js";
 import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain } from "../../lib/db/repos/budgetRepo.js";
 
 // OpenAI's native chat contract includes visible and reasoning tokens in this
@@ -46,7 +47,19 @@ export async function beginBudgetDispatch(context, apiKey, wire) {
 }
 export async function observeBudgetResponse(context, { response, nonacceptance } = {}) {
   if (!context?.budgetReservationId) return;
-  if (isReplaySafeRejection(response)) {
+  let replaySafe = isReplaySafeRejection(response);
+  // A 429 needs a complete canonical error envelope to prove that generation
+  // was rejected. Inspect a bounded clone here, before reserving another
+  // physical attempt, while leaving the caller's response body untouched.
+  if (!replaySafe && response?.status === 429) {
+    try {
+      const inspected = await inspectErrorBody(response);
+      replaySafe = inspected.complete && isReplaySafeRejection(response, JSON.parse(inspected.text));
+    } catch {
+      replaySafe = false;
+    }
+  }
+  if (replaySafe) {
     const db = await getAdapter();
     db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
       WHERE requestId=? AND state IN ('dispatched','uncertain') AND usageRowId IS NULL`,

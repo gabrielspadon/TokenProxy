@@ -65,6 +65,12 @@ describe('API key through real admission, transport, ledger and query',()=>{
   const result=await request(k);expect(result.response.status).toBe(503);expect(result.failureMetadata.safeToReplay).toBe(false);
   expect((await getBudgetStatus(k.id)).reservations[0].state).toBe('uncertain');expect(mocks.fetch).toHaveBeenCalledTimes(1);
  });
+ it('retains 429 exposure when its envelope reports accepted generation',async()=>{
+  const k=await key({maxCompletionTokens:100});
+  mocks.fetch.mockResolvedValue(Response.json({error:{message:'quota exhausted after generation accepted'}},{status:429}));
+  const result=await request(k);expect(result.response.status).toBe(429);expect(result.failureMetadata.safeToReplay).toBe(false);
+  expect((await getBudgetStatus(k.id)).reservations[0].state).toBe('uncertain');expect(mocks.fetch).toHaveBeenCalledTimes(1);
+ });
  it.each(['transport_pool_capacity','transport_pools_closed','transport_pool_cleanup'])('releases an owned pre-transport refusal%s with a local503 receipt',async code=>{
   const k=await key({maxCompletionTokens:100});mocks.fetch.mockRejectedValueOnce(new LocalTransportPoolRefusal(code));
   const result=await request(k);expect(result.response.status).toBe(503);expect(result.failureMetadata).toMatchObject({failurePhase:'admission',transportDispatched:false});
