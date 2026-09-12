@@ -205,7 +205,10 @@ describe('resolved physical models precede account admission', () => {
     expect(captured.mock.calls[0][0]).toMatchObject({
       modelInfo: { provider: 'claude', model: MODEL }, credentials: { connectionId: 'account-b' },
     });
-    expect(quota.evaluateQuota.mock.calls.flat().map((c) => c.id)).toEqual(['account-b']);
+    // The CONNECTION argument, not every argument: evaluateQuota also takes a
+    // resolved-route options object, and flattening the call merged that into
+    // the list as an id-less entry.
+    expect(quota.evaluateQuota.mock.calls.map(([c]) => c.id)).toEqual(['account-b']);
     expect(adapter.all('SELECT DISTINCT model FROM sessionAffinity')).toEqual([{ model: MODEL }]);
   });
 
@@ -288,7 +291,7 @@ describe('disabled model policy reaches real account selection', () => {
     await disable(alias, [MODEL], 'account-a');
     expect((await select('one', {}, 'cc')).connectionId).toBe('account-b');
     expect((await select('two', {}, 'claude')).connectionId).toBe('account-b');
-    expect(quota.evaluateQuota.mock.calls.flat().some((c) => c.id === 'account-a')).toBe(false);
+    expect(quota.evaluateQuota.mock.calls.some(([c]) => c.id === 'account-a')).toBe(false);
   });
 
   it('inherits provider disables and honors an explicit empty account override through the HTTP API', async () => {

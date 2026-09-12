@@ -132,7 +132,19 @@ describe('credit.state.exit: a refresh writes only the safe derived snapshot for
     const written = writesFor('conn-expose');
     expect(written).toBeTruthy();
     expect(Object.keys(written[1]).sort()).toEqual(['lastQuotaSnapshot']);
-    expect(Object.keys(written[1].lastQuotaSnapshot).sort()).toEqual(['fetchedAt', 'windows']);
+    // The derived snapshot plus the binding that makes it usable, and nothing
+    // else. evidenceIdentity is quotaEvidenceIdentity's opaque sha256 over
+    // {id, credentialRevision, quotaPauseThresholds, proxyOptions}, written by
+    // storeSnapshot so quotaGuard can REJECT this row later when the
+    // credential or the route has moved under it. A persisted snapshot without
+    // it never reads back (quotaGuard.js readSnapshot/staleSnapshot both
+    // require the identity to match), so this field is the write's contract,
+    // not a passenger on it. That it is a bare digest is asserted rather than
+    // assumed: the mutation this test guards is upstream data surviving the
+    // write, and a digest can carry none.
+    expect(Object.keys(written[1].lastQuotaSnapshot).sort())
+      .toEqual(['evidenceIdentity', 'fetchedAt', 'windows']);
+    expect(written[1].lastQuotaSnapshot.evidenceIdentity).toMatch(/^[0-9a-f]{64}$/);
 
     const serialized = JSON.stringify(written[1]);
     expect(serialized).not.toContain('acct-should-never-leave-9001');

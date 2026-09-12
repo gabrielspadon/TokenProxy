@@ -471,10 +471,13 @@ describe("required proxy unavailable caller boundaries", () => {
       quotaPauseThresholds: { session: 10 },
     });
 
+    // The selected strict options survive the quota read, and the read carries
+    // the guard's own abort signal so a live fetch cannot outlive the request
+    // that asked for it.
     expect(mocks.getUsageForProvider).toHaveBeenCalledWith(
       expect.any(Object),
       strictProxyOptions,
-      {},
+      { signal: expect.any(AbortSignal) },
     );
   });
 
