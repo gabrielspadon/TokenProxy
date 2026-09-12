@@ -221,7 +221,7 @@ test('workspace preferences preserve native keyboard focus and project text is e
   const preferences = page.getByRole('group', { name: 'Workspace preferences' });
   await expect(preferences.getByRole('combobox')).toHaveCount(0);
   await expect(preferences.getByRole('radiogroup', { name: 'Appearance' })).toBeVisible();
-  await expect(preferences.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  await expect(preferences.getByRole('button', { name: 'logout', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('button', { name: 'Edit project' }).click();
   await page.locator('.project-editor input').fill('<img src=x onerror=alert(1)>');

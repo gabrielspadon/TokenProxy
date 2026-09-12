@@ -46,10 +46,9 @@ async function fixture(page) {
   await page.route('**/api/tool-disclosure/stats', route => route.fulfill(json(200, [])));
   return patches;
 }
-// The sidebar Everyday / Advanced switch is the only level switch on the page.
+// Legacy stored preferences must not hide the default controls.
 const useAdvanced = page => page.addInitScript(() => window.localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced')));
 const controls = page => page.locator('[aria-label="Token savings control panel"]');
-const everyday = page => page.locator('[aria-label="Everyday token savings"]');
 const card = (page, key) => page.locator(`[data-savings-control="${key}"]`);
 const review = page => page.locator('[role="group"][aria-label^="Turn on"]');
 const task = (page, name) => page.getByRole('radiogroup', { name: 'Token savings task' }).getByText(name, { exact: true }).click();
@@ -110,27 +109,21 @@ test('legacy aggregates cannot manufacture measurement coverage', async ({ page 
   await expect(stageRow(page, 'rtk')).not.toContainText('-2,048 B');
 });
 
-test('the level governs the board and an expanded row survives a level change', async ({ page }) => {
+test('all controls remain available with a legacy Everyday preference', async ({ page }) => {
   await fixture(page);
-  await useAdvanced(page);
+  await page.addInitScript(() => localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('everyday')));
   await page.goto('/dashboard/shaping');
+  await expect(controls(page).locator('[data-savings-control]')).toHaveCount(CONTROLS.length);
+  await expect(page.getByRole('radiogroup', { name: 'Navigation view' })).toHaveCount(0);
   await evidence(page, 'epochMicroEnabled');
   await expect(card(page, 'epochMicroEnabled')).toContainText('Boundary-aware clearing');
-  const level = page.getByRole('radiogroup', { name: 'Navigation view' });
-  await level.getByText('Everyday', { exact: true }).click();
-  await expect(everyday(page)).toBeVisible();
-  await expect(everyday(page).locator('[data-savings-control]')).toHaveCount(4);
-  await level.getByText('Advanced', { exact: true }).click();
   await expect(card(page, 'epochMicroEnabled')).toHaveAttribute('data-expanded', 'true');
 });
 
-test('everyday carries no editor and an Advanced switch reviews in place from the keyboard', async ({ page }) => {
+test('the default controls review in place from the keyboard', async ({ page }) => {
   await fixture(page);
   await page.goto('/dashboard/shaping');
-  await expect(everyday(page).locator('details, input[type="number"], textarea, select')).toHaveCount(0);
   await expect(page.locator('dialog')).toHaveCount(0);
-  const level = page.getByRole('radiogroup', { name: 'Navigation view' });
-  await level.getByText('Advanced', { exact: true }).click();
   const toggle = card(page, 'epochMicroEnabled').getByRole('switch');
   await toggle.focus();
   await expect(toggle).toBeFocused();
