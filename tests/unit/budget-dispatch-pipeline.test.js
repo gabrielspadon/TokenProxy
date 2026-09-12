@@ -60,6 +60,29 @@ describe('API key through real admission, transport, ledger and query',()=>{
   expect(db.all('SELECT state FROM apiKeyBudgetReservations').map(r=>r.state).sort()).toEqual(['released','settled']);
   expect(mocks.fetch).toHaveBeenCalledTimes(2);expect(db.get('SELECT COUNT(*) AS n FROM usageHistory').n).toBe(1);
  });
+ it('publishes a proven rejection under synchronous FULL before retry',async()=>{
+  const k=await key({maxCompletionTokens:100,budgetPolicy:'reserve-remaining'});
+  mocks.executor=new BaseExecutor('openai',{baseUrl:'https://api.openai.com/v1/chat/completions',noAuth:true,retry:{429:{attempts:1,delayMs:0}}});
+  mocks.fetch.mockResolvedValueOnce(Response.json({error:{message:'rejected'}},{status:429})).mockResolvedValueOnce(completion());
+  const prior=db.get('PRAGMA synchronous').synchronous;const original=db.run.bind(db);const seen=[];const spy=vi.spyOn(db,'run').mockImplementation((sql,params)=>{
+   if(/UPDATE apiKeyBudgetReservations\s+SET state='released'/.test(sql))seen.push(db.get('PRAGMA synchronous').synchronous);
+   return original(sql,params);
+  });
+  try{const result=await request(k,{max_completion_tokens:undefined});expect(result.response.status).toBe(200);await result.response.text();}
+  finally{spy.mockRestore();}
+  expect(seen).toEqual([2]);expect(db.get('PRAGMA synchronous').synchronous).toBe(prior);expect(mocks.fetch).toHaveBeenCalledTimes(2);
+ });
+ it('blocks retry when a proven rejection release writes zero rows',async()=>{
+  const k=await key({maxCompletionTokens:100,budgetPolicy:'reserve-remaining'});
+  mocks.executor=new BaseExecutor('openai',{baseUrl:'https://api.openai.com/v1/chat/completions',noAuth:true,retry:{429:{attempts:1,delayMs:0}}});
+  mocks.fetch.mockResolvedValueOnce(Response.json({error:{message:'rejected'}},{status:429})).mockResolvedValueOnce(completion());
+  const original=db.run.bind(db);const spy=vi.spyOn(db,'run').mockImplementation((sql,params)=>
+   /UPDATE apiKeyBudgetReservations\s+SET state='released'/.test(sql)?{changes:0,lastInsertRowid:0}:original(sql,params));
+  try{
+   const result=await request(k,{max_completion_tokens:undefined});expect(result.response.status).toBe(402);
+   expect(result.failureMetadata.failurePhase).toBe('admission');expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  }finally{spy.mockRestore();}
+ });
  it('shares one 429 proof when its body completes just after the inspection deadline',async()=>{
   const k=await key({maxCompletionTokens:100,budgetPolicy:'reserve-remaining'});
   mocks.executor=new BaseExecutor('openai',{baseUrl:'https://api.openai.com/v1/chat/completions',noAuth:true,retry:{429:{attempts:1,delayMs:0}}});

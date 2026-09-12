@@ -1,6 +1,7 @@
 import { getAdapter } from "../../lib/db/driver.js";
 import { isReplaySafeRejection } from "../../../open-sse/utils/replaySafety.js";
-import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain } from "../../lib/db/repos/budgetRepo.js";
+import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain,
+  releaseRejectedBudgetReservation } from "../../lib/db/repos/budgetRepo.js";
 
 // OpenAI's native chat contract includes visible and reasoning tokens in this
 // cap. Compatible endpoints and predicted/audio output have no verified bound
@@ -50,14 +51,8 @@ export async function observeBudgetResponse(context, { response, nonacceptance }
   // Specialized executors may also supply their own verified classification.
   const replaySafe = Boolean(nonacceptance) || isReplaySafeRejection(response);
   if (replaySafe) {
-    const db = await getAdapter();
-    const result = db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
-      WHERE requestId=? AND state IN ('dispatched','uncertain') AND usageRowId IS NULL`,
-    [new Date().toISOString(), JSON.stringify({ source: "upstream-status", kind: "provider-nonacceptance", status: response.status,
-      classification: nonacceptance ?? null }), context.budgetReservationId]);
-    if (!result.changes && db.get("SELECT state FROM apiKeyBudgetReservations WHERE requestId=?", [context.budgetReservationId])?.state !== "released") {
-      throw new BudgetAdmissionError("budget-release-unconfirmed", "The rejected attempt could not release its reserved exposure; generation was not retried.");
-    }
+    await releaseRejectedBudgetReservation(context.budgetReservationId,
+      { status: response.status, classification: nonacceptance ?? null });
   } else if (!response?.ok) {
     await markBudgetUncertain(context.budgetReservationId, "upstream-error-without-nonacceptance-proof");
   }

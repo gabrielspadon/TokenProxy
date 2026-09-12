@@ -148,6 +148,24 @@ export async function markBudgetUncertain(requestId, reason = "outcome-unavailab
     WHERE requestId=? AND state='dispatched'`, [now(), JSON.stringify({ source: "gateway", reason }), requestId]);
 }
 
+// A verified upstream rejection authorizes another paid attempt only after its
+// reserved exposure is crash-durably released. The readback distinguishes an
+// idempotent repeat from a zero-row write that left live exposure behind.
+export async function releaseRejectedBudgetReservation(requestId, { status, classification = null } = {}) {
+  if (!requestId) return false;
+  const db = await getAdapter();
+  return durableTransaction(db, () => {
+    const result = db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
+      WHERE requestId=? AND state IN ('dispatched','uncertain') AND usageRowId IS NULL`,
+    [now(), JSON.stringify({ source: "upstream-status", kind: "provider-nonacceptance", status,
+      classification }), requestId]);
+    if (!result.changes && db.get("SELECT state FROM apiKeyBudgetReservations WHERE requestId=?", [requestId])?.state !== "released") {
+      refuse("budget-release-unconfirmed", "The rejected attempt could not release its reserved exposure; generation was not retried.");
+    }
+    return true;
+  });
+}
+
 // This automatic receipt accepts an owned transport proof, never an operator
 // assertion, status code or caller-supplied error-shaped object.
 export async function releaseUndispatchedBudgetReservation(requestId, error) {
