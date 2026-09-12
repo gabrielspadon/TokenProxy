@@ -211,9 +211,9 @@
       "source": "openai",
       "target": "commandcode",
       "request": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "direct",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       },
       "response": {
@@ -419,9 +419,9 @@
       "source": "openai-responses",
       "target": "commandcode",
       "request": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       },
       "response": {
@@ -627,9 +627,9 @@
       "source": "claude",
       "target": "commandcode",
       "request": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       },
       "response": {
@@ -833,9 +833,9 @@
       "source": "gemini",
       "target": "commandcode",
       "request": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       },
       "response": {
@@ -1039,9 +1039,9 @@
       "source": "gemini-cli",
       "target": "commandcode",
       "request": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       },
       "response": {
@@ -1505,9 +1505,9 @@
       "source": "antigravity",
       "target": "commandcode",
       "request": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       },
       "response": {
@@ -2301,9 +2301,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "direct",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -2323,9 +2323,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -2345,9 +2345,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -2367,9 +2367,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -2389,9 +2389,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -2411,9 +2411,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -2433,9 +2433,9 @@
         ]
       },
       "response": {
-        "status": "executor-managed",
+        "status": "supported",
         "mode": "pivot",
-        "owner": "commandcode-executor",
+        "owner": "legacy-commandcode-translator",
         "lossPolicy": []
       }
     },
@@ -3411,7 +3411,7 @@
       "id": "ndjson-valid",
       "protocol": "ndjson",
       "variant": "valid",
-      "owner": "commandcode-executor",
+      "owner": "ollama-executor",
       "fixture": "tests/fixtures/capabilities/protocols/ndjson-valid.json",
       "expected": "success"
     },
@@ -3419,7 +3419,7 @@
       "id": "ndjson-malformed",
       "protocol": "ndjson",
       "variant": "malformed",
-      "owner": "commandcode-executor",
+      "owner": "ollama-executor",
       "fixture": "tests/fixtures/capabilities/protocols/ndjson-malformed.json",
       "expected": "rejected-before-unbounded-buffer"
     },
@@ -3427,7 +3427,7 @@
       "id": "ndjson-oversized",
       "protocol": "ndjson",
       "variant": "oversized",
-      "owner": "commandcode-executor",
+      "owner": "ollama-executor",
       "fixture": "tests/fixtures/capabilities/protocols/ndjson-oversized.json",
       "expected": "rejected-before-unbounded-buffer"
     }
@@ -3853,5 +3853,22 @@
       "900000": 2000
     },
     "qualification": "local-stub-only; provider latency and live cache benefit excluded"
+  },
+  "providerImplementations": {
+    "commandcode": {
+      "executor": "open-sse/executors/commandcode.js",
+      "endpoint": "https://api.commandcode.ai/provider/v1/chat/completions",
+      "requestFormat": "openai",
+      "responseFormat": "openai",
+      "protocol": "openai-chat-completions",
+      "legacyFormatRegistered": "commandcode"
+    },
+    "ollama-local": {
+      "executor": "open-sse/executors/ollama-local.js",
+      "endpoint": "/api/chat",
+      "requestFormat": "ollama",
+      "responseFormat": "ollama",
+      "protocol": "ndjson"
+    }
   }
 }

@@ -1,5 +1,6 @@
 {
-  "encoding": "generated",
-  "byteLength": 1048577,
-  "fill": 65
+  "encoding": "aws-eventstream-prelude",
+  "declaredByteLength": 25165825,
+  "headersLength": 0,
+  "preludeHex": "01800001000000001cfe1cb5"
 }

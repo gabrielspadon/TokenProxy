@@ -69,4 +69,26 @@ describe("capability contract manifest", () => {
       ["provider-error", "success", "transport-abrupt"],
     );
   });
+
+  it("names the current CommandCode and Ollama wire owners", async () => {
+    const manifest = await loadJson("tests/contracts/capabilities.json");
+    expect(manifest.providerImplementations.commandcode).toMatchObject({
+      executor: "open-sse/executors/commandcode.js",
+      endpoint: "https://api.commandcode.ai/provider/v1/chat/completions",
+      requestFormat: FORMATS.OPENAI,
+      responseFormat: FORMATS.OPENAI,
+      protocol: "openai-chat-completions",
+      legacyFormatRegistered: FORMATS.COMMANDCODE,
+    });
+    expect(manifest.providerImplementations["ollama-local"]).toMatchObject({
+      executor: "open-sse/executors/ollama-local.js",
+      endpoint: "/api/chat",
+      requestFormat: FORMATS.OLLAMA,
+      responseFormat: FORMATS.OLLAMA,
+      protocol: "ndjson",
+    });
+    expect(manifest.binaryProtocols
+      .filter(({ protocol }) => protocol === "ndjson")
+      .every(({ owner }) => owner === "ollama-executor")).toBe(true);
+  });
 });

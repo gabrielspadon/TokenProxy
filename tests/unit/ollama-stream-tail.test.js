@@ -15,7 +15,9 @@ const encoder = new TextEncoder();
 async function drain(input, targetFormat, provider, model) {
   const stream = new ReadableStream({
     start(controller) {
-      controller.enqueue(encoder.encode(input));
+      for (const part of Array.isArray(input) ? input : [input]) {
+        controller.enqueue(encoder.encode(part));
+      }
       controller.close();
     },
   });
@@ -76,6 +78,22 @@ describe('Ollama NDJSON stream: the tail left in the line buffer', () => {
     expect(parsed.map((c) => c.choices?.[0]?.delta?.content || '').join('')).toBe('hello world');
     expect(parsed.at(-1).choices[0].finish_reason).toBe('stop');
     expect(parsed.at(-1).usage.total_tokens).toBe(18);
+  });
+
+  it('rejects a malformed record instead of silently completing the stream', async () => {
+    await expect(runOllama('{not-json}\n')).rejects.toThrow('Invalid Ollama NDJSON record');
+  });
+
+  it('rejects a record over 1 MiB before retaining another transport chunk', async () => {
+    const oversized = JSON.stringify({
+      message: { role: 'assistant', content: 'x'.repeat(1024 * 1024) },
+      done: false,
+    });
+    const midpoint = Math.floor(oversized.length / 2);
+    await expect(runOllama([
+      oversized.slice(0, midpoint),
+      oversized.slice(midpoint),
+    ])).rejects.toThrow('Ollama NDJSON record exceeded 1 MiB');
   });
 });
 
