@@ -5,7 +5,7 @@ import {
   chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync,
 } from "node:fs";
 import net from "node:net";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -174,9 +174,22 @@ export async function resolveExpectedLayoutVersion(value) {
   return version;
 }
 
+// Forwarding the host PATH verbatim lets a version manager on it re-elect the
+// interpreter for any child that spawns a bare `node` or `npm`, so a qualification
+// run could package and install under a different runtime than the one it is
+// reporting on. Put this process own binary directory first, which makes the
+// runtime it verifies the runtime it is actually using. The rest of PATH is kept
+// as-is: the child still needs the host toolchain, and narrowing that is a
+// separate isolation question.
+function runtimeFirstPath() {
+  const host = process.env.PATH || "/usr/bin:/bin";
+  const own = dirname(process.execPath);
+  return host.split(delimiter)[0] === own ? host : `${own}${delimiter}${host}`;
+}
+
 export function privateEnvironment(runRoot, extra = {}) {
   return {
-    PATH: process.env.PATH || "/usr/bin:/bin",
+    PATH: runtimeFirstPath(),
     LANG: "C.UTF-8",
     LC_ALL: "C.UTF-8",
     HOME: join(runRoot, "home"),
