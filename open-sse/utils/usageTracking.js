@@ -184,9 +184,16 @@ const CACHE_READ_NESTED = [
   ["input_tokens_details", "cached_tokens"],
   ["prompt_tokens_details", "cached_tokens"],
 ];
+// `input_tokens_details.cache_write_tokens` is OpenAI's documented cache write,
+// reported on GPT-5.6 and later:
+// https://developers.openai.com/api/docs/guides/prompt-caching
+// A nested write also breaks the inclusive/exclusive tie when no read spelling
+// is present at all; see resolveCacheTokens.
 const CACHE_WRITE_NESTED = [
   ["prompt_tokens_details", "cache_creation_tokens"],
   ["input_tokens_details", "cache_creation_tokens"],
+  ["input_tokens_details", "cache_write_tokens"],
+  ["prompt_tokens_details", "cache_write_tokens"],
 ];
 
 // First key that is actually present wins; absence is distinguished from zero so
@@ -213,14 +220,20 @@ function firstPresent(usage, keys, nested) {
 export function resolveCacheTokens(usage) {
   const inclusiveRead = firstPresent(usage, CACHE_READ_INCLUSIVE_KEYS, CACHE_READ_NESTED);
   const exclusiveRead = firstPresent(usage, CACHE_READ_EXCLUSIVE_KEYS, []);
-  const write = firstPresent(usage, CACHE_WRITE_KEYS, CACHE_WRITE_NESTED);
+  const flatWrite = firstPresent(usage, CACHE_WRITE_KEYS, []);
+  const nestedWrite = firstPresent(usage, [], CACHE_WRITE_NESTED);
   return {
     read: inclusiveRead !== undefined ? inclusiveRead : exclusiveRead,
-    write,
-    // An inclusive read spelling is the marker that prompt_tokens already counts
-    // the cache. It is also what canonicalizeUsage's own output always carries,
-    // which is what makes re-running it idempotent.
-    inclusive: inclusiveRead !== undefined,
+    write: flatWrite !== undefined ? flatWrite : nestedWrite,
+    // Marker that prompt_tokens ALREADY counts the cache. An explicit read
+    // spelling decides it outright, inclusive or exclusive, because that is
+    // direct evidence about the prompt field. Only when NEITHER read spelling
+    // is present does the write's container break the tie: a cache-miss turn
+    // reports a write and no read, and reading that as exclusive would fold
+    // the write into input and overstate it. canonicalizeUsage's own output
+    // always carries `cached_tokens`, which keeps re-running it idempotent.
+    inclusive: inclusiveRead !== undefined
+      || (exclusiveRead === undefined && nestedWrite !== undefined),
   };
 }
 
@@ -411,7 +424,14 @@ export function extractUsage(chunk) {
       cost_usd: usage.cost_usd,
       cost_in_usd: usage.cost_in_usd,
       cost_in_usd_ticks: usage.cost_in_usd_ticks,
-      prompt_tokens_details: cachedTokens ? { cached_tokens: cachedTokens } : undefined
+      // Forward the WHOLE details object rather than rebuilding a cached-only
+      // copy, as the chat-completions branch below already does. The rebuilt
+      // copy could only carry cached_tokens, so any other documented nested
+      // field (cache_write_tokens) was discarded before canonicalization.
+      prompt_tokens_details: usage.input_tokens_details
+        && typeof usage.input_tokens_details === "object"
+        ? usage.input_tokens_details
+        : (cachedTokens ? { cached_tokens: cachedTokens } : undefined)
     });
   }
 
