@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createNodeSqliteAdapter } from '../../src/lib/db/adapters/nodeSqliteAdapter.js';
 import { createSqlJsAdapter } from '../../src/lib/db/adapters/sqljsAdapter.js';
 import { runMigrationOnce } from '../../src/lib/db/migrate.js';
-import { buildCreateTableSql } from '../../src/lib/db/schema.js';
+import { SCHEMA_VERSION, buildCreateTableSql } from '../../src/lib/db/schema.js';
 import { ECONOMICS_PROJECTION_TABLES, economicsProjectionReady } from '../../src/lib/db/economicsProjectionSchema.js';
 import { readActivityAnalytics, readActivityEvidence } from '../../src/lib/db/analytics/activityQueries.mjs';
 import { analyticsDataVersion, createContextAnalyticsClient } from '../../src/lib/db/analytics/client.js';
@@ -190,6 +190,12 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
     const client = createContextAnalyticsClient({ file, driver, cacheTtlMs: 60000 });
     const input = query({ facets: ['summary'] });
     try {
+      // The worker's first open of the database writes its own -wal, and
+      // analyticsDataVersion stamps that file, so the version keying the very
+      // first result is already stale when it lands. Warm the worker before
+      // measuring cache behaviour; every version change asserted below is one
+      // this test causes.
+      await client.run(input);
       const baseline = await client.run(input);
       expect((await client.run(input)).freshness.cacheHit).toBe(true);
       const before = analyticsDataVersion(file), selected = manifest();
@@ -233,7 +239,7 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
     await runMigrationOnce({ ...db });
     expect(economicsProjectionReady(db, { verifyIntegrity: true })).toBe(true);
     expect(db.get("SELECT value FROM _meta WHERE key='schemaVersion'").value).toBe('7');
-    expect(db.get("SELECT value FROM _meta WHERE key='backupSchemaVersion'").value).toBe('40');
+    expect(db.get("SELECT value FROM _meta WHERE key='backupSchemaVersion'").value).toBe(String(SCHEMA_VERSION));
     expect(db.get('SELECT COUNT(*) AS count FROM usageEconomicsProjection').count).toBe(8);
     expect(db.get('SELECT typeof(cacheRead) AS type FROM usageEconomicsProjection WHERE id=1').type).toBe('real');
     expect(read()).toEqual(expected);
