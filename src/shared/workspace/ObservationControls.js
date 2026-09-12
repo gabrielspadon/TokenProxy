@@ -9,6 +9,10 @@ import local from './observationControls.module.css';
 // shape of data, when what it selects is who triggers the read. "Snapshot" was
 // unavailable -- this same rail already prints it for an isolated captured
 // dataset -- so the non-automatic mode is Manual.
+//
+// Manual is not "no reads": every mode reads each source ONCE when a page
+// opens, because a workspace with nothing on screen has nothing to hold. What
+// Manual withholds is the repeat.
 const BEHAVIORS = [
   { value: 'summary', label: 'Manual' },
   { value: 'live', label: 'Live' },

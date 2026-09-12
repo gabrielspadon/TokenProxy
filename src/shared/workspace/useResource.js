@@ -9,7 +9,9 @@ export function useResource(url, { onSnapshot, interval } = {}) {
   // Until the provider has read the stored observation mode, what this read
   // should do is unknown. Reading anyway costs a request that is aborted one
   // frame later when a stored Live or Paused arrives and re-runs this effect.
-  // Standalone consumers have no provider and are never gated.
+  // The provider sets `hydrated` even when storage is unreadable, so this gate
+  // cannot strand a consumer in loading. Standalone consumers have no provider
+  // and are never gated.
   const hydrated = observations?.hydrated ?? true;
   const sharedRevision = observations?.revision ?? 0;
   const intervalMs = background ? interval ?? (observations ? 15000 : 0) : 0;

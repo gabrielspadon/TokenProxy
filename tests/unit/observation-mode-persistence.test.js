@@ -170,22 +170,80 @@ it('resumes from paused with a single catch-up read, not one per missed interval
 it('falls back to the manual default for a malformed or unreadable stored value', async () => {
   for (const raw of ['LIVE', '"live"', '{}', '', 'streaming']) {
     window.localStorage.setItem(OBSERVATION_MODE_KEY, raw);
-    expect(readStoredMode(window.localStorage)).toBe(DEFAULT_OBSERVATION_MODE);
+    expect(readStoredMode()).toBe(DEFAULT_OBSERVATION_MODE);
   }
-  // A store that throws is blocked, partitioned or over quota. It fails to the
-  // mode that reads nothing on its own, never to the caller's last value.
+  // A store whose getItem throws is over quota or otherwise unusable.
   expect(
-    readStoredMode({
+    readStoredMode(() => ({
       getItem() {
         throw new Error('blocked');
       },
-    })
+    }))
   ).toBe(DEFAULT_OBSERVATION_MODE);
   window.localStorage.setItem(OBSERVATION_MODE_KEY, 'nonsense');
   await mount({ stream: '/api/usage/stream' });
   expect(policy.mode).toBe(DEFAULT_OBSERVATION_MODE);
   expect(policy.background).toBe(false);
   expect(opened).toHaveLength(0);
+});
+
+it('survives a localStorage property getter that throws, without stranding consumers', async () => {
+  // The failure that matters is not a throwing getItem, it is a throwing
+  // ACCESSOR: under a blocked or partitioned context, reading
+  // window.localStorage raises SecurityError before any method is called. If
+  // the store is acquired at the call site rather than inside the helper, that
+  // throw escapes the mount effect, `hydrated` never becomes true and every
+  // useResource consumer loads forever.
+  expect(
+    readStoredMode(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    })
+  ).toBe(DEFAULT_OBSERVATION_MODE);
+
+  const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    get() {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    },
+  });
+  try {
+    await mount({ stream: '/api/usage/stream' });
+    expect(policy.mode).toBe(DEFAULT_OBSERVATION_MODE);
+    // Hydration completed, so reads are permitted and nothing hangs.
+    expect(policy.hydrated).toBe(true);
+    expect(reads()).toBe(1);
+    expect(opened).toHaveLength(0);
+    // Choosing a mode still applies for this session; only the saving fails.
+    await act(async () => policy.setMode('live'));
+    expect(policy.mode).toBe('live');
+    expect(policy.background).toBe(true);
+  } finally {
+    Object.defineProperty(window, 'localStorage', real);
+  }
+});
+
+it('keeps a throwing storage accessor from breaking the cross-tab listener', async () => {
+  window.localStorage.setItem(OBSERVATION_MODE_KEY, 'live');
+  await mount();
+  expect(policy.mode).toBe('live');
+  const real = Object.getOwnPropertyDescriptor(window, 'localStorage');
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    get() {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    },
+  });
+  try {
+    // The storage event fires on a store that has since become unreadable.
+    // It resolves to the default rather than throwing out of the listener.
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', { key: OBSERVATION_MODE_KEY }));
+    });
+    expect(policy.mode).toBe(DEFAULT_OBSERVATION_MODE);
+  } finally {
+    Object.defineProperty(window, 'localStorage', real);
+  }
 });
 
 it('applies another tab writing the key, and a cleared key returns to manual', async () => {
