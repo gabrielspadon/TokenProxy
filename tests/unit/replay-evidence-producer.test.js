@@ -9,11 +9,8 @@ const at = '2026-09-12T00:00:00.000Z';
 let db;
 beforeAll(async () => {
   db = await getAdapter();
-  // The root integration registers this additive export in the next migration.
   const present = new Set(db.all('PRAGMA table_info(requestStats)').map(row => row.name));
-  for (const [name, definition] of Object.entries(REQUEST_REPLAY_COLUMNS)) {
-    if (!present.has(name)) db.exec(`ALTER TABLE requestStats ADD COLUMN ${name} ${definition}`);
-  }
+  for (const name of Object.keys(REQUEST_REPLAY_COLUMNS)) expect(present.has(name), name).toBe(true);
 });
 it.each([200,201,408,409,500,502,503,504])('records HTTP %s as never replay even when the body is an SSE error', status => {
   const result = replayResponseEvidence({ response: new Response('data: {"error":"failed"}', { status }) }, () => at);

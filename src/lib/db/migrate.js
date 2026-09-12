@@ -1,4 +1,4 @@
-import { TABLES, buildCreateTableSql, SCHEMA_VERSION } from "./schema.js";
+import { TABLES, TRIGGERS, buildCreateTableSql, SCHEMA_VERSION } from "./schema.js";
 import { MIGRATIONS, latestVersion } from "./migrations/index.js";
 import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
 import { makeBackupDir, backupDbLite, pruneOldBackups } from "./backup.js";
@@ -14,7 +14,11 @@ function isFreshDb(adapter) {
 }
 
 function needsSchemaSync(adapter) {
-  const objects = new Set(adapter.all("SELECT name FROM sqlite_master WHERE type IN ('table','index')").map(row => row.name));
+  const objects = new Set(adapter.all("SELECT name FROM sqlite_master WHERE type IN ('table','index','trigger')").map(row => row.name));
+  for (const trigger of TRIGGERS) {
+    const name = /CREATE TRIGGER IF NOT EXISTS (\w+)/i.exec(trigger)?.[1];
+    if (!name || !objects.has(name)) return true;
+  }
   for (const [tableName, def] of Object.entries(TABLES)) {
     if (!objects.has(tableName)) return true;
     const columns = new Set(adapter.all(`PRAGMA table_info(${tableName})`).map(row => row.name));
@@ -113,6 +117,7 @@ export async function runMigrationOnce(adapter) {
   adapter.transaction(() => {
     runVersionedMigrations(adapter);
     syncSchemaFromTables(adapter);
+    for (const trigger of TRIGGERS) adapter.exec(trigger);
     ensureEconomicsProjection(adapter, { verifiedReady: projectionHealthy && !schemaOutdated });
     ensureEconomicsProjectionIndexes(adapter);
     setMetaSync(adapter, "backupSchemaVersion", SCHEMA_VERSION);

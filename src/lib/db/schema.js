@@ -25,6 +25,8 @@ import { NOTIFICATION_AUTOMATION_TABLES } from './notificationAutomationSchema.j
 import { CONTEXT_STAGE_OUTCOME_COLUMNS } from './contextStageOutcomeSchema.js';
 import { TELEMETRY_ORIGIN_COLUMNS, TELEMETRY_OUTCOME_TABLES } from './telemetryOutcomeSchema.js';
 import { REQUEST_TERMINAL_COLUMNS } from './terminalEvidence.js';
+import { REQUEST_REPLAY_COLUMNS } from './replayEvidence.js';
+import { CRITICAL_ACK_TABLES, CRITICAL_ACK_TRIGGERS } from './criticalAckSchema.js';
 import { ECONOMICS_PROJECTION_TABLES } from './economicsProjectionSchema.js';
 import {
   PROJECT_TABLES,
@@ -56,7 +58,10 @@ import {
 // 37 = preserve integer/real token storage classes in the economics projection.
 // 38 = durable semantic terminal evidence and explicit usage backfill provenance.
 // 39 = origin-preserving economics projection with reversible visibility joins.
-export const SCHEMA_VERSION = 40;
+// 40 = reported cache presence in the economics projection.
+// 41 = dispatch replay evidence and durable critical-write acknowledgments.
+export const SCHEMA_VERSION = 41;
+export const TRIGGERS = CRITICAL_ACK_TRIGGERS;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -108,6 +113,7 @@ export const TABLES = {
   ...COST_LEDGER_TABLES,
   ...TELEMETRY_OUTCOME_TABLES,
   ...ECONOMICS_PROJECTION_TABLES,
+  ...CRITICAL_ACK_TABLES,
   _meta: {
     columns: {
       key: 'TEXT PRIMARY KEY',
@@ -357,6 +363,7 @@ export const TABLES = {
       ...TELEMETRY_ORIGIN_COLUMNS,
       ...REQUEST_IDENTITY_COLUMNS,
       ...REQUEST_TERMINAL_COLUMNS,
+      ...REQUEST_REPLAY_COLUMNS,
       id: 'TEXT PRIMARY KEY',
       sourceUsageId: 'INTEGER',
       timestamp: 'TEXT NOT NULL',
