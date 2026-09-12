@@ -81,7 +81,11 @@ it('execute preserves legacy dispatch refusal and does not turn it into upstream
   })).rejects.toBe(refusal);
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
-it.each([CursorExecutor, TraeExecutor, DevinCliExecutor])('keeps opaque service/subprocess coverage explicitly unsupported for %s', Executor => {
+it.each([
+  ['Cursor', CursorExecutor],
+  ['Trae', TraeExecutor],
+  ['Devin CLI', DevinCliExecutor],
+])('keeps opaque service/subprocess coverage explicitly unsupported for %s', (_name, Executor) => {
   const executor = new Executor();
   expect(executor.supportsBudgetDispatch).toBe(false);
   expect(executor.budgetDispatchUnsupportedReason).toMatch(/opaque|Opaque/);
