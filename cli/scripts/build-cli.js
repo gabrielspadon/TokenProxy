@@ -3,6 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
+const { copyBuildIdentity } = require('../../scripts/build-identity.cjs');
 
 const cliDir = path.resolve(__dirname, "..");
 const appDir = path.resolve(cliDir, "..");
@@ -240,6 +241,7 @@ function buildCliPackage() {
   console.log("3️⃣  Copying Next.js standalone build to app/cli/app...");
   try {
     copyStandaloneBuild(appDir, buildDistDir, cliAppDir);
+    copyBuildIdentity(buildDistDir, cliAppDir);
   } catch (error) {
     console.error("❌ Next.js standalone build not found under .next/standalone");
     console.error("Expected either .next/standalone/server.js or .next/standalone/app/");

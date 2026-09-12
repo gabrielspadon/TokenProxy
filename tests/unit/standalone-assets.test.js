@@ -1,9 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { copyStandaloneAssets } from "../../scripts/copy-standalone-assets.mjs";
+import buildIdentity from '../../scripts/build-identity.cjs';
 
 function createBuildFixture(distDir) {
   const projectRoot = mkdtempSync(join(tmpdir(), "tokenproxy-standalone-assets-"));
@@ -14,6 +15,7 @@ function createBuildFixture(distDir) {
   writeFileSync(join(buildRoot, "static", "chunks", "app.js"), "static asset");
   writeFileSync(join(projectRoot, "public", "favicon.svg"), "public asset");
   writeFileSync(join(projectRoot, "live-safety-runtime.cjs"), "passive runtime");
+  writeFileSync(join(buildRoot, 'required-server-files.json'), JSON.stringify({ config: { env: { TP_BUILD_SHA: 'a'.repeat(40) } } }));
   return projectRoot;
 }
 
@@ -27,6 +29,18 @@ describe("standalone build assets", () => {
       .toBe("static asset");
     expect(readFileSync(join(projectRoot, ".next", "standalone", "public", "favicon.svg"), "utf8"))
       .toBe("public asset");
+    expect(readFileSync(join(projectRoot, '.next', 'standalone', 'BUILD_SHA'), 'utf8')).toBe(`${'a'.repeat(40)}\n`);
+  });
+
+  it('copies the baked identity into CLI output and removes a stale stamp when provenance is unknown', () => {
+    const projectRoot = createBuildFixture('.next-cli-build');
+    const buildRoot = join(projectRoot, '.next-cli-build'), output = join(buildRoot, 'standalone');
+    writeFileSync(join(output, 'BUILD_SHA'), `${'b'.repeat(40)}\n`);
+    expect(buildIdentity.copyBuildIdentity(buildRoot, output)).toBe('a'.repeat(40));
+    expect(readFileSync(join(output, 'BUILD_SHA'), 'utf8')).toBe(`${'a'.repeat(40)}\n`);
+    writeFileSync(join(buildRoot, 'required-server-files.json'), JSON.stringify({ config: { env: { TP_BUILD_SHA: 'unknown' } } }));
+    expect(buildIdentity.copyBuildIdentity(buildRoot, output)).toBeNull();
+    expect(existsSync(join(output, 'BUILD_SHA'))).toBe(false);
   });
 
   it("uses a custom Next dist directory", () => {
