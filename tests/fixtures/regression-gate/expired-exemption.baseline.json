@@ -1,0 +1,6 @@
+{
+  "schemaVersion":1,
+  "acceptedFailures":[{"id":"tests/unit/example.test.js :: example passes :: occurrence 1","expires":"2000-01-01","reason":"fixture","externalPrerequisite":"fixture dependency"}],
+  "fixedFailures":[],
+  "classifiedSkips":[]
+}

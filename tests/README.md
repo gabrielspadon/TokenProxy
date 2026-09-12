@@ -1,57 +1,75 @@
 # TokenProxy test suite
 
-This directory is an independent ESM package with its own `package.json` and its
-own dependency tree. It is not wired into the root `npm test`, so it needs the
-root install first and then its own.
+This is an independent ESM package with its own committed lockfile. The
+canonical offline gate runs on Node 24.15.0 and creates a fresh home, temporary
+directory and data directory for every invocation.
 
-The canonical procedure, the baseline gate and the opt-in flags for live
-provider tests are in [CONTRIBUTING.md](../CONTRIBUTING.md#tests). This page
-covers only how the directory is laid out.
+## Reproducible install
 
-## Running
+Use the same Node binary for installation and execution. Putting its directory
+first on `PATH` matters because npm's launcher resolves `node` through `PATH`.
 
 ```bash
-npm install              # repository root, first
-cd tests && npm install  # then the suite's own dependencies
-npx vitest run           # the whole suite
-npx vitest run unit/capabilities.test.js   # one file, path relative to tests/
+export PATH=/path/to/node-v24.15.0/bin:$PATH
+npm ci --no-audit --no-fund
+(cd tests && npm ci --no-audit --no-fund)
+(cd cli && DATA_DIR="$(mktemp -d)" npm ci --no-audit --no-fund)
 ```
 
-Run vitest from inside `tests/`. It discovers `tests/vitest.config.js`, which
-resolves the `open-sse` and `@/` aliases back to the repository root, so the
-suite works regardless of where the vitest binary lives.
+The gateway and CLI retain their Node 20.18.1 minimum. The test package supports
+Node 22.22.2, Node 24.15.0 and supported newer even-numbered runtimes because its
+current jsdom dependency does not support the former Node 18 declaration.
 
-The committed `test` script in `tests/package.json` hardcodes a shared
-`NODE_PATH` inherited from upstream. Use the `npx vitest` form above instead.
+## Canonical offline gate
+
+The artifact directory must be absent or empty. The runner refuses live-test
+flags and inherited provider or proxy credentials, uses the repository-local
+Vitest binary with the explicit config, caps workers at four, preserves the raw
+runner exit and invokes the single regression verifier.
+
+```bash
+node scripts/qa/run-offline-tests.mjs \
+  --artifacts /tmp/tokenproxy-qualification/full
+
+node scripts/qa/run-offline-tests.mjs \
+  --artifacts /tmp/tokenproxy-qualification/targeted -- \
+  unit/capabilities.test.js
+```
+
+`tests/__baseline__/verify-no-regression.mjs` validates the JSON report, runner
+exit, file and assertion inventory, suite-level errors and snapshot state. The
+committed baseline currently has no accepted failures. Any future exception
+must name an external prerequisite and expiry date. A passing or expired
+exception fails the gate until it is removed.
+
+Every skipped assertion is listed by exact identity with its qualification
+state, owner, prerequisite and review date. A new, stale or expired skip
+classification fails the gate.
+
+After an intentional test addition, rename or removal, regenerate the reviewed
+inventory from a complete JSON report with
+`node scripts/qa/write-test-manifest.mjs report.json --output tests/__baseline__/test-manifest.json`.
+
+Direct Vitest use is for diagnosis only and must carry the explicit config,
+test mode and an isolated data directory.
+
+```bash
+DATA_DIR="$(mktemp -d)" NODE_ENV=test \
+  node tests/node_modules/vitest/vitest.mjs run \
+  --config tests/vitest.config.js --maxWorkers=1 \
+  unit/capabilities.test.js
+```
 
 ## Layout
 
-| Path | What lives there |
-|---|---|
-| `unit/` | The bulk of the suite. One file per behaviour, usually named after the issue it pins. |
-| `translator/` | Format-translation round trips, one file per `source:target` pair. |
-| `translator/real/` | Live provider calls. Gated behind `RUN_REAL=1`, and they cost money. |
-| `auth/` | SAML single sign-on. |
-| `e2e/` | Playwright browser specs, run by `playwright.config.js` there, not by vitest. |
-| `fixtures/` | Recorded request and response bodies shared across tests. |
-| `qa/` | The regression gate driven by `npm run qa:regression` from the root. |
-| `__baseline__/` | Snapshot baselines and the verifiers that compare against them. |
-| `smoke.mjs` | Root `npm run qa` / `qa:prod` entry point against a running instance. |
+- `unit/` contains handler, persistence, UI model and process tests.
+- `translator/` contains format translation and golden contracts.
+- `translator/real/` contains paid provider probes that remain inert offline.
+- `auth/` contains SAML tests.
+- `e2e/` contains separate Playwright programs.
+- `fixtures/` contains synthetic recorded inputs and negative gate reports.
+- `qa/` contains explicit qualification programs outside the unit gate.
+- `__baseline__/` contains reviewed inventories and canonical verifiers.
 
-## The verdict is the baseline gate, not the red count
-
-The suite is not expected to be green on a plain checkout. Judge a change with
-
-```bash
-npx vitest run --reporter=json --outputFile.json=/tmp/run.json
-node __baseline__/verify-no-regression.mjs /tmp/run.json
-```
-
-which passes only when every failure in the run is already catalogued in
-`__baseline__/known-fails.txt`. After touching the provider registry or alias
-logic, also run `verify-providers.mjs`, `verify-alias.mjs` and
-`verify-oauth-urls.mjs` from the same directory.
-
-`unit/embeddings.cloud.test.js` fails here by design: it imports
-`cloud/src/handlers/embeddings.js`, a worker directory that is not part of this
-repository.
+Provider registry, alias and OAuth baselines remain separate byte-level
+contracts and run after the offline suite in CI.

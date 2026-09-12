@@ -7,11 +7,12 @@
 // /etc/hosts` or a real DNS lookup.
 import net from "node:net";
 import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 
 const LOOPBACK = /^(127\.|::1$|::ffff:127\.|localhost$|0\.0\.0\.0$)/i;
 
 const realConnect = net.Socket.prototype.connect;
-net.Socket.prototype.connect = function guardedConnect(...args) {
+function assertAllowedConnection(args) {
   const opts = typeof args[0] === "object" && args[0] !== null ? args[0] : {};
   const host = opts.host ?? (typeof args[0] === "string" ? args[0] : opts.path ? undefined : args[1]);
   // A UNIX socket (opts.path) and a host-less connect (fd reuse) are not network egress.
@@ -21,8 +22,24 @@ net.Socket.prototype.connect = function guardedConnect(...args) {
         `Mock fetch/http/net for this test instead of reaching the network.`,
     );
   }
+}
+
+function guardedConnect(...args) {
+  assertAllowedConnection(args);
   return realConnect.apply(this, args);
-};
+}
+net.Socket.prototype.connect = guardedConnect;
+
+// node:net's convenience factories can retain a direct reference to the
+// original implementation. Guard those exports as well so `net.connect()` is
+// not an escape around the prototype hook.
+for (const name of ["connect", "createConnection"]) {
+  const realFactory = net[name];
+  net[name] = function guardedConnectionFactory(...args) {
+    assertAllowedConnection(args);
+    return realFactory.apply(this, args);
+  };
+}
 
 function isSudo(command) {
   return typeof command === "string" && /(^|\/)sudo(\s|$)/.test(command.trim());
@@ -41,3 +58,8 @@ for (const name of ["exec", "execSync", "spawn", "spawnSync", "execFile", "execF
     return real.call(this, command, ...rest);
   };
 }
+
+// Keep named ESM imports aligned with the guarded CommonJS-compatible builtin
+// objects. Otherwise `import { connect } from "node:net"` can retain the
+// pre-guard function even though `import net from "node:net"` is protected.
+syncBuiltinESMExports();

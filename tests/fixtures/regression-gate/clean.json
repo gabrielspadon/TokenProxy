@@ -1,0 +1,19 @@
+{
+  "numFailedTestSuites": 0,
+  "numFailedTests": 0,
+  "numPassedTestSuites": 1,
+  "numPassedTests": 1,
+  "numPendingTestSuites": 0,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "numTotalTestSuites": 1,
+  "numTotalTests": 1,
+  "snapshot": {"failure": false, "unchecked": 0, "uncheckedKeysByFile": [], "unmatched": 0, "filesRemoved": 0},
+  "success": true,
+  "testResults": [{
+    "name": "/fixture/tests/unit/example.test.js",
+    "status": "passed",
+    "message": "",
+    "assertionResults": [{"ancestorTitles": [], "fullName": "example passes", "status": "passed", "title": "example passes", "failureMessages": []}]
+  }]
+}

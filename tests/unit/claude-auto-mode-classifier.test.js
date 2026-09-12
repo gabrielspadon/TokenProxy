@@ -7,6 +7,11 @@ vi.mock("@/lib/usageDb.js", () => ({
   saveRequestUsage: vi.fn(async () => {}),
 }));
 
+// Both classifier consumers statically import these bindings. Vitest must wrap
+// the module before those consumers load, otherwise a later namespace spy only
+// observes direct test calls and misses calls made by either handler.
+vi.mock("../../open-sse/handlers/chatCore/claudeClassifier.js", { spy: true });
+
 const { FORMATS } = await import("../../open-sse/translator/formats.js");
 const { handleForcedSSEToJson } = await import(
   "../../open-sse/handlers/chatCore/sseToJsonHandler.js"
@@ -264,12 +269,19 @@ const nonStreamingContext = ({
   reqTag: "classifier-test",
   log: null,
 });
-const classifierCallSpies = () => ({
-  detect: vi.spyOn(claudeClassifier, "isClaudeClassifierRequest"),
-  output: vi.spyOn(claudeClassifier, "projectResponsesClassifierOutput"),
-  stream: vi.spyOn(claudeClassifier, "projectResponsesClassifierStream"),
-  validate: vi.spyOn(claudeClassifier, "validateClaudeClassifierMessage"),
-});
+const classifierCallSpies = () => {
+  const spies = {
+    detect: vi.spyOn(claudeClassifier, "isClaudeClassifierRequest"),
+    output: vi.spyOn(claudeClassifier, "projectResponsesClassifierOutput"),
+    stream: vi.spyOn(claudeClassifier, "projectResponsesClassifierStream"),
+    validate: vi.spyOn(claudeClassifier, "validateClaudeClassifierMessage"),
+  };
+  // The module-level spy is installed before both static consumers import it,
+  // so its history spans the file. Each assertion needs a fresh observation
+  // window rather than counts inherited from preceding table cases.
+  for (const spy of Object.values(spies)) spy.mockClear();
+  return spies;
+};
 const expectNoClassifierCalls = (spies) => {
   for (const spy of Object.values(spies)) expect(spy).not.toHaveBeenCalled();
 };

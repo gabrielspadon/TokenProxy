@@ -1,0 +1,556 @@
+{
+  "schemaVersion": 1,
+  "acceptedFailures": [],
+  "fixedFailures": [],
+  "classifiedSkips": [
+    {
+      "id": "tests/qa/context-evidence-preview.test.js :: creates a clearly synthetic preview through actual mocked capture and event ingestion :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "Synthetic browser evidence generation is qualified by the started-artifact harness, outside the unit gate.",
+      "owner": "T09 build and browser qualification",
+      "externalPrerequisite": "Explicit preview output path and started-artifact evidence workspace",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/qa/quota-workbench-preview.test.js :: retains synthetic quota observations and scheduler outcomes for visual qualification :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "Synthetic browser evidence generation is qualified by the started-artifact harness, outside the unit gate.",
+      "owner": "T09 build and browser qualification",
+      "externalPrerequisite": "Explicit preview output path and started-artifact evidence workspace",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/antigravity-cache.test.js :: Antigravity cache behavior (real API) has at least one active AG connection with refreshToken :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/antigravity-cache.test.js :: Antigravity cache behavior (real API) same sessionId → cache hit on repeated call :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/antigravity-cache.test.js :: Antigravity cache behavior (real API) different sessionId (same account) → cache still hits (session-independent) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/antigravity-cache.test.js :: Antigravity cache behavior (real API) cross-account → cache SHARED (content-based global cache) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/antigravity-cache.test.js :: Antigravity cache behavior (real API) codex-style sessionId vs random sessionId on unique prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/antigravity-cache.test.js :: Antigravity cache behavior (real API) unique prompt (never seen) → explore when cache starts hitting :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/db-benchmark.test.js :: DB Benchmark — SQLite vs Lowdb INSERT 500 provider connections :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "The legacy lowdb comparison is an optional benchmark and is not a release assertion.",
+      "owner": "T03 analytics qualification",
+      "externalPrerequisite": "Explicit lowdb reference dependency and uncontended benchmark lease",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/db-benchmark.test.js :: DB Benchmark — SQLite vs Lowdb READ 200 filtered queries :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "The legacy lowdb comparison is an optional benchmark and is not a release assertion.",
+      "owner": "T03 analytics qualification",
+      "externalPrerequisite": "Explicit lowdb reference dependency and uncontended benchmark lease",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/db-benchmark.test.js :: DB Benchmark — SQLite vs Lowdb READ 200 by id (point lookup) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "The legacy lowdb comparison is an optional benchmark and is not a release assertion.",
+      "owner": "T03 analytics qualification",
+      "externalPrerequisite": "Explicit lowdb reference dependency and uncontended benchmark lease",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/db-benchmark.test.js :: DB Benchmark — SQLite vs Lowdb saveRequestUsage 500 entries :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "The legacy lowdb comparison is an optional benchmark and is not a release assertion.",
+      "owner": "T03 analytics qualification",
+      "externalPrerequisite": "Explicit lowdb reference dependency and uncontended benchmark lease",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/db-benchmark.test.js :: DB Benchmark — SQLite vs Lowdb getUsageStats(24h) repeat 50x :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "The legacy lowdb comparison is an optional benchmark and is not a release assertion.",
+      "owner": "T03 analytics qualification",
+      "externalPrerequisite": "Explicit lowdb reference dependency and uncontended benchmark lease",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/mimo-free.live.test.js :: MiMo Free bootstrap (live) bootstrap returns 200 with JWT :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/mimo-free.live.test.js :: MiMo Free ended channel (live) chat with valid JWT → 400 Unsupported model (channel ended) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.e2e.test.js :: RTK end-to-end server is reachable :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.e2e.test.js :: RTK end-to-end rtkEnabled flag is true (user must enable via dashboard) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.e2e.test.js :: RTK end-to-end compresses git diff tool_result and writes [RTK] savings to log :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.e2e.test.js :: RTK end-to-end compresses grep-style tool_result :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E server reachable and rtkEnabled=true :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for claude (cc/* → openai→claude) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for codex (cx/* → openai→openai-responses) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for antigravity (ag/* → openai→antigravity) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for cursor (cu/* → openai→cursor) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for kiro (kr/* → openai→kiro) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for gemini (gemini/* → openai→gemini) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for deepseek (deepseek/* → openai, passthrough) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/unit/rtk.multi-provider.e2e.test.js :: RTK multi-provider E2E compresses git diff for ollama (ollama/* → openai→ollama) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/all-formats.real.test.js :: REAL all-formats matrix has active providers in DB :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3-flash-agent: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3-flash-agent: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3.5-flash-low: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3.5-flash-low: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3.5-flash-extra-low: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3.5-flash-extra-low: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-pro-agent: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-pro-agent: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3.1-pro-low: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3.1-pro-low: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/claude-sonnet-4-6: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/claude-sonnet-4-6: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/claude-opus-4-6-thinking: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/claude-opus-4-6-thinking: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gpt-oss-120b-medium: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gpt-oss-120b-medium: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3-flash: simple prompt :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/antigravity-models.real.test.js :: antigravity models — real ag/gemini-3-flash: tool call with optional field in schema :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/file-base64-survey.real.test.js :: REAL file base64 survey has active providers in DB :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/nvidia-thinking.e2e.test.js :: nvidia thinking e2e nvidia/minimaxai/minimax-m3 with reasoning_effort -> no 'thinking' 400 :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/nvidia-thinking.e2e.test.js :: nvidia thinking e2e nvidia/z-ai/glm-5.2 with reasoning_effort -> no 'thinking' 400 :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/nvidia-thinking.e2e.test.js :: nvidia thinking e2e nvidia/deepseek-ai/deepseek-v4-flash-0731 with reasoning_effort -> no 'thinking' 400 :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/nvidia-thinking.e2e.test.js :: nvidia thinking e2e nvidia/moonshotai/kimi-k2.6 with reasoning_effort -> no 'thinking' 400 :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/nvidia-thinking.e2e.test.js :: nvidia thinking e2e nvidia/nvidia/nemotron-3-ultra-550b-a55b with reasoning_effort -> no 'thinking' 400 :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/provider-cases.real.test.js :: REAL provider behavior cases gemini: finish_reason stop :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/provider-cases.real.test.js :: REAL provider behavior cases kiro: tool turn -> tool_calls :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/provider-cases.real.test.js :: REAL provider behavior cases ollama: max_tokens -> length :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/provider-cases.real.test.js :: REAL provider behavior cases codex: session stickiness (cached_tokens on 2nd turn) :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/provider-cases.real.test.js :: REAL provider behavior cases antigravity: responds OK :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/smoke-providers.real.test.js :: REAL provider smoke has active providers in DB :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/thinking.real.test.js :: REAL thinking normalization has active providers in DB :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    },
+    {
+      "id": "tests/translator/real/vision-capability-survey.real.test.js :: REAL vision capability survey has active providers in DB :: occurrence 1",
+      "state": "not-run",
+      "scope": "offline CI",
+      "reason": "This assertion performs an opt-in live-provider or credentialed end-to-end probe.",
+      "owner": "T11 provider qualification",
+      "externalPrerequisite": "Operator-selected credentials and approved probe budget in an isolated qualification run",
+      "reviewAfter": "2026-12-31"
+    }
+  ]
+}

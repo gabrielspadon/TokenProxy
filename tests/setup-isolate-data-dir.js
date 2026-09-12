@@ -17,11 +17,15 @@
 // assignment here lands before any module reads DATA_DIR. A file that sets its
 // own DATA_DIR later still wins for whatever it imports after that point; this
 // only removes the shared default that made files collide.
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const dir = mkdtempSync(join(tmpdir(), "tokenproxy-test-file-"));
+const root = process.env.TOKENPROXY_TEST_DATA_ROOT;
+if (!root?.trim()) {
+  throw new Error("[DATA_DIR] test setup requires TOKENPROXY_TEST_DATA_ROOT from the explicit Vitest config");
+}
+mkdirSync(root, { recursive: true, mode: 0o700 });
+const dir = mkdtempSync(join(root, "file-"));
 process.env.DATA_DIR = dir;
 
 // Per-file directories would otherwise accumulate one tree per file per run on
