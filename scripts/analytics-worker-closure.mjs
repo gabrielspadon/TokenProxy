@@ -15,8 +15,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = "./src/lib/db/analytics/worker.mjs";
 const LIST = "./src/lib/db/analytics/runtimeFiles.mjs";
 // Static import/export-from, bare side-effect import, and dynamic import() of a
-// string literal. A computed specifier cannot be resolved statically and is
-// reported rather than silently dropped.
+// string literal. Computed specifiers are outside this static inventory and
+// require verification by launching the packaged worker.
 const SPECIFIER = /^\s*(?:import|export)\b[^;'"]*?\bfrom\s*["']([^"']+)["']|^\s*import\s*["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)/gmu;
 const CANDIDATE_SUFFIXES = ["", ".mjs", ".js", ".cjs", ".json", "/index.mjs", "/index.js"];
 

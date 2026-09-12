@@ -2,7 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 const { copyBuildIdentity } = require('../../scripts/build-identity.cjs');
 
 const cliDir = path.resolve(__dirname, "..");
@@ -255,10 +255,11 @@ function buildCliPackage() {
   // but not the sibling .js schema files they import, and the worker then threw
   // ERR_MODULE_NOT_FOUND before its first message. Copy its exact closure, the
   // same list next.config.mjs traces into the standalone output.
-  const analyticsClosure = JSON.parse(execSync(
-    `${JSON.stringify(process.execPath)} --input-type=module -e ${JSON.stringify(
-      "const { ANALYTICS_WORKER_FILES } = await import(process.argv[1]); console.log(JSON.stringify(ANALYTICS_WORKER_FILES));",
-    )} ${JSON.stringify(path.join(appDir, "src/lib/db/analytics/runtimeFiles.mjs"))}`,
+  const analyticsClosure = JSON.parse(execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e",
+      "const { pathToFileURL } = await import('node:url'); const { ANALYTICS_WORKER_FILES } = await import(pathToFileURL(process.argv[1]).href); process.stdout.write(JSON.stringify(ANALYTICS_WORKER_FILES));",
+      path.join(appDir, "src/lib/db/analytics/runtimeFiles.mjs")],
     { encoding: "utf8" },
   ));
   for (const entry of [...analyticsClosure, "./src/lib/db/analytics/runtimeFiles.mjs"]) {
