@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { resolveTransport, credentialAuthMode } from "open-sse/services/provider.js";
+import { createVisibleTelemetryFixture } from "../../fixtures/visible-telemetry.mjs";
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
@@ -35,16 +36,28 @@ afterAll(() => {
   else process.env.DATA_DIR = originalDataDir;
 });
 
-async function waitForRow(connectionId) {
-  return vi.waitFor(
-    async () => {
-      const hist = await db.getUsageHistory({});
-      const row = hist.find((h) => h.connectionId === connectionId);
-      if (!row) throw new Error(`row for ${connectionId} not persisted yet`);
-      return row;
-    },
-    { timeout: 2000, interval: 10 },
-  );
+// Public history deliberately excludes test-origin writes. The fixture verifies
+// the origin of the rows this call owns and re-identifies only those as a
+// receipted synthetic import, so the public read under test stays the real one.
+// The adapter is resolved lazily because the db module is imported after
+// vi.resetModules() in beforeAll. saveUsageStats writes fire-and-forget, so the
+// raw row is awaited INSIDE the ownership window.
+let visibleFixture;
+async function waitForRow(connectionId, produce) {
+  const adapter = await (await import("@/lib/db/driver.js")).getAdapter();
+  visibleFixture ||= createVisibleTelemetryFixture(adapter, "subscription-upstream-exit");
+  await visibleFixture(async () => {
+    produce();
+    await vi.waitFor(() => {
+      if (!adapter.get("SELECT id FROM usageHistory WHERE connectionId=?", [connectionId])) {
+        throw new Error(`row for ${connectionId} not persisted yet`);
+      }
+    }, { timeout: 2000, interval: 10 });
+  });
+  const hist = await db.getUsageHistory({});
+  const row = hist.find((h) => h.connectionId === connectionId);
+  if (!row) throw new Error(`row for ${connectionId} is not visible to public history`);
+  return row;
 }
 
 // Kimi Code (open-sse/providers/registry/kimi.js, #2881): the OAuth
@@ -74,7 +87,7 @@ describe('subscription.upstream.exit: "route subscription lane through metered p
 describe("subscription.upstream.exit: receipt has configured connection and null metered cost (live_gate)", () => {
   it("a subscription connection with no configured per-token price retains unknown cost", async () => {
     const connectionId = "subscription-configured-conn";
-    saveUsageStats({
+    const row = await waitForRow(connectionId, () => saveUsageStats({
       provider: "kimi",
       // Deliberately outside the "kimi-*" PATTERN_PRICING catch-all (verified
       // via getPricingForModel) as well as MODEL_PRICING/PROVIDER_PRICING, so
@@ -83,8 +96,7 @@ describe("subscription.upstream.exit: receipt has configured connection and null
       tokens: { prompt_tokens: 900, completion_tokens: 300 },
       connectionId,
       silent: true,
-    });
-    const row = await waitForRow(connectionId);
+    }));
     expect(row.connectionId).toBe(connectionId); // the configured connection, unchanged
     expect(row.cost).toBeNull();
   });
@@ -103,14 +115,13 @@ describe('subscription.upstream.exit: "accept cross-model response" never lets t
     const responseBody = { model: "hostile-substituted-model", usage: { prompt_tokens: 40, completion_tokens: 10 } };
     const usage = extractUsageFromResponse(responseBody);
 
-    saveUsageStats({
+    const row = await waitForRow(connectionId, () => saveUsageStats({
       provider: "kimi",
       model: assignedModel, // the caller's own assignment, independent of responseBody.model
       tokens: usage,
       connectionId,
       silent: true,
-    });
-    const row = await waitForRow(connectionId);
+    }));
     expect(row.model).toBe(assignedModel);
     expect(row.model).not.toBe("hostile-substituted-model");
   });

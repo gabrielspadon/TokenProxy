@@ -1,6 +1,18 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createVisibleTelemetryFixture } from "../fixtures/visible-telemetry.mjs";
+
+// Public analytics and history deliberately exclude test-origin writes. The
+// fixture verifies the origin of the rows each seeding call owns and
+// re-identifies only those as a receipted synthetic import, so the public read
+// under test stays the real one.
+let visibleFixture;
+async function withVisibleRows(produce) {
+  visibleFixture ||= createVisibleTelemetryFixture(await (await import("@/lib/db/driver.js")).getAdapter(), "claude-thinking-usage-2770");
+  return visibleFixture(produce);
+}
+
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { FORMATS } from "../../open-sse/translator/formats.js";
@@ -175,14 +187,14 @@ describe("#2770 Claude thinking-token usage", () => {
     });
     expect(storedUsage).not.toHaveProperty("completion_tokens_details");
 
-    await db.saveRequestUsage({
+    await withVisibleRows(() => db.saveRequestUsage({
       provider: "anthropic",
       model: "claude-sonnet-4-6",
       connectionId: "claude-thinking-usage",
       tokens: storedUsage,
       endpoint: "/v1/messages",
       status: "ok",
-    });
+    }));
 
     const [entry] = await db.getUsageHistory({ provider: "anthropic" });
     expect(entry.tokens).toMatchObject({
