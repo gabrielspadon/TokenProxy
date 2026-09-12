@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import "./registerAll.js";
 import { assertJson, assertStream } from "../contracts/run-capability-matrix.mjs";
 import { FORMATS } from "../../open-sse/translator/formats.js";
+import { translateRequest } from "../../open-sse/translator/index.js";
 import { filterUsageForFormat } from "../../open-sse/utils/usageTracking.js";
 
 const responseEvent = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -37,5 +39,18 @@ describe("capability stream contract", () => {
       output_tokens: 2,
       total_tokens: 9,
     });
+  });
+
+  it("keeps trailing Responses reasoning at the OpenAI provider boundary", () => {
+    const translated = translateRequest(FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI, "fixture-model", {
+      input: [{
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "Two plus two equals four." }],
+      }],
+    });
+    expect(translated.messages).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      reasoning_content: "Two plus two equals four.",
+    }));
   });
 });

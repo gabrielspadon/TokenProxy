@@ -307,6 +307,14 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       result.messages.push(tr);
     }
   }
+  // A Responses turn may end with a reasoning item. There is no following
+  // assistant/function call to receive the buffered continuity, so preserve it
+  // as an explicit empty assistant turn rather than silently dropping it.
+  if (pendingReasoning || pendingReasoningEncrypted) {
+    const trailingReasoning = { role: ROLE.ASSISTANT, content: "" };
+    attachPendingReasoning(trailingReasoning);
+    result.messages.push(trailingReasoning);
+  }
 
   if (customToolNames.size > 0) result._customToolNames = [...customToolNames];
   if (responsesToolNameMap.size > 0) result._responsesToolNameMap = responsesToolNameMap;
