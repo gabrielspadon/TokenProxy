@@ -97,7 +97,7 @@ describe('analytical workspace read contract', () => {
     expect(result).toHaveProperty('summary');
     expect(result).toHaveProperty('groups');
     for (const omitted of ['series','items','pagination']) expect(result).not.toHaveProperty(omitted);
-    expect(statements.filter(sql=>sql.includes('records AS MATERIALIZED'))).toHaveLength(1);
+    expect(statements.filter(sql=>sql.includes('quantities AS MATERIALIZED'))).toHaveLength(1);
   });
   it('keeps the compatibility projection while rejecting ambiguous facet requests', () => {
     expect(validateActivityQuery({operation:'activity'}).facets).toEqual(['summary','groups','series','items']);

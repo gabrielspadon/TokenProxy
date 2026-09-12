@@ -7,6 +7,8 @@ const GROUPS = new Set(ECONOMICS_GROUP_VALUES);
 const IDENTITY_FILTERS = ['clientKeyId',...CLIENT_REFERENCE_FIELDS];
 const MISSING_FILTERS = ['provider','model','connectionId','sessionId','logicalRequestId',...IDENTITY_FILTERS];
 const SORTS = new Set(['timestamp','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs']);
+const POPULATION_SORT = {inputTokens:'prompt',uncachedInputTokens:'uncachedInput',cacheReadTokens:'cacheRead',cacheWriteTokens:'cacheWrite',
+  outputTokens:'output',recordedCostUsd:'recordedCost'};
 const GROUP_SORTS = new Set(['records','recordedCostUsd','estimatedCostUsd','reportedCostUsd','averageLatencyMs','inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens']);
 const FACETS = ['summary','groups','series','items'];
 const FACET_SET = new Set(FACETS);
@@ -144,21 +146,37 @@ const quantity = (field) => `CASE WHEN ${validToken(field)} THEN ${field} END`;
 const jsonQuantity = (field) => quantity(`json_extract(safeTokens,'$.${field}')`);
 
 const ATTRIBUTION = ['dispatchCoverage','requestId','logicalRequestId','attempt','projectId','rateSnapshotId','pricingCapturedAt','costSource','costEvidence','usageSource','estimatedCostUsd','reportedCostUsd'];
-function baseQuery(db, query, { materialize = false } = {}) {
+// The shared population carries only fields consumed by aggregate facets or
+// ordering. Full ledger evidence is hydrated for the bounded item page after
+// the population has selected its exact durable identities.
+const AGGREGATE_SOURCE_FIELDS = ['id','timestamp','status','dispatchCoverage','logicalRequestId','attempt','rateSnapshotId','costSource',
+  'estimatedCostUsd','reportedCostUsd','contextSessionId','requestLink','projectRef','taskRef','clientRef'];
+const aggregateSourceFields = query => [...new Set([...AGGREGATE_SOURCE_FIELDS,...economicsGroupFields(query.groupBy)])];
+const computedPopulationFields = `MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
+  CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache`;
+function baseQuery(db, query, { materialize = false, materializeNormalized = false, projection = null, selectedIds = null } = {}) {
   const table = query.view === 'economics' ? 'usageHistory' : 'requestStats';
   const columns = new Set(db.all(`PRAGMA table_info(${table})`, []).map((row) => row.name));
-  const { sql, params } = filterFor(query, columns);
-  const attribution = ATTRIBUTION.map((name) => name === 'requestId' && query.view === 'activity' ? 'id AS requestId'
-    : columns.has(name) ? name : `NULL AS ${name}`).join(',');
+  const filtered = filterFor(query, columns), params=[...filtered.params];
+  let filterSql=filtered.sql;
+  if (selectedIds?.length) {
+    filterSql += filterSql ? ` AND id IN (${selectedIds.map(()=>'?').join(',')})` : `WHERE id IN (${selectedIds.map(()=>'?').join(',')})`;
+    params.push(...selectedIds);
+  }
+  const attributionFor = name => name === 'requestId' && query.view === 'activity' ? 'id AS requestId'
+    : columns.has(name) ? name : `NULL AS ${name}`;
+  const attribution = ATTRIBUTION.map(attributionFor).join(',');
   const contextId = columns.has('contextSessionId') ? 'contextSessionId' : 'NULL AS contextSessionId';
   if (query.view === 'economics') {
+    const sourceFields=materializeNormalized ? aggregateSourceFields(query).join(',')
+      : `id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,${ECONOMICS_LINK_FIELDS.join(',')}`;
     return { params, sql: `WITH ${economicsLedgerSource(db,columns)}, filtered AS (
       SELECT id,timestamp,provider,model,connectionId,status,promptTokens,completionTokens,cost,${attribution},${contextId},${ECONOMICS_LINK_FIELDS.join(',')},linkedLatency,linkedTtft,
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN tokens ELSE '{}' END ELSE '{}' END AS safeTokens,
         CASE WHEN json_valid(tokens) THEN CASE WHEN json_type(tokens)='object' THEN 0 ELSE 1 END ELSE 1 END AS invalidTokenDetail
-      FROM ledger ${sql}
-    ), quantities AS ${materialize ? '' : 'MATERIALIZED '}(
-      SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,${ECONOMICS_LINK_FIELDS.join(',')},
+      FROM ledger ${filterSql}
+    ), quantities AS ${materializeNormalized || !materialize ? 'MATERIALIZED ' : ''}(
+      SELECT ${sourceFields},CAST(strftime('%s',timestamp) AS INTEGER)*1000 AS timestampMs,
         CASE WHEN json_extract(safeTokens,'$.input_tokens_present')=0 THEN NULL ELSE ${quantity('promptTokens')} END AS prompt,
         CASE WHEN json_extract(safeTokens,'$.output_tokens_present')=0 THEN NULL ELSE ${quantity('completionTokens')} END AS output,
         ${jsonQuantity('cached_tokens')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens')} AS cacheWrite,
@@ -173,22 +191,22 @@ function baseQuery(db, query, { materialize = false } = {}) {
         CASE WHEN ${validNumber('linkedLatency')} AND linkedLatency>0 THEN linkedLatency END AS latencyMs,
         CASE WHEN ${validNumber('linkedTtft')} AND linkedTtft>0 THEN linkedTtft END AS ttftMs
       FROM filtered
-    ), records AS ${materialize ? 'MATERIALIZED ' : ''}(SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
-      CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
+    ), records AS ${materialize && !materializeNormalized ? 'MATERIALIZED ' : ''}(SELECT ${projection || `*,${computedPopulationFields}`} FROM quantities)` };
   }
-  return { params, sql: `WITH quantities AS (
-    SELECT id,timestamp,provider,model,connectionId,status,${attribution},
-      ${ECONOMICS_LINK_FIELDS.map(field=>field === 'requestedModel' && columns.has(field) ? field : `NULL AS ${field}`).join(',')},NULL AS reasoningTokens,
+  const sourceFields=materializeNormalized ? aggregateSourceFields(query).map(field=>ECONOMICS_LINK_FIELDS.includes(field) ? `NULL AS ${field}`
+    : ATTRIBUTION.includes(field) ? attributionFor(field) : field==='contextSessionId' ? contextId : field).join(',')
+    : `id,timestamp,provider,model,connectionId,status,${attribution},${ECONOMICS_LINK_FIELDS.map(field=>field === 'requestedModel' && columns.has(field) ? field : `NULL AS ${field}`).join(',')}`;
+  return { params, sql: `WITH quantities AS ${materializeNormalized ? 'MATERIALIZED ' : ''}(
+    SELECT ${sourceFields},CAST(strftime('%s',timestamp) AS INTEGER)*1000 AS timestampMs,NULL AS reasoningTokens,
       ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
       ${quantity('cachedTokens')} AS cacheRead,${quantity('cacheCreationTokens')} AS cacheWrite,
       NULL AS recordedCost,
       CASE WHEN NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
         OR NOT ${validToken('cachedTokens')} OR NOT ${validToken('cacheCreationTokens')} THEN 1 ELSE 0 END AS invalidTokens,
       0 AS missingTokenDetail,CASE WHEN ${validNumber('latencyTotal')} AND latencyTotal>0 THEN latencyTotal END AS latencyMs,
-      CASE WHEN ${validNumber('latencyTtft')} AND latencyTtft>0 THEN latencyTtft END AS ttftMs,${contextId}
-    FROM requestStats ${sql}
-  ), records AS ${materialize ? 'MATERIALIZED ' : ''}(SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
-    CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
+      CASE WHEN ${validNumber('latencyTtft')} AND latencyTtft>0 THEN latencyTtft END AS ttftMs${materializeNormalized ? '' : `,${contextId}`}
+    FROM requestStats ${filterSql}
+  ), records AS ${materialize && !materializeNormalized ? 'MATERIALIZED ' : ''}(SELECT ${projection || `*,${computedPopulationFields}`} FROM quantities)` };
 }
 
 const TOTALS = `COUNT(*) AS records,COUNT(*) AS attempts,
@@ -227,13 +245,13 @@ COALESCE(SUM(prompt),0) AS inputTokens,
   COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0) AS recordedPending,
   COALESCE(SUM(invalidTokens),0) AS invalidTokenRows,COALESCE(SUM(inconsistentCache),0) AS inconsistentCacheRows,
   COALESCE(SUM(missingTokenDetail),0) AS missingTokenDetailRows,
-  COALESCE(SUM(CASE WHEN strftime('%s',timestamp) IS NULL THEN 1 ELSE 0 END),0) AS invalidTimestampRows,
+  COALESCE(SUM(timestampMs IS NULL),0) AS invalidTimestampRows,
   SUM(recordedCost) AS recordedCostUsd,COUNT(recordedCost) AS costSamples,
   COALESCE(SUM(CASE WHEN recordedCost=0 THEN 1 ELSE 0 END),0) AS zeroCostRows,
   AVG(latencyMs) AS averageLatencyMs,MIN(latencyMs) AS minimumLatencyMs,MAX(latencyMs) AS maximumLatencyMs,
   COUNT(latencyMs) AS latencySamples,AVG(ttftMs) AS averageTtftMs,COUNT(ttftMs) AS ttftSamples,
-  MIN(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS firstSeenAt,
-  MAX(CASE WHEN strftime('%s',timestamp) IS NOT NULL THEN timestamp END) AS lastSeenAt`;
+  MIN(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS firstSeenAt,
+  MAX(CASE WHEN timestampMs IS NOT NULL THEN timestamp END) AS lastSeenAt`;
 
 const TOTAL_FIELDS = ['records','attempts','linkedRequestRows','conflictingRequestRows','unavailableRequestRows','explicitSessionRows',
   'clientProjectRows','taskRows','clientRows','initialAttemptRows','additionalAttemptRows','additionalAttemptCostUsd','pairedCostUsd',
@@ -244,9 +262,6 @@ const TOTAL_FIELDS = ['records','attempts','linkedRequestRows','conflictingReque
   'cacheEligibleInputTokens','cacheEligibleReadTokens','succeeded','failed','recordedPending','invalidTokenRows','inconsistentCacheRows',
   'missingTokenDetailRows','invalidTimestampRows','recordedCostUsd','costSamples','zeroCostRows','averageLatencyMs','minimumLatencyMs',
   'maximumLatencyMs','latencySamples','averageTtftMs','ttftSamples','firstSeenAt','lastSeenAt'];
-const ITEM_FIELDS = ['id','timestamp','provider','model','connectionId','status',...ATTRIBUTION,...ECONOMICS_LINK_FIELDS,'reasoningTokens',
-  'inputTokens','uncachedInputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','recordedCostUsd','latencyMs','ttftMs',
-  'contextSessionId','invalidTokens','inconsistentCache','missingTokenDetail'];
 const jsonObject = fields => `json_object(${fields.map(field => `'${field}',${field}`).join(',')})`;
 const projection = (kind, payload) => `SELECT '${kind}' AS kind,${payload} AS payload`;
 
@@ -269,7 +284,13 @@ function groupColumns(groupBy) {
 export function readActivityAnalytics(db, input) {
   const query = validateActivityQuery(input);
   const requested = new Set(query.facets);
-  const base = baseQuery(db, query, { materialize: true });
+  const aggregatePopulation = ['summary','groups','series'].some(facet=>requested.has(facet));
+  const sortColumn=POPULATION_SORT[query.sortBy] || query.sortBy;
+  const itemProjection=sortColumn==='uncachedInput' ? `id,timestamp,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput`
+    : `id,timestamp${sortColumn==='timestamp' ? '' : `,${sortColumn}`}`;
+  const base = baseQuery(db, query, { materialize: true,
+    materializeNormalized: aggregatePopulation,
+    projection: aggregatePopulation ? null : itemProjection });
   const columns = groupColumns(query.groupBy);
   const ctes = [], selects = [];
   const needsSummary = requested.has('summary') || requested.has('series');
@@ -294,19 +315,16 @@ export function readActivityAnalytics(db, input) {
     const span = `MAX(${MINUTE},COALESCE(${rangeEnd},CAST(strftime('%s',summary.lastSeenAt) AS INTEGER)*1000)-COALESCE(${rangeStart},CAST(strftime('%s',summary.firstSeenAt) AS INTEGER)*1000))`;
     const floor = `MAX(${MINUTE},CAST(((${span}+${MINUTE})+${denominator}-1)/${denominator} AS INTEGER)*${MINUTE})`;
     ctes.push(`series_settings AS (SELECT CASE WHEN records=0 OR firstSeenAt IS NULL OR lastSeenAt IS NULL THEN NULL ELSE MAX(${floor},${query.bucketMs || 0}) END AS bucketMs FROM summary)`,
-      `series_rows AS (SELECT CAST((CAST(strftime('%s',timestamp) AS INTEGER)*1000)/bucketMs AS INTEGER)*bucketMs AS bucketStartMs,${TOTALS}
-        FROM records,series_settings WHERE bucketMs IS NOT NULL AND strftime('%s',timestamp) IS NOT NULL GROUP BY bucketStartMs ORDER BY bucketStartMs)`);
+      `series_rows AS (SELECT CAST(timestampMs/bucketMs AS INTEGER)*bucketMs AS bucketStartMs,${TOTALS}
+        FROM records,series_settings WHERE bucketMs IS NOT NULL AND timestampMs IS NOT NULL GROUP BY bucketStartMs ORDER BY bucketStartMs)`);
     selects.push(`${projection('series-meta',"json_object('bucketMs',bucketMs)")} FROM series_settings`,
       `${projection('series',jsonObject(['bucketStartMs',...TOTAL_FIELDS]))} FROM series_rows`);
   }
   if (requested.has('items')) {
-    ctes.push(`item_rows AS MATERIALIZED (SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},${ECONOMICS_LINK_FIELDS.join(',')},reasoningTokens,prompt AS inputTokens,
-      uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
-      recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
-      FROM records ORDER BY ${query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC
+    ctes.push(`item_rows AS MATERIALIZED (SELECT id FROM records ORDER BY ${POPULATION_SORT[query.sortBy] || query.sortBy} ${query.sortDirection.toUpperCase()} NULLS LAST,timestamp DESC,id DESC
       LIMIT ${query.pageSize} OFFSET ${(query.page-1)*query.pageSize})`);
     selects.push(`${projection('item-meta',"json_object('totalItems',COUNT(*))")} FROM records`,
-      `${projection('item',jsonObject(ITEM_FIELDS))} FROM item_rows`);
+      `${projection('item',jsonObject(['id']))} FROM item_rows`);
   }
   const projected = db.all(`${base.sql}${ctes.length ? `,${ctes.join(',')}` : ''} ${selects.join(' UNION ALL ')}`, base.params);
   const result = {
@@ -343,10 +361,21 @@ export function readActivityAnalytics(db, input) {
   }
   if (requested.has('items')) {
     const totalItems=byKind('item-meta')[0].totalItems;
-    result.items=enrichActivityItems(db,query,byKind('item'));
+    result.items=readActivityItemsByIds(db,query,byKind('item').map(row=>row.id));
     result.pagination={page:query.page,pageSize:query.pageSize,totalItems,totalPages:Math.ceil(totalItems/query.pageSize),hasNext:query.page*query.pageSize<totalItems,hasPrev:query.page>1};
   }
   return result;
+}
+
+function readActivityItemsByIds(db,query,ids) {
+  if (!ids.length) return [];
+  const base=baseQuery(db,query,{selectedIds:ids}), positions=new Map(ids.map((id,index)=>[id,index]));
+  const rows=db.all(`${base.sql} SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},${ECONOMICS_LINK_FIELDS.join(',')},reasoningTokens,prompt AS inputTokens,
+    uncachedInput AS uncachedInputTokens,cacheRead AS cacheReadTokens,cacheWrite AS cacheWriteTokens,output AS outputTokens,
+    recordedCost AS recordedCostUsd,latencyMs,ttftMs,contextSessionId,invalidTokens,inconsistentCache,missingTokenDetail
+    FROM records`,base.params);
+  rows.sort((a,b)=>positions.get(a.id)-positions.get(b.id));
+  return enrichActivityItems(db,query,rows);
 }
 
 function readActivityItems(db,query,base,limit,offset=0) {

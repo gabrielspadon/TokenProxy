@@ -28,6 +28,10 @@ parentPort?.on("message", async ({ id, query }) => {
       : query?.operation?.startsWith("quota-history") ? validateQuotaHistoryQuery(query) : validateAnalyticsQuery(query);
     phase = "open";
     db = await openAnalyticsReadOnly(workerData.file, workerData.driver);
+    // Match the database's analytical scratch settings on this
+    // short-lived read-only connection. Grouping and percentile sorts stay in
+    // process instead of repeatedly spilling their temporary b-trees to disk.
+    db.exec("PRAGMA temp_store=MEMORY; PRAGMA cache_size=-64000; PRAGMA mmap_size=30000000;");
     const snapshotStartedAt = new Date().toISOString();
     phase = "snapshot";
     db.exec("BEGIN");
