@@ -135,6 +135,28 @@ describe("sqljs atomic persist", () => {
     adapter.close();
   });
 
+  it("does not acknowledge while an injected storage sync is delayed", async () => {
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v TEXT)");
+    adapter.flush();
+    let delayed = false;
+    const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      if (!delayed) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+        delayed = true;
+      }
+    });
+    const started = performance.now();
+    try {
+      adapter.criticalTransaction(() => adapter.run("INSERT INTO t VALUES (?)", ["after-sync"]));
+    } finally {
+      fsync.mockRestore();
+    }
+    expect(delayed).toBe(true);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(20);
+    adapter.close();
+  });
+
   it("rejects async and nested critical callbacks without mutating the database", async () => {
     const adapter = await createSqlJsAdapter(dbPath);
     adapter.exec("CREATE TABLE t (v TEXT)");
