@@ -10,13 +10,11 @@ import {
 } from './accountControlPanelModel';
 import { groupQuotaProducts } from './quotaProductGroups';
 
-// One glance answers "how many accounts can take work right now". Every account
-// lands in exactly one bucket; the order here is the order the strip renders.
-// `depleted` is its own word because `low` used to hold both nineteen percent
-// and nothing at all, and those are different problems with different answers.
-// `paused` and `quotaHold` split for the same reason one step further on: one
-// chip counted the operator's own holds together with holds nobody chose, so
-// the strip agreed with a board that was already saying the wrong word.
+// The seven-way split src/app/dashboard/connections/page.js:42 still reads.
+// The Capacity board no longer uses it: `CATEGORIES` further down is that
+// board's one mapping. Kept exported because deleting it would break a page
+// this packet does not own; recorded for root in
+// coordination/ui_accounts-to-root.md.
 export const BUCKETS = [
   { id: 'ready', label: 'Ready', tone: 'positive' },
   { id: 'low', label: 'Low quota', tone: 'ember' },
@@ -286,6 +284,74 @@ export function sectionSummary(accounts, now) {
   return counts;
 }
 
+// --- the one presentation mapping -------------------------------------------
+
+/**
+ * The four presentation categories, in render order. Counts, the filter, each
+ * card's `data-category`, its dot and each group heading all read
+ * `accountCategory` and nothing else.
+ *
+ * Two vocabularies used to render as two same-weight filter strips, the second
+ * indented under the first with a `\u21b3` glyph and the word "Breakdown", so an
+ * operator had to work out that "out of quota" lived INSIDE "cooling down"
+ * before the board answered anything. Worse, a card carried both
+ * `data-bucket` (seven-way) and `data-section` (five-way): the dot took its
+ * colour from the bucket while the card took its rail from the section, so a
+ * depleted account rendered a red dot inside an ember heading.
+ */
+export const CATEGORIES = [
+  { id: 'active', label: 'Active', tone: 'positive' },
+  { id: 'cooldown', label: 'Cooldown', tone: 'ember' },
+  { id: 'paused', label: 'Paused', tone: 'slate' },
+  { id: 'unknown', label: 'Unknown', tone: 'unknown' },
+];
+
+/**
+ * Section to category. A projection, deliberately, rather than a second
+ * classifier: `accountSection` already holds the ordered precedence and its
+ * tests, so restating that order here would be a second place for it to drift.
+ *
+ * `action` and `unverified` both land on Unknown because the question this
+ * board answers is "can I send work here", and neither has an answer. They are
+ * NOT the same fact and the card never says they are: the state word
+ * ("Needs sign-in", "No credential", "Not checked") and the reason sentence
+ * from `accountStateReason` keep every one of them distinct. Unknown is a
+ * statement about evidence, never a quota reading, which is why an account
+ * whose quota is genuinely empty is `cooldown` (a clock clears it) and never
+ * lands here.
+ */
+const CATEGORY_OF_SECTION = {
+  serving: 'active',
+  resting: 'cooldown',
+  held: 'paused',
+  action: 'unknown',
+  unverified: 'unknown',
+};
+// The inverse, for ordering. Each category asks its section's question, so the
+// order within it is the one that section already earned.
+const SECTION_OF_CATEGORY = {
+  active: 'serving',
+  cooldown: 'resting',
+  paused: 'held',
+  unknown: 'unverified',
+};
+
+export function accountCategory(account, now) {
+  return CATEGORY_OF_SECTION[accountSection(account, now)];
+}
+
+export function categorySummary(accounts, now) {
+  const counts = Object.fromEntries(CATEGORIES.map((item) => [item.id, 0]));
+  for (const account of accounts) counts[accountCategory(account, now)] += 1;
+  return counts;
+}
+
+// Card order within one category: most headroom first where work goes next,
+// soonest return where the operator is waiting, name where neither ranks.
+export function orderCategory(accounts, category, now) {
+  return orderSection(accounts, SECTION_OF_CATEGORY[category], now);
+}
+
 /**
  * When this account can work again, as epoch ms, or null.
  *
@@ -409,15 +475,20 @@ export function fleetSummary(accounts, now) {
   return counts;
 }
 
-// The two axes filter independently and compose, because they answer different
-// questions: a `resting` account can also be `paused`, and an operator narrowing
-// to one is not asking to leave the other behind.
-export function filterAccounts(accounts, { query = '', bucket = null, section = null }, now) {
+// `category` is the Capacity board's one axis. `bucket` and `section` remain
+// for src/app/dashboard/connections/page.js, which filters on the seven-way
+// split; every key is optional and they compose.
+export function filterAccounts(
+  accounts,
+  { query = '', bucket = null, section = null, category = null },
+  now
+) {
   const needle = query.trim().toLowerCase();
   return accounts.filter(
     (account) =>
       (!bucket || accountBucket(account, now) === bucket) &&
       (!section || accountSection(account, now) === section) &&
+      (!category || accountCategory(account, now) === category) &&
       (!needle ||
         `${account.displayName || account.name || ''} ${account.email || ''} ${account.provider} ${accountControlId(account)}`
           .toLowerCase()
@@ -485,13 +556,36 @@ export function orderSection(accounts, section, now) {
   return [...accounts].sort(byName);
 }
 
-// Bar colour scale. Depleted is nothing left; low is at or under the larger of
-// 20% and the account's own auto-pause threshold; warn is at or under half.
-export function windowLevel(window) {
-  if (window.unlimited || !Number.isFinite(window.remaining)) return null;
-  if (window.remaining <= 0) return 'depleted';
-  if (window.remaining <= Math.max(LOW_REMAINING, window.threshold || 0)) return 'low';
-  if (window.remaining <= 50) return 'warn';
+/**
+ * Bar colour scale. Depleted is nothing left; low is at or under the larger of
+ * 20% and the account's own auto-pause threshold; warn is at or under half.
+ *
+ * Reads `windowHeadroom`, not the stored `remaining`. It read the stored number
+ * and was the last reader on the board that did, so it disagreed with every
+ * other one about a replenished window. Probed 2026-09-12 with a general window
+ * recorded at 0% whose `resetAt` had passed: `accountBucket` answered `ready`,
+ * `headroomOf` answered 100, `accountEvidence` answered `fresh`, and this
+ * function answered `depleted`. The card led with "100% left" above a red
+ * depleted hatch, and `visibleWindowLines` used the same verdict to decide
+ * which shorter windows to hide, so a fresh period could suppress its own
+ * sibling lines.
+ *
+ * `now` is a parameter rather than a `Date.now()` default because the board
+ * pins its clock to the capture time in an isolated snapshot, and a function
+ * that reached for the wall clock would contradict the card beside it. Called
+ * without one it degrades to the stored reading, which is the pre-fix
+ * behaviour: src/app/dashboard/QuotaLine.js:38 still calls it that way and is
+ * outside this packet's ownership, so the meter it draws keeps the old verdict
+ * until that one-line call is updated. Requested in
+ * coordination/ui_accounts-to-root.md; `visibleWindowLines` below, which IS
+ * owned here, passes the clock and is fixed.
+ */
+export function windowLevel(window, now) {
+  const headroom = windowHeadroom(window, now);
+  if (window.unlimited || headroom === null) return null;
+  if (headroom <= 0) return 'depleted';
+  if (headroom <= Math.max(LOW_REMAINING, window.threshold || 0)) return 'low';
+  if (headroom <= 50) return 'warn';
   return 'good';
 }
 
@@ -505,7 +599,7 @@ export function visibleWindowLines(account, hiddenIds, now) {
   const lines = windowLines(account);
   const depletedOrder = {};
   for (const line of lines) {
-    if (windowLevel(line) === 'depleted' && !accountWindowStale(line, now))
+    if (windowLevel(line, now) === 'depleted' && !accountWindowStale(line, now))
       depletedOrder[line.product] = Math.max(depletedOrder[line.product] ?? -1, line.order);
   }
   const shown = [];
@@ -524,7 +618,22 @@ export function providerList(accounts) {
   return [...new Set(accounts.map((account) => account.provider).filter(Boolean))].sort();
 }
 
-// How a provider entry can be credentialed, derived from the registry entry.
+/**
+ * How a provider entry can be credentialed, derived from the registry entry.
+ *
+ * The fallback below was audited as a candidate for presenting "API key" on an
+ * OAuth-only provider and REJECTED on the evidence. It is unreachable for every
+ * shipped provider: src/shared/constants/providers.js:16 always sets
+ * `authModes` on the entry it builds, so the `Array.isArray && length` test
+ * above is true for all 136 registry entries. Enumerated 2026-09-12 with the
+ * real registry: zero entries reach the fallback, and the 14 OAuth-only ones
+ * (claude, codex, cursor, gitlab, grok-cli, iflow, ...) all arrive carrying
+ * `authModes: ['oauth']`. The fallback only misreports for a hand-built object
+ * that sets `hasOAuth` without `authModes`, which is a test fixture
+ * (tests/unit/account-board-model.test.js:224 asserts exactly that shape) and
+ * never a provider. Left as-is: changing it would edit a provider-capability
+ * contract to fix a presentation defect that does not occur.
+ */
 export function credentialModes(entry) {
   if (Array.isArray(entry.authModes) && entry.authModes.length) return entry.authModes;
   const modes = [];
