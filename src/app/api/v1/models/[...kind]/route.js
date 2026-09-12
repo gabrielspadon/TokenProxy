@@ -52,7 +52,7 @@ export async function GET(_request, { params }) {
     // slug still wins, which is why "image" cannot address a model of that name;
     // the alternative would break every existing caller of these eight slugs.
     if (!kindFilter) {
-      const all = await buildModelsList(ALL_KINDS);
+      const all = await buildModelsList(ALL_KINDS, { localOnly: true });
       const match = all.find((m) => m.id === slug || m.id.split("/").pop() === slug);
       if (match) {
         return Response.json(match, {
@@ -70,7 +70,7 @@ export async function GET(_request, { params }) {
       );
     }
 
-    const data = await buildModelsList(kindFilter);
+    const data = await buildModelsList(kindFilter, { localOnly: true });
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

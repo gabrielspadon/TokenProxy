@@ -30,17 +30,57 @@ import { readClaudeCompat, rewriteModelsListForClaude } from "@/lib/claudeCompat
 import { buildCodexCatalog } from "@/lib/codexCatalog";
 // Authenticated OpenAI/Codex catalogs, shared with the provider detail route (#2654).
 import { detectClientTool } from "open-sse/utils/clientDetector.js";
+import {
+  getPublicModelCatalogState,
+  readLiveCatalog,
+  refreshLiveCatalog,
+  refreshPublicModelCatalogWith,
+  resetPublicModelCatalogForTests,
+  startPublicModelCatalogRefresh,
+} from "./catalogSnapshot.js";
+
+// Provider catalog clients may include response bodies or request URLs in
+// diagnostic arguments. The public refresh path records provider and error
+// class itself, so delegated clients receive a sink rather than raw console.
+const SAFE_CATALOG_LOG = Object.freeze({
+  debug() {},
+  error() {},
+  info() {},
+  log() {},
+  warn() {},
+});
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
   kiro: async (conn) => {
+    let credentialPersistenceFailed = false;
     const result = await (await import("open-sse/services/kiroModels.js")).resolveKiroModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console });
+    }, {
+      log: SAFE_CATALOG_LOG,
+      onCredentialsRefreshed: async (refreshed) => {
+        if (!refreshed?.accessToken) return;
+        const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken || conn.refreshToken,
+          expiresIn: refreshed.expiresIn,
+        });
+        if (!persisted) {
+          credentialPersistenceFailed = true;
+          throw new Error("Kiro catalog credential persistence failed");
+        }
+        conn.accessToken = refreshed.accessToken;
+        if (refreshed.refreshToken) conn.refreshToken = refreshed.refreshToken;
+        if (refreshed.expiresIn) {
+          conn.expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
+        }
+      },
+    });
+    if (credentialPersistenceFailed) throw new Error("Kiro catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
   qoder: async (conn) => {
@@ -61,27 +101,41 @@ const LIVE_MODEL_RESOLVERS = {
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console });
+    }, { log: SAFE_CATALOG_LOG });
     return result?.models?.length ? { models: result.models } : null;
   },
   github: async (conn) => {
+    let credentialPersistenceFailed = false;
     const result = await (await import("open-sse/services/copilotModels.js")).resolveCopilotModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
     }, {
-      log: console,
+      log: SAFE_CATALOG_LOG,
       onCredentialsRefreshed: async (refreshed) => {
-        await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
+        const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           copilotToken: refreshed.copilotToken,
           copilotTokenExpiresAt: refreshed.copilotTokenExpiresAt,
           existingProviderSpecificData: conn.providerSpecificData || {},
         });
+        if (!persisted) {
+          credentialPersistenceFailed = true;
+          throw new Error("GitHub catalog credential persistence failed");
+        }
+        conn.providerSpecificData = {
+          ...(conn.providerSpecificData || {}),
+          ...(refreshed.copilotToken ? { copilotToken: refreshed.copilotToken } : {}),
+          ...(refreshed.copilotTokenExpiresAt
+            ? { copilotTokenExpiresAt: refreshed.copilotTokenExpiresAt }
+            : {}),
+        };
       },
     });
+    if (credentialPersistenceFailed) throw new Error("GitHub catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
   "grok-cli": async (conn) => {
+    let credentialPersistenceFailed = false;
     const proxy = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
     const result = await (await import("open-sse/services/grokCliModels.js")).resolveGrokCliModels({
       ...conn,
@@ -96,19 +150,36 @@ const LIVE_MODEL_RESOLVERS = {
         strictProxy: proxy.strictProxy === true,
       },
       onCredentialsRefreshed: async (refreshed) => {
-        await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
+        const persisted = await (await import("@/sse/services/tokenRefresh")).updateProviderCredentials(conn.id, {
           ...refreshed,
           existingProviderSpecificData: conn.providerSpecificData || {},
         });
+        if (!persisted) {
+          credentialPersistenceFailed = true;
+          throw new Error("Grok catalog credential persistence failed");
+        }
+        if (refreshed.accessToken) conn.accessToken = refreshed.accessToken;
+        if (refreshed.refreshToken) conn.refreshToken = refreshed.refreshToken;
+        if (refreshed.providerSpecificData) {
+          conn.providerSpecificData = {
+            ...(conn.providerSpecificData || {}),
+            ...refreshed.providerSpecificData,
+          };
+        }
+        if (refreshed.expiresAt) conn.expiresAt = refreshed.expiresAt;
+        else if (refreshed.expiresIn) {
+          conn.expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
+        }
       },
     });
+    if (credentialPersistenceFailed) throw new Error("Grok catalog credential persistence failed");
     return result?.models?.length ? { models: result.models } : null;
   },
   cursor: async (conn, proxyOptions) => {
     const result = await (await import("open-sse/services/cursorModels.js")).resolveCursorModels({
       accessToken: conn.accessToken,
       providerSpecificData: conn.providerSpecificData || {},
-    }, { log: console, proxyOptions });
+    }, { log: SAFE_CATALOG_LOG, proxyOptions });
     return result?.models?.length ? { models: result.models } : null;
   },
   zed: async (conn) => {
@@ -486,16 +557,24 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
         && LIVE_MODEL_RESOLVERS[providerId]
         && !(Array.isArray(enabled) && enabled.length > 0),
       );
+      const cachedLive = Boolean(
+        localOnly
+        && conn
+        && LIVE_MODEL_RESOLVERS[providerId]
+        && !(Array.isArray(enabled) && enabled.length > 0),
+      ) ? readLiveCatalog(providerId, conn) : null;
       const cursorProxy = !localOnly && providerId === "cursor"
         ? resolveCursorModelProxyOptions(conn)
         : null;
-      if (!cursorProxy && !wantsLive) continue;
+      if (!cursorProxy && !wantsLive && !cachedLive) continue;
       // Settle both now so a rejection cannot surface as an unhandled one while
       // the loop is still working through the providers ahead of this one.
       const live = wantsLive
-        ? Promise.resolve(cursorProxy).then(
+        ? refreshLiveCatalog(providerId, conn, () => Promise.resolve(cursorProxy).then(
           (proxyOptions) => LIVE_MODEL_RESOLVERS[providerId](conn, proxyOptions),
-        )
+        ))
+        : cachedLive
+        ? Promise.resolve(cachedLive)
         : null;
       inFlightByProvider.set(providerId, {
         cursorProxy: settled(cursorProxy),
@@ -533,10 +612,10 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
       let liveModelKindById = new Map();
       let liveCapabilitiesById = new Map();
 
-      let rawModelIds = localOnly && hasExplicitEnabledModels
+      let rawModelIds = localOnly
         ? Array.from(
             new Set(
-              enabledModels.filter(
+              (hasExplicitEnabledModels ? enabledModels : providerModels.map((model) => model.id)).filter(
                 (modelId) => typeof modelId === "string" && modelId.trim() !== "",
               ),
             ),
@@ -579,7 +658,7 @@ export async function buildModelsList(kindFilter, { thinkingVariants = false, lo
         if (resolved.error) {
           const err = resolved.error;
           if (isRequiredProxyUnavailableError(err)) throw err;
-          console.log(`Live model fetch failed for ${providerId}: ${err?.message || err}`);
+          console.log(`Live model fetch failed for ${providerId} type=${err?.name || "Error"}`);
         } else {
           const live = resolved.value;
           if (live?.models?.length) {
@@ -783,7 +862,7 @@ export async function OPTIONS() {
  */
 export async function GET(request) {
   try {
-    const data = await buildModelsList([LLM_KIND], { thinkingVariants: true });
+    const data = await buildModelsList([LLM_KIND], { thinkingVariants: true, localOnly: true });
 
     // Anthropic-protocol clients (Claude Code) filter model ids by
     // /(claude|anthropic)/i and would see nothing — rewrite ids with the
@@ -889,4 +968,20 @@ export async function GET(request) {
       { status: 500 }
     );
   }
+}
+
+export { getPublicModelCatalogState, resetPublicModelCatalogForTests };
+
+export function refreshPublicModelCatalog(options) {
+  return refreshPublicModelCatalogWith(
+    () => buildModelsList([LLM_KIND], { thinkingVariants: true }),
+    options,
+  );
+}
+
+export function startPublicModelCatalogScheduler(options) {
+  startPublicModelCatalogRefresh(
+    () => buildModelsList([LLM_KIND], { thinkingVariants: true }),
+    options,
+  );
 }

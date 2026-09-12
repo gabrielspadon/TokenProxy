@@ -224,7 +224,7 @@ export async function fetchOpenAICatalog(connection) {
     const models = normalizeOpenAICatalog(parseOpenAIStyleModels(await response.json()));
     return models.length ? models : null;
   } catch (error) {
-    console.log("Failed to fetch OpenAI models (falling back to static):", error?.message || error);
+    console.log(`Failed to fetch OpenAI models (falling back to static) type=${error?.name || "Error"}`);
     return null;
   }
 }

@@ -237,30 +237,41 @@ describe("required proxy unavailable caller boundaries", () => {
       .toHaveBeenCalledWith(pairlessConnection.id, "missing-pool", pair);
   }
 
-  it("v1 Cursor models returns 503 before catalog or static fallback", async () => {
+  it("v1 Cursor models serves local inventory without resolving its proxy", async () => {
     useUnavailableCursorConnection();
     const { GET } = await import("@/app/api/v1/models/route.js");
 
-    await expectRequiredProxyUnavailable(await GET(new Request("http://localhost/v1/models")));
+    const response = await GET(new Request("http://localhost/v1/models"));
+    expect(response.status).toBe(200);
+    expect(mocks.resolveConnectionProxyConfig).not.toHaveBeenCalled();
+    expect(mocks.resolveCursorModels).not.toHaveBeenCalled();
   });
 
-  it("v1 combo-only models returns 503 before a static Cursor fallback", async () => {
+  it("v1 combo-only models remains local when a Cursor proxy is unavailable", async () => {
     useUnavailableCursorConnection();
     mocks.getSettings.mockResolvedValue({ exposeComboOnly: true });
     mocks.getCombos.mockResolvedValue([{ name: "combo-static-fallback" }]);
     const { GET } = await import("@/app/api/v1/models/route.js");
 
-    await expectRequiredProxyUnavailable(await GET(new Request("http://localhost/v1/models")));
+    const response = await GET(new Request("http://localhost/v1/models"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "combo-static-fallback" }),
+    ]));
+    expect(mocks.resolveConnectionProxyConfig).not.toHaveBeenCalled();
   });
 
-  it("v1 non-LLM models returns 503 before a static Cursor fallback", async () => {
+  it("v1 non-LLM models remains local when a Cursor proxy is unavailable", async () => {
     useUnavailableCursorConnection();
     const { GET } = await import("@/app/api/v1/models/[...kind]/route.js");
 
-    await expectRequiredProxyUnavailable(await GET(
+    const response = await GET(
       new Request("http://localhost/v1/models/image"),
       { params: Promise.resolve({ kind: "image" }) },
-    ));
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.resolveConnectionProxyConfig).not.toHaveBeenCalled();
+    expect(mocks.resolveCursorModels).not.toHaveBeenCalled();
   });
 
   it("provider Cursor models returns 503 before catalog or static fallback", async () => {
@@ -309,7 +320,7 @@ describe("required proxy unavailable caller boundaries", () => {
     expect(mocks.resolveCursorModels).not.toHaveBeenCalled();
   });
 
-  it("Cursor v1 catalog keeps an available strict route instead of falling back", async () => {
+  it("Cursor v1 catalog stays local even when a strict route is available", async () => {
     mocks.getProviderConnections.mockResolvedValue([cursorConnection]);
     mocks.resolveConnectionProxyConfig.mockResolvedValue(usableStrictProxy);
     mocks.resolveCursorModels.mockResolvedValue({ models: [{ id: "cursor-live", name: "Cursor Live" }] });
@@ -318,10 +329,8 @@ describe("required proxy unavailable caller boundaries", () => {
     const response = await GET(new Request("http://localhost/v1/models"));
 
     expect(response.status).toBe(200);
-    expect(mocks.resolveCursorModels).toHaveBeenCalledWith(
-      expect.objectContaining({ accessToken: cursorConnection.accessToken }),
-      expect.objectContaining({ proxyOptions: strictProxyOptions }),
-    );
+    expect(mocks.resolveConnectionProxyConfig).not.toHaveBeenCalled();
+    expect(mocks.resolveCursorModels).not.toHaveBeenCalled();
   });
 
   it("non-Cursor v1 models retain their normal static result", async () => {

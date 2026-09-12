@@ -35,6 +35,13 @@ export async function register() {
       console.error("[Bootstrap] boot start failed:", e?.message);
     }
 
+    try {
+      const { startPublicModelCatalogScheduler } = await import("@/app/api/v1/models/route.js");
+      startPublicModelCatalogScheduler();
+    } catch (e) {
+      console.warn("[model-list] background refresh start failed:", e?.message);
+    }
+
     // Webhook delivery watches signals the router already emits; it has to be
     // subscribed before the first request produces one.
     try {

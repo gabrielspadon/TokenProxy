@@ -18,6 +18,7 @@ const {
   buildOAuthResolver,
   withStaticMediaModels,
   fetchOpenAICatalog,
+  codexModelsResolver,
   resolveLiveOpenAIModels,
 } = await import("@/app/api/providers/[id]/models/liveCatalog.js");
 
@@ -32,7 +33,7 @@ beforeEach(() => {
   refreshMocks.refreshCodexToken.mockReset().mockResolvedValue(null);
   refreshMocks.updateProviderCredentials.mockReset().mockResolvedValue(null);
 });
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => { globalThis.fetch = originalFetch; vi.restoreAllMocks(); });
 
 describe("normalizeOpenAICatalog", () => {
   it("keeps a live chat model the static registry has never heard of", () => {
@@ -141,8 +142,11 @@ describe("fetchOpenAICatalog fails open", () => {
   });
 
   it("returns null when the upstream throws or times out", async () => {
-    globalThis.fetch = vi.fn(async () => { throw new Error("The operation was aborted"); });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => { throw new Error("secret-token-in-error"); });
     expect(await fetchOpenAICatalog({ apiKey: "sk-test" })).toBeNull();
+    expect(log.mock.calls.flat().join(" ")).not.toContain("secret-token-in-error");
+    log.mockRestore();
   });
 
   it("returns null on an empty catalog", async () => {
@@ -157,6 +161,22 @@ describe("fetchOpenAICatalog fails open", () => {
     expect(url).toBe("https://api.openai.com/v1/models");
     expect(init.headers.Authorization).toBe("Bearer sk-connection-one");
     expect(init.signal).toBeDefined();
+  });
+});
+
+describe("Codex catalog logging", () => {
+  it("does not retain or log an upstream error body", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      text: async () => "secret-upstream-body",
+    }));
+    const result = await codexModelsResolver({ accessToken: "token" });
+    expect(result.warning).toBe("Failed to fetch Codex models: HTTP 401");
+    expect(JSON.stringify(result)).not.toContain("secret-upstream-body");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("secret-upstream-body");
+    log.mockRestore();
   });
 });
 
