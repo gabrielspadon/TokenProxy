@@ -111,8 +111,8 @@
   grid-template-columns: 24px minmax(180px, 1fr) 96px 84px 78px 78px 60px auto;
   align-items: center;
   column-gap: 10px;
-  padding-block: 4px;
-  min-height: 40px;
+  padding-block: var(--density-pad-block);
+  min-height: calc(var(--density-row-min) + 8px);
 }
 .ruleMain > * {
   min-width: 0;
@@ -122,8 +122,8 @@
   grid-template-columns: minmax(160px, 1.3fr) 100px 152px 92px minmax(0, 0.8fr) auto;
   align-items: center;
   column-gap: 10px;
-  padding: 4px 0 4px 24px;
-  min-height: 36px;
+  padding: var(--density-pad-block) 0 var(--density-pad-block) 24px;
+  min-height: calc(var(--density-row-min) + 4px);
 }
 .alertMain > * {
   min-width: 0;
@@ -337,5 +337,3 @@
 }
 
 /* Comfy adds room to the two row grids, matching the shared card variants. */
-[data-density='comfy'] .ruleMain { min-height: 50px; padding-block: 8px; }
-[data-density='comfy'] .alertMain { min-height: 46px; padding-block: 8px; }
