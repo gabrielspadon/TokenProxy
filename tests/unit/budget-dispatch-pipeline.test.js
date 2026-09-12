@@ -60,6 +60,16 @@ describe('API key through real admission, transport, ledger and query',()=>{
   expect(db.all('SELECT state FROM apiKeyBudgetReservations').map(r=>r.state).sort()).toEqual(['released','settled']);
   expect(mocks.fetch).toHaveBeenCalledTimes(2);expect(db.get('SELECT COUNT(*) AS n FROM usageHistory').n).toBe(1);
  });
+ it('shares one 429 proof when its body completes just after the inspection deadline',async()=>{
+  const k=await key({maxCompletionTokens:100,budgetPolicy:'reserve-remaining'});
+  mocks.executor=new BaseExecutor('openai',{baseUrl:'https://api.openai.com/v1/chat/completions',noAuth:true,retry:{429:{attempts:1,delayMs:0}}});
+  let controller;const delayed=new Response(new ReadableStream({start(value){controller=value;}}),{status:429,headers:{'content-type':'application/json'}});
+  mocks.fetch.mockResolvedValueOnce(delayed).mockResolvedValueOnce(completion());
+  const pending=request(k,{max_completion_tokens:undefined});await vi.waitFor(()=>expect(mocks.fetch).toHaveBeenCalledTimes(1));
+  await new Promise(resolve=>setTimeout(resolve,1050));controller.enqueue(new TextEncoder().encode(JSON.stringify({error:{message:'rejected'}})));controller.close();
+  const result=await pending;expect(result.response.status).toBe(429);expect(result.failureMetadata.safeToReplay).toBe(true);
+  expect((await getBudgetStatus(k.id)).reservations[0].state).toBe('released');expect(mocks.fetch).toHaveBeenCalledTimes(1);
+ });
  it.each([{}, {'x-tokenproxy-replay-safe':'false'}, {'x-tokenproxy-replay-safe':'true','x-should-retry':'false'}])('retains ambiguous5xx exposure and makes exactly one dispatch (%j)',async headers=>{
   const k=await key({maxCompletionTokens:100});mocks.fetch.mockResolvedValue(Response.json({error:{message:'uncertain'}},{status:503,headers}));
   const result=await request(k);expect(result.response.status).toBe(503);expect(result.failureMetadata.safeToReplay).toBe(false);

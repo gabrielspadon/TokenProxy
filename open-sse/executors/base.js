@@ -358,7 +358,11 @@ export class BaseExecutor {
           },
           proxyOptions,
         );
-        await notifyDispatchResponse(afterDispatch, response);
+        // The accounting hook and retry planner must consume the same bounded
+        // 429 proof. A second inspection can cross the deadline differently
+        // and retry while the first attempt still holds uncertain exposure.
+        const replaySafe = await canReplay(response);
+        await notifyDispatchResponse(afterDispatch, response, replaySafe ? "verified-provider-nonacceptance" : undefined);
         deadline.clear();
         if (signal?.aborted) { cancelBody(response); signal.throwIfAborted(); }
         const ct = response.headers?.get?.("content-type") || "";
@@ -388,7 +392,7 @@ export class BaseExecutor {
           continue;
         }
 
-        if (await canReplay(response) && this.shouldRetry(response.status, urlIndex)) {
+        if (replaySafe && this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.(
             "RETRY",
             `${response.status} on ${url}, trying fallback ${urlIndex + 1}`,

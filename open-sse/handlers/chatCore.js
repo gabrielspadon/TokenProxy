@@ -2597,9 +2597,20 @@ async function handleChatCoreAttempt({
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
     // An executor may convert an accepted SSE failure to HTTP. Preserve its
     // explicit no-replay provenance instead of treating it as a rejection.
-    const safeAcrossAccounts = isSafeQuotaAccountRejection(providerResponse, errorPayload);
-    const safeToReplay = isReplaySafeRejection(providerResponse, errorPayload)
+    let safeAcrossAccounts = isSafeQuotaAccountRejection(providerResponse, errorPayload);
+    let safeToReplay = isReplaySafeRejection(providerResponse, errorPayload)
       && (providerResponse.status !== HTTP_STATUS.RATE_LIMITED || safeAcrossAccounts);
+    // A complete body can prove rejection after BaseExecutor's bounded header
+    // observation expired. Publish that later proof to the same reservation
+    // before the coordinator is allowed to retry against another account.
+    if (safeToReplay && contextTelemetry?.budgetReservationId) {
+      try {
+        await observeBudgetResponse(contextTelemetry, { response: providerResponse, nonacceptance: "verified-provider-nonacceptance" });
+      } catch {
+        safeToReplay = false;
+        safeAcrossAccounts = false;
+      }
+    }
     return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay, safeAcrossAccounts }, rid), saverMeta);
   }
 

@@ -1,6 +1,5 @@
 import { getAdapter } from "../../lib/db/driver.js";
 import { isReplaySafeRejection } from "../../../open-sse/utils/replaySafety.js";
-import { inspectErrorBody } from "../../../open-sse/utils/inspectErrorBody.js";
 import { BudgetAdmissionError, budgetErrorResponse, reserveBudget, markBudgetDispatched, markBudgetUncertain } from "../../lib/db/repos/budgetRepo.js";
 
 // OpenAI's native chat contract includes visible and reasoning tokens in this
@@ -47,24 +46,18 @@ export async function beginBudgetDispatch(context, apiKey, wire) {
 }
 export async function observeBudgetResponse(context, { response, nonacceptance } = {}) {
   if (!context?.budgetReservationId) return;
-  let replaySafe = isReplaySafeRejection(response);
-  // A 429 needs a complete canonical error envelope to prove that generation
-  // was rejected. Inspect a bounded clone here, before reserving another
-  // physical attempt, while leaving the caller's response body untouched.
-  if (!replaySafe && response?.status === 429) {
-    try {
-      const inspected = await inspectErrorBody(response);
-      replaySafe = inspected.complete && isReplaySafeRejection(response, JSON.parse(inspected.text));
-    } catch {
-      replaySafe = false;
-    }
-  }
+  // BaseExecutor passes its exact bounded body proof through nonacceptance.
+  // Specialized executors may also supply their own verified classification.
+  const replaySafe = Boolean(nonacceptance) || isReplaySafeRejection(response);
   if (replaySafe) {
     const db = await getAdapter();
-    db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
+    const result = db.run(`UPDATE apiKeyBudgetReservations SET state='released',updatedAt=?,resolutionEvidence=?
       WHERE requestId=? AND state IN ('dispatched','uncertain') AND usageRowId IS NULL`,
     [new Date().toISOString(), JSON.stringify({ source: "upstream-status", kind: "provider-nonacceptance", status: response.status,
       classification: nonacceptance ?? null }), context.budgetReservationId]);
+    if (!result.changes && db.get("SELECT state FROM apiKeyBudgetReservations WHERE requestId=?", [context.budgetReservationId])?.state !== "released") {
+      throw new BudgetAdmissionError("budget-release-unconfirmed", "The rejected attempt could not release its reserved exposure; generation was not retried.");
+    }
   } else if (!response?.ok) {
     await markBudgetUncertain(context.budgetReservationId, "upstream-error-without-nonacceptance-proof");
   }
