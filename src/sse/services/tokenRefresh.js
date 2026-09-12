@@ -152,6 +152,24 @@ function isUncertainCriticalWrite(error) {
     && error?.commitState === "committed";
 }
 
+function credentialSelectionChanged() {
+  return Object.assign(
+    new Error("Credential selection changed during refresh"),
+    { code: "CREDENTIAL_SELECTION_CHANGED", retryable: false },
+  );
+}
+
+function isCompatibleCredentialSelection(expected, winner, { connectionId, provider } = {}) {
+  if (!winner || winner.isActive === false) return false;
+  const expectedId = expected?.id || expected?.connectionId || connectionId;
+  const winnerId = winner.id || winner.connectionId;
+  if (expectedId && winnerId !== expectedId) return false;
+  const expectedProvider = expected?.provider || provider;
+  if (expectedProvider && winner.provider !== expectedProvider) return false;
+  if (expected?.authType && winner.authType !== expected.authType) return false;
+  return true;
+}
+
 /**
  * Providers that carry a real Google project ID.
  * @param {string} provider
@@ -281,7 +299,10 @@ export async function updateProviderCredentials(connectionId, newCredentials, op
     if (options.signal?.aborted) throw error;
     if (error?.code === "CREDENTIAL_CONFLICT") {
       const winner = await getProviderConnectionById(connectionId);
-      if (winner) return winner;
+      if (!isCompatibleCredentialSelection(current, winner, { connectionId })) {
+        throw credentialSelectionChanged();
+      }
+      return winner;
     }
     if (isUncertainCriticalWrite(error) && candidate) {
       const stored = await getProviderConnectionById(connectionId);
@@ -320,9 +341,15 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
   signal?.throwIfAborted();
   const stored = creds.connectionId ? await getProviderConnectionById(creds.connectionId) : null;
   signal?.throwIfAborted();
-  if (options.requireCurrent && !stored) return creds;
-  if (stored?.isActive === false || stored?.provider && stored.provider !== provider || stored?.authType && stored.authType !== 'oauth') {
-    return withAuthoritativeConnection(creds, stored);
+  const selected = credentials._connection || credentials;
+  if (!stored && (options.requireCurrent || credentials._connection)) {
+    throw credentialSelectionChanged();
+  }
+  if (stored && (
+    !isCompatibleCredentialSelection(selected, stored, { connectionId: creds.connectionId, provider })
+    || stored.authType && stored.authType !== "oauth"
+  )) {
+    throw credentialSelectionChanged();
   }
   if (stored) {
     const selectedTransport = !options.requireCurrent && credentials._connection

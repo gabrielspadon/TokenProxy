@@ -95,6 +95,25 @@ describe('refresh persistence revision and stop boundary',()=>{
   });
   expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });
+ it.each([
+  ['disabled',{...original,isActive:false}],
+  ['provider-swapped',{...original,provider:'claude'}],
+  ['auth-type-swapped',{...original,authType:'apikey'}],
+  ['id-swapped',{...original,id:'replacement'}],
+  ['deleted',null],
+ ])('rejects a %s conflict winner before credential delivery',async(_state,winner)=>{
+  getProviderConnectionById.mockResolvedValueOnce(original).mockResolvedValue(winner);
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed(
+   {accessToken:'late',refreshToken:'late-rotation'},
+   {expectedCredentials:options.expectedCredentials},
+  ));
+  updateProviderConnection.mockRejectedValue(Object.assign(new Error('conflict'),{code:'CREDENTIAL_CONFLICT'}));
+  await expect(checkAndRefreshToken('codex',original,{force:true})).rejects.toMatchObject({
+   code:'CREDENTIAL_SELECTION_CHANGED',
+   retryable:false,
+  });
+  expect(refreshProviderCredentials).toHaveBeenCalledTimes(1);
+ });
  it('rejects a visible candidate when COMMIT acknowledgement is uncertain',async()=>{
   let visible=original;
   getProviderConnectionById.mockImplementation(async()=>visible);
@@ -124,8 +143,18 @@ describe('refresh persistence revision and stop boundary',()=>{
   let settled=false;const call=checkAndRefreshToken('codex',original,{force:true,signal:controller.signal,waitForSettled:true}).finally(()=>{settled=true;});await flush();
   controller.abort();await flush();expect(settled).toBe(false);d.resolve({accessToken:'late'});await expect(call).rejects.toMatchObject({name:'AbortError'});expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });
- it.each([null,{...original,isActive:false},{...original,authType:'apikey'}])('skips removed or no-longer-eligible background rows %#',async current=>{
-  getProviderConnectionById.mockResolvedValue(current);await checkAndRefreshToken('codex',original,{force:true,requireCurrent:true});expect(refreshProviderCredentials).not.toHaveBeenCalled();
+ it.each([
+  null,
+  {...original,isActive:false},
+  {...original,provider:'claude'},
+  {...original,authType:'apikey'},
+ ])('rejects removed or no-longer-eligible background rows %#',async current=>{
+  getProviderConnectionById.mockResolvedValue(current);
+  await expect(checkAndRefreshToken('codex',original,{force:true,requireCurrent:true})).rejects.toMatchObject({
+   code:'CREDENTIAL_SELECTION_CHANGED',
+   retryable:false,
+  });
+  expect(refreshProviderCredentials).not.toHaveBeenCalled();
  });
  it('drains background project enrichment before releasing its scheduler permit',async()=>{
   const credentials={...original,provider:'antigravity'},controller=new AbortController(),d=deferred();getProviderConnectionById.mockResolvedValue(credentials);

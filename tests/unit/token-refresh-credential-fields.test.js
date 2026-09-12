@@ -104,6 +104,7 @@ describe('checkAndRefreshToken: needsProjectId false branch and creds.id fallbac
       shouldRefreshCredentials: () => true,
       refreshProviderCredentials: async () => ({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'new-a', expiresIn: 60 }),
     }));
+    getProviderConnectionById.mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', provider: 'claude', authType: 'oauth', isActive: true, accessToken: 'old' });
     updateProviderConnection.mockResolvedValue({ id: 'c' });
     await mod.checkAndRefreshToken('claude', { connectionId: 'conn-1', accessToken: 'old' });
     expect(getProjectIdForConnection).not.toHaveBeenCalled();
@@ -121,6 +122,7 @@ describe('checkAndRefreshToken: needsProjectId false branch and creds.id fallbac
           { expectedCredentials: options.expectedCredentials },
         ),
     }));
+    getProviderConnectionById.mockResolvedValue({ id: 'conn-fallback', connectionId: 'conn-fallback', provider: 'claude', authType: 'oauth', isActive: true, accessToken: 'old' });
     const fresh = await import('@/sse/services/tokenRefresh.js');
     await fresh.checkAndRefreshToken('claude', { id: 'conn-fallback', accessToken: 'old' });
     expect(updateProviderConnection).toHaveBeenCalledWith('conn-fallback', expect.anything(), expect.objectContaining({expectedCredentials:expect.objectContaining({id:'conn-fallback'})}));
@@ -144,6 +146,7 @@ describe('checkAndRefreshToken: github copilot missing-token and expiry math', (
       accessToken: 'gh-acc',
       ...updates,
     }));
+    getProviderConnectionById.mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', provider: 'github', authType: 'oauth', isActive: true, accessToken: 'gh-acc', providerSpecificData: {} });
     const fresh = await import('@/sse/services/tokenRefresh.js');
     const out = await fresh.checkAndRefreshToken('github', {
       connectionId: 'conn-1',
@@ -164,6 +167,7 @@ describe('checkAndRefreshToken: github copilot missing-token and expiry math', (
       ...(await orig()),
       refreshCopilotToken: vi.fn(async () => null),
     }));
+    getProviderConnectionById.mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', provider: 'github', authType: 'oauth', isActive: true, accessToken: 'gh-acc', providerSpecificData: {} });
     const fresh = await import('@/sse/services/tokenRefresh.js');
     const out = await fresh.checkAndRefreshToken('github', {
       connectionId: 'conn-1',

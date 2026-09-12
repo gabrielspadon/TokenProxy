@@ -42,6 +42,7 @@ function isNonServerRuntime() {
 function safeRefreshFailureReason(error) {
   if (error?.name === "AbortError") return "cancelled";
   if (error?.code === "REAUTH_REQUIRED") return "reauth-required";
+  if (error?.code === "CREDENTIAL_SELECTION_CHANGED") return "selection-changed";
   if (error?.code === "CREDENTIAL_CONFLICT") return "credential-conflict";
   if (error?.code === "CREDENTIAL_PERSISTENCE_UNCONFIRMED") return "persistence-unconfirmed";
   return "refresh-error";
