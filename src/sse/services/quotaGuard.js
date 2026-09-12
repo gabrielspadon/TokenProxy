@@ -22,11 +22,16 @@ import { updateProviderConnection } from "@/lib/localDb";
 import * as localDb from "@/lib/localDb";
 import { isQuotaEligible, isQuotaPaused, deriveQuotaSnapshot } from "@/shared/utils/quotaPause.js";
 import { runAntigravityUsageProbe } from "@/lib/antigravityVerification";
+import { requestSignal, withRequestLifetime } from "open-sse/utils/requestLifetime.js";
+import { waitForPreparation } from "open-sse/utils/preparationAbort.js";
+import { quotaEvidenceIdentity } from "./quotaEvidenceIdentity.js";
 
 // How long a snapshot (memory or persisted) stays fresh before a live refresh.
 const CACHE_TTL_MS = 2 * 60 * 1000;
 // Bound latency of an on-demand live fetch inside the routing path.
 const LIVE_FETCH_TIMEOUT_MS = 3000;
+const NEGATIVE_CACHE_TTL_MS = 5000;
+const MAX_CACHE_ENTRIES = 1024;
 
 // Module-level in-memory cache to avoid a live provider fetch on every request.
 // key: connectionId -> { snapshot, fetchedAt }
@@ -36,6 +41,13 @@ const memoryCache = new Map();
 // share a single fetch instead of each stalling the selection queue on its
 // own up-to-3s provider call.
 const inFlightRefreshes = new Map();
+const negativeCache = new Map();
+
+function setBounded(map, key, value) {
+  map.delete(key);
+  map.set(key, value);
+  while (map.size > MAX_CACHE_ENTRIES) map.delete(map.keys().next().value);
+}
 
 function freshSnapshot(snapshot, fetchedAt) {
   if (!snapshot || !fetchedAt) return null;
@@ -45,16 +57,21 @@ function freshSnapshot(snapshot, fetchedAt) {
   return snapshot;
 }
 
-function readSnapshot(connection) {
+function readSnapshot(connection, identity) {
   const cached = memoryCache.get(connection.id);
-  if (cached) {
+  if (cached?.identity === identity) {
     const s = freshSnapshot(cached.snapshot, cached.fetchedAt);
     if (s) return s;
   }
   const persisted = connection.lastQuotaSnapshot;
+  if (cached && cached.identity !== identity && Date.parse(persisted?.fetchedAt) <= cached.fetchedAt) return null;
+  if (persisted?.credentialRevisionId && persisted.credentialRevisionId !== connection.credentialRevisionId) return null;
   if (persisted) {
     const s = freshSnapshot(persisted, persisted.fetchedAt);
-    if (s) return s;
+    if (s) {
+      setBounded(memoryCache, connection.id, { identity, snapshot: s, fetchedAt: Date.parse(s.fetchedAt) });
+      return s;
+    }
   }
   return null;
 }
@@ -63,10 +80,14 @@ function readSnapshot(connection) {
 // the admission queue for a live fetch, so a TTL-expired snapshot still gates
 // (isQuotaPaused auto-recovers a window past its resetAt) while a refresh
 // catches up in the background.
-function staleSnapshot(connection) {
+function staleSnapshot(connection, identity) {
   const cached = memoryCache.get(connection.id);
-  if (cached?.snapshot) return cached.snapshot;
-  return connection.lastQuotaSnapshot || null;
+  if (cached?.identity === identity && cached.snapshot) return cached.snapshot;
+  if (cached && cached.identity !== identity) return null;
+  const persisted = connection.lastQuotaSnapshot;
+  if (persisted?.credentialRevisionId && persisted.credentialRevisionId !== connection.credentialRevisionId) return null;
+  if (persisted) setBounded(memoryCache, connection.id, { identity, snapshot: persisted, fetchedAt: Date.parse(persisted.fetchedAt) });
+  return persisted || null;
 }
 
 function snapshotOwner(connection) {
@@ -88,16 +109,14 @@ function buildProxyOptions(connection) {
   });
 }
 
-async function fetchLiveSnapshot(connection, providedProxyOptions = null) {
+async function fetchLiveSnapshot(connection, providedProxyOptions, signal) {
   const proxyOptions = providedProxyOptions || await buildProxyOptions(connection);
   if (proxyOptions?.kind === "required-unavailable") return { snapshot: proxyOptions, rawUsage: null };
   const usagePromise = connection.provider === "antigravity"
-    ? runAntigravityUsageProbe(connection, proxyOptions)
-    : getUsageForProvider(connection, proxyOptions, {});
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("quota fetch timeout")), LIVE_FETCH_TIMEOUT_MS)
-  );
-  const usage = await Promise.race([usagePromise, timeout]);
+    ? runAntigravityUsageProbe(connection, proxyOptions, { signal })
+    : getUsageForProvider(connection, proxyOptions, { signal });
+  const usage = await waitForPreparation(usagePromise, signal);
+  signal.throwIfAborted();
   // getUsageForProvider nests remaining % inside `usage.quotas`; derive the
   // single gating snapshot (most-depleted window) from it. null → fail-open.
   // The raw payload is returned alongside it (not just the snapshot) so a
@@ -107,33 +126,63 @@ async function fetchLiveSnapshot(connection, providedProxyOptions = null) {
   return { snapshot: snapshot || null, rawUsage: usage };
 }
 
-function storeSnapshot(connectionId, snapshot) {
-  memoryCache.set(connectionId, { snapshot, fetchedAt: Date.parse(snapshot.fetchedAt) });
+function storeSnapshot(connection, snapshot, identity, signal) {
+  const stored = { ...snapshot, ...(connection.credentialRevisionId ? { credentialRevisionId: connection.credentialRevisionId } : {}) };
+  setBounded(memoryCache, connection.id, { snapshot: stored, identity, fetchedAt: Date.parse(snapshot.fetchedAt) });
   // Best-effort persistence so the dashboard and subsequent routing reads stay warm.
-  updateProviderConnection(connectionId, { lastQuotaSnapshot: snapshot }).catch(() => {});
+  updateProviderConnection(connection.id, { lastQuotaSnapshot: stored }, { expectedCredentials: connection, signal }).catch(() => {});
 }
 
 // Run one live fetch and, when it produced a usable snapshot, warm both caches.
 // Fail-open is preserved by the caller: a rejection here never pauses anything.
-async function runLiveRefresh(connection, proxyOptions) {
-  const fetched = await fetchLiveSnapshot(connection, proxyOptions);
-  if (fetched?.snapshot?.kind === "required-unavailable") return fetched;
-  if (fetched?.snapshot) storeSnapshot(connection.id, fetched.snapshot);
-  await retainQuotaUsage(connection, fetched?.rawUsage);
-  return fetched;
+async function runLiveRefresh(connection, proxyOptions, entry) {
+  const { signal } = entry.controller;
+  const timer = setTimeout(() => entry.controller.abort(new DOMException('Quota evidence timeout', 'TimeoutError')), LIVE_FETCH_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const fetched = await fetchLiveSnapshot(connection, proxyOptions, signal);
+    signal.throwIfAborted();
+    if (inFlightRefreshes.get(connection.id) !== entry) return { snapshot: null, rawUsage: null, failureClass: 'superseded' };
+    if (fetched?.snapshot?.kind === 'required-unavailable') return fetched;
+    if (fetched?.snapshot) {
+      negativeCache.delete(connection.id);
+      storeSnapshot(connection, fetched.snapshot, entry.identity, signal);
+    } else {
+      setBounded(negativeCache, connection.id, { identity: entry.identity, expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS, failureClass: 'empty' });
+    }
+    await retainQuotaUsage(connection, fetched?.rawUsage);
+    return { ...fetched, ...(!fetched?.snapshot ? { failureClass: 'empty' } : {}) };
+  } catch (error) {
+    const failureClass = error?.name === 'TimeoutError' ? 'timeout' : signal.aborted ? 'superseded' : 'fetch-error';
+    if (inFlightRefreshes.get(connection.id) === entry && failureClass !== 'superseded') {
+      setBounded(negativeCache, connection.id, { identity: entry.identity, expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS, failureClass });
+    }
+    return { snapshot: null, rawUsage: null, failureClass };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // Deduped per connection: the first miss starts the fetch, every concurrent
 // miss (and the background revalidator) awaits the same promise.
-function scheduleRefresh(connection, proxyOptions) {
-  let p = inFlightRefreshes.get(connection.id);
-  if (!p) {
-    p = runLiveRefresh(connection, proxyOptions).finally(() => {
-      if (inFlightRefreshes.get(connection.id) === p) inFlightRefreshes.delete(connection.id);
-    });
-    inFlightRefreshes.set(connection.id, p);
+function scheduleRefresh(connection, proxyOptions, identity) {
+  const negative = negativeCache.get(connection.id);
+  if (negative?.identity === identity && negative.expiresAt > Date.now()) {
+    return Promise.resolve({ snapshot: null, rawUsage: null, failureClass: negative.failureClass });
   }
-  return p;
+  let entry = inFlightRefreshes.get(connection.id);
+  if (entry?.identity !== identity) {
+    entry?.controller.abort(new DOMException('Quota credentials changed', 'AbortError'));
+    entry = { identity, controller: new AbortController(), promise: null };
+    inFlightRefreshes.set(connection.id, entry);
+    const owned = entry;
+    // A cancelled subscriber cannot cancel other waiters or poison a shared
+    // metadata refresh. This owner has its own bounded lifetime.
+    entry.promise = withRequestLifetime(undefined, () => runLiveRefresh(connection, proxyOptions, owned)).finally(() => {
+      if (inFlightRefreshes.get(connection.id) === owned) inFlightRefreshes.delete(connection.id);
+    });
+  }
+  return entry.promise;
 }
 
 /**
@@ -155,9 +204,12 @@ function scheduleRefresh(connection, proxyOptions) {
  *   usable snapshot, so it is never paired with evidence it did not produce.
  */
 export async function evaluateQuota(connection) {
+  const signal = requestSignal();
+  signal?.throwIfAborted();
   if (!isQuotaEligible(connection)) return { paused: false, reason: "ineligible", snapshot: null, rawUsage: null };
 
-  const proxyOptions = await buildProxyOptions(connection);
+  const proxyOptions = await waitForPreparation(buildProxyOptions(connection), signal);
+  signal?.throwIfAborted();
   if (proxyOptions?.kind === "required-unavailable") {
     return {
       paused: false,
@@ -168,20 +220,24 @@ export async function evaluateQuota(connection) {
     };
   }
 
-  let snapshot = readSnapshot(connection);
+  const identity = quotaEvidenceIdentity(connection, proxyOptions);
+  let snapshot = readSnapshot(connection, identity);
   let rawUsage = null;
+  let failureClass = null;
   if (!snapshot) {
-    const stale = staleSnapshot(connection);
+    const stale = staleSnapshot(connection, identity);
     if (stale) {
       // P-F2: serve the stale snapshot now, refresh asynchronously. The next
       // request sees fresh evidence; this one never waits on the provider.
       snapshot = stale;
-      scheduleRefresh(connection, proxyOptions).catch(() => {});
+      scheduleRefresh(connection, proxyOptions, identity).catch(() => {});
     } else {
       // No evidence anywhere: one deduped live fetch, awaited — the only case
       // an admission still waits on the provider, and only the first one in.
       try {
-        const fetched = await scheduleRefresh(connection, proxyOptions);
+        const fetched = await waitForPreparation(scheduleRefresh(connection, proxyOptions, identity), signal);
+        signal?.throwIfAborted();
+        failureClass = fetched?.failureClass || null;
         if (fetched?.snapshot?.kind === "required-unavailable") {
           return {
             paused: false,
@@ -198,7 +254,9 @@ export async function evaluateQuota(connection) {
         // as fresh.
         rawUsage = snapshot ? fetched?.rawUsage ?? null : null;
       } catch {
+        signal?.throwIfAborted();
         snapshot = null;
+        failureClass = 'fetch-error';
       }
     }
   }
@@ -209,6 +267,7 @@ export async function evaluateQuota(connection) {
     reason: paused ? "below-threshold" : snapshot ? "ok" : "no-data",
     snapshot,
     rawUsage,
+    ...(failureClass ? { failureClass } : {}),
   };
 }
 
@@ -221,9 +280,15 @@ export { getQuotaPauseInfo } from "@/shared/utils/quotaPause.js";
 
 // Exposed for tests / cache invalidation.
 export function _clearQuotaCache(connectionId) {
-  if (connectionId) memoryCache.delete(connectionId);
-  else {
+  if (connectionId) {
+    memoryCache.delete(connectionId);
+    negativeCache.delete(connectionId);
+    inFlightRefreshes.get(connectionId)?.controller.abort(new DOMException('Quota cache invalidated', 'AbortError'));
+    inFlightRefreshes.delete(connectionId);
+  } else {
     memoryCache.clear();
+    negativeCache.clear();
+    for (const entry of inFlightRefreshes.values()) entry.controller.abort(new DOMException('Quota cache invalidated', 'AbortError'));
     inFlightRefreshes.clear();
   }
 }

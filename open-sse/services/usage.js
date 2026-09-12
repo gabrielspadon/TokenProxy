@@ -44,7 +44,7 @@ const USAGE_HANDLERS = {
     onValidationRequired: c.onValidationRequired,
     onVerificationSuccess: c.onVerificationSuccess,
   }),
-  claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force }),
+  claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force, signal: c.signal }),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   qoder: async (c) => {
@@ -75,6 +75,7 @@ const USAGE_HANDLERS = {
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
+  options.signal?.throwIfAborted();
   const { provider, id: connectionId, accessToken, apiKey, providerSpecificData, projectId } = connection;
   const providerDataWithProjectId = {
     ...(providerSpecificData || {}),
@@ -90,11 +91,13 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
     apiKey,
     providerSpecificData,
     providerDataWithProjectId,
-    proxyOptions,
+    proxyOptions: options.signal ? { ...(proxyOptions || {}), signal: options.signal } : proxyOptions,
+    signal: options.signal,
     force: options.force === true,
     verificationContext: options.verificationContext,
     onValidationRequired: options.onValidationRequired,
     onVerificationSuccess: options.onVerificationSuccess,
   });
+  options.signal?.throwIfAborted();
   return withQuotaObservation(usage);
 }

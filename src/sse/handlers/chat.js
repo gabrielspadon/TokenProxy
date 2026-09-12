@@ -1,6 +1,8 @@
 import { withResourceAdmission } from '../services/resourceAdmission.js';
 import "open-sse/index.js";
 import { getRequestIdentity } from "../services/requestIdentity.js";
+import { getRequestFallbackDeadline, isFallbackDeadlineError } from "open-sse/utils/fallbackDeadline.js";
+import { withRequestLifetime } from "open-sse/utils/requestLifetime.js";
 
 import {
   getProviderCredentials,
@@ -50,14 +52,6 @@ import { recordApiKeyDevice } from "@/sse/services/apiKeyDevices.js";
 const REQUEST_CONNECTION_HEADER = "x-connection-id";
 // The header a caller uses to cap how many accounts one request may spend.
 const REQUEST_MAX_ATTEMPTS_HEADER = "x-max-attempts";
-// How long one request may spend walking the pool before it stops rotating and
-// hands back the upstream response it actually has. Accounts are no longer
-// benched after a failure, so nothing else bounds the walk: without this a
-// request could serially eat every account's connect timeout and leave the
-// caller waiting minutes for an error it could have had on the second attempt.
-// Checked only at a rotation, so fast failures (a 429 answers instantly) still
-// sweep the whole pool; it is slow failures that stop the sweep.
-const ROTATION_BUDGET_MS = 120_000;
 /**
  * Read the caller's attempt ceiling. Anything that is not a positive safe
  * integer is no ceiling at all: a "0", a "-1" or a "many" must not be read as
@@ -332,12 +326,18 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
+  getRequestFallbackDeadline(request);
   if (Number.isFinite(options.deadline)) {
     const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(options.deadline - Date.now())));
     const caller = options.signal || request?.signal;
     options = { ...options, signal: caller ? AbortSignal.any([caller, timeout]) : timeout };
   }
-  return withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline });
+  try {
+    return await withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline });
+  } catch (error) {
+    if (isFallbackDeadlineError(error)) return terminalAttemptResponse(errorResponse(504, error.message, { failurePhase: "routing" }));
+    throw error;
+  }
 }
 
 async function handleChatAdmitted(request, clientRawRequest = null, options = {}) {
@@ -629,6 +629,8 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,
+      signal: callerSignal,
+      deadline: getRequestFallbackDeadline(request),
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
         // Seed the cycle guard with this combo so a member naming it is refused
@@ -653,6 +655,8 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
     return handleComboChat({
       body,
+      signal: callerSignal,
+      deadline: getRequestFallbackDeadline(request),
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
         (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, callerSignal),
@@ -734,6 +738,7 @@ async function planCascadeStep(body, modelStr, clientRawRequest) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboChain = null, callerSignal = request?.signal, cascadeCtx = null, allowCascade = false) {
+  getRequestFallbackDeadline(request).throwIfExpired(callerSignal);
   // The cascade only engages for the model the caller actually asked for on a
   // solo request: combo members and capacity-adapter substitutes re-enter this
   // wrapper with allowCascade=false and dispatch unchanged.
@@ -755,7 +760,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // A retryable-class cheap failure escalates to the strong model with the
     // SAME body; a 4xx (non-retryable) does not auto-escalate. The escalation
     // pins the session so the next step goes straight to strong.
-    if (cascadeCtx.tag === "cascade-cheap" && isRetryableCascadeStatus(response?.status)) {
+    if (cascadeCtx.tag === "cascade-cheap" && isRetryableCascadeStatus(response?.status)
+        && response.headers?.get('x-tokenproxy-replay-safe') === 'true') {
       // The failed attempt's body can still be a live upstream stream wrapped
       // around the account lease; discarding it unread would hold both. Cancel
       // releases the lease and the socket before the strong dispatch spends its
@@ -772,6 +778,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 }
 
 async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboChain = null, callerSignal = request?.signal, routeKindTag = null) {
+  const fallbackDeadline = getRequestFallbackDeadline(request);
+  fallbackDeadline.throwIfExpired(callerSignal);
   // Same request object handleChat saw, so readRid's memoised WeakMap hands
   // back the SAME rid every hop of a recursive chat call.
   const rid = requestRid(request);
@@ -841,6 +849,8 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       return handleComboChat({
         body,
+        signal: callerSignal,
+        deadline: fallbackDeadline,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
           (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, new Set(chain), callerSignal),
@@ -910,10 +920,9 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // background job and wrong for an interactive client that would rather see
   // the first real error than wait out eight upstream timeouts.
   const maxAttempts = readAttemptCeiling(request);
-  const rotationStartedAt = Date.now();
-
   while (true) {
     if (callerSignal?.aborted) return errorResponse(499, "Request aborted");
+    fallbackDeadline.throwIfExpired(callerSignal);
     // Session affinity's ONLY input. resolveRoutingSessionHash (auth.js) hashes
     // whatever identity sessionManager can read out of these two fields; given
     // neither, it falls back to the literal "anonymous" and every request of a
@@ -952,7 +961,10 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       credentialOptions.preferredConnectionId = requestedConnectionId;
       credentialOptions.strictPreferredConnection = true;
     }
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, credentialOptions);
+    const credentials = await fallbackDeadline.run(signal => withRequestLifetime(signal,
+      () => getProviderCredentials(provider, excludeConnectionIds, model, credentialOptions), { admitted: true }), {
+      signal: callerSignal, onLateResult: value => releaseAccountLease(value?.accountLease),
+    });
     // The slot this selection reserved (auth.js reserve). It is held for the
     // WHOLE attempt and given back exactly once, whichever of this loop's many
     // exits ends it: the four aborts, the empty-stream rotation, the replay
@@ -970,6 +982,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
     const accountLease = credentials?.accountLease || null;
     let leaseHandedOff = false;
     try {
+      fallbackDeadline.throwIfExpired(callerSignal);
 
       // Selection may substitute a healthy account for the pinned one. For a
       // caller that named an account that is not a helpful fallback: it spends the
@@ -1024,19 +1037,19 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       }
 
       // Account selection shown in the unified "▶" line (acc:...)
-      const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+      const refreshedCredentials = await fallbackDeadline.run(() => checkAndRefreshToken(provider, credentials), { signal: callerSignal });
 
       // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
       if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
         const projectVerificationHooks = provider === "antigravity"
           ? await createAntigravityVerificationHooks(credentials.connectionId)
           : {};
-        const pid = await getProjectIdForConnection(
+        const pid = await fallbackDeadline.run(() => getProjectIdForConnection(
           credentials.connectionId,
           refreshedCredentials.accessToken,
           provider,
           projectVerificationHooks,
-        );
+        ), { signal: callerSignal });
         if (pid) {
           refreshedCredentials.projectId = pid;
           // Persist to DB in background so subsequent requests have it immediately
@@ -1056,6 +1069,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       const connectTimeout = {
         providerOverride: chatSettings.providerStrategies?.[provider]?.connectTimeoutMs,
         globalTimeout: chatSettings.connectTimeoutMs,
+        fallbackDeadline,
       };
       const chatVerificationHooks = provider === "antigravity"
         ? await createAntigravityVerificationHooks(credentials.connectionId)
@@ -1256,7 +1270,8 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       // Scoped to the quota class on a 429, so an uncertain generation outcome,
       // which is what the permission actually guards, still refuses to replay.
       const replaySafe = result.failureMetadata?.safeToReplay === true
-        || (failureClass === "quota" && result.status === HTTP_STATUS.RATE_LIMITED);
+        || (result.failureMetadata?.safeAcrossAccounts === true
+          && failureClass === "quota" && result.status === HTTP_STATUS.RATE_LIMITED);
 
       if (!replaySafe || mustWait) {
         decide("UP", "no-replay", { rid, why: mustWait ? "account-cooldown" : "generation-outcome-uncertain" });
@@ -1282,15 +1297,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
           leaseHandedOff = true;
           return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
         }
-        // Time budget spent. Another account would mean another upstream wait
-        // the caller has already paid too much for, so give them the real error.
-        const elapsedMs = Date.now() - rotationStartedAt;
-        if (elapsedMs >= ROTATION_BUDGET_MS) {
-          log.warn("CHAT", `[${provider}/${model}] rotation budget spent after ${Math.round(elapsedMs / 1000)}s over ${excludeConnectionIds.size + 1} account(s)`);
-          decide("UP", "attempt-ceiling", { rid, attempts: excludeConnectionIds.size + 1, why: `budget-${Math.round(elapsedMs / 1000)}s` });
-          leaseHandedOff = true;
-          return releaseAccountLeaseOnResponse(terminalAttemptResponse(result.response, cooldownMs), accountLease);
-        }
+        fallbackDeadline.throwIfExpired(callerSignal);
         const fails = (failCountByConn.get(credentials.connectionId) || 0) + 1;
         failCountByConn.set(credentials.connectionId, fails);
         // The same-account retry exists for a transient glitch. markAccountUnavailable

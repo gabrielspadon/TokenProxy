@@ -144,6 +144,24 @@ afterAll(() => {
 });
 
 describe("proxyAwareFetch MITM bypass aborts", () => {
+  it.each(['metadata', 'transport'])('composes the %s owner with the other transport lifetime', async owner => {
+    const metadata = new AbortController();
+    const transport = new AbortController();
+    const pending = settle(proxyAwareFetch(
+      'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
+      { method: 'POST', body: '{}', signal: transport.signal },
+      { signal: metadata.signal },
+    ));
+    await vi.dynamicImportSettled();
+    expect(seams.state.requests).toHaveLength(1);
+    const reason = new DOMException('fixture owner ended', 'AbortError');
+    (owner === 'metadata' ? metadata : transport).abort(reason);
+    expect((await pending).error).toBe(reason);
+    expect(seams.state.requests[0].destroyReasons).toEqual([reason]);
+    expect(seams.state.sockets[0].destroyReasons).toEqual([reason]);
+    expect(nativeFetch).not.toHaveBeenCalled();
+  });
+
   it("settles at the response-header deadline while DNS is pending and removes its listener", async () => {
     seams.state.dnsResolve = (_hostname, callback) => {
       setTimeout(() => callback(new Error("late DNS failure")), 2000);

@@ -4,11 +4,12 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
-import { errorResponse, unavailableResponse } from "../utils/error.js";
+import { errorResponse, unavailableResponse, extractRetryAfterDeadline } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { peekStreamForContent } from "../utils/streamContent.js";
 import { estimateTokenCount } from "./memory/contextCompactor.js";
+import { createFallbackDeadline, isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -29,13 +30,18 @@ const COMBO_RETRY_STATUSES = new Set([502, 503, 504]);
 // Retry-After in seconds or as an HTTP-date. The provider's own number beats the
 // classifier's guess, and a long one is exactly what tells the combo to move on
 // instead of parking the request.
-function retryAfterDelayMs(response) {
-  const raw = response?.headers?.get?.("retry-after");
-  if (!raw) return null;
-  const secs = Number(raw);
-  if (Number.isFinite(secs)) return secs > 0 ? secs * 1000 : null;
-  const dateMs = Date.parse(raw);
-  return Number.isFinite(dateMs) && dateMs > Date.now() ? dateMs - Date.now() : null;
+function selectComboFailure(previous, candidate) {
+  if (!previous) return candidate;
+  // Status, message and reset belong to one rejection. Prefer an actionable
+  // quota failure, then its earliest known reset, without splicing envelopes.
+  if (previous.status !== 429 && candidate.status === 429) return candidate;
+  if (previous.status === candidate.status && candidate.retryAt !== null &&
+      (previous.retryAt === null || candidate.retryAt < previous.retryAt)) return candidate;
+  return previous;
+}
+
+function discardResponse(response) {
+  try { Promise.resolve(response.body?.cancel()).catch(() => {}); } catch {}
 }
 
 // Prefixes used when flattening tool turns into plain prose for panel models.
@@ -705,7 +711,7 @@ function bodyForAttempt(body) {
   }
 }
 
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, signal, deadline = createFallbackDeadline() }) {
   // Apply rotation strategy if enabled
   let rotatedModels = getRotatedModels(
     models.map((modelStr, originalIndex) => ({ modelStr, originalIndex })),
@@ -719,9 +725,8 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     contextTokens: estimateRequestContextTokens(body), required, autoSwitch,
   });
 
-  let lastError = null;
-  let earliestRetryAfter = null;
-  let lastStatus = null;
+  let failure = null;
+  let safeFailures = 0;
   const retryAttempts = new Map();
 
   for (let i = 0; i < rotatedModels.length; i++) {
@@ -729,7 +734,12 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
     try {
+      deadline.throwIfExpired(signal);
       const result = await handleSingleModel(bodyForAttempt(body), modelStr);
+      if (signal?.aborted) {
+        discardResponse(result);
+        signal.throwIfAborted();
+      }
       if (result.headers.get("x-tokenproxy-replay-safe") === "false") {
         const terminal = withComboTrackingHeaders(result, modelStr);
         if (!terminal.headers.has("x-should-retry")) terminal.headers.set("x-should-retry", "false");
@@ -768,18 +778,15 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
       // Extract error info from response
       let errorText = result.statusText || "";
-      let retryAfter = null;
+      // Normalize seconds immediately, before another member consumes time.
+      let retryAt = extractRetryAfterDeadline(result);
       try {
         const errorBody = await result.clone().json();
         errorText = errorBody?.error?.message || errorBody?.error || errorBody?.message || errorText;
-        retryAfter = errorBody?.retryAfter || null;
+        const bodyRetryAt = Date.parse(errorBody?.retryAfter ?? errorBody?.error?.retryAfter);
+        if (retryAt === null && Number.isFinite(bodyRetryAt) && bodyRetryAt > Date.now()) retryAt = bodyRetryAt;
       } catch {
         // Ignore JSON parse errors
-      }
-
-      // Track earliest retryAfter across all combo models
-      if (retryAfter && (!earliestRetryAfter || new Date(retryAfter) < new Date(earliestRetryAfter))) {
-        earliestRetryAfter = retryAfter;
       }
 
       // Normalize error text to string (Worker-safe)
@@ -818,6 +825,10 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         return withComboTrackingHeaders(result, modelStr);
       }
 
+      safeFailures++;
+      failure = selectComboFailure(failure, { status: result.status, message: errorText || String(result.status), retryAt });
+      discardResponse(result);
+
       // Waiting out the cooldown and then advancing anyway spent the delay and
       // still left the member, so a chain whose first entry was briefly
       // overloaded fell onto one that may have no credentials at all (#337).
@@ -829,23 +840,25 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // placeholder, not retry info. Sleeping on it would park the chain for
       // seconds per member on the strength of a guess.
       const classifiedDelayMs = cooldownMs === TRANSIENT_COOLDOWN_MS ? null : cooldownMs;
-      const retryDelayMs = retryAfterDelayMs(result) ?? classifiedDelayMs;
+      const retryDelayMs = retryAt === null ? classifiedDelayMs : Math.max(0, retryAt - Date.now());
       const attempts = retryAttempts.get(i) || 0;
       if (COMBO_RETRY_STATUSES.has(result.status) && attempts < COMBO_RETRY_MAX_ATTEMPTS &&
           retryDelayMs !== null && retryDelayMs > 0 && retryDelayMs <= COMBO_RETRY_MAX_DELAY_MS) {
         retryAttempts.set(i, attempts + 1);
         log.info("COMBO", `Model ${modelStr} transient ${result.status}, retry ${attempts + 1}/${COMBO_RETRY_MAX_ATTEMPTS} in ${retryDelayMs}ms`);
-        await new Promise(r => setTimeout(r, retryDelayMs));
+        await deadline.wait(retryDelayMs, signal);
         i--;
         continue;
       }
 
       // Fallback to next model
-      lastError = errorText || String(result.status);
-      if (!lastStatus) lastStatus = result.status;
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
-      const response = errorResponse(502, error.message || "Provider attempt failed with an uncertain outcome");
+      const response = signal?.aborted
+        ? errorResponse(499, "Request aborted")
+        : isFallbackDeadlineError(error)
+          ? errorResponse(504, error.message, { failurePhase: "routing" })
+          : errorResponse(502, error.message || "Provider attempt failed with an uncertain outcome");
       response.headers.set("x-tokenproxy-replay-safe", "false");
       response.headers.set("x-should-retry", "false");
       return withComboTrackingHeaders(response);
@@ -856,21 +869,24 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   // Use 503 (Service Unavailable) rather than 406 (Not Acceptable) — 406 implies
   // the request itself is invalid, but here the providers are simply unavailable
   // or have no active credentials. 503 is more accurate and retryable by clients.
-  const allDisabled = lastError && lastError.toLowerCase().includes("no credentials");
-  const status = allDisabled ? 503 : (lastStatus || 503);
-  const msg = lastError || "All combo models unavailable";
+  const allDisabled = failure?.message.toLowerCase().includes("no credentials");
+  const status = allDisabled ? 503 : (failure?.status || 503);
+  const msg = failure?.message || "All combo models unavailable";
+  let response;
 
-  if (earliestRetryAfter) {
-    const retryHuman = formatRetryAfter(earliestRetryAfter);
+  if (failure?.retryAt !== null && failure?.retryAt !== undefined) {
+    const retryAfter = new Date(failure.retryAt).toISOString();
+    const retryHuman = formatRetryAfter(retryAfter);
     log.warn("COMBO", `All models failed | ${msg} (${retryHuman})`);
-    return withComboTrackingHeaders(unavailableResponse(status, msg, earliestRetryAfter, retryHuman));
+    response = unavailableResponse(status, msg, retryAfter, retryHuman);
+  } else {
+    log.warn("COMBO", `All models failed | ${msg}`);
+    response = errorResponse(status, msg);
   }
-
-  log.warn("COMBO", `All models failed | ${msg}`);
-  return new Response(
-    JSON.stringify({ error: { message: msg } }),
-    { status, headers: { "Content-Type": "application/json", "x-tokenproxy-combo": "true" } }
-  );
+  // Unsafe/unknown outcomes return above. Only inspected safe rejections can
+  // reach exhaustion and permit an enclosing configured combo to continue.
+  response.headers.set("x-tokenproxy-replay-safe", safeFailures > 0 ? "true" : "false");
+  return withComboTrackingHeaders(response);
 }
 
 /**

@@ -189,7 +189,7 @@ describe("evaluateQuota (routing engine)", () => {
     expect(getUsageForProvider).toHaveBeenCalledTimes(1);
     expect(updateProviderConnection).toHaveBeenCalledWith("c1", expect.objectContaining({
       lastQuotaSnapshot: expect.objectContaining({ windows: expect.arrayContaining([expect.objectContaining({ key: "session (5h)", remainingPercentage: 10 })]) }),
-    }));
+    }), expect.objectContaining({ expectedCredentials: conn, signal: expect.any(AbortSignal) }));
   });
 
   it("does not pause when only an unconfigured window is low", async () => {

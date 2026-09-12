@@ -1,5 +1,6 @@
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
-import { isReplaySafeRejection, withReplaySafety } from "../utils/replaySafety.js";
+import { isReplaySafeRejection, isSafeQuotaAccountRejection, withReplaySafety } from "../utils/replaySafety.js";
+import { isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
 import { createStageGuard } from "../utils/stageOutcome.js";
 import { pendingShapingHandoffs } from "../../src/lib/db/repos/shapingHandoffsRepo.js";
 import { injectHandoffPackets } from "../services/memory/handoffStore.js";
@@ -422,12 +423,26 @@ function updatePrefixTelemetry(scope, serialized, tracked) {
 export async function handleChatCore(options) {
   try {
     options.callerSignal?.throwIfAborted();
-    return await handleChatCoreAttempt(options);
+    options.connectTimeout?.fallbackDeadline?.throwIfExpired(options.callerSignal);
+    const deadline = options.connectTimeout?.fallbackDeadline;
+    return deadline
+      ? await deadline.run((signal, releaseFallbackPreparation) => handleChatCoreAttempt({
+        ...options, callerSignal: signal, releaseFallbackPreparation,
+      }), { signal: options.callerSignal, onLateResult: discardLateResponse })
+      : await handleChatCoreAttempt(options);
   } catch (error) {
+    if (isFallbackDeadlineError(error)) {
+      trackPendingRequest(options.modelInfo.model, options.modelInfo.provider, options.connectionId, false);
+      return createErrorResult(504, error.message, null, { safeToReplay: false }, options.requestId);
+    }
     if (!options.callerSignal?.aborted) throw error;
     trackPendingRequest(options.modelInfo.model, options.modelInfo.provider, options.connectionId, false);
     return createCallerAbortResult();
   }
+}
+
+function discardLateResponse(result) {
+  try { Promise.resolve(result?.response?.body?.cancel()).catch(() => {}); } catch {}
 }
 
 async function handleChatCoreAttempt({
@@ -489,6 +504,7 @@ async function handleChatCoreAttempt({
   sourceFormatOverride,
   providerThinking,
   connectTimeout,
+  releaseFallbackPreparation,
   memorySettings,
   toolDisclosure,
   codexFastMode,
@@ -2134,6 +2150,13 @@ async function handleChatCoreAttempt({
       return budgetErrorResult(error, rid);
     }
     if (contextTelemetry?.budgetReservationId) await markBudgetUncertain(contextTelemetry.budgetReservationId, "transport-outcome-unknown");
+    if (isFallbackDeadlineError(error)) {
+      trackPendingRequest(model, provider, connectionId, false, true);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
+      streamController.handleComplete();
+      reqSummary("failed", { rid, conn: connPrefix, status: 504, why: "fallback-deadline", ...saverFields });
+      return withSaverHeaders(createErrorResult(504, error.message, null, { safeToReplay: false }, rid), saverMeta);
+    }
     const isAntigravity = provider === "antigravity";
     const sinkError = isAntigravity ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : (error.message || String(error));
     if (callerSignal?.aborted && (isCallerAbortError(error) || error.name === "AbortError")) {
@@ -2199,10 +2222,15 @@ async function handleChatCoreAttempt({
   };
   const executeAttempt = async (args) => {
     executionSignal.throwIfAborted();
+    connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
     await requireBudgetDispatchCoverage(apiKey, executor.supportsBudgetDispatch === true);
     executionSignal.throwIfAborted();
+    connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
     let dispatches = 0;
-    return executor.execute({ ...args, beforeDispatch: async (wire = {}) => {
+    releaseFallbackPreparation?.();
+    const execute = (signal, releaseHeaderBudget) => executor.execute({ ...args, signal, beforeDispatch: async (wire = {}) => {
+      signal?.throwIfAborted();
+      connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
       if (dispatches++ > 0) {
         contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
       }
@@ -2213,7 +2241,14 @@ async function handleChatCoreAttempt({
       if (structure) contextTelemetry.structures.push(structure);
       contextTelemetry.dispatchCoverage = "physical-dispatch";
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
-    }, afterDispatch: (result) => observeBudgetResponse(contextTelemetry, result) });
+      connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
+    }, afterDispatch: (result) => {
+      releaseHeaderBudget?.();
+      return observeBudgetResponse(contextTelemetry, result);
+    } });
+    return connectTimeout?.fallbackDeadline
+      ? connectTimeout.fallbackDeadline.run(execute, { signal: executionSignal, onLateResult: discardLateResponse })
+      : execute(executionSignal);
   };
   try {
     const result = await executeAttempt({
@@ -2251,8 +2286,10 @@ async function handleChatCoreAttempt({
       // providers (xAI/grok-cli) issue a new RT on every refresh; without this,
       // refreshWithRetry's 2nd/3rd attempt reuses the already-consumed RT →
       // invalid_grant → auth_failed retryable=false.
-      const newCredentials = await refreshWithRetry(
+      const refresh = () => refreshWithRetry(
         async () => {
+          executionSignal.throwIfAborted();
+          connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
           const result = await executor.refreshCredentials(credentials, log);
           if (
             result?.refreshToken &&
@@ -2267,6 +2304,9 @@ async function handleChatCoreAttempt({
         3,
         log,
       );
+      const newCredentials = connectTimeout?.fallbackDeadline
+        ? await connectTimeout.fallbackDeadline.run(refresh, { signal: executionSignal })
+        : await refresh();
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         if (log?.line)
           log.line(reqTag, "🔑", `TOKEN REFRESHED · ${provider}/${model}`);
@@ -2307,6 +2347,7 @@ async function handleChatCoreAttempt({
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
       }
     } catch (e) {
+      if (isFallbackDeadlineError(e) || executionSignal.aborted) return mapTransportError(e);
       log?.warn?.(
         "TOKEN",
         `${provider.toUpperCase()} | refresh threw: ${provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : e.message}`,
@@ -2552,8 +2593,10 @@ async function handleChatCoreAttempt({
     reqSummary("failed", { rid, conn: connPrefix, status: safeStatusCode, why: "upstream", ...saverFields });
     // An executor may convert an accepted SSE failure to HTTP. Preserve its
     // explicit no-replay provenance instead of treating it as a rejection.
-    const safeToReplay = isReplaySafeRejection(providerResponse);
-    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay }, rid), saverMeta);
+    const safeAcrossAccounts = isSafeQuotaAccountRejection(providerResponse, errorPayload);
+    const safeToReplay = isReplaySafeRejection(providerResponse)
+      && (providerResponse.status !== HTTP_STATUS.RATE_LIMITED || safeAcrossAccounts);
+    return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay, safeAcrossAccounts }, rid), saverMeta);
   }
 
   const sharedCtx = {

@@ -265,7 +265,7 @@ describe('auth.js selection emissions', () => {
     expect(paused).toContain('why=window-below-threshold');
     const unknown = findLine('SEL.quota-unknown');
     expect(unknown).toContain('conn=conn_uuu');
-    expect(unknown).toContain('why=evidence-absent-not-empty');
+    expect(unknown).toContain('why=fetch-error');
     leases.releaseAccountLease(picked.accountLease);
   });
 

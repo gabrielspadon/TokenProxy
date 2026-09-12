@@ -22,3 +22,27 @@ export function isReplaySafeRejection(response) {
   if (permission === 'false' || response.headers?.get?.('x-should-retry') === 'false') return false;
   return permission === 'true' || REJECTED_STATUSES.has(response.status);
 }
+
+// An account-specific retry prohibition is distinct from accepted generation.
+// Only a complete parsed canonical 429 envelope can make that distinction.
+export function isSafeQuotaAccountRejection(response, payload) {
+  if (response?.status !== 429 || response.headers?.get?.('x-tokenproxy-replay-safe') === 'false') return false;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  if (Object.keys(payload).some(key => !['error', 'type', 'request_id', 'requestId'].includes(key))) return false;
+  if (!payload.error || typeof payload.error !== 'object' || Array.isArray(payload.error)
+      || typeof payload.error.message !== 'string' || !payload.error.message.trim()) return false;
+  const forbidden = /usage|tokens|cost|output|choices|content|completion|generation|tool|result|accepted/i;
+  const pending = [payload];
+  let inspected = 0;
+  while (pending.length) {
+    const value = pending.pop();
+    if (++inspected > 1024) return false;
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value)) {
+        if (forbidden.test(key)) return false;
+        if (child && typeof child === 'object') pending.push(child);
+      }
+    }
+  }
+  return true;
+}

@@ -313,7 +313,7 @@ describe("chat connect timeout propagation", () => {
     await expect(handleChatCore(options())).resolves.toMatchObject({ success: false, status: 502 });
   });
 
-  it.each([400, 401, 403, 503])("preserves non-replayable provenance on an executor's synthetic HTTP %s", async (status) => {
+  it.each([400, 401, 403, 429, 503])("preserves non-replayable provenance on an executor's synthetic HTTP %s", async (status) => {
     const result = response(status);
     result.response.headers.set("x-tokenproxy-replay-safe", "false");
     mocks.execute.mockResolvedValueOnce(result);
@@ -323,6 +323,17 @@ describe("chat connect timeout propagation", () => {
     });
     expect(mocks.execute).toHaveBeenCalledTimes(1);
     expect(mocks.refreshWithRetry).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('carries wire-proven quota rejection separately from same-account retry advice (generation evidence %s)', async generationEvidence => {
+    const upstream = response(429);
+    upstream.response.headers.set('x-should-retry', 'false');
+    mocks.execute.mockResolvedValueOnce(upstream);
+    mocks.parseUpstreamError.mockResolvedValueOnce({ statusCode: 429, message: 'Usage credits required',
+      errorPayload: { error: { message: 'Usage credits required' }, ...(generationEvidence ? { usage: { total_tokens: 1 } } : {}) } });
+    const result = await handleChatCore(options());
+    expect(result.failureMetadata).toMatchObject({ safeToReplay: false, safeAcrossAccounts: !generationEvidence });
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 
   it("forbids another replay after an accepted field-strip retry returns a synthetic failure", async () => {

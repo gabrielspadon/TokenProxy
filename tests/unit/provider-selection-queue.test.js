@@ -36,6 +36,8 @@ vi.mock("@/sse/utils/logger.js", () => ({
 
 const auth = await import("@/sse/services/auth.js");
 const { getProviderCredentials } = auth;
+const { withRequestLifetime } = await import('open-sse/utils/requestLifetime.js');
+const { releaseAccountLease, leaseRegistry } = await import('@/sse/services/accountLeaseRegistry.js');
 
 function deferred() {
   let resolve;
@@ -134,6 +136,7 @@ describe("provider-scoped account-selection queue", () => {
     const firstGate = deferred();
     const secondGate = deferred();
     const firstStarted = deferred();
+    const secondStarted = deferred();
     let calls = 0;
     dbMocks.getProviderConnections.mockImplementation(({ provider }) => {
       calls += 1;
@@ -141,6 +144,7 @@ describe("provider-scoped account-selection queue", () => {
         firstStarted.resolve();
         return firstGate.promise;
       }
+      secondStarted.resolve();
       return secondGate.promise;
     });
 
@@ -152,8 +156,7 @@ describe("provider-scoped account-selection queue", () => {
       await drainMicrotasks();
       expect(calls).toBe(1);
       firstGate.resolve([connection("openai", "openai-1")]);
-      await first;
-      await drainMicrotasks();
+      await secondStarted.promise;
       expect(calls).toBe(2);
     } finally {
       firstGate.resolve([connection("openai", "openai-1")]);
@@ -166,6 +169,7 @@ describe("provider-scoped account-selection queue", () => {
     const firstGate = deferred();
     const secondGate = deferred();
     const firstStarted = deferred();
+    const secondStarted = deferred();
     const queriedProviders = [];
     dbMocks.getProviderConnections.mockImplementation(({ provider }) => {
       queriedProviders.push(provider);
@@ -173,6 +177,7 @@ describe("provider-scoped account-selection queue", () => {
         firstStarted.resolve();
         return firstGate.promise;
       }
+      secondStarted.resolve();
       return secondGate.promise;
     });
 
@@ -184,8 +189,7 @@ describe("provider-scoped account-selection queue", () => {
       await drainMicrotasks();
       expect(queriedProviders).toEqual(["kilocode"]);
       firstGate.resolve([connection("kilocode", "kilo-1")]);
-      await aliasSelection;
-      await drainMicrotasks();
+      await secondStarted.promise;
       expect(queriedProviders).toEqual(["kilocode", "kilocode"]);
     } finally {
       firstGate.resolve([connection("kilocode", "kilo-1")]);
@@ -287,5 +291,58 @@ describe("provider-scoped account-selection queue", () => {
     });
     expect(quotaMocks.evaluateQuota).toHaveBeenCalledTimes(1);
     expect(quotaMocks.evaluateQuota).toHaveBeenCalledWith(preferred);
+    releaseAccountLease(credentials.accountLease);
+  });
+
+  it('lets another account of the same provider proceed during a cold quota read', async () => {
+    const cold = deferred(), started = deferred();
+    const a = connection('openai', 'cold-a'), b = connection('openai', 'warm-b');
+    dbMocks.getProviderConnections.mockResolvedValue([a, b]);
+    quotaMocks.evaluateQuota.mockImplementation(c => {
+      if (c.id === a.id) { started.resolve(); return cold.promise; }
+      return { paused: false, reason: 'ineligible', snapshot: null };
+    });
+    const first = getProviderCredentials('openai', null, 'fixture-model', { preferredConnectionId: a.id, strictPreferredConnection: true });
+    await started.promise;
+    try {
+      const second = await getProviderCredentials('openai', null, 'fixture-model', { preferredConnectionId: b.id, strictPreferredConnection: true });
+      expect(second.connectionId).toBe(b.id);
+      releaseAccountLease(second.accountLease);
+    } finally {
+      cold.resolve({ paused: false, reason: 'no-data', failureClass: 'empty', snapshot: null });
+      releaseAccountLease((await first)?.accountLease);
+    }
+  });
+
+  it('revalidates credentials after the remote read before reserving an account', async () => {
+    const pending = deferred(), started = deferred();
+    let current = connection('openai', 'rotating-account');
+    dbMocks.getProviderConnections.mockImplementation(async () => [current]);
+    quotaMocks.evaluateQuota.mockImplementationOnce(() => { started.resolve(); return pending.promise; });
+    const selection = getProviderCredentials('openai', null, 'fixture-model', { preferredConnectionId: current.id });
+    await started.promise;
+    current = { ...current, apiKey: 'new-fixture-credential' };
+    pending.resolve({ paused: false, reason: 'no-data', snapshot: null });
+    const result = await selection;
+    expect(result.apiKey).toBe('new-fixture-credential');
+    expect(quotaMocks.evaluateQuota).toHaveBeenCalledTimes(2);
+    releaseAccountLease(result.accountLease);
+  });
+
+  it('cancels a quota waiter without a late reservation or retained provider lock', async () => {
+    const pending = deferred(), started = deferred();
+    const account = connection('openai', 'cancelled-account');
+    dbMocks.getProviderConnections.mockResolvedValue([account]);
+    quotaMocks.evaluateQuota.mockImplementationOnce(() => { started.resolve(); return pending.promise; });
+    const controller = new AbortController();
+    const selection = withRequestLifetime(controller.signal, () => getProviderCredentials('openai', null, 'fixture-model', { preferredConnectionId: account.id })).catch(error => error);
+    await started.promise;
+    controller.abort(new DOMException('fixture cancellation', 'AbortError'));
+    expect((await selection).name).toBe('AbortError');
+    pending.resolve({ paused: false, reason: 'no-data', snapshot: null });
+    await drainMicrotasks();
+    expect(leaseRegistry.inFlight(account.id)).toBe(0);
+    expect(auth._getProviderSelectionQueueSize()).toBe(0);
+    expect(dbMocks.getProviderConnections).toHaveBeenCalledTimes(1);
   });
 });

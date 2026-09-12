@@ -142,6 +142,55 @@ beforeEach(() => {
   authMocks.getProviderCredentials.mockResolvedValue(null);
 });
 
+describe('fallback deadline across preparation', () => {
+  it('does not escalate a configured cascade after an uncertain cheap-model failure', async () => {
+    settingsMocks.getSettings.mockResolvedValue({ cascadePairs: [{ strong: 'prov/strong', cheap: 'prov/cheap' }] });
+    authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'c1', providerSpecificData: {} });
+    refreshMocks.checkAndRefreshToken.mockImplementation(async (_p, c) => c);
+    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 0, failureClass: 'transient' });
+    coreMocks.handleChatCore.mockResolvedValue({ success: false, status: 502, error: 'Interrupted after acceptance',
+      failureMetadata: { safeToReplay: false }, response: Response.json({ error: { message: 'Interrupted after acceptance' } }, { status: 502 }) });
+    const response = await handleChat(request({ model: 'prov/strong', messages: [{ role: 'user', content: 'Inspect this' }] }));
+    expect(response.status).toBe(502);
+    expect(coreMocks.handleChatCore).toHaveBeenCalledTimes(1);
+    expect(coreMocks.handleChatCore.mock.calls[0][0].modelInfo.model).toBe('cheap');
+    expect(response.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+  });
+
+  it('does not dispatch after account selection consumes the request budget', async () => {
+    let clock = 0;
+    const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      authMocks.getProviderCredentials.mockImplementation(async () => {
+        clock = 120_001;
+        return { connectionId: 'c1', accountLease: 'test-lease' };
+      });
+      const response = await handleChat(request());
+      expect(response.status).toBe(504);
+      expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+      const { releaseAccountLease } = await import('@/sse/services/accountLeaseRegistry.js');
+      expect(releaseAccountLease).toHaveBeenCalledWith('test-lease');
+    } finally { monotonic.mockRestore(); }
+  });
+
+  it('does not dispatch after credential refresh consumes the remaining budget', async () => {
+    let clock = 0;
+    const monotonic = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+    try {
+      authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'c1', accountLease: 'test-lease' });
+      refreshMocks.checkAndRefreshToken.mockImplementationOnce(async (_, credentials) => {
+        clock = 120_001;
+        return credentials;
+      });
+      const response = await handleChat(request());
+      expect(response.status).toBe(504);
+      expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+      const { releaseAccountLease } = await import('@/sse/services/accountLeaseRegistry.js');
+      expect(releaseAccountLease).toHaveBeenCalledWith('test-lease');
+    } finally { monotonic.mockRestore(); }
+  });
+});
+
 describe('body and model validation', () => {
   it('refuses an unparseable JSON body with 400', async () => {
     const res = await handleChat(request('{not json'));

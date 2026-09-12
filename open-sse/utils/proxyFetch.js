@@ -610,6 +610,12 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 }
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
+  // Metadata owners can bound their whole read, including response bodies.
+  // Keep any narrower transport timeout and explicit request cancellation.
+  if (proxyOptions?.signal) {
+    options = { ...options, signal: options.signal
+      ? AbortSignal.any([options.signal, proxyOptions.signal]) : proxyOptions.signal };
+  }
   const attempt = { dispatched: false };
   try {
     return await performProxyAwareFetch(url, options, proxyOptions, attempt);

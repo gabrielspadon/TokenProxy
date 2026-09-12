@@ -37,6 +37,15 @@ function setBounded(map, key, value) {
 }
 
 export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
+  // A bounded metadata owner (the routing quota cache) already coalesces its
+  // subscribers. Its timeout must not cancel the dashboard's separate cached
+  // read or publish an aborted result into that cache.
+  if (options.signal) {
+    options.signal.throwIfAborted();
+    const result = await fetchClaudeUsageRaw(accessToken, { ...(proxyOptions || {}), signal: options.signal });
+    options.signal.throwIfAborted();
+    return result;
+  }
   const force = options?.force === true;
 
   // Serve in-flight or fresh cached result (skip on manual force)
