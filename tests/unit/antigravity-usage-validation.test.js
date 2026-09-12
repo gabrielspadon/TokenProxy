@@ -466,7 +466,7 @@ describe("Antigravity usage verification", () => {
 
     expect(response.status).toBe(401);
     expect(JSON.stringify([payload, error.mock.calls])).not.toContain(opaque);
-    expect(payload).toEqual({ error: "Antigravity upstream request failed" });
+    expect(payload).toEqual({ error: "Antigravity upstream request failed", code: "reauth_required" });
   });
 
   it("does not expose an opaque probe diagnostic through the Antigravity usage route", async () => {
