@@ -35,13 +35,13 @@ function sourceRows() { return ['requestStats', 'usageHistory'].map(table => db.
 beforeEach(() => {
   raw = new DatabaseSync(':memory:');
   raw.exec(`PRAGMA foreign_keys=ON;
-    CREATE TABLE requestStats(id TEXT PRIMARY KEY,dataOrigin TEXT,latencyTotal INTEGER,model TEXT,payload BLOB);
+    CREATE TABLE requestStats(id TEXT PRIMARY KEY,dataOrigin TEXT,latencyTotal INTEGER,model TEXT,payload BLOB,sourceUsageId INTEGER);
     CREATE TABLE usageHistory(id INTEGER PRIMARY KEY,dataOrigin TEXT,cost REAL,tokens TEXT);
-    INSERT INTO requestStats VALUES('fixture','unknown',88600000000,'gpt-5.6-sol',X'007f');
-    INSERT INTO requestStats VALUES('unusual','unknown',88600000000,'gpt-5.6-sol',NULL);
-    INSERT INTO requestStats VALUES('production','production',20,'gpt-5.6-sol',NULL);
-    INSERT INTO requestStats VALUES('new-test','test',20,'gpt-5.6-sol',NULL);
-    INSERT INTO requestStats VALUES('imported','import',20,'gpt-5.6-sol',NULL);
+    INSERT INTO requestStats VALUES('fixture','unknown',88600000000,'gpt-5.6-sol',X'007f',NULL);
+    INSERT INTO requestStats VALUES('unusual','unknown',88600000000,'gpt-5.6-sol',NULL,NULL);
+    INSERT INTO requestStats VALUES('production','production',20,'gpt-5.6-sol',NULL,NULL);
+    INSERT INTO requestStats VALUES('new-test','test',20,'gpt-5.6-sol',NULL,NULL);
+    INSERT INTO requestStats VALUES('imported','import',20,'gpt-5.6-sol',NULL,NULL);
     INSERT INTO usageHistory VALUES(1,'unknown',999999.0,'{"test": true}');
     INSERT INTO usageHistory VALUES(2,NULL,999999.0,'{}');`);
   for (const name of ['telemetryQuarantineReceipts', 'telemetryQuarantineRows']) raw.exec(buildCreateTableSql(name, TELEMETRY_OUTCOME_TABLES[name]));
@@ -79,6 +79,19 @@ it('atomically excludes only proven rows, preserves all source data and reverses
   expect(revertQuarantine(db, value, { evidence: EVIDENCE }).changed).toBe(false);
   expect(db.all('SELECT * FROM telemetryQuarantineRows')).toHaveLength(2);
   expect(() => applyQuarantine(db, value, { evidence: EVIDENCE })).toThrow('already reverted');
+});
+
+it('excludes explicitly linked backfill rows while retaining unproven bh-name lookalikes', () => {
+  raw.exec("INSERT INTO requestStats(id,dataOrigin,sourceUsageId) VALUES('derived','unknown',1),('bh-1','unknown',NULL)");
+  const value = createQuarantineManifest(db, { evidence: EVIDENCE, rows: [{ sourceTable: 'usageHistory', rowId: '1' }] });
+  applyQuarantine(db, value, { evidence: EVIDENCE });
+  expect(visible('requestStats')).not.toContain('derived');
+  expect(visible('requestStats')).toContain('bh-1');
+  revertQuarantine(db, value, { evidence: EVIDENCE });
+  expect(visible('requestStats')).toContain('derived');
+  raw.exec("UPDATE usageHistory SET dataOrigin='test' WHERE id=1");
+  expect(visible('requestStats')).not.toContain('derived');
+  expect(visible('requestStats')).toContain('bh-1');
 });
 
 it.each(['fingerprint', 'missing', 'evidence', 'selector', 'count', 'duplicate', 'row-id', 'table', 'extra-field'])('fails closed on %s mismatch without partial receipt writes', mode => {
