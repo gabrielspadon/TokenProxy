@@ -5,6 +5,7 @@ import { DATA_DIR } from "../dataDir.js";
 export const DB_DIR = path.join(DATA_DIR, "db");
 export const DATA_FILE = path.join(DB_DIR, "data.sqlite");
 export const BACKUPS_DIR = path.join(DB_DIR, "backups");
+export const SECRET_KEY_FILE = path.join(DB_DIR, "secret.key");
 // The DB holds provider OAuth access/refresh tokens and plaintext client API
 // keys, so it is at least as sensitive as auth/cli-secret and jwt-secret (both
 // already written with mode 0o600). Without an explicit mode it inherits the
@@ -74,8 +75,7 @@ export function hardenPermissions() {
     if (fs.existsSync(dir)) chmodQuiet(dir, SECRET_DIR_MODE);
   }
   // -wal and -shm are created by SQLite itself, so they inherit the umask too.
-  for (const suffix of ["", "-wal", "-shm"]) {
-    const file = `${DATA_FILE}${suffix}`;
+  for (const file of [SECRET_KEY_FILE, ...["", "-wal", "-shm"].map((suffix) => `${DATA_FILE}${suffix}`)]) {
     if (fs.existsSync(file)) chmodQuiet(file, SECRET_FILE_MODE);
   }
 }
