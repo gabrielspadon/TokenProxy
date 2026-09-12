@@ -215,7 +215,7 @@ describe("handleChatCore REQ.ok one-liner", () => {
     const reqs = reqLines();
     expect(reqs).toHaveLength(1);
     expect(reqs[0]).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=abcdef1234 conn=test-con route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=abcdef1234 conn=test-con route=openai\/gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
     );
   });
 
@@ -561,7 +561,7 @@ describe("REQ.ok save=/ce= with a composed saver pipeline", () => {
     expect(reqs).toHaveLength(1);
     // "hello" → "hi" is a 3-byte shrink; save_tok rounds /4 toward -1.
     expect(reqs[0]).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=saver-0001 conn=test-con save=rtk:-3 save_tok=-1 route=gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z REQ\.ok rid=saver-0001 conn=test-con save=rtk:-3 save_tok=-1 route=openai\/gpt-4o>openai\/gpt-4o fmt=openai>openai row=[a-f0-9-]{36} t=\d+ in=8 out=4 cr=0 cw=0 ctx=8 ttft=\d+( path=\S+)?$/
     );
     // first request of the session: no previous body to compare against
     expect(reqs[0]).not.toContain("ce=");
