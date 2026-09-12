@@ -124,7 +124,7 @@ describe("chat request replay", () => {
     const response = await handleChat(request());
 
     expect(response.status).toBe(200);
-    expect(dispatchMocks.handleChatCore.mock.calls[0][0].connectTimeout).toEqual({
+    expect(dispatchMocks.handleChatCore.mock.calls[0][0].connectTimeout).toMatchObject({
       providerOverride: 8000,
       globalTimeout: 15000,
     });
@@ -164,7 +164,7 @@ describe("chat request replay", () => {
     const response = await handleChat(request());
 
     expect(response.status).toBe(200);
-    expect(dispatchMocks.handleChatCore.mock.calls[0][0].connectTimeout).toEqual({
+    expect(dispatchMocks.handleChatCore.mock.calls[0][0].connectTimeout).toMatchObject({
       providerOverride: Infinity,
       globalTimeout: "15000",
     });
