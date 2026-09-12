@@ -5,19 +5,25 @@ import { updatePricing } from '../../src/lib/db/repos/pricingRepo.js';
 import { createContextTelemetry, recordContextAttempt } from '../../open-sse/handlers/chatCore/contextTelemetry.js';
 import { readActivityAnalytics, validateActivityQuery } from '../../src/lib/db/analytics/activityQueries.mjs';
 import { recordCostLedger } from '../../src/lib/db/repos/costLedgerRepo.js';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 
 const db=await getAdapter(), stamp='2026-09-06T12:00:00.000Z';
 const reference=char=>`ctx1_${char.repeat(64)}`;
 const fields={provider:'fixture',model:'model',connectionId:'account'};
 const read=(patch={})=>readActivityAnalytics(db,{operation:'activity',view:'economics',...patch});
+// Public analytics excludes test-origin writes. capture() is this suite's own
+// seed-to-terminal boundary, so only the rows it produces become visible.
+const visible=createVisibleTelemetryFixture(db,'economics-evidence');
 beforeEach(async()=>{
   db.run('DELETE FROM usageHistory');db.run('DELETE FROM requestStats');db.run('DELETE FROM contextSessions');
   await updatePricing({fixture:{model:{input:2,output:4,cached:0.5,cache_creation:3,reasoning:1}}});
 });
-async function capture({attempt=1,logical='logical',project='a',client='b',time=stamp,cost=null,latency=500,rid,completionId}={}) {
+async function capture(options={}) { return visible(()=>captureRows(options)); }
+async function captureRows({attempt=1,logical='logical',project='a',client='b',time=stamp,cost=null,latency=500,rid,completionId}={}) {
   const context=createContextTelemetry({timestamp:time,logicalRequestId:logical,attempt,sessionHash:'a'.repeat(64),sessionIdentitySource:'explicit'});
   context.dispatchCoverage='physical-dispatch';
-  await recordContextAttempt(context,fields);
+  // Terminal, not the default pending: capture() seeds a completed attempt.
+  await recordContextAttempt(context,{...fields,status:'success'});
   db.run('UPDATE requestStats SET clientKeyId=?,clientIdentitySource=?,clientRef=?,projectRef=?,taskRef=?,latencyTotal=?,latencyTtft=? WHERE id=?',
     ['key','client-reported',reference(client),reference(project),reference('c'),latency,100,context.requestId]);
   await saveRequestUsage({...fields,timestamp:time,requestedModel:'requested-alias',contextTelemetry:context,rid,completionId,

@@ -12,7 +12,11 @@ const { handleEmbeddings } = await import("../../src/sse/handlers/embeddings.js"
 const { handleRerank } = await import("../../src/sse/handlers/rerank.js");
 const { getAdapter } = await import("../../src/lib/db/driver.js");
 const { readActivityAnalytics } = await import("../../src/lib/db/analytics/activityQueries.mjs");
+const { createVisibleTelemetryFixture } = await import("../fixtures/visible-telemetry.mjs");
 const db = await getAdapter();
+// Public analytics excludes test-origin writes; only this request's own rows
+// are exposed, and only after the retry has reached its persisted terminal.
+const visible = createVisibleTelemetryFixture(db, "usage-attribution-media");
 beforeEach(() => { db.run("DELETE FROM usageHistory"); db.run("DELETE FROM requestStats"); db.run("DELETE FROM contextSessions"); mocks.refresh.mockResolvedValue({ apiKey: "refreshed-synthetic" }); });
 afterEach(() => vi.unstubAllGlobals());
 const modalities = [
@@ -28,7 +32,7 @@ describe("actual media requests preserve exact dispatch identity", () => {
       ids.push(pending.id);
       return ids.length === 1 ? Response.json({ error: { message: "expired" } }, { status: 401 }) : Response.json(payload);
     }));
-    const response = await handle(new Request(`http://localhost/v1/${endpoint}`, { method: "POST", body: JSON.stringify(body) }));
+    const response = await visible(() => handle(new Request(`http://localhost/v1/${endpoint}`, { method: "POST", body: JSON.stringify(body) })));
     expect(response.status).toBe(200); expect(ids).toHaveLength(2); expect(new Set(ids).size).toBe(2);
     const economics = readActivityAnalytics(db, { operation: "activity", view: "economics" });
     expect(economics.items).toHaveLength(1); expect(economics.items[0].requestId).toBe(ids[1]);
