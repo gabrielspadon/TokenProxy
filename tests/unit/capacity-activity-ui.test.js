@@ -135,6 +135,7 @@ it('separates a reported zero, an unreported metric and a day with no attempts a
   expect(silent.values.every(item => item.reported === false && item.text === 'not reported')).toBe(true);
   expect(silent.label).toBe('Friday, 4 September 2026. No recorded attempts. Tokens in not reported. Tokens out not reported. Cache read not reported. Cache write not reported.');
   expect(month.recordedDays).toBe(2);
+  expect(month.askedDays).toBe(month.days.length);
   // A zero total is never a level, so it can never paint like a small total.
   expect(capacityCalendarLevel(0, 1000)).toBe(0);
   expect([1, 250, 251, 500, 501, 750, 751, 1000].map(value => capacityCalendarLevel(value, 1000))).toEqual([1, 1, 2, 2, 3, 3, 4, 4]);
@@ -338,7 +339,7 @@ it('gives all four exact values on hover and on keyboard focus, and moves by arr
   calendarWorkspace();
   await render();
   const readout = () => host.querySelector('p[aria-live="polite"]').textContent;
-  expect(readout()).toContain('4 of 30 days carry recorded attempts');
+  expect(readout()).toContain('4 of 30 days in the selected period carry recorded attempts');
   const focusable = [...host.querySelectorAll('[data-day]')].filter(node => node.tabIndex === 0);
   expect(focusable.map(node => node.dataset.day)).toEqual(['2026-09-01']);
   // Hover carries the same reading as focus.
@@ -423,4 +424,44 @@ it('keeps a full honest month when no series arrived at all', async () => {
   expect(host.querySelectorAll('[data-day]').length).toBeGreaterThan(27);
   // Nothing reads as a measured zero when nothing was measured.
   expect([...host.querySelectorAll('[data-day] span > b')].every(node => node.dataset.absent === 'true')).toBe(true);
+});
+
+it('says a day outside the asked period is unasked rather than unreported', () => {
+  // The request covered 10-20 September only. Days 1-9 and 21-30 were never
+  // looked at, so claiming "not reported" there would assert evidence of
+  // absence the query never sought.
+  const month = capacityCalendarMonth(
+    [{ bucketStartMs: Date.parse('2026-09-12T06:00:00Z'), inputTokens: 700, inputSamples: 1 }],
+    Date.parse('2026-09-15T00:00:00Z'),
+    { startMs: Date.parse('2026-09-10T00:00:00Z'), endMs: Date.parse('2026-09-21T00:00:00Z') }
+  );
+  expect(month.askedDays).toBe(11);
+  expect(month.days[0].outside).toBe(true);
+  expect(month.days[11].outside).toBe(false);
+  expect(month.days.at(-1).outside).toBe(true);
+  const unasked = capacityCalendarReading(month.days[0]);
+  expect(unasked.values.every(item => item.text === 'outside the selected period')).toBe(true);
+  expect(unasked.label).toBe('Tuesday, 1 September 2026. Outside the selected period. Tokens in outside the selected period. Tokens out outside the selected period. Cache read outside the selected period. Cache write outside the selected period.');
+  // Inside the window, an unrecorded day is still honestly unreported.
+  expect(capacityCalendarReading(month.days[10]).values[0].text).toBe('not reported');
+  expect(capacityCalendarReading(month.days[11]).values[0].text).toBe('700 tokens');
+  // A month entirely outside the period says so instead of drawing 31 unknowns.
+  const away = capacityCalendarMonth([], Date.parse('2026-03-10T00:00:00Z'),
+    { startMs: Date.parse('2026-09-10T00:00:00Z'), endMs: Date.parse('2026-09-21T00:00:00Z') });
+  expect(away.askedDays).toBe(0);
+  // With no window every day is asked about, which is the all-history default.
+  expect(capacityCalendarMonth([], Date.parse('2026-09-15T00:00:00Z')).askedDays).toBe(30);
+});
+
+it('marks unasked days apart from both a reported zero and a missing metric', async () => {
+  calendarWorkspace({ scope: { period: 'custom', start: '2026-09-09T00:00:00.000Z', end: '2026-09-10T00:00:00.000Z' } });
+  await render();
+  // The selected day is inside; its neighbours were never asked about.
+  expect(host.querySelector('[data-day="2026-09-09"] span > b').dataset.absent).toBeUndefined();
+  expect(host.querySelector('[data-day="2026-09-09"] span > b').dataset.level).toBe('0');
+  expect(host.querySelector('[data-day="2026-09-08"] span > b').dataset.absent).toBe('unasked');
+  expect(host.querySelector('[data-day="2026-09-08"]').getAttribute('aria-label')).toContain('Outside the selected period');
+  expect(host.querySelector('[data-day="2026-09-09"]').getAttribute('aria-label')).toContain('Tokens in 0 tokens');
+  // Zero inside the window, unasked outside it, and neither says "not reported".
+  expect(host.querySelector('[data-day="2026-09-08"]').getAttribute('aria-label')).not.toContain('not reported');
 });
