@@ -84,10 +84,23 @@ describe('synthesize', () => {
     expect(ssml).toContain("xml:gender='Male'");
   });
 
-  it('re-scrapes the token and retries once on 429', async () => {
+  it('does not resend on a 429 it holds no parsed quota proof for', async () => {
+    // This branch never consumes the error body, so the 429 cannot be shown to
+    // be an account-quota rejection rather than accepted, billed generation.
     globalThis.fetch
       .mockResolvedValueOnce(translatorRes())
       .mockResolvedValueOnce(audioRes(0, 429))
+      .mockResolvedValueOnce(translatorRes())
+      .mockResolvedValueOnce(audioRes());
+    const { provider } = await loadProvider();
+    await expect(provider.synthesize('hi', 'en-US-JennyNeural')).rejects.toThrow('429');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-scrapes the token and retries once on a 403 rejection', async () => {
+    globalThis.fetch
+      .mockResolvedValueOnce(translatorRes())
+      .mockResolvedValueOnce(audioRes(0, 403))
       .mockResolvedValueOnce(translatorRes())
       .mockResolvedValueOnce(audioRes());
     const { provider } = await loadProvider();
