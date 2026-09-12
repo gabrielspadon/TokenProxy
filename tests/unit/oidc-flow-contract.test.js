@@ -39,6 +39,10 @@ function jsonResponse(body, ok = true, status = 200) {
   return { ok, status, json: async () => body };
 }
 
+function redirectResponse(location, status = 302) {
+  return { ok: false, status, headers: new Headers({ location }), json: async () => ({}) };
+}
+
 describe('getPublicOrigin', () => {
   it('prefers configured BASE_URL and trims trailing slashes', () => {
     vi.stubEnv('BASE_URL', 'https://app.example.com///');
@@ -137,12 +141,34 @@ describe('fetchOidcDiscovery', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('uses the socket-level public-only dispatcher so redirects and DNS changes stay guarded', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ issuer: 'https://idp.example.com' }));
+  it('follows a public HTTPS enterprise redirect one validated hop at a time', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(redirectResponse('https://login.example.com/tenant/discovery'))
+      .mockResolvedValueOnce(jsonResponse({ issuer: 'https://idp.example.com' }));
     vi.stubGlobal('fetch', fetchMock);
     await fetchOidcDiscovery('https://idp.example.com');
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'follow' });
-    expect(fetchMock.mock.calls[0][1].dispatcher).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'manual', dispatcher: expect.anything() });
+    expect(fetchMock.mock.calls[1][0]).toBe('https://login.example.com/tenant/discovery');
+  });
+
+  it.each([
+    'http://93.184.216.34/discovery',
+    'https://127.0.0.1/discovery',
+  ])('rejects an unsafe discovery redirect before fetching %s', async (location) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(redirectResponse(location));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchOidcDiscovery('https://idp.example.com')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a private discovery authorization endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      issuer: 'https://idp.example.com',
+      authorization_endpoint: 'https://127.0.0.1/authorize',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(fetchOidcDiscovery('https://idp.example.com')).rejects.toThrow(/Blocked/);
   });
 });
 
@@ -183,6 +209,20 @@ describe('buildOidcAuthorizationUrl', () => {
     expect(url.searchParams.get('code_challenge')).toBe('ch');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
     expect(normalizeScopes('')).toContain('openid');
+  });
+
+  it.each([
+    'http://93.184.216.34/authorize',
+    'https://169.254.169.254/authorize',
+  ])('rejects an unsafe authorization endpoint %s', (authorizationEndpoint) => {
+    expect(() => buildOidcAuthorizationUrl({
+      authorizationEndpoint,
+      clientId: 'client-1',
+      redirectUri: 'https://app.example.com/cb',
+      state: 'st',
+      nonce: 'no',
+      codeChallenge: 'ch',
+    })).toThrow();
   });
 });
 

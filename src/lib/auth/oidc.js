@@ -11,6 +11,8 @@ export const OIDC_COOKIE_NAMES = {
 
 const DEFAULT_SCOPES = "openid profile email";
 const DEFAULT_LOGIN_LABEL = "Sign in with OIDC";
+const DISCOVERY_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_DISCOVERY_REDIRECTS = 5;
 
 function trimTrailingSlashes(value) {
   return (value || "").trim().replace(/\/+$/, "");
@@ -93,14 +95,32 @@ export async function fetchOidcDiscovery(issuerUrl) {
   const trimmed = trimTrailingSlashes(issuerUrl);
   assertOidcEndpoint(trimmed);
   const discoveryUrl = `${trimmed}/.well-known/openid-configuration`;
-  // Discovery is credential-free and may follow public redirects used by
-  // enterprise IdP front doors. The dispatcher validates every resolved and
-  // redirected socket address, so a DNS change cannot cross into a private net.
-  const res = await fetchPublicUrl(discoveryUrl, { cache: "no-store", redirect: "follow" });
-  if (!res.ok) {
-    throw new Error(`Failed to load OIDC discovery document from ${discoveryUrl}`);
+  // Enterprise IdP front doors commonly redirect discovery. Manual handling
+  // applies the HTTPS and public-host policy before every hop, while the
+  // dispatcher separately validates every address returned by DNS at connect.
+  let currentUrl = discoveryUrl;
+  for (let redirects = 0; ; redirects += 1) {
+    assertOidcEndpoint(currentUrl);
+    const res = await fetchPublicUrl(currentUrl, { cache: "no-store", redirect: "manual" });
+    if (DISCOVERY_REDIRECT_STATUSES.has(res.status)) {
+      if (redirects >= MAX_DISCOVERY_REDIRECTS) {
+        throw new Error(`OIDC discovery exceeded ${MAX_DISCOVERY_REDIRECTS} redirects`);
+      }
+      const location = res.headers?.get?.("location");
+      if (!location) throw new Error("OIDC discovery redirect did not provide a location");
+      currentUrl = new URL(location, currentUrl).toString();
+      assertOidcEndpoint(currentUrl);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Failed to load OIDC discovery document from ${discoveryUrl}`);
+    }
+    const discovery = await res.json();
+    if (discovery?.authorization_endpoint) {
+      assertOidcEndpoint(discovery.authorization_endpoint);
+    }
+    return discovery;
   }
-  return await res.json();
 }
 
 export function createPkcePair() {
@@ -126,6 +146,7 @@ export function buildOidcAuthorizationUrl({
   nonce,
   codeChallenge,
 }) {
+  assertOidcEndpoint(authorizationEndpoint);
   const url = new URL(authorizationEndpoint);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", clientId);
