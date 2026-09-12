@@ -200,6 +200,7 @@ export function privateEnvironment(runRoot, extra = {}) {
     DB_ENCRYPTION_KEY: "artifact-fixture-db-encryption-key",
     INITIAL_PASSWORD: "artifact-fixture-password",
     ...extra,
+    TOKENPROXY_TELEMETRY_ORIGIN: "test",
   };
 }
 
