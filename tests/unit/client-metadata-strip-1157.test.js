@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { translateRequest } from "../../open-sse/translator/index.js";
+import { getTargetFormat } from "../../open-sse/services/provider.js";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
 
 const exec = readFileSync(new URL("../../open-sse/executors/default.js", import.meta.url), "utf8");
@@ -30,13 +31,27 @@ describe("client_metadata never reaches an OpenAI-shaped upstream (#1157 #1442)"
       false, null, "anthropic")?.client_metadata).toEqual({ user_id: "u1" });
   });
 
+  // These are PROVIDER ids and translateRequest takes a FORMAT, so the format is
+  // resolved the way resolveUpstreamRoute does it. kimi resolves to the Claude
+  // wire format and so belongs on the other side of this contract: it is the
+  // upstream that understands the field, covered by the case above.
   it("the translator half still drops it on every openai-shaped target", () => {
-    for (const t of ["openai", "kimi", "ollama"]) {
-      const out = translateRequest("claude", t, "m",
+    for (const p of ["openai", "opencode-go", "ollama"]) {
+      const target = getTargetFormat(p);
+      expect(target, `${p} is not an openai-shaped target`).not.toBe("claude");
+      const out = translateRequest("claude", target, "m",
         { model: "m", messages: [{ role: "user", content: "hi" }], client_metadata: { user_id: "u1" } },
-        false, null, "p");
-      expect(out?.client_metadata, `${t} kept client_metadata`).toBeUndefined();
+        false, null, p);
+      expect(out?.client_metadata, `${p} kept client_metadata`).toBeUndefined();
     }
+  });
+
+  it("keeps it for a claude-format provider, which is why the strip is format-keyed", () => {
+    expect(getTargetFormat("kimi")).toBe("claude");
+    const out = translateRequest("claude", getTargetFormat("kimi"), "m",
+      { model: "m", messages: [{ role: "user", content: "hi" }], client_metadata: { user_id: "u1" } },
+      false, null, "kimi");
+    expect(out?.client_metadata).toEqual({ user_id: "u1" });
   });
 
   it("the openai-to-openai passthrough is the gap the executor now closes", () => {
