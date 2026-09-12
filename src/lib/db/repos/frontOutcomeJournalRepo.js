@@ -130,6 +130,10 @@ function checkpointKey(directory, name) {
   return `frontOutcomeJournal:v1:${createHash('sha256').update(directory).digest('hex')}:${name}`;
 }
 
+function checksum(buffer) {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
 function parseActiveClock(directory) {
   const { content } = readOwnedFile(path.join(directory, 'active-clock.json'), 'active clock');
   let active;
@@ -141,8 +145,12 @@ function parseActiveClock(directory) {
 
 function readSegment(directory, name, checkpoint) {
   const { content, stat } = readOwnedFile(path.join(directory, name), `segment ${name}`);
-  const offset = checkpoint && checkpoint.dev === stat.dev && checkpoint.ino === stat.ino ? checkpoint.offset : 0;
+  const continuing = checkpoint && checkpoint.dev === stat.dev && checkpoint.ino === stat.ino;
+  const offset = continuing ? checkpoint.offset : 0;
   if (offset > content.length) fail(`segment ${name} shrank without rotation`);
+  if (continuing && (!RECEIPT.test(checkpoint.prefixSha256 || '') || checksum(content.subarray(0, offset)) !== checkpoint.prefixSha256)) {
+    fail(`segment ${name} consumed prefix changed`);
+  }
   const pending = content.subarray(offset);
   const lastNewline = pending.lastIndexOf(0x0a);
   const completeLength = lastNewline < 0 ? 0 : lastNewline + 1;
@@ -157,7 +165,8 @@ function readSegment(directory, name, checkpoint) {
     events.push(validateEvent(value, `segment ${name}`));
     cursor = newline + 1;
   }
-  return { stat, events, nextOffset: offset + completeLength, pendingBytes: pending.length - completeLength };
+  const nextOffset = offset + completeLength;
+  return { stat, events, nextOffset, prefixSha256: checksum(content.subarray(0, nextOffset)), pendingBytes: pending.length - completeLength };
 }
 
 function same(value, expected) {
@@ -249,6 +258,10 @@ function boundedInterval(intervalMs) {
   return Number.isFinite(parsed) ? Math.min(MAX_IMPORT_INTERVAL_MS, Math.max(MIN_IMPORT_INTERVAL_MS, Math.round(parsed))) : DEFAULT_IMPORT_INTERVAL_MS;
 }
 
+function isBuildPhase(phase = process.env.NEXT_PHASE) {
+  return phase === 'phase-production-build' || phase === 'phase-export' || phase === 'phase-static';
+}
+
 async function importOnce(state, ingest) {
   if (state.inFlight) return false;
   const job = Promise.resolve().then(ingest);
@@ -266,7 +279,7 @@ async function importOnce(state, ingest) {
 // Process-wide boot owner. Each cadence is bounded and a stalled import holds
 // the single-flight lease instead of allowing another importer to overlap it.
 export function startFrontOutcomeJournalIngestion({ intervalMs = DEFAULT_IMPORT_INTERVAL_MS, ingest = ingestFrontOutcomeJournal } = {}) {
-  if (scheduler.timer) return false;
+  if (scheduler.timer || isBuildPhase()) return false;
   const generation = ++scheduler.generation;
   const tick = () => {
     if (scheduler.generation !== generation) return;
@@ -306,7 +319,8 @@ export async function ingestFrontOutcomeJournal({
     let checkpoint = null;
     if (previous) {
       try { checkpoint = JSON.parse(previous.value); } catch { fail(`checkpoint ${name}`); }
-      if (!Number.isInteger(checkpoint.offset) || checkpoint.offset < 0 || !Number.isInteger(checkpoint.dev) || !Number.isInteger(checkpoint.ino)) fail(`checkpoint ${name}`);
+      if (!Number.isInteger(checkpoint.offset) || checkpoint.offset < 0 || !Number.isInteger(checkpoint.dev) || !Number.isInteger(checkpoint.ino)
+        || !RECEIPT.test(checkpoint.prefixSha256 || '')) fail(`checkpoint ${name}`);
     }
     return { name, ...readSegment(resolvedDirectory, name, checkpoint) };
   });
@@ -315,7 +329,8 @@ export async function ingestFrontOutcomeJournal({
   db.transaction(() => {
     interrupted = writeOperations(db, active, operations);
     for (const data of segmentData) if (data.nextOffset > 0) db.run('INSERT INTO _meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      [checkpointKey(resolvedDirectory, data.name), JSON.stringify({ dev: data.stat.dev, ino: data.stat.ino, offset: data.nextOffset })]);
+      [checkpointKey(resolvedDirectory, data.name), JSON.stringify({ dev: data.stat.dev, ino: data.stat.ino, offset: data.nextOffset,
+        prefixSha256: data.prefixSha256 })]);
   });
   const events = segmentData.reduce((total, data) => total + data.events.length, 0);
   return { enabled: true, events, segments: segmentData.filter((data) => data.events.length).length,

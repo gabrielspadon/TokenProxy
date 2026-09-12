@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getAdapter } from '../../src/lib/db/driver.js';
 import { ingestFrontOutcomeJournal, startFrontOutcomeJournalIngestion, stopFrontOutcomeJournalIngestion } from '../../src/lib/db/repos/frontOutcomeJournalRepo.js';
+import { canStartFrontOutcomeJournal } from '../../src/instrumentation.js';
 
 const CLOCK = '11111111-1111-4111-8111-111111111111';
 const INGRESS = '22222222-2222-4222-8222-222222222222';
@@ -173,6 +174,40 @@ it('runs an initial and recurring journal import without overlapping a stalled i
   await Promise.resolve();
   await vi.advanceTimersByTimeAsync(1_000);
   expect(ingest).toHaveBeenCalledTimes(2);
+});
+
+it('does not arm the database-writing importer during build and static phases', async () => {
+  const prior = process.env.NEXT_PHASE;
+  const ingest = vi.fn();
+  try {
+    for (const phase of ['phase-production-build', 'phase-export', 'phase-static']) {
+      process.env.NEXT_PHASE = phase;
+      expect(canStartFrontOutcomeJournal()).toBe(false);
+      expect(startFrontOutcomeJournalIngestion({ ingest })).toBe(false);
+    }
+    expect(ingest).not.toHaveBeenCalled();
+  } finally {
+    if (prior === undefined) delete process.env.NEXT_PHASE;
+    else process.env.NEXT_PHASE = prior;
+  }
+});
+
+it('rejects same-inode consumed-prefix mutation without advancing records or checkpoint', async () => {
+  const directory = journal([
+    { schemaVersion: 1, kind: 'process-start', clockDomain: CLOCK, recordedAt: AT },
+    { schemaVersion: 1, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: null, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null },
+  ]);
+  await ingestFrontOutcomeJournal({ directory });
+  const saved = db.get("SELECT value FROM _meta WHERE key LIKE 'frontOutcomeJournal:%'").value;
+  const file = segment(directory);
+  const contents = fs.readFileSync(file);
+  contents[0] ^= 1;
+  fs.writeFileSync(file, contents, { mode: 0o600 });
+
+  await expect(ingestFrontOutcomeJournal({ directory })).rejects.toThrow('consumed prefix changed');
+  expect(db.get('SELECT state FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS]).state).toBe('pending');
+  expect(db.get("SELECT value FROM _meta WHERE key LIKE 'frontOutcomeJournal:%'").value).toBe(saved);
 });
 
 it('rejects malformed or conflicting complete input before it mutates rows or checkpoints', async () => {
