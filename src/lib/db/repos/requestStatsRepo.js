@@ -4,6 +4,7 @@ import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
 import { normalizeTerminalEvidence } from "../terminalEvidence.js";
 import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
 import { processTelemetryOrigin } from '../telemetryOrigin.js';
+import { normalizeReplayEvidence } from '../replayEvidence.js';
 
 // Full-history statistics source. One row per request (id is the requestDetail
 // id, shared across the streaming start/complete upsert), written
@@ -120,6 +121,7 @@ async function saveRequestStatsInternal(detail) {
   if (!detail || typeof detail !== "object" || !detail.id) return;
   try {
     const terminalEvidence = normalizeTerminalEvidence(detail.terminalEvidence, detail.status);
+    const replayEvidence = normalizeReplayEvidence(detail.contextTelemetry?.replayEvidence);
     const db = await getAdapter();
     const tokens = canonicalizeUsage(detail.tokens) || {};
     const latency = detail.latency || {};
@@ -187,6 +189,8 @@ async function saveRequestStatsInternal(detail) {
       }
       if (terminalEvidence) db.run(`UPDATE requestStats SET terminalState=?,terminalReason=?,terminalSource=?,terminalObservedAt=? WHERE id=?`,
         [terminalEvidence.terminalState, terminalEvidence.terminalReason, terminalEvidence.terminalSource, terminalEvidence.terminalObservedAt, detail.id]);
+      if (replayEvidence) db.run(`UPDATE requestStats SET replayDisposition=?,replaySource=?,replayStatus=?,replayObservedAt=? WHERE id=?`,
+        [replayEvidence.replayDisposition, replayEvidence.replaySource, replayEvidence.replayStatus, replayEvidence.replayObservedAt, detail.id]);
     });
     await maybeCleanup(db);
   } catch (e) {

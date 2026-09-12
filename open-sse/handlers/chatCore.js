@@ -1,4 +1,5 @@
 import { classifyHttpTerminalEvidence } from "../../src/lib/db/terminalEvidence.js";
+import { replayResponseEvidence } from '../../src/lib/db/replayEvidence.js';
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
 import { isReplaySafeRejection, isSafeQuotaAccountRejection, withReplaySafety } from "../utils/replaySafety.js";
 import { isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
@@ -2140,6 +2141,7 @@ async function handleChatCoreAttempt({
   let providerResponseFormat = targetFormat;
   const mapTransportError = async (error) => {
     if (isLocalTransportPoolRefusal(error)) {
+      contextTelemetry.replayEvidence = { disposition: 'safe-rejection', source: 'transport-no-dispatch', status: null, observedAt: new Date().toISOString() };
       await releaseUndispatchedBudgetReservation(contextTelemetry?.budgetReservationId, error);
       trackPendingRequest(model, provider, connectionId, false, true);
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId, status: "error" });
@@ -2250,9 +2252,14 @@ async function handleChatCoreAttempt({
       contextTelemetry.structures = contextTelemetry.structures.filter((value) => value.boundary !== "physical-dispatch");
       if (structure) contextTelemetry.structures.push(structure);
       contextTelemetry.dispatchCoverage = "physical-dispatch";
+      contextTelemetry.replayEvidence = { disposition: 'unknown', source: 'dispatch-start', status: null, observedAt: new Date().toISOString() };
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
       connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
-    }, afterDispatch: (response) => observeBudgetResponse(contextTelemetry, response) });
+    }, afterDispatch: async (evidence) => {
+      contextTelemetry.replayEvidence = replayResponseEvidence(evidence);
+      await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+      await observeBudgetResponse(contextTelemetry, evidence);
+    } });
       // Internal rejected responses can precede another executor dispatch.
       // Only the executor's final result transfers ownership to the stream.
       releaseHeaderBudget?.();
@@ -2574,6 +2581,7 @@ async function handleChatCoreAttempt({
       status: `FAILED ${safeStatusCode}`,
     }).catch(() => {});
     const sinkMessage = provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : message;
+    contextTelemetry.replayEvidence = replayResponseEvidence({ response: providerResponse, payload: errorPayload });
     saveRequestDetail(
       buildRequestDetail({
         contextTelemetry,

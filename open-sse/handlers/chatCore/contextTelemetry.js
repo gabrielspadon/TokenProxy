@@ -6,7 +6,7 @@ import { markBudgetUncertain } from "../../../src/lib/db/repos/budgetRepo.js";
 export function createContextTelemetry(fields) {
   const requestId = randomUUID();
   const routingHash = /^[a-f0-9]{32,64}$/.test(fields.sessionHash || "") ? fields.sessionHash : null;
-  return { ...fields, requestId,
+  return { ...fields, requestId, replayEvidence: undefined,
     stages: fields.stages?.map(stage => stage.outcomeSource === "execution"
       ? { ...stage, executionRequestId: stage.executionRequestId || requestId } : stage),
     handoffs: fields.handoffs?.map(item => ({ ...item, executionRequestId: item.executionRequestId || requestId })),
