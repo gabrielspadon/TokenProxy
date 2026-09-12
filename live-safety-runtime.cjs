@@ -117,7 +117,9 @@ function createLiveSafety({ env=process.env, identity=processIdentity(), maxSecr
             sinks[sink].bytes+=part.length;
             const joined=Buffer.concat([tail,part]);
             for(const [fingerprint,secret] of secrets) {
-              let offset=0;
+              // Matches wholly inside the prior suffix were already counted.
+              // Start at the only prefix that can cross this write boundary.
+              let offset=Math.max(0,tail.length-secret.length+1);
               while((offset=joined.indexOf(secret,offset))>=0) {
                 if(offset+secret.length>tail.length) {
                   const policy=authorized(fingerprint);
