@@ -227,16 +227,6 @@
 .sortPick { width: 148px; }
 .sortPick :global(.mantine-Input-input) { font-size: var(--type-dense); }
 .clientFilter { display: flex; gap: 4px; align-items: center; }
-.sessionRows { min-width: 0; overflow: auto; }
-.sessionRows:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
-.sessionTable { border-collapse: collapse; width: 100%; font-size: var(--type-dense); }
-.sessionTable th, .sessionTable td { padding: 4px 10px; text-align: start; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-.sessionTable thead th { position: sticky; top: 0; z-index: 1; background: var(--paper); color: var(--slate); font-weight: 500; }
-.sessionTable [data-numeric] { text-align: end; font-variant-numeric: tabular-nums; }
-.sessionTable tbody th { font-weight: 500; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.sessionTable tbody tr:hover td { background: var(--paper); }
-.sessionTable tr[data-selected] > * { background: var(--signal-wash); }
-.detailRow > td { padding: 0; white-space: normal; }
 .boardFoot { border-top: 1px solid var(--rule); }
 .boardFoot > .pager { border-top: 0; }
 .boardFoot > .identityFoot { border-top: 0; max-width: none; padding-top: 0; }

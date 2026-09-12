@@ -54,18 +54,9 @@ export const NAV_GROUPS = [
   },
 ];
 
-export const EVERYDAY_GROUPS = [
-  { label: 'Overview', paths: ['/dashboard', '/dashboard/context', '/dashboard/usage'] },
-  { label: 'Manage', paths: ['/dashboard/connections', '/dashboard/models', '/dashboard/shaping', '/dashboard/keys'] },
-  { label: 'Get connected', paths: ['/dashboard/tools'] },
-];
-
-// Presentation only. Direct links and authorization are independent of this view.
-export function navigationGroups(mode, pathname) {
-  if (mode === 'advanced') return NAV_GROUPS;
-  const visible = new Set(EVERYDAY_GROUPS.flatMap(group => group.paths));
-  const current = NAV.find(item => item.href === pathname || item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`));
-  return current && !visible.has(current.href)
-    ? [...EVERYDAY_GROUPS, { label: 'Current page', paths: [current.href] }]
-    : EVERYDAY_GROUPS;
+// Every supported destination is always in the rail. The groups order them;
+// they never gate one away, so no destination depends on a stored preference to
+// be reachable. Direct links and authorization are independent of this view.
+export function navigationGroups() {
+  return NAV_GROUPS;
 }

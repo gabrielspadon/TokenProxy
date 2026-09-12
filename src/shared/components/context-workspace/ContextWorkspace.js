@@ -1,7 +1,6 @@
 'use client';
 import {
   createContext,
-  Fragment,
   useCallback,
   useContext,
   useEffect,
@@ -39,7 +38,6 @@ import {
   StateWord,
   boardStyles as board,
   useDensity,
-  useLevel,
 } from '@/shared/workspace/Board';
 import shared from '@/shared/workspace/workspace.module.css';
 import { ContextInspector } from './ContextInspector';
@@ -358,8 +356,7 @@ export function ContextWorkspace() {
   const [task, setTask] = useState('sessions'),
     [historyVisited, setHistoryVisited] = useState(false),
     [historyRevision, setHistoryRevision] = useState(0);
-  // The sidebar switch owns the level; the density is the one shared choice.
-  const advanced = useLevel();
+  // Context is the one approachable surface; the density is the shared choice.
   const [density, setDensity] = useDensity();
   const identity = workspace.contextView.baseline;
   const resource = useResource(
@@ -394,8 +391,7 @@ export function ContextWorkspace() {
         <div className={shared.lensTitle}>
           <h1>Context trace</h1>
           <p>
-            {advanced ? 'Advanced' : 'Everyday'} · session continuity, cache evidence and request
-            shaping
+            Session continuity, cache evidence and request shaping
           </p>
         </div>
         <Button component={Link} href="/dashboard/shaping" variant="subtle" size="compact-xs">
@@ -424,7 +420,6 @@ export function ContextWorkspace() {
             setBaseline={setBaseline}
             historyRevision={historyRevision}
             active={task === 'sessions'}
-            advanced={advanced}
             density={density}
             onDensity={setDensity}
           />
@@ -541,98 +536,12 @@ function SessionCard({ session, scale, expanded, onToggle, detail }) {
   );
 }
 
-const SESSION_COLUMNS = [
-  'Session',
-  'Identity',
-  'Client',
-  'Requests',
-  'Attempts',
-  'Input tokens',
-  'Body change',
-  'Last seen (UTC)',
-];
-function SessionRows({ sessions, selectedId, onSelect, detail }) {
-  return (
-    <div
-      className={styles.sessionRows}
-      role="region"
-      aria-label="Recorded sessions, scrollable table"
-      tabIndex={0}
-    >
-      <table className={styles.sessionTable} aria-label="Recorded sessions">
-        <thead>
-          <tr>
-            {SESSION_COLUMNS.map((column) => (
-              <th
-                key={column}
-                scope="col"
-                data-numeric={
-                  ['Requests', 'Attempts', 'Input tokens', 'Body change'].includes(column) ||
-                  undefined
-                }
-              >
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {sessions.map((session) => {
-            const word = sessionWord(session);
-            const expanded = session.id === selectedId;
-            const name = sessionName(session);
-            return (
-              <Fragment key={session.id}>
-                <tr data-selected={expanded || undefined}>
-                  <th scope="row">
-                    <button
-                      type="button"
-                      className={board.nameButton}
-                      aria-pressed={expanded}
-                      aria-label={`Inspect ${name}`}
-                      onClick={() => onSelect(session.id)}
-                    >
-                      {name}
-                    </button>
-                    <span className={styles.sessionId}>#{session.id}</span>
-                  </th>
-                  <td>
-                    <StateWord tone={word.tone}>{word.label}</StateWord>
-                  </td>
-                  <td>{session.clientTool || 'Unknown client'}</td>
-                  <td data-numeric>{quantity(session.requests)}</td>
-                  <td data-numeric>{quantity(session.attempts)}</td>
-                  <td data-numeric title={quantity(session.providerInputTokens)}>
-                    {quantity(session.providerInputTokens, true)}
-                  </td>
-                  <td data-numeric>
-                    {signedBytes(finite(session.savedBytes) ? -session.savedBytes : null)}
-                  </td>
-                  <td>
-                    <time dateTime={session.lastSeenAt}>{utc(session.lastSeenAt)}</time>
-                  </td>
-                </tr>
-                {expanded ? (
-                  <tr className={styles.detailRow}>
-                    <td colSpan={SESSION_COLUMNS.length}>{detail}</td>
-                  </tr>
-                ) : null}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function ContextScope({
   workspace,
   baseline,
   setBaseline,
   historyRevision,
   active,
-  advanced,
   density,
   onDensity,
 }) {
@@ -995,17 +904,13 @@ function ContextScope({
         ) : (
           <ReadState resource={overview}>
             <div className={styles.sessionViewport}>
-              <Board label="Recorded session cohort" advanced={advanced} density={density}>
+              <Board label="Recorded session cohort" density={density}>
                 <BoardSummary
                   label="Session summary"
                   chips={chips}
                   active={bucket}
                   onPick={setBucket}
-                  note={
-                    advanced
-                      ? 'Every recorded column, newest observation first'
-                      : 'Advanced view adds every recorded column'
-                  }
+                  note="Newest observation first; open a session for its full evidence"
                 />
                 <BoardToolbar
                   search={query}
@@ -1074,18 +979,16 @@ function ContextScope({
                       </Button>
                     )}
                   </form>
-                  {!advanced && (
-                    <Select
-                      size="xs"
-                      className={styles.sortPick}
-                      aria-label="Sort sessions"
-                      allowDeselect={false}
-                      leftSection={<Icon name="i-sort" />}
-                      value={sort}
-                      onChange={(value) => value && setSort(value)}
-                      data={SORTS}
-                    />
-                  )}
+                  <Select
+                    size="xs"
+                    className={styles.sortPick}
+                    aria-label="Sort sessions"
+                    allowDeselect={false}
+                    leftSection={<Icon name="i-sort" />}
+                    value={sort}
+                    onChange={(value) => value && setSort(value)}
+                    data={SORTS}
+                  />
                   <Tooltip label="How much room each session takes">
                     <DensitySwitch value={density} onChange={onDensity} />
                   </Tooltip>
@@ -1106,13 +1009,6 @@ function ContextScope({
                       Clear filters
                     </button>
                   </div>
-                ) : advanced ? (
-                  <SessionRows
-                    sessions={visible}
-                    selectedId={selectedSessionId}
-                    onSelect={selectSession}
-                    detail={sessionDetail}
-                  />
                 ) : (
                   IDENTITY_BUCKETS.map((item) => {
                     const members = visible.filter((entry) => sessionBucket(entry) === item.id);
