@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
+import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
 import { PROJECT_BINDING_EFFECT } from '../projectIdentity.js';
 import { initializeBudgetAccount, outstandingBudget } from './budgetRepo.js';
 import { BUDGET_POLICY_EXPLANATIONS, BUDGET_DIMENSIONS } from '../budgetPolicy.js';
@@ -174,8 +175,8 @@ export async function listProjectCandidates(apiKeyId, options = {}) {
   // Candidate IDs are two fixed-length fingerprints, ordered before pagination.
   // No caller-supplied SQL, raw metadata, or secret enters this projection.
   const rows = db.all(`WITH identities AS (
-      SELECT clientRef,projectRef FROM usageHistory WHERE clientKeyId=? AND clientIdentitySource='client-reported'
-      UNION SELECT clientRef,projectRef FROM requestStats WHERE clientKeyId=? AND clientIdentitySource='client-reported')
+      SELECT clientRef,projectRef FROM usageHistory WHERE ${telemetryFilterSql('usageHistory')} AND clientKeyId=? AND clientIdentitySource='client-reported'
+      UNION SELECT clientRef,projectRef FROM requestStats WHERE ${telemetryFilterSql('requestStats')} AND clientKeyId=? AND clientIdentitySource='client-reported')
     SELECT clientRef,projectRef FROM identities WHERE length(clientRef)=69 AND length(projectRef)=69
       AND substr(clientRef,1,5)='ctx1_' AND substr(projectRef,1,5)='ctx1_'
       AND substr(clientRef,6) NOT GLOB '*[^a-f0-9]*' AND substr(projectRef,6) NOT GLOB '*[^a-f0-9]*'

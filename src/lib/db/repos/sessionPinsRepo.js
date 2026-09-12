@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
+import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
 import { PIN_SELECT, PENDING_PIN_SELECT, pinBinding, pinRevision } from '../helpers/sessionPinControl.js';
 
 export class PinControlError extends Error {
@@ -85,7 +86,7 @@ export async function listSessionPins({ limit = 25, before, provider, connection
   const pins = rows.slice(0, limit).map(row => {
     const session = db.get("SELECT id, identitySource FROM contextSessions WHERE sessionHash=? AND identitySource IN ('explicit','inferred','routing')", [row.sessionHash]);
     const requests = session ? db.all(`SELECT id, logicalRequestId, requestedModel, model, connectionId, status, timestamp, dispatchCoverage FROM requestStats
-      WHERE contextSessionId=? AND model=? ORDER BY timestamp DESC, id DESC LIMIT 8`, [session.id, row.model]) : [];
+      WHERE ${telemetryFilterSql('requestStats')} AND contextSessionId=? AND model=? ORDER BY timestamp DESC, id DESC LIMIT 8`, [session.id, row.model]) : [];
     const actions = db.all('SELECT * FROM sessionPinActions WHERE sessionHash=? AND model=? ORDER BY createdAt DESC, id DESC LIMIT 8', [row.sessionHash, row.model]);
     const switches = db.all('SELECT id, fromConnectionId, toConnectionId, trigger, reason, switchedAt FROM accountSwitches WHERE sessionHash=? AND model=? ORDER BY switchedAt DESC LIMIT 8', [row.sessionHash, row.model]);
     return { ...publicPin(row, observedAt), session: session ? { id: session.id, identitySource: session.identitySource, join: 'stored-routing-hash' } : null,

@@ -2,6 +2,8 @@ import { getAdapter } from "../driver.js";
 import { saveContextMetrics, shouldIgnorePending, cleanupContext, retentionDays } from "./contextRepo.js";
 import { canonicalizeUsage } from "../../../../open-sse/utils/usageTracking.js";
 import { normalizeTerminalEvidence } from "../terminalEvidence.js";
+import { telemetryFilterSql } from '../analytics/telemetryFilter.mjs';
+import { processTelemetryOrigin } from '../telemetryOrigin.js';
 
 // Full-history statistics source. One row per request (id is the requestDetail
 // id, shared across the streaming start/complete upsert), written
@@ -83,7 +85,7 @@ function colIn(col, values) {
 }
 
 export function buildStatsWhere(filter = {}) {
-  const conds = [];
+  const conds = [telemetryFilterSql('requestStats')];
   const params = [];
   for (const [col, key] of [["provider", "provider"], ["model", "model"], ["connectionId", "connectionId"]]) {
     const c = colIn(col, filter[key]);
@@ -136,8 +138,8 @@ async function saveRequestStatsInternal(detail) {
       if (!existing || Object.entries(values).some(([field, value]) => existing[field] !== value)) db.run(
         `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
            promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens,
-           latencyTotal, latencyTtft)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           latencyTotal, latencyTtft, dataOrigin)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            timestamp = excluded.timestamp,
            status = excluded.status,
@@ -162,6 +164,7 @@ async function saveRequestStatsInternal(detail) {
           tokens.reasoning_tokens || 0,
           latency.total || 0,
           latency.ttft || 0,
+          processTelemetryOrigin(),
         ]
       );
       const coverage = detail.contextTelemetry?.dispatchCoverage;
@@ -217,12 +220,12 @@ export async function ensureStatsBackfilled() {
     db.transaction(() => {
       db.run(
         `INSERT INTO requestStats(id, timestamp, provider, model, connectionId, status,
-           promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens)
+           promptTokens, completionTokens, cachedTokens, cacheCreationTokens, reasoningTokens, dataOrigin, originReceiptId, sourceUsageId)
          SELECT 'bh-' || id, timestamp, provider, model, connectionId, status,
                 promptTokens, completionTokens,
                 COALESCE(json_extract(tokens, '$.cached_tokens'), json_extract(tokens, '$.cache_read_input_tokens'), 0),
                 COALESCE(json_extract(tokens, '$.cache_creation_input_tokens'), 0),
-                COALESCE(json_extract(tokens, '$.reasoning_tokens'), 0)
+                COALESCE(json_extract(tokens, '$.reasoning_tokens'), 0), dataOrigin, originReceiptId, id
          FROM usageHistory`
       );
       db.run(`INSERT INTO _meta(key, value) VALUES('statsBackfilled', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
@@ -478,13 +481,13 @@ export async function getTrafficWindow(sinceIso, { percentile = 0.95 } = {}) {
       `SELECT COUNT(*) AS requests,
               SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors,
               SUM(CASE WHEN latencyTotal > 0 THEN 1 ELSE 0 END) AS latencySamples
-       FROM requestStats WHERE timestamp >= ?`,
+       FROM requestStats WHERE ${telemetryFilterSql('requestStats')} AND timestamp >= ?`,
       [sinceIso]
     ) || {};
 
   // Unbounded on purpose: the freshness indicator has to distinguish "quiet
   // instance" from "no telemetry at all", which the windowed count cannot.
-  const freshness = db.get(`SELECT MAX(timestamp) AS lastEventAt FROM requestStats`) || {};
+  const freshness = db.get(`SELECT MAX(timestamp) AS lastEventAt FROM requestStats WHERE ${telemetryFilterSql('requestStats')}`) || {};
 
   // latencyTotal is 0 for rows whose latency was never measured (backfilled
   // history, and any writer that omitted it), so those are excluded from the
@@ -497,7 +500,7 @@ export async function getTrafficWindow(sinceIso, { percentile = 0.95 } = {}) {
     const offset = Math.max(0, Math.ceil(percentile * latencySamples) - 1);
     const row = db.get(
       `SELECT latencyTotal FROM requestStats
-       WHERE timestamp >= ? AND latencyTotal > 0
+       WHERE ${telemetryFilterSql('requestStats')} AND timestamp >= ? AND latencyTotal > 0
        ORDER BY latencyTotal ASC LIMIT 1 OFFSET ?`,
       [sinceIso, offset]
     );

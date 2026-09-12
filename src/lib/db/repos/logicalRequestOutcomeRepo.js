@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getAdapter } from '../driver.js';
 import { normalizeTerminalEvidence } from '../terminalEvidence.js';
+import { processTelemetryOrigin } from '../telemetryOrigin.js';
 import { backendClock, ownerIsDead } from '../../../sse/services/processClock.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -41,7 +42,7 @@ export function createLogicalOutcomeStore(db, { clock = backendClock, now = () =
     });
     initialized = true;
   }
-  function begin(logicalRequestId, { dataOrigin = process.env.NODE_ENV === 'test' ? 'test' : 'production', originReceiptId = null,
+  function begin(logicalRequestId, { dataOrigin = processTelemetryOrigin(), originReceiptId = null,
     startedMs = monotonic(), firstObservedAt = now() } = {}) {
     if (!UUID.test(logicalRequestId) || !['production', 'test', 'import', 'unknown'].includes(dataOrigin)) throw new Error('Invalid logical request identity');
     initialize();

@@ -3,7 +3,11 @@
 // stats-summary-honesty.test.js does not: the saveRequestStats upsert,
 // buildStatsWhere time-window and multi-select filters, the usageHistory
 // backfill, getStatsFilters cascading maps, and getStatsSeries bucketing.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+
+// These fixtures exercise production display behavior. Origin-boundary tests
+// separately prove that actual test processes cannot self-label their rows.
+vi.mock('../../src/lib/db/telemetryOrigin.js', () => ({ processTelemetryOrigin: () => 'production' }));
 
 const { DATA_FILE } = await import('../../src/lib/db/paths.js');
 const { getAdapter } = await import('../../src/lib/db/driver.js');
@@ -28,8 +32,9 @@ beforeAll(async () => {
 });
 
 describe('buildStatsWhere', () => {
-  it('no filter means no WHERE clause and no params', () => {
-    expect(buildStatsWhere({})).toEqual({ where: '', params: [] });
+  it('no caller filter still applies the shared visible population', () => {
+    expect(buildStatsWhere({}).where).toContain('telemetryQuarantineRows');
+    expect(buildStatsWhere({}).params).toEqual([]);
   });
 
   it('a scalar and an array both become IN clauses, empties are skipped', () => {

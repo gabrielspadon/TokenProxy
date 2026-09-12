@@ -156,6 +156,8 @@ export async function isModelAllowed(key, model) {
 // this is the key's real total rather than a trailing window, and the ceiling
 // therefore applies to traffic already recorded rather than restarting at zero.
 export async function getApiKeyUsage(key) {
+  // Enforcement fallback and its displayed ceiling use inclusive accounting.
+  // Telemetry quarantine cannot erase acknowledged spend or restore allowance.
   const db = await getAdapter();
   const row =
     db.get(
@@ -177,6 +179,7 @@ export async function getApiKeyUsage(key) {
 // The same totals for every key in one pass, so a listing does not run one
 // query per key.
 export async function getApiKeyUsageTotals() {
+  // These are the same inclusive accounting totals shown beside key ceilings.
   const db = await getAdapter();
   const rows = db.all(
     `SELECT apiKey,
