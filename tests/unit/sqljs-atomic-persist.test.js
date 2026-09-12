@@ -68,4 +68,72 @@ describe("sqljs atomic persist", () => {
     expect(fs.readFileSync(dbPath).length).toBeGreaterThan(0);
     expect(fs.existsSync(dbPath + ".tmp")).toBe(false);
   });
+
+  it("publishes a critical transaction before returning without requiring close", async () => {
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v TEXT)");
+    adapter.flush();
+
+    const result = adapter.criticalTransaction(() => {
+      adapter.run("INSERT INTO t (v) VALUES (?)", ["acknowledged"]);
+      return 71;
+    });
+
+    expect(result).toBe(71);
+    const concurrent = await createSqlJsAdapter(dbPath);
+    expect(concurrent.get("SELECT v FROM t").v).toBe("acknowledged");
+    concurrent.close();
+    adapter.close();
+  });
+
+  it.each(["ENOSPC", "EIO"])("does not acknowledge or retain a critical write when publication fails with %s", async (code) => {
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v TEXT)");
+    adapter.run("INSERT INTO t (v) VALUES (?)", ["published"]);
+    adapter.flush();
+    const before = fs.readFileSync(dbPath);
+    const write = vi.spyOn(fs, "writeFileSync").mockImplementation((target, ...args) => {
+      if (typeof target === "number") throw Object.assign(new Error(`fixture ${code}`), { code });
+      return Reflect.apply(fs.writeFileSync, fs, [target, ...args]);
+    });
+    try {
+      expect(() => adapter.criticalTransaction(() => {
+        adapter.run("INSERT INTO t (v) VALUES (?)", ["unacknowledged"]);
+      })).toThrow(expect.objectContaining({ code }));
+    } finally {
+      write.mockRestore();
+    }
+    expect(adapter.all("SELECT v FROM t ORDER BY rowid")).toEqual([{ v: "published" }]);
+    expect(fs.readFileSync(dbPath).equals(before)).toBe(true);
+    expect(fs.existsSync(dbPath + ".tmp")).toBe(false);
+    adapter.close();
+  });
+
+  it("waits for the durable file and directory syncs before acknowledging", async () => {
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v TEXT)");
+    adapter.flush();
+    const syncs = [];
+    const fsync = vi.spyOn(fs, "fsyncSync").mockImplementation((fd) => { syncs.push(fd); });
+    try {
+      adapter.criticalTransaction(() => adapter.run("INSERT INTO t VALUES (?)", ["synced"]));
+    } finally {
+      fsync.mockRestore();
+    }
+    expect(syncs).toHaveLength(process.platform === "win32" ? 1 : 2);
+    adapter.close();
+  });
+
+  it("rejects async and nested critical callbacks without mutating the database", async () => {
+    const adapter = await createSqlJsAdapter(dbPath);
+    adapter.exec("CREATE TABLE t (v TEXT)");
+    adapter.flush();
+    expect(() => adapter.criticalTransaction(async () => {})).toThrow(expect.objectContaining({ code: "CRITICAL_TRANSACTION_ASYNC" }));
+    expect(() => adapter.transaction(() => adapter.criticalTransaction(() => {})))
+      .toThrow(expect.objectContaining({ code: "CRITICAL_TRANSACTION_NESTED" }));
+    expect(() => adapter.criticalTransaction(() => adapter.transaction(() => {})))
+      .toThrow(expect.objectContaining({ code: "CRITICAL_TRANSACTION_NESTED" }));
+    expect(adapter.get("SELECT COUNT(*) AS n FROM t").n).toBe(0);
+    adapter.close();
+  });
 });

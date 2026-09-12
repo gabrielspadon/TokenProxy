@@ -15,7 +15,7 @@ async function loadSql() {
 export async function createSqlJsAdapter(filePath) {
   const SQLLib = await loadSql();
   const buf = fs.existsSync(filePath) ? fs.readFileSync(filePath) : null;
-  const db = new SQLLib.Database(buf);
+  let db = new SQLLib.Database(buf);
   db.exec(PRAGMA_SQL);
   // Schema is created/synced by migrate.js after adapter init
 
@@ -32,18 +32,28 @@ export async function createSqlJsAdapter(filePath) {
       db.exec(PRAGMA_SQL);
     }
     const tmp = filePath + ".tmp";
-    const fd = fs.openSync(tmp, "w", 0o600);
+    let fd = null;
+    let published = false;
     try {
+      fd = fs.openSync(tmp, "w", 0o600);
       fs.fchmodSync(fd, 0o600);
       fs.writeFileSync(fd, data);
       fs.fsyncSync(fd);
-    } finally {
       fs.closeSync(fd);
-    }
-    fs.renameSync(tmp, filePath); // atomic on POSIX; no torn file on crash
-    if (syncDirectory && process.platform !== "win32") {
-      const directory = fs.openSync(dirname(filePath), "r");
-      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+      fd = null;
+      fs.renameSync(tmp, filePath); // atomic on POSIX; no torn file on crash
+      published = true;
+      if (syncDirectory && process.platform !== "win32") {
+        const directory = fs.openSync(dirname(filePath), "r");
+        try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+      }
+    } finally {
+      if (fd !== null) {
+        try { fs.closeSync(fd); } catch {}
+      }
+      if (!published) {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
     }
     dirty = false;
   }
@@ -59,6 +69,7 @@ export async function createSqlJsAdapter(filePath) {
 
   function scheduleSave() {
     dirty = true;
+    if (criticalActive) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
@@ -122,9 +133,26 @@ export async function createSqlJsAdapter(filePath) {
     scheduleSave();
   }
 
+  let transactionDepth = 0;
+  let criticalActive = false;
+
+  function criticalError(code, message) {
+    return Object.assign(new Error(message), { code });
+  }
+
+  function isThenable(value) {
+    return value !== null
+      && (typeof value === "object" || typeof value === "function")
+      && typeof value.then === "function";
+  }
+
   function transaction(fn) {
+    if (criticalActive) {
+      throw criticalError("CRITICAL_TRANSACTION_NESTED", "A critical sql.js transaction cannot contain another transaction");
+    }
     const sp = `sp_${Math.random().toString(36).slice(2)}`;
     db.exec(`SAVEPOINT ${sp}`);
+    transactionDepth += 1;
     try {
       const result = fn();
       db.exec(`RELEASE ${sp}`);
@@ -136,6 +164,8 @@ export async function createSqlJsAdapter(filePath) {
         db.exec(`RELEASE ${sp}`);
       } catch {}
       throw e;
+    } finally {
+      transactionDepth -= 1;
     }
   }
 
@@ -153,12 +183,54 @@ export async function createSqlJsAdapter(filePath) {
   };
   registerShutdownFlusher(flushOnShutdown, 100);
 
-  function criticalTransaction() {
-    throw Object.assign(
-      new Error("Critical writes are unavailable for the sql.js adapter"),
-      { code: "CRITICAL_TRANSACTION_UNSUPPORTED" },
-    );
+  function criticalTransaction(fn) {
+    if (typeof fn !== "function") throw new TypeError("criticalTransaction requires a function");
+    if (Object.prototype.toString.call(fn) === "[object AsyncFunction]") {
+      throw criticalError("CRITICAL_TRANSACTION_ASYNC", "A critical sql.js transaction callback must be synchronous");
+    }
+    if (criticalActive || transactionDepth > 0) {
+      throw criticalError("CRITICAL_TRANSACTION_NESTED", "A critical sql.js transaction must be the outermost transaction");
+    }
+
+    // sql.js commits to memory only. Preserve an exact pre-write image so a
+    // failed file publication can also roll back the live adapter state.
+    let before;
+    try { before = Buffer.from(db.export()); }
+    finally { db.exec(PRAGMA_SQL); }
+    const dirtyBefore = dirty;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    const sp = `critical_${Math.random().toString(36).slice(2)}`;
+    let open = false;
+    criticalActive = true;
+    try {
+      db.exec(`SAVEPOINT ${sp}`);
+      open = true;
+      const result = fn();
+      if (isThenable(result)) {
+        throw criticalError("CRITICAL_TRANSACTION_ASYNC", "A critical sql.js transaction callback must be synchronous");
+      }
+      db.exec(`RELEASE ${sp}`);
+      open = false;
+      dirty = true;
+      persist({ syncDirectory: true });
+      return result;
+    } catch (error) {
+      if (open) {
+        try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
+      }
+      try { db.close(); } catch {}
+      db = new SQLLib.Database(before);
+      db.exec(PRAGMA_SQL);
+      dirty = dirtyBefore;
+      throw error;
+    } finally {
+      criticalActive = false;
+      if (dirtyBefore && dirty && !saveTimer) scheduleSave();
+    }
   }
 
-  return { driver: "sql.js", run, get, all, exec, transaction, criticalTransaction, flush, close, raw: db };
+  const adapter = { driver: "sql.js", run, get, all, exec, transaction, criticalTransaction, flush, close };
+  Object.defineProperty(adapter, "raw", { enumerable: true, get: () => db });
+  return adapter;
 }
