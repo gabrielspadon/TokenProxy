@@ -192,3 +192,104 @@ describe("Codex permanently invalid OAuth state (#3194)", () => {
     expect(persisted).toEqual(restored);
   });
 });
+
+describe("Claude organization OAuth rejection", () => {
+  it("persists quarantine and excludes only the rejected account from active selection", async () => {
+    const rejected = await connectionsRepo.createProviderConnection({
+      provider: "claude",
+      authType: "oauth",
+      accessToken: "rejected-test-token",
+      email: "rejected@example.test",
+    });
+    const healthy = await connectionsRepo.createProviderConnection({
+      provider: "claude",
+      authType: "oauth",
+      accessToken: "healthy-test-token",
+      email: "healthy@example.test",
+    });
+    const otherProviderBefore = await connectionsRepo.getProviderConnections({ provider: "codex" });
+    dbMocks.getProviderConnections.mockImplementationOnce(connectionsRepo.getProviderConnections);
+    dbMocks.updateProviderConnection.mockImplementationOnce(connectionsRepo.updateProviderConnection);
+
+    await markAccountUnavailable(
+      rejected.id,
+      403,
+      "[403]: OAuth authentication is currently not allowed for this organization.",
+      "claude",
+      "claude-opus-5",
+    );
+
+    const persisted = await connectionsRepo.getProviderConnectionById(rejected.id);
+    expect(persisted).toMatchObject({ isActive: false, testStatus: "reauth_required", errorCode: 403 });
+    const candidates = await connectionsRepo.getProviderConnections({ provider: "claude", isActive: true });
+    expect(candidates.map((connection) => connection.id)).toEqual([healthy.id]);
+    expect(await connectionsRepo.getProviderConnectionById(healthy.id)).toEqual(healthy);
+    expect(await connectionsRepo.getProviderConnections({ provider: "codex" })).toEqual(otherProviderBefore);
+  });
+
+  it.each([
+    ["claude", 401],
+    ["codex", 403],
+    ["other-provider", 403],
+  ])("does not quarantine the Claude marker for %s status %i", async (provider, status) => {
+    await markAccountUnavailable(
+      "other-account",
+      status,
+      "OAuth authentication is currently not allowed for this organization.",
+      provider,
+      "other-model",
+    );
+
+    expect(dbMocks.updateProviderConnection).toHaveBeenCalled();
+    expect(dbMocks.updateProviderConnection.mock.calls[0][1].isActive).toBeUndefined();
+  });
+
+  it("quarantines the account-wide 403 instead of repeatedly dispatching it", async () => {
+    const result = await markAccountUnavailable(
+      "claude-a",
+      403,
+      "OAuth authentication is currently not allowed for this organization.",
+      "claude",
+      "claude-opus-5",
+    );
+
+    expect(result).toEqual({ shouldFallback: true, cooldownMs: 0, failureClass: "credential", retrySameAccount: false, mustWait: false });
+    expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
+      "claude-a",
+      expect.objectContaining({
+        isActive: false,
+        testStatus: "reauth_required",
+        errorCode: 403,
+        backoffLevel: 0,
+        lastError: "OAuth authentication is currently not allowed for this organization.",
+      }),
+    );
+    expect(Object.keys(dbMocks.updateProviderConnection.mock.calls[0][1]).some((key) => key.startsWith("modelLock_"))).toBe(false);
+  });
+
+  it("keeps an unrelated organization-scoped model refusal model-local", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T14:00:00.000Z"));
+
+    try {
+      await markAccountUnavailable(
+        "claude-a",
+        403,
+        "This model is not available to your organization",
+        "claude",
+        "claude-opus-5",
+      );
+
+      expect(dbMocks.updateProviderConnection).toHaveBeenCalledWith(
+        "claude-a",
+        expect.objectContaining({
+          "modelLock_claude-opus-5": "2026-09-12T14:02:00.000Z",
+          testStatus: "unavailable",
+        }),
+      );
+      expect(dbMocks.updateProviderConnection.mock.calls[0][1].isActive).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
