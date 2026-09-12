@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync,
 } from "node:fs";
 import net from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
@@ -48,7 +48,7 @@ export function packageVersion(packagePath) {
 
 export function prepareArtifacts(artifacts) {
   if (existsSync(artifacts)) {
-    if (!statSync(artifacts).isDirectory()) fail(`artifact path is not a directory: ${artifacts}`);
+    if (!lstatSync(artifacts).isDirectory()) fail(`artifact path must be a real directory: ${artifacts}`);
     if (readdirSync(artifacts).length > 0) fail(`artifact directory must be empty: ${artifacts}`);
     chmodSync(artifacts, 0o700);
   } else {
@@ -82,8 +82,28 @@ function spawnSyncResult(command, args, { cwd, env = process.env } = {}) {
 export async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) {
   const running = spawnSyncResult(command, args, { cwd, env });
   const result = await new Promise((resolvePromise, rejectPromise) => {
-    const timeout = setTimeout(() => {
-      running.child.kill("SIGTERM");
+    let timedOut = false;
+    const timeout = setTimeout(async () => {
+      timedOut = true;
+      const root = procIdentity(running.child.pid);
+      const captured = root ? processTree(root) : [];
+      try {
+        for (const identity of captured.toReversed()) {
+          if (sameIdentity(procIdentity(identity.pid), identity)) {
+            try { process.kill(identity.pid, "SIGTERM"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+          }
+        }
+        await waitForExit(running.child, 1000);
+        for (const identity of captured.toReversed()) {
+          if (sameIdentity(procIdentity(identity.pid), identity)) {
+            try { process.kill(identity.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+          }
+        }
+        await waitForExit(running.child, 1000);
+      } catch (error) {
+        rejectPromise(new Error(`command timeout cleanup failed: ${error.message}`));
+        return;
+      }
       rejectPromise(new Error(`command timed out after ${timeoutMs} ms: ${command} ${args.join(" ")}`));
     }, timeoutMs);
     running.child.once("error", (error) => {
@@ -92,13 +112,14 @@ export async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 }
     });
     running.child.once("exit", (code, signal) => {
       clearTimeout(timeout);
+      if (timedOut) return;
       resolvePromise({ code, signal, stdout: running.stdout, stderr: running.stderr });
     });
   });
   return result;
 }
 
-async function reservePort() {
+export async function reservePort() {
   const server = net.createServer();
   await new Promise((resolvePromise, rejectPromise) => {
     server.once("error", rejectPromise);
@@ -113,27 +134,24 @@ export function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function readSchemaVersion(database) {
+export function readSchemaVersion(database, key = "schemaVersion") {
   const db = new DatabaseSync(database, { readOnly: true });
   try {
-    const row = db.prepare("SELECT value FROM _meta WHERE key = 'schemaVersion'").get();
+    const row = db.prepare("SELECT value FROM _meta WHERE key = ?").get(key);
     const version = Number.parseInt(row?.value, 10);
-    if (!Number.isSafeInteger(version) || version < 0) fail("database has no valid schemaVersion");
+    if (!Number.isSafeInteger(version) || version < 0) fail(`database has no valid ${key}`);
     return version;
   } finally {
     db.close();
   }
 }
 
-function setSchemaVersion(database, version) {
-  const db = new DatabaseSync(database);
+export function schemaSha256(database) {
+  const db = new DatabaseSync(database, { readOnly: true });
   try {
-    const result = db.prepare("UPDATE _meta SET value = ? WHERE key = 'schemaVersion'").run(String(version));
-    if (Number(result.changes) !== 1) fail("database schemaVersion seed row is missing");
-  } finally {
-    db.close();
-  }
-  if (readSchemaVersion(database) !== version) fail(`database schemaVersion could not be set to ${version}`);
+    const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
+    return createHash("sha256").update(JSON.stringify(schema)).digest("hex");
+  } finally { db.close(); }
 }
 
 export async function resolveExpectedSchemaVersion(value) {
@@ -145,6 +163,14 @@ export async function resolveExpectedSchemaVersion(value) {
   if (!Number.isSafeInteger(version) || version < 1 || String(version) !== String(value ?? version)) {
     fail(`invalid expected schema version: ${value ?? version}`);
   }
+  return version;
+}
+
+export async function resolveExpectedLayoutVersion(value) {
+  const version = value === undefined
+    ? (await import(pathToFileURL(join(SCRIPT_ROOT, "src/lib/db/schema.js")).href)).SCHEMA_VERSION
+    : Number(value);
+  if (!Number.isSafeInteger(version) || version < 1 || String(version) !== String(value ?? version)) fail(`invalid expected layout version: ${value}`);
   return version;
 }
 
@@ -166,6 +192,8 @@ export function privateEnvironment(runRoot, extra = {}) {
     NODE_ENV: "production",
     NEXT_TELEMETRY_DISABLED: "1",
     TOKENPROXY_NO_UPDATE: "1",
+    MODEL_CATALOG_SYNC: "off",
+    MODEL_CAPABILITY_OVERRIDES: JSON.stringify({ "fixture-model": { vision: true, reasoning: true } }),
     JWT_SECRET: "artifact-fixture-jwt-secret-000000000000",
     API_KEY_SECRET: "artifact-fixture-api-secret-111111111111",
     MACHINE_ID_SALT: "artifact-fixture-machine-salt-22222222",
@@ -271,7 +299,7 @@ async function captureOwnership(child, port) {
 }
 
 async function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return { code: child.exitCode, signal: child.signalCode };
+  if (child.exitCode !== null || child.signalCode !== null) return { code: child.exitCode, signal: child.signalCode };
   return new Promise((resolvePromise) => {
     const onExit = (code, signal) => {
       clearTimeout(timer);
@@ -301,7 +329,8 @@ async function portIsClosed(port, timeoutMs = 5_000) {
 
 async function cleanupOwned(child, ownership) {
   const result = { graceful: false, forced: false, listenerGone: false, exitCode: child.exitCode, signal: child.signalCode };
-  if (child.exitCode === null) {
+  const ownedTree = processTree(ownership.root);
+  if (child.exitCode === null && child.signalCode === null) {
     if (!sameIdentity(procIdentity(ownership.root.pid), ownership.root)) fail("refusing cleanup because the spawned process identity changed");
     child.kill("SIGTERM");
     let exit = await waitForExit(child, 5_000);
@@ -316,6 +345,7 @@ async function cleanupOwned(child, ownership) {
     result.signal = exit?.signal ?? null;
   }
   result.listenerGone = await portIsClosed(ownership.port);
+  result.processesGone = ownedTree.every((identity) => !sameIdentity(procIdentity(identity.pid), identity));
   return result;
 }
 
@@ -323,7 +353,7 @@ async function readJson(url, child, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) fail(`artifact exited before ${url} became ready with code ${child.exitCode}`);
+    if (child.exitCode !== null || child.signalCode !== null) fail(`artifact exited before ${url} became ready with code ${child.exitCode} signal ${child.signalCode}`);
     try {
       const response = await fetch(url, {
         headers: { connection: "close" },
@@ -341,12 +371,26 @@ async function readJson(url, child, timeoutMs = 60_000) {
   fail(`timed out waiting for ${url}: ${lastError?.message || "no response"}`);
 }
 
-async function startAndProbe({ launch, env, candidate, port, label, during }) {
+export async function startOwnedArtifact({ launch, env, candidate, port, label }) {
+  if (!/^[A-Za-z0-9_-]+$/u.test(label || "")) fail("artifact label must be a safe log basename");
   const running = spawnSyncResult(launch.command, launch.args(port), { cwd: launch.cwd, env: { ...env, PORT: String(port), HOSTNAME: "127.0.0.1" } });
   const receipt = { label, command: [launch.command, ...launch.args(port)], pid: running.child.pid };
+  const spawnedRoot = running.child.pid ? procIdentity(running.child.pid) : null;
+  let spawnError;
+  running.child.once("error", (error) => { spawnError = error; });
   let ownership;
+  let closing;
+  const close = () => closing ||= (async () => {
+    const captured = ownership || (spawnedRoot ? { root: spawnedRoot, port } : null);
+    try {
+      receipt.cleanup = captured ? await cleanupOwned(running.child, captured) : { listenerGone: await portIsClosed(port), unverified: true };
+    } catch (error) { receipt.cleanup = { listenerGone: false, error: error.message }; }
+    writeFileSync(join(env.TOKENPROXY_ARTIFACT_LOG_DIR, `${label}-stdout.log`), running.stdout, { mode: 0o600 });
+    writeFileSync(join(env.TOKENPROXY_ARTIFACT_LOG_DIR, `${label}-stderr.log`), running.stderr, { mode: 0o600 });
+    return receipt.cleanup;
+  })();
+  const baseUrl = `http://127.0.0.1:${port}`;
   try {
-    const baseUrl = `http://127.0.0.1:${port}`;
     const health = await readJson(`${baseUrl}/api/health`, running.child);
     ownership = await captureOwnership(running.child, port);
     const readiness = await readJson(`${baseUrl}/api/ready`, running.child);
@@ -363,25 +407,27 @@ async function startAndProbe({ launch, env, candidate, port, label, during }) {
     if (readiness.body?.buildSha !== candidate.sha) fail(`served readiness SHA ${readiness.body?.buildSha || "null"} does not match candidate ${candidate.sha}`);
     if (version.body?.buildSha !== candidate.sha) fail(`served build SHA ${version.body?.buildSha || "null"} does not match candidate ${candidate.sha}`);
     if (version.body?.currentVersion !== candidate.version) fail(`served version ${version.body?.currentVersion || "null"} does not match candidate ${candidate.version}`);
-    if (during) receipt.during = await during(baseUrl);
+    return { baseUrl, ownership, receipt, close };
   } catch (error) {
-    receipt.error = error.message;
-  } finally {
-    if (ownership) {
-      try { receipt.cleanup = await cleanupOwned(running.child, ownership); }
-      catch (error) { receipt.cleanup = { listenerGone: false, error: error.message }; }
-    } else if (running.child.exitCode === null) {
-      running.child.kill("SIGTERM");
-      await waitForExit(running.child, 3_000);
-      receipt.cleanup = { listenerGone: await portIsClosed(port), unverified: true };
-    }
-    writeFileSync(join(env.TOKENPROXY_ARTIFACT_LOG_DIR, `${label}-stdout.log`), running.stdout, { mode: 0o600 });
-    writeFileSync(join(env.TOKENPROXY_ARTIFACT_LOG_DIR, `${label}-stderr.log`), running.stderr, { mode: 0o600 });
+    receipt.error = (spawnError || error).message;
+    await close();
+    throw Object.assign(error, { receipt });
   }
-  return receipt;
 }
 
-function validateManifest(path) {
+export async function startAndProbe({ during, ...options }) {
+  let running;
+  try {
+    running = await startOwnedArtifact(options);
+    if (during) running.receipt.during = await during(running.baseUrl);
+  } catch (error) {
+    if (!running) return error.receipt || { label: options.label, error: error.message };
+    running.receipt.error = error.message;
+  } finally { if (running) await running.close(); }
+  return running.receipt;
+}
+
+export function validateManifest(path) {
   const manifest = JSON.parse(readFileSync(path, "utf8"));
   if (!Array.isArray(manifest.cells) || manifest.cells.length !== 121) fail("capability manifest must contain exactly 121 format cells");
   if (!Array.isArray(manifest.primaryEndpoints) || manifest.primaryEndpoints.length !== 36) fail("capability manifest must contain exactly 36 primary endpoint cells");
@@ -390,7 +436,7 @@ function validateManifest(path) {
   return manifest;
 }
 
-async function runCapabilityMatrix({ matrixScript, baseUrl, providerControlUrl, authorization, env }) {
+export async function runCapabilityMatrix({ matrixScript, baseUrl, providerControlUrl, authorization, env }) {
   const authName = "CAPABILITY_GATEWAY_AUTH";
   const args = [
     matrixScript,
@@ -401,7 +447,7 @@ async function runCapabilityMatrix({ matrixScript, baseUrl, providerControlUrl, 
   ];
   const result = await runCommand(process.execPath, args, {
     cwd: SCRIPT_ROOT,
-    env: { PATH: env.PATH, LANG: env.LANG, LC_ALL: env.LC_ALL, [authName]: authorization },
+    env: { ...env, [authName]: authorization },
     timeoutMs: 10 * 60_000,
   });
   if (result.code !== 0) fail(`capability matrix exited ${result.code}: ${result.stderr.slice(-2_000)}`);
@@ -413,12 +459,31 @@ async function runCapabilityMatrix({ matrixScript, baseUrl, providerControlUrl, 
   return report;
 }
 
+export async function startFixtureProvider(providerModule) {
+  if (typeof providerModule.startProviderStub !== "function") fail("provider stub module does not export startProviderStub");
+  for (let port = 20210; port <= 20219; port += 1) {
+    try { return await providerModule.startProviderStub({ host: "127.0.0.1", port }); }
+    catch (error) { if (error.code !== "EADDRINUSE") throw error; }
+  }
+  fail("all reserved capability provider ports 20210-20219 are occupied");
+}
+
+export function capabilityOptions(options, root = SCRIPT_ROOT) {
+  return {
+    manifest: requiredPath(options["capability-manifest"] || join(root, "tests/contracts/capabilities.json"), "capability manifest"),
+    providerStubModule: requiredPath(options["provider-stub-module"] || join(root, "tests/contracts/provider-stub.mjs"), "provider stub module"),
+    seedScript: requiredPath(options["seed-script"] || join(root, "tests/contracts/capability-gateway-seed.mjs"), "capability seed script"),
+    matrixScript: requiredPath(options["matrix-script"] || join(root, "tests/contracts/run-capability-matrix.mjs"), "capability matrix script"),
+  };
+}
+
 export async function qualifyStartedArtifact({
   artifacts,
   candidate,
   launch,
   capability,
   expectedSchemaVersion,
+  expectedLayoutVersion,
   preparedRunRoot = null,
 }) {
   const receipt = {
@@ -438,14 +503,25 @@ export async function qualifyStartedArtifact({
     mkdirSync(logDir, { mode: 0o700 });
     const env = privateEnvironment(runRoot, { TOKENPROXY_ARTIFACT_LOG_DIR: logDir });
     const manifest = validateManifest(capability.manifest);
-    const providerPort = await reservePort();
+    for (const name of [".env", ".env.local", ".env.production", ".env.production.local"]) {
+      if (existsSync(join(launch.cwd, name))) fail(`artifact verifier refuses implicit environment file ${name}`);
+    }
     const providerModule = await import(pathToFileURL(capability.providerStubModule).href);
-    if (typeof providerModule.startProviderStub !== "function") fail("provider stub module does not export startProviderStub");
-    provider = await providerModule.startProviderStub({ host: "127.0.0.1", port: providerPort });
+    provider = await startFixtureProvider(providerModule);
+    const guardPath = join(SCRIPT_ROOT, "tests/qa/gateway-performance/guard.cjs");
+    if (!existsSync(guardPath)) fail("artifact runtime I/O guard is missing");
+    const guardEnv = {
+      NODE_OPTIONS: `--require ${JSON.stringify(guardPath)}`,
+      BENCH_RUN_ID: "t09-started-artifact",
+      BENCH_ALLOWED_PORTS: new URL(provider.baseUrl).port,
+      // The packaged launcher owns a server child; both inherit the guard.
+      BENCH_BUILD: "1",
+    };
     const authFile = join(runRoot, "authorization");
     const seed = await runCommand(process.execPath, [capability.seedScript], {
       cwd: SCRIPT_ROOT,
       env: privateEnvironment(runRoot, {
+        ...guardEnv,
         CAPABILITY_PROVIDER_BASE_URL: `${provider.baseUrl}/v1`,
         CAPABILITY_AUTH_FILE: authFile,
       }),
@@ -459,18 +535,24 @@ export async function qualifyStartedArtifact({
     const authorization = readFileSync(authFile, "utf8").trim();
     if (!authorization) fail("capability seed did not create authorization");
     const seededSchemaVersion = readSchemaVersion(database);
-    setSchemaVersion(database, 0);
+    const seededLayoutVersion = readSchemaVersion(database, "backupSchemaVersion");
+    const seededSchemaSha256 = schemaSha256(database);
+    if (seededSchemaVersion > expectedSchemaVersion || seededLayoutVersion > expectedLayoutVersion) fail("fixture schema is newer than the candidate");
     const schemaVersions = [];
+    const layoutVersions = [];
 
     for (let index = 0; index < 2; index += 1) {
       const port = await reservePort();
       const run = await startAndProbe({
         launch,
         env: privateEnvironment(runRoot, {
+          ...guardEnv,
+          BENCH_ALLOWED_PORTS: `${new URL(provider.baseUrl).port},${port}`,
           TOKENPROXY_ARTIFACT_LOG_DIR: logDir,
           CAPABILITY_GATEWAY_AUTH: authorization,
           CAPABILITY_PROVIDER_BASE_URL: `${provider.baseUrl}/v1`,
           TOKENPROXY_EXPECTED_SCHEMA_VERSION: String(expectedSchemaVersion),
+          TOKENPROXY_EXPECTED_LAYOUT_VERSION: String(expectedLayoutVersion),
         }),
         candidate,
         port,
@@ -487,14 +569,17 @@ export async function qualifyStartedArtifact({
       });
       receipt.starts.push(run);
       if (run.error) fail(run.error);
-      if (run.cleanup?.listenerGone !== true || run.cleanup?.graceful !== true || run.cleanup?.forced === true || run.cleanup?.exitCode !== 0) {
+      if (run.cleanup?.listenerGone !== true || run.cleanup?.processesGone !== true || run.cleanup?.graceful !== true || run.cleanup?.forced === true || run.cleanup?.exitCode !== 0) {
         fail(`artifact ${run.label} did not stop cleanly`);
       }
       const schemaVersion = readSchemaVersion(database);
+      const layoutVersion = readSchemaVersion(database, "backupSchemaVersion");
       schemaVersions.push(schemaVersion);
+      layoutVersions.push(layoutVersion);
       if (schemaVersion !== expectedSchemaVersion) {
         fail(`artifact ${run.label} left schemaVersion ${schemaVersion}; expected ${expectedSchemaVersion}`);
       }
+      if (layoutVersion !== expectedLayoutVersion) fail(`artifact ${run.label} left backupSchemaVersion ${layoutVersion}; expected ${expectedLayoutVersion}`);
     }
 
     const matrix = receipt.starts[1].during;
@@ -512,9 +597,15 @@ export async function qualifyStartedArtifact({
     receipt.persistence = {
       seeded: true,
       seededSchemaVersion,
-      seedSchemaVersion: 0,
+      seededLayoutVersion,
+      seedSchemaVersion: seededSchemaVersion,
+      seedScriptSha256: sha256File(capability.seedScript),
+      seededSchemaSha256,
+      reopenedSchemaSha256: schemaSha256(database),
+      migrationExercised: (seededSchemaVersion < expectedSchemaVersion || seededLayoutVersion < expectedLayoutVersion) && seededSchemaSha256 !== schemaSha256(database),
       migratedSchemaVersion: schemaVersions[0],
       reopenedSchemaVersion: schemaVersions[1],
+      reopenedLayoutVersion: layoutVersions[1],
       reopened: schemaVersions.length === 2 && schemaVersions.every((version) => version === expectedSchemaVersion),
       databaseBytes: statSync(database).size,
       databaseSha256: sha256File(database),
@@ -552,18 +643,15 @@ export async function standaloneMain(argv = process.argv.slice(2)) {
   };
   if (!SHA_PATTERN.test(candidate.sha)) fail(`invalid candidate SHA: ${candidate.sha}`);
   const expectedSchemaVersion = await resolveExpectedSchemaVersion(options["expected-schema-version"]);
-  const capability = {
-    manifest: requiredPath(options["capability-manifest"] || join(SCRIPT_ROOT, "tests/contracts/capabilities.json"), "capability manifest"),
-    providerStubModule: requiredPath(options["provider-stub-module"] || join(SCRIPT_ROOT, "tests/contracts/provider-stub.mjs"), "provider stub module"),
-    seedScript: requiredPath(options["seed-script"] || join(SCRIPT_ROOT, "tests/contracts/capability-gateway-seed.mjs"), "capability seed script"),
-    matrixScript: requiredPath(options["matrix-script"] || join(SCRIPT_ROOT, "tests/contracts/run-capability-matrix.mjs"), "capability matrix script"),
-  };
+  const expectedLayoutVersion = await resolveExpectedLayoutVersion(options["expected-layout-version"]);
+  const capability = capabilityOptions(options);
   const receipt = await qualifyStartedArtifact({
     artifacts,
     candidate,
     launch: { command: process.execPath, args: () => [entry], cwd: standaloneRoot },
     capability,
     expectedSchemaVersion,
+    expectedLayoutVersion,
   });
   receipt.schema = "tokenproxy-standalone-qualification-v1";
   if (receipt.artifactsPrepared) {

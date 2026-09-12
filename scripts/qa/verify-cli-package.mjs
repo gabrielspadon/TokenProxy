@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  capabilityOptions,
   gitSha,
   packageVersion,
   parseOptions,
@@ -10,6 +11,7 @@ import {
   privateEnvironment,
   qualifyStartedArtifact,
   resolveExpectedSchemaVersion,
+  resolveExpectedLayoutVersion,
   runCommand,
   sha256File,
 } from "./verify-standalone.mjs";
@@ -80,12 +82,8 @@ export async function cliMain(argv = process.argv.slice(2)) {
   };
   if (!SHA_PATTERN.test(candidate.sha)) fail(`invalid candidate SHA: ${candidate.sha}`);
   const expectedSchemaVersion = await resolveExpectedSchemaVersion(options["expected-schema-version"]);
-  const capability = {
-    manifest: requiredPath(options["capability-manifest"] || join(SCRIPT_ROOT, "tests/contracts/capabilities.json"), "capability manifest"),
-    providerStubModule: requiredPath(options["provider-stub-module"] || join(SCRIPT_ROOT, "tests/contracts/provider-stub.mjs"), "provider stub module"),
-    seedScript: requiredPath(options["seed-script"] || join(SCRIPT_ROOT, "tests/contracts/capability-gateway-seed.mjs"), "capability seed script"),
-    matrixScript: requiredPath(options["matrix-script"] || join(SCRIPT_ROOT, "tests/contracts/run-capability-matrix.mjs"), "capability matrix script"),
-  };
+  const expectedLayoutVersion = await resolveExpectedLayoutVersion(options["expected-layout-version"]);
+  const capability = capabilityOptions(options);
   const runRoot = prepareArtifacts(artifacts);
   const packDir = join(runRoot, "pack");
   const prefix = join(runRoot, "install");
@@ -157,6 +155,7 @@ export async function cliMain(argv = process.argv.slice(2)) {
       },
       capability,
       expectedSchemaVersion,
+      expectedLayoutVersion,
     });
     receipt = {
       ...receipt,

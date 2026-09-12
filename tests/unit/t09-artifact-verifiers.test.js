@@ -46,6 +46,7 @@ function makeFixture() {
     writeFileSync(stateFile, JSON.stringify(state));
     const db = new DatabaseSync(join(dbDir, "data.sqlite"));
     db.prepare("UPDATE _meta SET value=? WHERE key='schemaVersion'").run(process.env.TOKENPROXY_EXPECTED_SCHEMA_VERSION);
+    db.prepare("UPDATE _meta SET value=? WHERE key='backupSchemaVersion'").run(process.env.TOKENPROXY_EXPECTED_LAYOUT_VERSION);
     db.close();
     const shaPath = process.env.TOKENPROXY_FIXTURE_SHA_PATH || resolve(process.cwd(), "BUILD_SHA");
     const buildSha = readFileSync(shaPath, "utf8").trim();
@@ -85,7 +86,7 @@ function makeFixture() {
     import { join } from "node:path";
     mkdirSync(join(process.env.DATA_DIR, "db"), { recursive: true });
     const db = new DatabaseSync(join(process.env.DATA_DIR, "db", "data.sqlite"));
-    db.exec("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO _meta (key, value) VALUES ('schemaVersion', '0')");
+    db.exec("CREATE TABLE _meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO _meta (key, value) VALUES ('schemaVersion', '0'), ('backupSchemaVersion', '0')");
     db.close();
     writeFileSync(join(process.env.DATA_DIR, "db", "fixture-state.json"), JSON.stringify({ boots: 0, seeded: true }));
     writeFileSync(process.env.CAPABILITY_AUTH_FILE, "Bearer fixture-secret\\n", { mode: 0o600 });
@@ -116,6 +117,7 @@ function verifierArgs(fixture, artifacts, extra = []) {
     "--candidate-sha", SHA,
     "--candidate-version", VERSION,
     "--expected-schema-version", "9",
+    "--expected-layout-version", "41",
     "--capability-manifest", fixture.manifest,
     "--provider-stub-module", fixture.provider,
     "--seed-script", fixture.seed,
@@ -160,6 +162,8 @@ describe("T09 standalone artifact verifier", () => {
       persistence: { seeded: true, seedSchemaVersion: 0, migratedSchemaVersion: 9, reopenedSchemaVersion: 9, reopened: true },
     });
     expect(receipt.starts).toHaveLength(2);
+    expect(receipt.persistence.migrationExercised).toBe(false);
+    expect(receipt.persistence.seededSchemaSha256).toBe(receipt.persistence.reopenedSchemaSha256);
     expect(receipt.starts.every(runReceipt => runReceipt.health.ok && runReceipt.readiness.ready)).toBe(true);
     expect(receipt.starts.every(runReceipt => runReceipt.healthStatus === 200 && runReceipt.readinessStatus === 200 && runReceipt.versionStatus === 200)).toBe(true);
     expect(receipt.starts.every(runReceipt => runReceipt.version.buildSha === SHA)).toBe(true);
