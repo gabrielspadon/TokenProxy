@@ -43,7 +43,9 @@ function assertAllowedUnixSocket(path) {
 
 function assertAllowedConnection(args) {
   const opts = typeof args[0] === "object" && args[0] !== null ? args[0] : {};
-  if (opts.path !== undefined) {
+  // Node's HTTP URL normalization includes `path: null` in TCP options. Only
+  // an actual path selects AF_UNIX; null remains a normal host/port connect.
+  if (opts.path !== undefined && opts.path !== null) {
     assertAllowedUnixSocket(opts.path);
     return;
   }

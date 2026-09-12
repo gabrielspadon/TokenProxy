@@ -10,6 +10,7 @@
 // The coupling is between two files, so the test is on both.
 
 import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
@@ -49,8 +50,21 @@ describe("BUILD_SHA is stamped before the bundle is built", () => {
     expect(gitTry).toBeLessThan(fileRead);
   });
 
-  it("slices an env-provided sha to 12 chars like every other path", () => {
-    expect(nextConfig).toContain("process.env.TOKENPROXY_BUILD_SHA.slice(0, 12)");
+  it("preserves the complete build sha from every source", () => {
+    expect(nextConfig).toContain("return process.env.TOKENPROXY_BUILD_SHA;");
+    expect(nextConfig).not.toContain(".slice(0, 12)");
+  });
+
+  it("inlines an env-provided full commit identity without truncation", () => {
+    const sha = "a".repeat(40);
+    const configUrl = new URL("../../next.config.mjs", import.meta.url).href;
+    const output = execFileSync(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `process.env.TOKENPROXY_BUILD_SHA = ${JSON.stringify(sha)}; const { default: config } = await import(${JSON.stringify(configUrl)}); process.stdout.write(config.env.TP_BUILD_SHA);`,
+    ], { encoding: "utf8" });
+
+    expect(output).toBe(sha);
   });
 
   it("stamps exactly once, so no later write can shadow the pre-build one", () => {
