@@ -1,0 +1,49 @@
+{
+  "model": "fixture-model",
+  "max_tokens": 32,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "lookup_weather",
+        "description": "Return weather",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        }
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": "Weather in Halifax?"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_weather_1",
+          "type": "function",
+          "function": {
+            "name": "lookup_weather",
+            "arguments": "{\"city\":\"Halifax\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_weather_1",
+      "content": "{\"celsius\":12}"
+    }
+  ]
+}

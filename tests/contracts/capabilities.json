@@ -1,0 +1,3857 @@
+{
+  "schemaVersion": 1,
+  "contract": "tokenproxy-offline-capabilities",
+  "formats": [
+    "openai",
+    "openai-responses",
+    "claude",
+    "gemini",
+    "gemini-cli",
+    "vertex",
+    "antigravity",
+    "kiro",
+    "cursor",
+    "ollama",
+    "commandcode"
+  ],
+  "statusVocabulary": {
+    "supported": "complete registered route",
+    "rejected": "missing route or explicit content rejection before dispatch",
+    "documented-loss": "supported conversion with named non-core annotation loss",
+    "executor-managed": "private wire protocol validated at executor boundary"
+  },
+  "cells": [
+    {
+      "source": "openai",
+      "target": "openai",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "openai-responses",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "claude",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "gemini",
+      "request": {
+        "status": "documented-loss",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "gemini-cli",
+      "request": {
+        "status": "documented-loss",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "vertex",
+      "request": {
+        "status": "documented-loss",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "antigravity",
+      "request": {
+        "status": "documented-loss",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai",
+      "target": "kiro",
+      "request": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai",
+      "target": "cursor",
+      "request": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai",
+      "target": "ollama",
+      "request": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai",
+      "target": "commandcode",
+      "request": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "openai",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "openai-responses",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "claude",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "gemini",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "gemini-cli",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "vertex",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "antigravity",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "kiro",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "cursor",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "ollama",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "openai-responses",
+      "target": "commandcode",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "claude",
+      "target": "openai",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "openai-responses",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "claude",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "gemini",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "gemini-cli",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "vertex",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "antigravity",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "claude",
+      "target": "kiro",
+      "request": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "claude",
+      "target": "cursor",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "claude",
+      "target": "ollama",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "claude",
+      "target": "commandcode",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "openai",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "openai-responses",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "claude",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "gemini",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "gemini-cli",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "vertex",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "antigravity",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "kiro",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "cursor",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "ollama",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini",
+      "target": "commandcode",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "openai",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "openai-responses",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "claude",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "gemini",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "gemini-cli",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "vertex",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "antigravity",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "kiro",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "cursor",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "ollama",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "gemini-cli",
+      "target": "commandcode",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "openai",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "openai-responses",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "claude",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "gemini",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "gemini-cli",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "vertex",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "antigravity",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "kiro",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "cursor",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "ollama",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "vertex",
+      "target": "commandcode",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "vertex",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "openai",
+      "request": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "direct",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "openai-responses",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "claude",
+      "request": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "gemini",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "gemini-cli",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "vertex",
+      "request": {
+        "status": "documented-loss",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": [
+          "unsupported-provider-schema-annotations-removed"
+        ]
+      },
+      "response": {
+        "status": "supported",
+        "mode": "pivot",
+        "owner": "translator",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "antigravity",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "kiro",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "cursor",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "ollama",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "antigravity",
+      "target": "commandcode",
+      "request": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "openai",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "openai-responses",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "claude",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "gemini",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "gemini-cli",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "vertex",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "antigravity",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "kiro-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "kiro",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "cursor",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "ollama",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "kiro",
+      "target": "commandcode",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "kiro",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "openai",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "openai-responses",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "claude",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "gemini",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "gemini-cli",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "vertex",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "antigravity",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "cursor-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "kiro",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "cursor",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "ollama",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "cursor",
+      "target": "commandcode",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "cursor",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "openai",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "openai-responses",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "claude",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "gemini",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "gemini-cli",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "vertex",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "antigravity",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "ollama-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "kiro",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "cursor",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "ollama",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "ollama",
+      "target": "commandcode",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "ollama",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "commandcode"
+          }
+        ]
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "openai",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "direct",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "openai-responses",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "claude",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "gemini",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "gemini-cli",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "vertex",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "antigravity",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "executor-managed",
+        "mode": "pivot",
+        "owner": "commandcode-executor",
+        "lossPolicy": []
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "kiro",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "kiro"
+          }
+        ]
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "cursor",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "cursor"
+          }
+        ]
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "ollama",
+      "request": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "commandcode",
+            "to": "openai"
+          }
+        ]
+      },
+      "response": {
+        "status": "rejected",
+        "mode": "unavailable",
+        "owner": "translator-registry",
+        "lossPolicy": [],
+        "missing": [
+          {
+            "from": "openai",
+            "to": "ollama"
+          }
+        ]
+      }
+    },
+    {
+      "source": "commandcode",
+      "target": "commandcode",
+      "request": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      },
+      "response": {
+        "status": "supported",
+        "mode": "passthrough",
+        "owner": "identity",
+        "lossPolicy": []
+      }
+    }
+  ],
+  "primaryEndpoints": [
+    {
+      "id": "openai-json-text",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": false,
+      "scenario": "text",
+      "fixture": "tests/fixtures/capabilities/openai/text.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-json-tool-cycle",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": false,
+      "scenario": "tool-cycle",
+      "fixture": "tests/fixtures/capabilities/openai/tool-cycle.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-json-parallel-tools",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": false,
+      "scenario": "parallel-tools",
+      "fixture": "tests/fixtures/capabilities/openai/parallel-tools.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-json-reasoning",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": false,
+      "scenario": "reasoning",
+      "fixture": "tests/fixtures/capabilities/openai/reasoning.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "reasoning",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-json-image",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": false,
+      "scenario": "image",
+      "fixture": "tests/fixtures/capabilities/openai/image.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "image",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-json-malformed",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": false,
+      "scenario": "malformed",
+      "fixture": "tests/fixtures/capabilities/openai/malformed.json",
+      "expected": {
+        "outcome": "rejected",
+        "status": 400,
+        "upstreamDispatch": false
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-stream-text",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": true,
+      "scenario": "text",
+      "fixture": "tests/fixtures/capabilities/openai/text.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-stream-tool-cycle",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": true,
+      "scenario": "tool-cycle",
+      "fixture": "tests/fixtures/capabilities/openai/tool-cycle.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-stream-parallel-tools",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": true,
+      "scenario": "parallel-tools",
+      "fixture": "tests/fixtures/capabilities/openai/parallel-tools.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-stream-reasoning",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": true,
+      "scenario": "reasoning",
+      "fixture": "tests/fixtures/capabilities/openai/reasoning.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "reasoning",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-stream-image",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": true,
+      "scenario": "image",
+      "fixture": "tests/fixtures/capabilities/openai/image.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "image",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "openai-stream-malformed",
+      "endpoint": "/v1/chat/completions",
+      "sourceFormat": "openai",
+      "stream": true,
+      "scenario": "malformed",
+      "fixture": "tests/fixtures/capabilities/openai/malformed.json",
+      "expected": {
+        "outcome": "rejected",
+        "status": 400,
+        "upstreamDispatch": false
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-json-text",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": false,
+      "scenario": "text",
+      "fixture": "tests/fixtures/capabilities/claude/text.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-json-tool-cycle",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": false,
+      "scenario": "tool-cycle",
+      "fixture": "tests/fixtures/capabilities/claude/tool-cycle.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-json-parallel-tools",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": false,
+      "scenario": "parallel-tools",
+      "fixture": "tests/fixtures/capabilities/claude/parallel-tools.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-json-reasoning",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": false,
+      "scenario": "reasoning",
+      "fixture": "tests/fixtures/capabilities/claude/reasoning.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "reasoning",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-json-image",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": false,
+      "scenario": "image",
+      "fixture": "tests/fixtures/capabilities/claude/image.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "image",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-json-malformed",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": false,
+      "scenario": "malformed",
+      "fixture": "tests/fixtures/capabilities/claude/malformed.json",
+      "expected": {
+        "outcome": "rejected",
+        "status": 400,
+        "upstreamDispatch": false
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-stream-text",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": true,
+      "scenario": "text",
+      "fixture": "tests/fixtures/capabilities/claude/text.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-stream-tool-cycle",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": true,
+      "scenario": "tool-cycle",
+      "fixture": "tests/fixtures/capabilities/claude/tool-cycle.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-stream-parallel-tools",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": true,
+      "scenario": "parallel-tools",
+      "fixture": "tests/fixtures/capabilities/claude/parallel-tools.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-stream-reasoning",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": true,
+      "scenario": "reasoning",
+      "fixture": "tests/fixtures/capabilities/claude/reasoning.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "reasoning",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-stream-image",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": true,
+      "scenario": "image",
+      "fixture": "tests/fixtures/capabilities/claude/image.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "image",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "claude-stream-malformed",
+      "endpoint": "/v1/messages",
+      "sourceFormat": "claude",
+      "stream": true,
+      "scenario": "malformed",
+      "fixture": "tests/fixtures/capabilities/claude/malformed.json",
+      "expected": {
+        "outcome": "rejected",
+        "status": 400,
+        "upstreamDispatch": false
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-json-text",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": false,
+      "scenario": "text",
+      "fixture": "tests/fixtures/capabilities/responses/text.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-json-tool-cycle",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": false,
+      "scenario": "tool-cycle",
+      "fixture": "tests/fixtures/capabilities/responses/tool-cycle.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-json-parallel-tools",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": false,
+      "scenario": "parallel-tools",
+      "fixture": "tests/fixtures/capabilities/responses/parallel-tools.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-json-reasoning",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": false,
+      "scenario": "reasoning",
+      "fixture": "tests/fixtures/capabilities/responses/reasoning.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "reasoning",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-json-image",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": false,
+      "scenario": "image",
+      "fixture": "tests/fixtures/capabilities/responses/image.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "image",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-json-malformed",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": false,
+      "scenario": "malformed",
+      "fixture": "tests/fixtures/capabilities/responses/malformed.json",
+      "expected": {
+        "outcome": "rejected",
+        "status": 400,
+        "upstreamDispatch": false
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-stream-text",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": true,
+      "scenario": "text",
+      "fixture": "tests/fixtures/capabilities/responses/text.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-stream-tool-cycle",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": true,
+      "scenario": "tool-cycle",
+      "fixture": "tests/fixtures/capabilities/responses/tool-cycle.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-stream-parallel-tools",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": true,
+      "scenario": "parallel-tools",
+      "fixture": "tests/fixtures/capabilities/responses/parallel-tools.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "tool-transaction",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-stream-reasoning",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": true,
+      "scenario": "reasoning",
+      "fixture": "tests/fixtures/capabilities/responses/reasoning.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "reasoning",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-stream-image",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": true,
+      "scenario": "image",
+      "fixture": "tests/fixtures/capabilities/responses/image.json",
+      "expected": {
+        "outcome": "success",
+        "status": 200,
+        "upstreamDispatch": true
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "image",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    },
+    {
+      "id": "responses-stream-malformed",
+      "endpoint": "/v1/responses",
+      "sourceFormat": "openai-responses",
+      "stream": true,
+      "scenario": "malformed",
+      "fixture": "tests/fixtures/capabilities/responses/malformed.json",
+      "expected": {
+        "outcome": "rejected",
+        "status": 400,
+        "upstreamDispatch": false
+      },
+      "assertions": [
+        "schema",
+        "roles",
+        "system",
+        "source-immutability",
+        "event-order",
+        "finish-reason",
+        "usage"
+      ]
+    }
+  ],
+  "binaryProtocols": [
+    {
+      "id": "eventstream-valid",
+      "protocol": "aws-eventstream",
+      "variant": "valid",
+      "owner": "kiro-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/eventstream-valid.json",
+      "expected": "success"
+    },
+    {
+      "id": "eventstream-malformed",
+      "protocol": "aws-eventstream",
+      "variant": "malformed",
+      "owner": "kiro-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/eventstream-malformed.json",
+      "expected": "rejected-before-unbounded-buffer"
+    },
+    {
+      "id": "eventstream-oversized",
+      "protocol": "aws-eventstream",
+      "variant": "oversized",
+      "owner": "kiro-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/eventstream-oversized.json",
+      "expected": "rejected-before-unbounded-buffer"
+    },
+    {
+      "id": "protobuf-valid",
+      "protocol": "connectrpc-protobuf",
+      "variant": "valid",
+      "owner": "cursor-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/protobuf-valid.json",
+      "expected": "success"
+    },
+    {
+      "id": "protobuf-malformed",
+      "protocol": "connectrpc-protobuf",
+      "variant": "malformed",
+      "owner": "cursor-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/protobuf-malformed.json",
+      "expected": "rejected-before-unbounded-buffer"
+    },
+    {
+      "id": "protobuf-oversized",
+      "protocol": "connectrpc-protobuf",
+      "variant": "oversized",
+      "owner": "cursor-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/protobuf-oversized.json",
+      "expected": "rejected-before-unbounded-buffer"
+    },
+    {
+      "id": "ndjson-valid",
+      "protocol": "ndjson",
+      "variant": "valid",
+      "owner": "commandcode-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/ndjson-valid.json",
+      "expected": "success"
+    },
+    {
+      "id": "ndjson-malformed",
+      "protocol": "ndjson",
+      "variant": "malformed",
+      "owner": "commandcode-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/ndjson-malformed.json",
+      "expected": "rejected-before-unbounded-buffer"
+    },
+    {
+      "id": "ndjson-oversized",
+      "protocol": "ndjson",
+      "variant": "oversized",
+      "owner": "commandcode-executor",
+      "fixture": "tests/fixtures/capabilities/protocols/ndjson-oversized.json",
+      "expected": "rejected-before-unbounded-buffer"
+    }
+  ],
+  "modalityRoutes": [
+    {
+      "id": "openai-to-claude-image",
+      "source": "openai",
+      "target": "claude",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "claude-to-openai-image",
+      "source": "claude",
+      "target": "openai",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-responses-to-openai-image",
+      "source": "openai-responses",
+      "target": "openai",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-gemini-image",
+      "source": "openai",
+      "target": "gemini",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-kiro-image",
+      "source": "openai",
+      "target": "kiro",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-ollama-image",
+      "source": "openai",
+      "target": "ollama",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-commandcode-image",
+      "source": "openai",
+      "target": "commandcode",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-cursor-image",
+      "source": "openai",
+      "target": "cursor",
+      "modality": "image",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/image-valid.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/image-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/image-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/image-url.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/image-base64.json",
+          "expected": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-claude-audio",
+      "source": "openai",
+      "target": "claude",
+      "modality": "audio",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/audio-valid.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/audio-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/audio-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/audio-url.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/audio-base64.json",
+          "expected": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-claude-pdf",
+      "source": "openai",
+      "target": "claude",
+      "modality": "pdf",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/pdf-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/pdf-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/pdf-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/pdf-url.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/pdf-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    },
+    {
+      "id": "openai-to-gemini-video",
+      "source": "openai",
+      "target": "gemini",
+      "modality": "video",
+      "cases": [
+        {
+          "variant": "valid",
+          "fixture": "tests/fixtures/capabilities/modalities/video-valid.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "malformed",
+          "fixture": "tests/fixtures/capabilities/modalities/video-malformed.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "oversized",
+          "fixture": "tests/fixtures/capabilities/modalities/video-oversized.json",
+          "expected": "rejected"
+        },
+        {
+          "variant": "url",
+          "fixture": "tests/fixtures/capabilities/modalities/video-url.json",
+          "expected": "preserved"
+        },
+        {
+          "variant": "base64",
+          "fixture": "tests/fixtures/capabilities/modalities/video-base64.json",
+          "expected": "preserved"
+        }
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome": "success",
+      "terminal": "completed",
+      "replaySafe": false
+    },
+    {
+      "outcome": "provider-error",
+      "terminal": "provider-error",
+      "replaySafe": false
+    },
+    {
+      "outcome": "transport-abrupt",
+      "terminal": "transport-abrupt",
+      "replaySafe": false
+    }
+  ],
+  "controlledCorpus": {
+    "seed": 23063,
+    "contextTokenPopulations": [
+      32000,
+      250000,
+      900000
+    ],
+    "effort": "high",
+    "maxOutputTokens": 32,
+    "warmupRequests": 10,
+    "measuredRequests": 100,
+    "saverConfigurations": [
+      "off",
+      "schema",
+      "thinking",
+      "rtk",
+      "query-aware",
+      "pairs",
+      "reorder",
+      "mid-prefix",
+      "tool-disclosure",
+      "caveman-ponytail",
+      "all-wide",
+      "all-tight"
+    ],
+    "receipts": [
+      "enabled",
+      "evaluated",
+      "outcome",
+      "beforeBytes",
+      "afterBytes",
+      "cachePrefixBytes"
+    ],
+    "limitsMsP95": {
+      "32000": 250,
+      "250000": 1000,
+      "900000": 2000
+    },
+    "qualification": "local-stub-only; provider latency and live cache benefit excluded"
+  }
+}

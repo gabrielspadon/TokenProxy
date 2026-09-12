@@ -1,0 +1,30 @@
+{
+  "model": "fixture-model",
+  "max_output_tokens": 32,
+  "reasoning": {
+    "effort": "high",
+    "summary": "auto"
+  },
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Reason briefly, then answer 2+2."
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_fixture",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "Two plus two equals four."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "model": "fixture-model",
+  "max_tokens": 32,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 16
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Reason briefly, then answer 2+2."
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "Two plus two equals four.",
+          "signature": "fixture-signature"
+        },
+        {
+          "type": "text",
+          "text": "4"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "Confirm."
+    }
+  ]
+}

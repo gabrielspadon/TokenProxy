@@ -1,0 +1,68 @@
+{
+  "model": "fixture-model",
+  "max_tokens": 32,
+  "tools": [
+    {
+      "name": "lookup_weather",
+      "description": "Return weather",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Weather in two cities?"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "call_weather_a",
+          "name": "lookup_weather",
+          "input": {
+            "city": "Halifax"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "call_weather_b",
+          "name": "lookup_weather",
+          "input": {
+            "city": "Dartmouth"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_weather_a",
+          "content": "12 C"
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "call_weather_b",
+          "content": "13 C"
+        }
+      ]
+    }
+  ]
+}
