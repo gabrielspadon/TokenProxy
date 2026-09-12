@@ -13,13 +13,59 @@
     font-family: var(--mono);
     font-size: var(--type-dense);
     color: var(--slate);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    /* An identifier reads left to right whatever the document direction, and
-       its exact value is carried on the element's title. */
+    /* An identifier reads left to right whatever the document direction. */
     direction: ltr;
     unicode-bidi: isolate;
+  }
+
+  /* A model id is the value an operator matches against and pastes into a
+     client, so it has to be READABLE, not merely present. The shared board
+     clips identity text to one ellipsised line (board.module.css .identityText
+     small), which leaves the tail of a long id unreachable without a pointer:
+     a title tooltip needs hover, and the span is not focusable. Wrapping the
+     id costs one line on the longest rows and reaches keyboard and touch users
+     with no new tab stop. Scoped to the catalog board so the plans board and
+     every other board keep the shared single-line geometry. */
+  [data-models-catalog] .identityText > .models-id,
+  [data-models-catalog] .identityText > small.models-id {
+    overflow-wrap: anywhere;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.3;
+  }
+  [data-models-catalog] .models-name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  /* Rows are no longer uniform height once an id wraps, so the row's own
+     content decides it and the cells align to their tops rather than floating
+     on a centre line. */
+  [data-models-catalog] .main {
+    align-items: start;
+    padding-block: 6px;
+  }
+  /* The shared advanced row gives the identity column minmax(180px, 1fr) and
+     the alias column minmax(170px, 0.9fr), so an empty alias input held nearly
+     as much width as the identifier it sat beside. Rebalancing hands that width
+     to the identifier, which shortens how often a wrap is needed at all. Track
+     count and order are unchanged, so the header still lines up with its cells. */
+  [data-models-catalog] .head,
+  [data-models-catalog] .main {
+    grid-template-columns: 24px 20px minmax(260px, 1.6fr) 100px minmax(300px, 1.7fr) minmax(120px, 0.5fr) 142px;
+  }
+
+  /* The alias input held a wide track for a value that is usually empty and is
+     always short. Narrowing it returns that width to the identifier column. */
+  [data-models-catalog] .models-alias {
+    max-width: 168px;
+  }
+  @media (max-width: 760px) {
+    [data-models-catalog] .models-alias {
+      max-width: none;
+    }
   }
   .models-alias {
     min-width: 0;

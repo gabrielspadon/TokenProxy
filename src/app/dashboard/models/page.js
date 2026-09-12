@@ -361,7 +361,7 @@ export function CatalogControls({ density, onDensity }) {
 
   return (
     <>
-      <Board label="Model catalog" advanced={advanced} density={density} compare="none">
+      <Board label="Model catalog" advanced={advanced} density={density} compare="none" data-models-catalog="">
         <BoardSummary
           label="Catalog summary"
           chips={chips}
