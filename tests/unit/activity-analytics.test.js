@@ -151,6 +151,7 @@ describe('analytical workspace read contract', () => {
       cache_read_tokens_present: true, cache_write_tokens_present: true }));
     expect(read({ view: 'economics', connectionId: 'personal' }).summary).toMatchObject({ cacheWriteTokens: 0,
       cacheWriteSamples: 1, uncachedInputTokens: 400, missingTokenDetailRows: 0 });
+    // A row predating the flags keeps whatever it recorded, honestly.
     write.run(JSON.stringify({ cached_tokens: 600, cache_creation_input_tokens: 100 }));
     expect(read({ view: 'economics', connectionId: 'personal' }).summary).toMatchObject({ cacheWriteTokens: 100,
       cacheWriteSamples: 1, uncachedInputTokens: 300 });

@@ -226,6 +226,8 @@ export function resolveCacheTokens(usage) {
     // spelling is direct evidence and decides it either way; only with no read
     // spelling does the write's container break the tie (a cache-miss turn
     // reports a write and no read, and folding it would overstate input).
+    // canonicalizeUsage's own output always carries cached_tokens, which keeps
+    // re-running it idempotent.
     inclusive: inclusiveRead !== undefined
       || (exclusiveRead === undefined && nestedWrite !== undefined),
   };

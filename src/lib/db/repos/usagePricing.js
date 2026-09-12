@@ -39,6 +39,9 @@ export function persistUsagePricing(db, snapshot) {
 
 export function usageQuantityPresence(tokens) {
   const present = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  // Capture cache presence from the RAW tokens, before canonicalizeUsage
+  // synthesizes a 0 that reads identically to a reported one. An explicit
+  // false flag on a re-presented object stays false rather than being revived.
   const cache = resolveCacheTokens(tokens || {});
   const observedCache = (flag, value) => tokens?.estimated !== true
     && tokens?.[flag] !== false && present(value);

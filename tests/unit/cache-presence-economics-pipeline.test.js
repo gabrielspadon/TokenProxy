@@ -4,6 +4,10 @@ import { saveUsageStats, extractUsageFromResponse } from '../../open-sse/handler
 import { extractUsage } from '../../open-sse/utils/usageTracking.js';
 import { readActivityAnalytics } from '../../src/lib/db/analytics/activityQueries.mjs';
 
+// End to end on the completion ledger: real extraction (stream and non-stream)
+// through saveUsageStats into SQLite, then out through the economics read. What
+// is under test is that a reported cache write of 0 stays a reported 0 while an
+// ABSENT one reads back as Unknown, since both store the same 0 column.
 const db = await getAdapter();
 beforeEach(() => { db.run('DELETE FROM usageHistory'); });
 
@@ -27,6 +31,8 @@ describe.each(['stream', 'json'])('cache presence through %s extraction and comp
     const stored = await persist(tokens);
     expect(stored).toMatchObject({ prompt_tokens: 20000, cached_tokens: 12000,
       cache_read_tokens_present: true, cache_write_tokens_present: write !== undefined });
+    // Reported 0 stays 0 and still counts as a sample; absent reads back null
+    // with no sample. The read fraction is unaffected either way.
     const result = read();
     expect(result.summary).toMatchObject({ inputTokens: 20000, cacheReadTokens: 12000, cacheReadFraction: 0.6,
       cacheWriteTokens: write ?? null, cacheWriteSamples: write === undefined ? 0 : 1,

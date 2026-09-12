@@ -21,10 +21,11 @@ describe("OpenAI nested cache_write_tokens", () => {
     input_tokens_details: { cached_tokens: 12000, cache_write_tokens: 6000 },
     output_tokens_details: { reasoning_tokens: 200 },
   };
-  it('keeps nested cache writes in structured and human completion logs', () => {
+
+  it("keeps nested cache writes in structured and human completion logs", () => {
     const usage = extractUsageFromResponse({ usage: DOCUMENTED_USAGE });
     expect(doneFields({ usage, latency: { total: 100 } })).toMatchObject({ in: 20000, cr: 12000, cw: 6000, ctx: 20000 });
-    expect(formatDoneLine({ usage, latency: { total: 100 } })).toContain('+6000');
+    expect(formatDoneLine({ usage, latency: { total: 100 } })).toContain("+6000");
   });
 
   it("resolves the nested write count without flipping to exclusive accounting", () => {

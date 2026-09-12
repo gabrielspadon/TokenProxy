@@ -149,6 +149,9 @@ function filterFor(query, columns, alias = 'usageEconomicsProjection') {
 const validNumber = (field) => `(typeof(${field}) IN ('integer','real') AND ${field}>=0 AND ${field}<=1.7976931348623157e308)`;
 const validToken = (field) => `(${validNumber(field)} AND ${field}<=9007199254740991)`;
 const quantity = (field) => `CASE WHEN ${validToken(field)} THEN ${field} END`;
+// A recorded false presence flag means the provider never reported the field,
+// so the stored 0 is a synthesized default rather than an observation. Older
+// rows carry no flag at all and keep whatever they recorded, honestly.
 const jsonQuantity = (field, presence) => presence
   ? `CASE WHEN json_extract(safeTokens,'$.${presence}')=0 THEN NULL ELSE ${quantity(`json_extract(safeTokens,'$.${field}')`)} END`
   : quantity(`json_extract(safeTokens,'$.${field}')`);
