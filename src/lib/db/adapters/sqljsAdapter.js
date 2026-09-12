@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import { dirname } from "node:path";
+import { createHash } from 'node:crypto';
 import initSqlJs from "sql.js";
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 import { createCriticalAckJournal, criticalAckFailure } from './criticalAckJournal.js';
+import { acquireSqlJsWriterAdmission } from './writerAdmission.js';
 
 let SQL = null;
 const POST_RENAME_PUBLICATION = Symbol("sqljs.postRenamePublication");
@@ -19,13 +21,69 @@ export async function createSqlJsAdapter(filePath) {
   const buf = fs.existsSync(filePath) ? fs.readFileSync(filePath) : null;
   let db = new SQLLib.Database(buf);
   db.exec(PRAGMA_SQL);
+  db.exec('PRAGMA query_only=ON');
   // Schema is created/synced by migrate.js after adapter init
 
   let dirty = false;
   let saveTimer = null;
+  let admission = null;
+  let publishedDigest = null;
+  let staleError = null;
+  let closed = false;
   const SAVE_DEBOUNCE_MS = 100;
 
+  const digest = (bytes) => bytes === null ? null : createHash('sha256').update(bytes).digest('hex');
+  function hasUncheckpointedSidecar() {
+    return ['-wal', '-journal'].some((suffix) => {
+      try { return fs.statSync(filePath + suffix).size > 0; }
+      catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+    });
+  }
+  function snapshotChanged() {
+    return Object.assign(new Error('Database snapshot changed outside its writer owner; do not replay the mutation'), {
+      code: 'DB_SNAPSHOT_STALE', retryable: false, committed: false,
+    });
+  }
+  function snapshotBytes() {
+    try {
+      if (!fs.lstatSync(filePath).isFile()) throw Object.assign(new Error('Snapshot is not a regular database file'), { code: 'DB_SNAPSHOT_STALE', retryable: false, committed: false });
+      return fs.readFileSync(filePath);
+    } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  }
+
+  function promoteWriter() {
+    if (closed) throw new Error('Database adapter is closed');
+    if (staleError) throw staleError;
+    if (admission) return;
+    const acquired = acquireSqlJsWriterAdmission(filePath);
+    try {
+      if (hasUncheckpointedSidecar()) throw snapshotChanged();
+      // This adapter may have served reads while another owner published.
+      // Acquire first, then load that owner's latest committed snapshot.
+      const bytes = snapshotBytes();
+      const fresh = new SQLLib.Database(bytes);
+      try { fresh.exec(PRAGMA_SQL); }
+      catch (error) { fresh.close(); throw error; }
+      db.close();
+      db = fresh;
+      publishedDigest = digest(bytes);
+      admission = acquired;
+    } catch (error) { acquired.release(); throw error; }
+  }
+
+  function assertSnapshotCurrent() {
+    if (staleError) throw staleError;
+    try {
+      admission.assertOwned();
+      if (hasUncheckpointedSidecar() || digest(snapshotBytes()) !== publishedDigest) throw snapshotChanged();
+    } catch (error) {
+      if (['DB_SNAPSHOT_STALE', 'DB_WRITER_OWNERSHIP_LOST', 'DB_WRITER_OWNERSHIP_INVALID'].includes(error.code)) staleError = error;
+      throw error;
+    }
+  }
+
   function persist({ syncDirectory = false } = {}) {
+    assertSnapshotCurrent();
     let data;
     try { data = Buffer.from(db.export()); }
     finally {
@@ -49,6 +107,7 @@ export async function createSqlJsAdapter(filePath) {
       fd = null;
       fs.renameSync(tmp, filePath); // atomic on POSIX; no torn file on crash
       published = true;
+      publishedDigest = digest(data);
       if (syncDirectory && process.platform !== "win32") {
         const directory = fs.openSync(dirname(filePath), "r");
         try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
@@ -105,6 +164,7 @@ export async function createSqlJsAdapter(filePath) {
   }
 
   function run(sql, params = []) {
+    promoteWriter();
     const stmt = db.prepare(sql);
     try {
       stmt.bind(paramsObj(params));
@@ -144,6 +204,7 @@ export async function createSqlJsAdapter(filePath) {
   }
 
   function exec(sql) {
+    promoteWriter();
     db.exec(sql);
     scheduleSave();
   }
@@ -166,6 +227,7 @@ export async function createSqlJsAdapter(filePath) {
     if (criticalActive) {
       throw criticalError("CRITICAL_TRANSACTION_NESTED", "A critical sql.js transaction cannot contain another transaction");
     }
+    promoteWriter();
     const sp = `sp_${Math.random().toString(36).slice(2)}`;
     db.exec(`SAVEPOINT ${sp}`);
     transactionDepth += 1;
@@ -186,16 +248,17 @@ export async function createSqlJsAdapter(filePath) {
   }
 
   function close() {
+    if (closed) return;
     if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
     if (dirty) persist();
     db.close();
+    closed = true;
+    admission?.release();
   }
 
   const flushOnShutdown = () => {
-    if (dirty)
-      try {
-        persist();
-      } catch {}
+    try { close(); } catch {}
   };
   registerShutdownFlusher(flushOnShutdown, 100);
 
@@ -207,6 +270,8 @@ export async function createSqlJsAdapter(filePath) {
     if (criticalActive || transactionDepth > 0) {
       throw criticalError("CRITICAL_TRANSACTION_NESTED", "A critical sql.js transaction must be the outermost transaction");
     }
+    promoteWriter();
+    assertSnapshotCurrent();
 
     // sql.js commits to memory only. Preserve an exact pre-write image so a
     // failed file publication can also roll back the live adapter state.

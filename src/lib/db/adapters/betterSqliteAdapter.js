@@ -3,13 +3,21 @@ import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 import { createTransactionController } from "./criticalTransaction.js";
 import { createCriticalAckJournal } from './criticalAckJournal.js';
+import { acquireNativeWriterAdmission } from './writerAdmission.js';
 
 // Periodic checkpoint to keep WAL file small (avoid huge -wal/-shm growth)
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 export function createBetterSqliteAdapter(filePath) {
-  const db = new Database(filePath);
-  db.exec(PRAGMA_SQL);
+  const admission = acquireNativeWriterAdmission(filePath);
+  let db;
+  try { db = new Database(filePath); db.exec(PRAGMA_SQL); }
+  catch (error) {
+    let closed = !db;
+    try { db?.close(); closed = true; } catch {}
+    if (closed) admission.release();
+    throw error;
+  }
   // Schema is created/synced by migrate.js after adapter init
 
   const stmtCache = new Map();
@@ -44,7 +52,7 @@ export function createBetterSqliteAdapter(filePath) {
   function gracefulClose() {
     try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
     try { stmtCache.clear(); } catch {}
-    try { db.close(); } catch {}
+    try { db.close(); admission.release(); } catch {}
   }
 
   // Ensure WAL is flushed and -wal/-shm files removed on shutdown

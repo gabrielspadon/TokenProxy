@@ -26,7 +26,7 @@ No automatic pruning or rotation deletes evidence, so a 24-hour window remains a
 
 Critical writes add synchronous journal I/O and marker/index maintenance. Native writes add intent and receipt file/directory barriers; the first transaction also creates the epoch header. sql.js retains its whole-database export cost. Measure these costs on the integrated candidate before release.
 
-sql.js uses in-memory snapshots and requires one verified writable owner for a database file. Concurrent writable sql.js adapters can overwrite each other's snapshots on ordinary flushes; this change detects missing acknowledged markers but does not establish an interprocess writer lease. Concurrent-writer qualification remains unavailable until that separate ownership contract is implemented. Analytics observers must use read-only database access.
+sql.js uses in-memory snapshots and requires one verified writable owner for a database file. The separate [managed writer ownership contract](DATABASE-WRITER-OWNERSHIP.md) enforces exclusive sql.js admission across cooperating application adapters and rejects stale snapshot publication. External or older writers that bypass admission remain unsupported. Analytics observers use independent read-only database access.
 
 Windows lacks the directory fsync barrier used here and its captures report `directory-fsync-unavailable`; a successful file flush alone does not qualify equivalent power-loss durability. Node/better-sqlite3/sql.js focused tests exercise actual temporary databases, injected storage failures, immutable markers, restart reconciliation, receipt-only recovery, and owned child exits on both sides of the receipt barrier. Application builds, production execution and sustained-load qualification remain separate gates.
 

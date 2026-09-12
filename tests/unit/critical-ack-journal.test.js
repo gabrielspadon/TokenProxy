@@ -218,6 +218,7 @@ it('refuses a restored database that would reuse an already acknowledged sequenc
   const oldBytes = fs.readFileSync(databaseFile);
   db.criticalTransaction(() => db.run('INSERT INTO business VALUES (2, ?)', ['after']));
   expect(capture().counters.ackEligible).toBe(2);
+  db.close();
   fs.writeFileSync(databaseFile, oldBytes);
   const stale = await createSqlJsAdapter(databaseFile);
   adapters.push(stale);

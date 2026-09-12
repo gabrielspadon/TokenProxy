@@ -4,6 +4,7 @@ import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
 import { createTransactionController } from "./criticalTransaction.js";
 import { createCriticalAckJournal } from './criticalAckJournal.js';
+import { acquireNativeWriterAdmission } from './writerAdmission.js';
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
@@ -11,9 +12,15 @@ export async function createNodeSqliteAdapter(filePath) {
   // Dynamic import — fails on Node < 22.5 → driver.js falls back to sql.js
   const sqlite = await import("node:sqlite");
   const Database = sqlite.DatabaseSync;
-  const db = new Database(filePath);
-
-  db.exec(PRAGMA_SQL);
+  const admission = acquireNativeWriterAdmission(filePath);
+  let db;
+  try { db = new Database(filePath); db.exec(PRAGMA_SQL); }
+  catch (error) {
+    let closed = !db;
+    try { db?.close(); closed = true; } catch {}
+    if (closed) admission.release();
+    throw error;
+  }
 
   const stmtCache = new Map();
   function prepare(sql) {
@@ -46,7 +53,7 @@ export async function createNodeSqliteAdapter(filePath) {
   function gracefulClose() {
     try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
     try { stmtCache.clear(); } catch {}
-    try { db.close(); } catch {}
+    try { db.close(); admission.release(); } catch {}
   }
   registerShutdownFlusher(gracefulClose, 100);
 
