@@ -149,14 +149,18 @@ describe('Context workspace', () => {
     expect(card.textContent).toContain('Inferred locality');
     expect(card.textContent).toContain('synthetic-cli');
   });
-  it('renders the same cohort as a dense row table at the Advanced level', async () => {
+  it('keeps the card cohort and its evidence when a stored navigation mode says otherwise', async () => {
+    // Context is Everyday because of its route, so a value left over from the
+    // removed sidebar switch changes nothing and no browser reset is needed.
     localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify('advanced'));
     await render();
-    expect(container.querySelectorAll('[aria-label="Recorded session cohort"] article')).toHaveLength(0);
-    const rows = container.querySelectorAll('table[aria-label="Recorded sessions"] tbody tr');
-    expect(rows[0].textContent).toContain('Synthetic research');
-    expect(rows[0].textContent).toContain('synthetic-cli');
-    // The selected session expands inline, under its own row.
+    expect(container.querySelector('table[aria-label="Recorded sessions"]')).toBeNull();
+    const card = container.querySelector('[aria-label="Recorded session cohort"] article');
+    expect(card.textContent).toContain('Synthetic research');
+    expect(card.textContent).toContain('synthetic-cli');
+    // Every column the removed row table carried still reaches the reader.
+    for (const label of ['Attempts', 'Input', 'Body']) expect(card.textContent).toContain(label);
+    // The selected session still expands its full attempt evidence inline.
     expect(container.querySelector('table[aria-label="Session request attempts"]')).not.toBeNull();
   });
   it('shows historical coverage without synthesizing sessions or requesting their details', async () => {

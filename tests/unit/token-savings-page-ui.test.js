@@ -58,6 +58,8 @@ import { CONFIGURATION_FIELDS, CONTROLS, THRESHOLDS } from '@/app/dashboard/shap
 import { PROFILE_KEYS } from '@/lib/shaping/profile';
 
 let container, root;
+// The level follows the route now. This only asserts that a value left behind by
+// the removed sidebar switch changes nothing, so no browser reset is required.
 const level = (mode) => localStorage.setItem('tokenproxy.navigation-mode', JSON.stringify(mode));
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -123,11 +125,14 @@ async function change(name, value) {
     await act(async () => input.dispatchEvent(new FocusEvent('focusout', { bubbles: true })));
 }
 
-it('reads nothing but settings on open and keeps the level as the only switch', async () => {
+it('reads nothing but settings on open and presents its full controls by default', async () => {
   await render();
   expect(container.querySelector('h1').textContent).toBe('Token savings');
   expect(container.querySelectorAll('[role="tablist"]')).toHaveLength(0);
-  expect(container.querySelector('[data-layout="cards"]')).not.toBeNull();
+  // Every route except Context opens with its controls already on screen, so
+  // the dense row layout is the default rather than a stored preference.
+  expect(container.querySelector('[data-layout="rows"]')).not.toBeNull();
+  expect(container.querySelector('[data-layout="cards"]')).toBeNull();
   expect(container.querySelector('dialog')).toBeNull();
   expect(state.reads.some((url) => /pxpipe|headroom|runtime/.test(url))).toBe(false);
   expect(state.calls).toEqual([]);

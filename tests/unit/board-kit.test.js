@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { Board, BoardGroup, BoardSummary, BoardToolbar, Card, DensitySwitch, EvidenceLine, StateWord } from '@/shared/workspace/Board';
+import { Board, BoardGroup, BoardSummary, BoardToolbar, Card, DENSITY_KEY, DENSITY_STOPS, DensitySwitch, EvidenceLine, StateWord, isEverydayRoute, resolveDensity } from '@/shared/workspace/Board';
 
 let root, host;
 beforeEach(() => {
@@ -46,4 +46,46 @@ it('composes a board with summary chips, toolbar, group, card and evidence lines
   expect(host.querySelector('[data-usage] [data-share="read"]').style.width).toBe('20%');
   expect(host.querySelector('[data-level="good"]')).not.toBeNull();
   expect(host.querySelectorAll('[data-unknown]')).toHaveLength(1);
+});
+
+it('offers four ordered density stops and carries the chosen one onto the board', async () => {
+  const chosen = [];
+  await render(
+    <Board label="Things" density="compact">
+      <BoardToolbar actions={<DensitySwitch value="compact" onChange={(value) => chosen.push(value)} />} />
+    </Board>
+  );
+  const scale = host.querySelector('[aria-label="Density"]');
+  expect([...scale.querySelectorAll('label')].map((node) => node.textContent))
+    .toEqual(['Compact', 'Dense', 'Tidy', 'Comfy']);
+  expect(host.querySelector('section[aria-label="Things"]').dataset.density).toBe('compact');
+  // Every stop is a labelled radio, so the scale is reachable by keyboard and
+  // announces which step is current.
+  const radios = [...scale.querySelectorAll('input[type="radio"]')];
+  expect(radios).toHaveLength(4);
+  expect(radios.find((input) => input.checked).value).toBe('compact');
+  await act(async () => radios[3].click());
+  expect(chosen).toEqual(['comfy']);
+});
+
+it('keeps a stored density, falls back for a malformed one, and never silently renames a stop', () => {
+  expect(DENSITY_KEY).toBe('tokenproxy.capacity-density');
+  expect(DENSITY_STOPS.map((stop) => stop.value)).toEqual(['compact', 'dense', 'tidy', 'comfy']);
+  // The two values earlier builds could have written read back unchanged.
+  for (const stored of ['tidy', 'comfy']) expect(resolveDensity(stored)).toBe(stored);
+  for (const stored of ['compact', 'dense']) expect(resolveDensity(stored)).toBe(stored);
+  // Anything else resolves rather than rendering an unknown attribute.
+  for (const broken of ['cosy', '', null, undefined, 0, {}, 'COMFY']) expect(resolveDensity(broken)).toBe('tidy');
+});
+
+it('derives the level from the route boundary, not from a stored preference', () => {
+  expect(isEverydayRoute('/dashboard/context')).toBe(true);
+  expect(isEverydayRoute('/dashboard/context/session-1')).toBe(true);
+  // A sibling route that merely starts with the same letters is not Context.
+  expect(isEverydayRoute('/dashboard/context-limits')).toBe(false);
+  for (const route of ['/dashboard', '/dashboard/usage', '/dashboard/connections', '/dashboard/model-context']) {
+    expect(isEverydayRoute(route)).toBe(false);
+  }
+  // An unknown or absent path presents the full controls rather than hiding them.
+  for (const unknown of ['/missing', '', null, undefined]) expect(isEverydayRoute(unknown)).toBe(false);
 });
