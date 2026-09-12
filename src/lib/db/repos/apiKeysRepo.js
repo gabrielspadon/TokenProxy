@@ -19,6 +19,7 @@ const WITH_ALLOWED_MODELS = `SELECT a.*, m.value AS allowedModels
 
 function rowToKey(row) {
   if (!row) return null;
+  globalThis.__tokenproxyLiveSafety?.register(row.key);
   return {
     id: row.id,
     key: row.key,
@@ -285,6 +286,7 @@ export async function createApiKey(name, machineId, expiresAt = null) {
       apiKey.budgetPolicy,
     ]
   );
+  globalThis.__tokenproxyLiveSafety?.register(apiKey.key);
   return apiKey;
 }
 

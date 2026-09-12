@@ -29,6 +29,7 @@ export function normalizeReplayEvidence(value) {
     || !['upstream-response', 'dispatch-start', 'transport-no-dispatch'].includes(source)
     || typeof observedAt !== 'string' || !Number.isFinite(Date.parse(observedAt)) || new Date(observedAt).toISOString() !== observedAt
     || (source === 'upstream-response' ? !Number.isInteger(status) || status < 100 || status >= 600 : status !== null)
+    || (source === 'upstream-response' && (disposition === 'unknown' || disposition === 'safe-rejection' && status < 400))
     || (source === 'dispatch-start' && disposition !== 'unknown')
     || (source === 'transport-no-dispatch' && disposition !== 'safe-rejection')) throw new Error('Invalid replay evidence');
   return { replayDisposition: disposition, replaySource: source, replayStatus: status, replayObservedAt: observedAt };

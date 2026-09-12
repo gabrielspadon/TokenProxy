@@ -44,6 +44,7 @@ export async function POST(request, { params }) {
         details: { kind: 'credential-rotation', reason: 'explicit-operator-request' },
       }
     );
+    globalThis.__tokenproxyLiveSafety?.authorizeDelivery('client-key-rotate', result.successor.key);
     return store(result, 201);
   } catch (error) {
     if (error instanceof RotationError) return store({ error: error.message }, error.status);

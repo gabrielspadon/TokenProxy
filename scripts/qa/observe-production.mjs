@@ -41,7 +41,7 @@ export function readFrontStatus(socketPath) {
           if (response.statusCode !== 200) fail('front status HTTP');
           const source = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const result = Object.fromEntries(['ready', 'public_ready', 'journal_healthy', 'terminal_counts', 'terminal_window_started_at',
-            'backend_build_sha', 'observation_monotonic_ms', 'active', 'queued', 'dispatching'].map((key) => [key, source[key]]));
+            'backend_build_sha', 'observation_monotonic_ms', 'active', 'queued', 'dispatching', 'source_manifest'].map((key) => [key, source[key] ?? null]));
           statusCount(result);
           resolve(result);
         } catch (error) { reject(error); }
@@ -53,7 +53,24 @@ export function readFrontStatus(socketPath) {
   });
 }
 
+export async function readLiveSecretStatus(baseUrl, credentialPath) {
+  const url = new URL('/api/admin/live-safety', baseUrl);
+  if (url.protocol !== 'http:' || !['127.0.0.1','[::1]'].includes(url.hostname) || url.username || url.password) fail('safety status requires explicit loopback HTTP');
+  const credential = readPrivateJson(credentialPath);
+  if (Object.keys(credential).length !== 1 || typeof credential.cliToken !== 'string' || !credential.cliToken
+    || credential.cliToken.length > 4096 || /[\r\n]/.test(credential.cliToken)) fail('safety status credential');
+  const response = await fetch(url, { headers:{'x-tp-cli-token':credential.cliToken}, redirect:'error', signal:AbortSignal.timeout(2000) });
+  if (!response.ok) { await response.body?.cancel(); fail('safety status authentication or HTTP'); }
+  const reader = response.body.getReader(), chunks=[]; let bytes=0;
+  try { while (true) { const next=await reader.read(); if(next.done) break; bytes+=next.value.length;
+    if(bytes>262144) fail('safety status exceeds bound'); chunks.push(next.value); } }
+  finally { await reader.cancel().catch(()=>{}); }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
 export async function sampleObservation({ directory, keyringPath, databasePath, driver, controlSocket, releaseId,
+  safetyUrl, safetyCredentialPath, captureAcknowledgments,
+  readSafety = safetyUrl ? () => readLiveSecretStatus(safetyUrl, safetyCredentialPath) : null,
   readStatus = () => readFrontStatus(controlSocket), now = () => new Date().toISOString() }) {
   if (!SHA.test(releaseId || '')) fail('release evidence SHA256 required');
   const captureStartedAt = now();
@@ -61,22 +78,32 @@ export async function sampleObservation({ directory, keyringPath, databasePath, 
   statusCount(before);
   const journal = readFrontObservationJournal({ directory, keyringPath });
   const db = await openAnalyticsReadOnly(databasePath, driver);
-  let attempts;
+  let attempts, acknowledgments;
+  const secrets = readSafety ? await readSafety() : { unobservable:['runtime-capture-not-configured'] };
   try {
     db.exec('BEGIN');
+    const available = new Set(db.all('PRAGMA table_info(requestStats)').map(row=>row.name));
+    const extraColumns = ['dispatchCoverage','connectionId','replayDisposition','replaySource','replayStatus','replayObservedAt']
+      .map(name=>available.has(name)?name:`NULL AS ${name}`).join(',');
     attempts = db.all(`SELECT id,logicalRequestId,attempt,status,contextTelemetryError,
-      terminalState,terminalReason,terminalSource,terminalObservedAt FROM requestStats
+      terminalState,terminalReason,terminalSource,terminalObservedAt,${extraColumns} FROM requestStats
       WHERE logicalRequestId IS NOT NULL ORDER BY logicalRequestId,attempt,id LIMIT ?`, [MAX_ATTEMPTS + 1]);
     if (attempts.length > MAX_ATTEMPTS) fail('attempt snapshot exceeds bound');
+    try {
+      const moduleUrl = new URL('../../src/lib/db/adapters/criticalAckJournal.js', import.meta.url).href;
+      const capture = captureAcknowledgments || (await import(/* @vite-ignore */ moduleUrl)).captureCriticalAcknowledgments;
+      acknowledgments = capture({ databaseFile:databasePath,db });
+    } catch { acknowledgments = {unobservable:['acknowledgment-producer-unavailable']}; }
   } finally { db.close(); }
   const after = await readStatus();
   if (statusCount(before) !== statusCount(after) || before.terminal_window_started_at !== after.terminal_window_started_at
-    || before.backend_build_sha !== after.backend_build_sha) {
+    || before.backend_build_sha !== after.backend_build_sha || JSON.stringify(before.source_manifest)!==JSON.stringify(after.source_manifest)) {
     fail('front changed while sampling; retry without pausing traffic');
   }
   return signFrontObservation({ schemaVersion: 1, kind: 'production-observation', releaseId, captureStartedAt,
     captureEndedAt: now(), monotonicStartedMs: before.observation_monotonic_ms,
-    monotonicEndedMs: after.observation_monotonic_ms, status: after, ...journal, attempts }, keyringPath);
+    monotonicEndedMs: after.observation_monotonic_ms, status: after, ...journal, attempts,
+    safety:{secrets,acknowledgments} }, keyringPath);
 }
 
 function validateSnapshot(snapshot, keyringPath) {
@@ -131,6 +158,21 @@ function collectRequests(events) {
   return requests;
 }
 
+export function observationRequestScope(row, begin, end) {
+  if (row.start.firstObservedAt < begin.captureEndedAt || row.start.firstObservedAt >= end.captureStartedAt) return 'outsideWindow';
+  if (['test','import'].includes(row.start.dataOrigin)) return 'trustedNonProduction';
+  if (row.start.dataOrigin !== 'production' || row.start.observationVersion !== 1 || row.start.requestClass === 'unknown') return 'untrustedOriginOrClass';
+  return row.start.requestClass === 'inference' ? 'natural' : 'nonInference';
+}
+
+export function authenticatedObservationSources(options) {
+  const observation = assembleObservation(options);
+  const before = options.begin.segments.flatMap(segment=>segment.events);
+  const after = options.end.segments.flatMap(segment=>segment.events);
+  return { observation,before,after,requests:[...collectRequests(after).values()]
+    .filter(row=>observationRequestScope(row,options.begin,options.end)==='natural') };
+}
+
 function classify(row, attempts, capturedAt) {
   const terminal = row.terminal;
   if (!terminal) return { category: 'unknown', reason: 'pending-or-interrupted' };
@@ -178,13 +220,8 @@ export function assembleObservation({ begin, end, keyringPath }) {
   const exclusions = { outsideWindow: 0, trustedNonProduction: 0, nonInference: 0, untrustedOriginOrClass: 0 };
   const unknowns = [];
   for (const [frontIngressId, row] of collectRequests(after)) {
-    if (row.start.firstObservedAt < begin.captureEndedAt || row.start.firstObservedAt >= end.captureStartedAt) { exclusions.outsideWindow++; continue; }
-    if (['test', 'import'].includes(row.start.dataOrigin)) { exclusions.trustedNonProduction++; continue; }
-    if (row.start.dataOrigin !== 'production' || row.start.observationVersion !== 1 || row.start.requestClass === 'unknown') {
-      exclusions.untrustedOriginOrClass++;
-      continue;
-    }
-    if (row.start.requestClass !== 'inference') { exclusions.nonInference++; continue; }
+    const scope = observationRequestScope(row,begin,end);
+    if (scope !== 'natural') { exclusions[scope]++; continue; }
     counts.naturalLogicalRequests++;
     const result = classify(row, attempts, end.captureEndedAt);
     counts[result.category]++;
@@ -223,7 +260,8 @@ async function main() {
   }
   const result = command === 'sample'
     ? await sampleObservation({ directory: options.journal, keyringPath: options.keyring, databasePath: options.database,
-      driver: options.driver, controlSocket: options['control-socket'], releaseId: options['release-id'] })
+      driver: options.driver, controlSocket: options['control-socket'], releaseId: options['release-id'],
+      safetyUrl: options['safety-url'], safetyCredentialPath: options['safety-credential'] })
     : command === 'assemble'
       ? assembleObservation({ begin: readPrivateJson(options.begin), end: readPrivateJson(options.end), keyringPath: options.keyring })
       : fail('use sample or assemble');

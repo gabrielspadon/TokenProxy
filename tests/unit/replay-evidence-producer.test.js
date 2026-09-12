@@ -40,6 +40,7 @@ it('persists exact response proofs for both physical URL dispatches without reta
 });
 it('rejects forged local response proof and retains unknown before-response dispatch', () => {
   expect(()=>normalizeReplayEvidence({disposition:'safe-rejection',source:'dispatch-start',observedAt:at})).toThrow('Invalid replay');
+  expect(()=>normalizeReplayEvidence({disposition:'safe-rejection',source:'upstream-response',status:200,observedAt:at})).toThrow('Invalid replay');
   expect(normalizeReplayEvidence({disposition:'unknown',source:'dispatch-start',observedAt:at})).toMatchObject({replayDisposition:'unknown',replayStatus:null});
 });
 it('records canonical account quota nonacceptance independently of same-account retry permission', () => {

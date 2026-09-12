@@ -247,27 +247,32 @@ function validateProductNative(value, id, identities) {
   }
 }
 
-export function validateSafetyClosure(root, value, observation, identities) {
+export function validateSafetyClosure(root, value, observation, identities, derivedAudits) {
   requireThat(value.schema === "tokenproxy-live-safety-closure-v1" && value.state === "passed" && value.releaseId === observation.releaseId && same(value.window, observation.window), "live safety closure must bind the exact observation window and release");
   for (const key of ["applicationSha", "frontSha", "deploySha"]) requireThat(value[key] === identities[key], "live safety closure revision mismatch");
   const expected = ["replay", "secret-scan", "acknowledged-writes", "front-evictions"];
   requireThat(Array.isArray(value.audits) && same(value.audits.map((audit) => audit.scope).sort(), expected.sort()), "live safety closure audit inventory incomplete");
+  requireThat(derivedAudits && expected.every(scope=>derivedAudits[scope]), "live safety requires native derivation from authenticated snapshots");
   for (const audit of value.audits) {
     const source = JSON.parse(readArtifact(root, audit.source).bytes);
+    requireThat(same(source, derivedAudits[audit.scope]), "live safety audit differs from native authenticated source derivation");
     requireThat(source.schema === `tokenproxy-live-${audit.scope}-audit-v1` && source.state === "passed" && source.releaseId === observation.releaseId && same(source.window, observation.window) && empty(source.unobservable), "live safety source is failed, unobservable or outside the observation window");
     for (const key of ["applicationSha", "frontSha", "deploySha"]) requireThat(source[key] === identities[key], "live safety source revision mismatch");
     requireThat(source.inputs?.length > 0, "live safety raw source references missing");
-    const sources = source.inputs.map((input) => readArtifact(root, input));
+    source.inputs.forEach((input) => readArtifact(root, input));
     if (audit.scope === "replay") {
       integer(source.logicalRequests, observation.counts.naturalLogicalRequests, "audited natural requests");
       integer(source.physicalAttempts, 1, "audited physical attempts");
       requireThat(empty(source.unsafeReplays) && empty(source.unresolvedAttempts), "live replay safety remains unresolved");
     } else if (audit.scope === "secret-scan") {
-      integer(source.scannedFiles, 1, "scanned log/API/trace files"); integer(source.scannedBytes, 1, "scanned bytes");
-      requireThat(source.scannedFiles === sources.length && source.scannedBytes === sources.reduce((sum, input) => sum + input.bytes.length, 0), "live credential scan inventory disagrees with retained bytes");
-      requireThat(same(source.sinks?.slice().sort(), ["api", "exception", "log", "trace"]) && empty(source.findings) && empty(source.omittedSources), "live credential scan has findings or missing sinks");
+      integer(source.scannedBytes, 1, "passively scanned output bytes"); integer(source.observedWrites, 1, "observed sink writes");
+      requireThat(source.matchScope === "configured-credential-literal-bytes" && source.rawContentRetained === false
+        && same(source.coverage?.map(row=>row.sink).sort(), ["api", "exception", "log", "trace"])
+        && source.coverage.every(row=>row.status === "observed" || row.sink === "trace" && row.status === "checked-inactive")
+        && empty(source.findings), "live credential scan has findings or missing sink coverage");
     } else if (audit.scope === "acknowledged-writes") {
-      integer(source.acknowledged, 1, "acknowledged writes");
+      integer(source.acknowledged, 0, "durable-before-return eligible writes");
+      requireThat(source.acknowledgmentScope === "durable-before-return" && source.callerObserved === null, "acknowledgment observation scope mismatch");
       requireThat(source.reconciled === source.acknowledged && empty(source.missing) && empty(source.unreadable), "acknowledged live writes did not reconcile");
     } else {
       integer(source.beginCounter, 0, "initial eviction counter"); integer(source.endCounter, 0, "final eviction counter");
@@ -290,7 +295,12 @@ async function validateObservationNative(root, receipt, native, identities, repo
   requireThat(derived.outcomeGatePassed === true && empty(derived.failures) && derived.counts.unknown === 0 && derived.exclusions.untrustedOriginOrClass === 0, "native observation outcome gate failed");
   requireThat(same(derived.remainingReleaseGates?.slice().sort(), ["acknowledged-data-loss", "deployment-eviction", "secret-exposure", "unsafe-replay"]), "native observation safety scope changed and requires an explicit closure contract");
   requireThat(Date.parse(receipt.startedAt) <= Date.parse(derived.window.start) && Date.parse(receipt.finishedAt) >= Date.parse(derived.window.end), "observation gate interval does not cover authenticated window");
-  validateSafetyClosure(root, JSON.parse(readArtifact(root, receipt.safetyClosure).bytes), derived, identities);
+  const { deriveLiveSafety, candidateSafetySources, candidateFrontSources } = await import(pathToFileURL(resolve(repositoryRoot, "scripts/qa/collect-live-safety.mjs")).href);
+  const { audits } = await deriveLiveSafety({ begin, end, keyringPath, identities,
+    inputs: ["begin", "end", "keyring"].map(role=>({ role,...refs[role] })),
+    sourceHashes:candidateSafetySources(repositoryRoot),
+    frontSourceHashes:candidateFrontSources(identities.frontRepositoryRoot,identities.frontSha) });
+  validateSafetyClosure(root, JSON.parse(readArtifact(root, receipt.safetyClosure).bytes), derived, identities, audits);
   const syntheticGenerationRequests = end.segments.flatMap((segment) => segment.events).filter((event) => event.kind === "start" && ["test", "import"].includes(event.dataOrigin) && event.requestClass === "inference" && event.firstObservedAt >= derived.window.start && event.firstObservedAt < derived.window.end).length;
   return { logicalRequests: derived.counts.naturalLogicalRequests, proxyUnexpectedFailures: derived.counts.proxyFailure, syntheticGenerationRequests };
 }

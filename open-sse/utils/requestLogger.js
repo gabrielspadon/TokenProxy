@@ -12,10 +12,12 @@ let sequence = 0;
 const sink = createBoundedLogSink({ async write(item) {
   if (generations.get(item.slot) !== item.generation) return false;
   if (item.begin) {
+    globalThis.__tokenproxyLiveSafety?.traceBegin(item.slot);
     await fs.mkdir(path.dirname(item.sessionPath), { recursive: true, mode: 0o700 });
     await fs.rm(item.sessionPath, { recursive: true, force: true });
     await fs.mkdir(item.sessionPath, { mode: 0o700 });
   } else {
+    globalThis.__tokenproxyLiveSafety?.traceWrite(item.slot, item.filename, item.text);
     await fs[item.filename.endsWith('.json') ? 'writeFile' : 'appendFile'](path.join(item.sessionPath, item.filename), item.text, { mode: 0o600 });
   }
 } });
@@ -28,6 +30,7 @@ function noop() {
 
 /** Opt-in bounded content retention. Completion never waits for disk on the response path. */
 export async function createRequestLogger(sourceFormat, targetFormat, model, { signal } = {}) {
+  globalThis.__tokenproxyLiveSafety?.traceMode();
   if (typeof process === 'undefined' || process.env.ENABLE_REQUEST_LOGS !== 'true' || signal?.aborted) return noop();
   const generation = ++sequence;
   const slot = generation % SESSION_SLOTS;

@@ -13,6 +13,7 @@ function createBuildFixture(distDir) {
   mkdirSync(join(projectRoot, "public"), { recursive: true });
   writeFileSync(join(buildRoot, "static", "chunks", "app.js"), "static asset");
   writeFileSync(join(projectRoot, "public", "favicon.svg"), "public asset");
+  writeFileSync(join(projectRoot, "live-safety-runtime.cjs"), "passive runtime");
   return projectRoot;
 }
 
@@ -46,6 +47,7 @@ describe("standalone build assets", () => {
 
     expect(readFileSync(join(projectRoot, ".next", "standalone", "custom-server.js"), "utf8"))
       .toBe("wrapper");
+    expect(readFileSync(join(projectRoot, '.next', 'standalone', 'live-safety-runtime.cjs'), 'utf8')).toBe('passive runtime');
   });
 
   it("does not modify workspace-traced CLI builds", () => {

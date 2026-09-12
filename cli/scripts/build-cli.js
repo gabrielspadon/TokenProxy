@@ -256,6 +256,7 @@ function buildCliPackage() {
   const customServerSrc = path.join(appDir, "custom-server.js");
   if (fs.existsSync(customServerSrc)) {
     fs.copyFileSync(customServerSrc, path.join(cliAppDir, "custom-server.js"));
+    fs.copyFileSync(path.join(appDir, "live-safety-runtime.cjs"), path.join(cliAppDir, "live-safety-runtime.cjs"));
     console.log("✅ Copied custom-server.js\n");
   } else {
     console.error("❌ custom-server.js not found — without it no request can be proven local,");

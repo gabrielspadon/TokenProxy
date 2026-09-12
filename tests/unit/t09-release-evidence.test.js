@@ -338,7 +338,7 @@ describe("source-native qualification contracts", () => {
       audit("acknowledged-writes", { acknowledged: 1000, reconciled: 1000, missing: [], unreadable: [] }),
       audit("front-evictions", { beginCounter: 5, endCounter: 5, delta: 0, counterEpoch: "retained-front-process" }),
     ] };
-    expect(() => validateSafetyClosure(f.evidence, closure, observation, f.identities)).not.toThrow();
+    expect(() => validateSafetyClosure(f.evidence, closure, observation, f.identities)).toThrow(/native derivation/u);
     const wrongWindow = { ...closure, window: { ...window, durationMs: 1 } };
     expect(() => validateSafetyClosure(f.evidence, wrongWindow, observation, f.identities)).toThrow(/exact observation window/u);
     closure.audits.pop();

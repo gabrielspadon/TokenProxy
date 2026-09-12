@@ -27,6 +27,7 @@ let cachedCliToken = null;
 async function getCliToken() {
   if (!cachedCliToken)
     cachedCliToken = await getConsistentMachineId(CLI_TOKEN_SALT);
+  globalThis.__tokenproxyLiveSafety?.register(cachedCliToken);
   return cachedCliToken;
 }
 

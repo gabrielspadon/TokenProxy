@@ -1,11 +1,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { assembleObservation, sampleObservation } from '../../scripts/qa/observe-production.mjs';
 import { signFrontObservation } from '../../src/lib/db/repos/frontOutcomeJournalRepo.js';
+import { deriveLiveSafety, candidateSafetySources } from '../../scripts/qa/collect-live-safety.mjs';
+import { validateSafetyClosure } from '../../scripts/qa/assemble-release-evidence.mjs';
+import { createNodeSqliteAdapter } from '../../src/lib/db/adapters/nodeSqliteAdapter.js';
+import { captureCriticalAcknowledgments,getCriticalAcknowledgmentRuntime,validateCriticalAcknowledgmentCapture } from '../../src/lib/db/adapters/criticalAckJournal.js';
+const {createLiveSafety}=createRequire(import.meta.url)('../../live-safety-runtime.cjs');
 
 const roots = [];
 const CLOCK = '11111111-1111-4111-8111-111111111111';
@@ -21,7 +27,7 @@ const signed = (record) => {
   const value = { schemaVersion: 2, clockDomain: CLOCK, recordedAt: AT, ...record, authKeyId: KEY_ID };
   return { ...value, receiptId: createHmac('sha256', SECRET).update(canon(value)).digest('hex') };
 };
-afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { vi.useRealTimers();vi.unstubAllEnvs();for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 
 function fixture(count = 1000) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tp-observation-'));
@@ -144,7 +150,58 @@ it('samples a read-only database and signs the exact joined scalar rows', async 
   const before = fs.readFileSync(databasePath);
   const result = await sampleObservation({ ...f, databasePath, driver: 'node:sqlite', releaseId: f.end.releaseId,
     readStatus: async () => f.end.status, now: () => END });
-  expect(result.attempts).toEqual(f.attempts);
+  expect(result.attempts).toEqual(f.attempts.map(row=>({...row,dispatchCoverage:null,connectionId:null,
+    replayDisposition:null,replaySource:null,replayStatus:null,replayObservedAt:null})));
+  expect(result.safety.secrets.unobservable).toEqual(['runtime-capture-not-configured']);
   expect(fs.readFileSync(databasePath)).toEqual(before);
   expect(assembleObservation({ ...f, end: result }).counts.success).toBe(1);
+});
+
+it('rederives all four safety audits from signed natural outcomes and actual durable ACK evidence',async()=>{
+  const f=fixture(),applicationSha='c'.repeat(40),identities={applicationSha,frontSha:'e'.repeat(40),deploySha:'f'.repeat(40)};
+  const hash=value=>createHash('sha256').update(value).digest('hex');
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date(AT));vi.stubEnv('TP_BUILD_SHA',applicationSha);
+  const databaseFile=path.join(f.root,'critical.sqlite'),db=await createNodeSqliteAdapter(databaseFile);
+  try {
+    db.exec('CREATE TABLE business(id INTEGER PRIMARY KEY,value TEXT)');
+    db.criticalTransaction(()=>db.run('INSERT INTO business VALUES(1,?)',['private fixture value']));
+    const sourceHashes=candidateSafetySources();
+    const runtime=createLiveSafety({env:{JWT_SECRET:'private-runtime-credential-123456'},
+      source:{...sourceHashes,buildSha:applicationSha},identity:{id:'fixture-runtime',pid:process.pid,bootId:'boot',startTicks:'1',startedAt:AT}});
+    for(const sink of ['api','log','exception'])runtime.stream(sink).close();
+    const native=()=>{const secrets=runtime.snapshot();secrets.criticalAcknowledgments=getCriticalAcknowledgmentRuntime({databaseFile});
+      return {secrets,acknowledgments:captureCriticalAcknowledgments({databaseFile,db})};};
+    const frontSourceHashes={'front-proxy.mjs':'1'.repeat(64),'front-activation.mjs':'2'.repeat(64),'front-lifecycle.mjs':'3'.repeat(64),
+      'front-telemetry.mjs':'4'.repeat(64),'front-outcome-journal.mjs':'5'.repeat(64)};
+    const source_manifest={schemaVersion:1,capturedAt:AT,files:frontSourceHashes,sha256:hash(JSON.stringify(frontSourceHashes))};
+    vi.setSystemTime(new Date(START));
+    f.begin=signFrontObservation({...f.begin,status:{...f.begin.status,source_manifest},safety:native()},f.keyringPath);
+    vi.setSystemTime(new Date('2026-09-10T02:00:00.000Z'));
+    db.criticalTransaction(()=>db.run('INSERT INTO business VALUES(2,?)',['another private fixture']));
+    runtime.scan('api','ordinary generation output');
+    for(const row of f.attempts)Object.assign(row,{dispatchCoverage:'physical-dispatch',replayDisposition:'never-replay',replaySource:'upstream-response',replayStatus:200,replayObservedAt:row.terminalObservedAt});
+    vi.setSystemTime(new Date(END));
+    f.end=signFrontObservation({...f.snapshot(END,f.events,f.attempts),status:{...f.end.status,source_manifest},safety:native()},f.keyringPath);
+    const put=(name,value)=>{const bytes=JSON.stringify(value),file=path.join(f.root,name);fs.writeFileSync(file,bytes,{mode:0o600});return {path:name,sha256:hash(bytes)};};
+    const refs={begin:put('begin.json',f.begin),end:put('end.json',f.end),keyring:{path:path.relative(f.root,f.keyringPath),sha256:hash(fs.readFileSync(f.keyringPath))}};
+    const options={...f,identities,sourceHashes,frontSourceHashes,validateCapture:validateCriticalAcknowledgmentCapture,
+      inputs:['begin','end','keyring'].map(role=>({role,...refs[role]}))};
+    const {observation,audits}=await deriveLiveSafety(options);
+    expect(observation.outcomeGatePassed).toBe(true);
+    expect(Object.values(audits).map(row=>[row.state,row.unobservable])).toEqual(Array.from({length:4},()=>['passed',[]]));
+    expect(audits['acknowledged-writes']).toMatchObject({acknowledged:1,reconciled:1,callerObserved:null});
+    const closure={schema:'tokenproxy-live-safety-closure-v1',state:'passed',...identities,releaseId:observation.releaseId,window:observation.window,
+      audits:Object.entries(audits).map(([scope,value])=>({scope,source:put(`${scope}.json`,value)}))};
+    expect(()=>validateSafetyClosure(f.root,closure,observation,identities,audits)).not.toThrow();
+    const altered={...audits.replay,physicalAttempts:9999};
+    closure.audits[0].source=put('altered.json',altered);
+    expect(()=>validateSafetyClosure(f.root,closure,observation,identities,audits)).toThrow('differs from native');
+    const missing=structuredClone(f.end);missing.safety.acknowledgments.journal.records.pop();
+    const missingResult=await deriveLiveSafety({...options,end:signFrontObservation(missing,f.keyringPath)});
+    expect(missingResult.audits['acknowledged-writes'].state).toBe('failed');
+    const oldFront=structuredClone(f.end);delete oldFront.status.source_manifest;
+    expect(Object.values((await deriveLiveSafety({...options,end:signFrontObservation(oldFront,f.keyringPath)})).audits).every(row=>row.state==='failed')).toBe(true);
+    const tampered=structuredClone(f.end);tampered.attempts[0].replayDisposition='safe-rejection';
+    await expect(deriveLiveSafety({...options,end:tampered})).rejects.toThrow('receipt');
+  } finally {db.close();}
 });

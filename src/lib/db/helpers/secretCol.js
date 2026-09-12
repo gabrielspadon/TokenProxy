@@ -130,6 +130,7 @@ function decrypt(stored) {
 
 // Encrypts a JSON-serializable value for storage in a `data` column.
 export function encryptSecretJson(value) {
+  globalThis.__tokenproxyLiveSafety?.credentials(value);
   return encrypt(JSON.stringify(value ?? null));
 }
 
@@ -139,9 +140,13 @@ export function decryptSecretJson(stored, fallback = null) {
   if (stored == null) return fallback;
   try {
     if (typeof stored === 'string' && stored.startsWith(ENC_PREFIX)) {
-      return JSON.parse(decrypt(stored));
+      const value = JSON.parse(decrypt(stored));
+      globalThis.__tokenproxyLiveSafety?.credentials(value);
+      return value;
     }
-    return JSON.parse(stored);
+    const value = JSON.parse(stored);
+    globalThis.__tokenproxyLiveSafety?.credentials(value);
+    return value;
   } catch {
     return fallback;
   }

@@ -199,14 +199,30 @@ hashed raw `inputs`, and `unobservable: []`. Required scope-specific fields are
 
 - `replay` has `logicalRequests` covering the natural denominator,
   `physicalAttempts`, `unsafeReplays: []`, and `unresolvedAttempts: []`.
-- `secret-scan` has `scannedFiles`/`scannedBytes` matching the retained input
-  inventory, `sinks` containing api/exception/log/trace, `findings: []`, and
-  `omittedSources: []`.
-- `acknowledged-writes` has a positive `acknowledged` count, equal `reconciled`,
-  `missing: []`, and `unreadable: []`.
+- `secret-scan` derives `scannedBytes` and `observedWrites` from passive runtime
+  counters, with exact api/exception/log/trace `coverage` and `findings: []`.
+  Trace may be `checked-inactive` only when the same process and source prove
+  both request logging and OTLP remained disabled. Empty files alone cannot
+  establish inactivity. Matching covers configured credential literal bytes;
+  unknown credentials, transformations and unregistered external sinks remain
+  explicit limitations. Receipts retain no response, prompt or credential text.
+- `acknowledged-writes` has a nonnegative `acknowledged` count, equal `reconciled`,
+  `missing: []`, and `unreadable: []`. Its scope is `durable-before-return` and
+  `callerObserved: null`. Eligible receipts conservatively include the crash gap
+  before return; they do not establish that a caller received a response.
+  Zero activity requires complete journal and instrumented process coverage.
 - `front-evictions` has one `counterEpoch`, equal nonnegative `beginCounter` and
   `endCounter`, and `delta: 0`; the source inputs retain both counter captures.
 
+`collect-live-safety.mjs` derives all four audits from the signed begin/end
+snapshots. The release assembler runs that native derivation again and compares
+the entire audit objects, so edited counters or clean booleans cannot close a
+gate. Each audit retains the hashed begin/end/keyring references. Snapshots bind
+the backend runtime source and the front's immutable startup source manifest
+to the exact application/front candidate SHAs. Front manifests cover proxy,
+activation, lifecycle, telemetry and outcome-journal modules.
+
+See [LIVE-SAFETY.md](LIVE-SAFETY.md) for the runtime capture and assembly commands.
 These collectors must establish their measurements from the actual window.
 An unavailable invariant belongs in `unobservable` and prevents qualification.
 The contract does not imply the live collectors or observation have run. Local
