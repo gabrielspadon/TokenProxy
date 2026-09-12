@@ -9,13 +9,14 @@ import { getContextOverview, getContextSession } from "../../src/lib/db/repos/co
 import { parseContextFilter, readContextOverview, validateAnalyticsQuery } from "../../src/lib/db/analytics/contextQueries.mjs";
 import { openAnalyticsReadOnly } from "../../src/lib/db/analytics/readOnly.mjs";
 import { analyticsDataVersion, createContextAnalyticsClient, ContextAnalyticsError } from "../../src/lib/db/analytics/client.js";
+import { createVisibleTelemetryFixture } from "../fixtures/visible-telemetry.mjs";
 
 let db;
 beforeAll(async () => {
   db = await getAdapter();
-  await saveRequestStats({ id: "worker-fixture", timestamp: "2026-09-06T12:00:00.000Z", provider: "fixture", model: "model", connectionId: "account", status: "success",
+  await createVisibleTelemetryFixture(db, "context-analytics-worker")(() => saveRequestStats({ id: "worker-fixture", timestamp: "2026-09-06T12:00:00.000Z", provider: "fixture", model: "model", connectionId: "account", status: "success",
     tokens: { prompt_tokens: 100, completion_tokens: 5, cached_tokens: 0 },
-    contextTelemetry: { sessionHash: "a".repeat(32), stages: [{ stage: "rtk", in: 100, out: 90 }] } });
+    contextTelemetry: { sessionHash: "a".repeat(32), stages: [{ stage: "rtk", in: 100, out: 90 }] } }));
 });
 afterAll(async () => { await globalThis._contextAnalytics?.client.close(); });
 
