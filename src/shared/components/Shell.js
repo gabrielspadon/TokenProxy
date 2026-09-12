@@ -223,7 +223,6 @@ function WorkspaceShell({ children }) {
                   variant="subtle"
                   color="gray"
                   size="compact-xs"
-                  aria-label="Sign out"
                   leftSection={<Icon name="i-signout" />}
                   loading={signingOut}
                   disabled={snapshot?.isolated}

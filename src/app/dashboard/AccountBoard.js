@@ -77,7 +77,7 @@ const EVIDENCE_NOTE = {
 // --brand-* token in src/app/workspace.css. No invented provider, no invented
 // logo, and each button opens the SAME AddAccountRow flow the picker opens, so
 // the grant, the paste-back fallback and the naming stage are the shipped ones.
-// Add-everything stays on Connections, reachable through "Other".
+// Additional providers use the full Connections flow.
 const QUICK_CONNECTIONS = [
   { id: 'codex', name: 'OpenAI Codex', label: 'Codex', brand: 'openai' },
   { id: 'claude', name: 'Claude Code', label: 'Claude Code', brand: 'claude' },
@@ -86,7 +86,7 @@ const QUICK_CONNECTIONS = [
 
 // What each category MEANS, in the tooltip on its chip. It used to be a
 // `<span>` beside each group heading, where it truncated with an ellipsis and
-// was the only explanation the state had (root visual review, finding 1).
+// was the only explanation the state had.
 const CATEGORY_MEANING = {
   active: 'Can take work now.',
   cooldown: 'Out of quota, rate limited or auto-paused. Each card leads with when it returns.',
@@ -401,8 +401,7 @@ const STATE_ASK = {
  *
  * NO CLAIM WITHOUT THE EVIDENCE FOR IT. The Active branch used to answer
  * "Proven by use" whenever no quota window was readable, which rendered above a
- * card whose own lines said "No attempts" and "No quota window to read" (root
- * visual review, finding 2). `accountProven` is what the word asserts, so it is
+ * card whose own lines said "No attempts" and "No quota window to read". `accountProven` is what the word asserts, so it is
  * what gets asked: a served request or a passed test earns "Serving", and the
  * absence of both says so plainly instead.
  */
@@ -874,7 +873,7 @@ export function AccountBoard({
           with a \u21b3 and the word "Breakdown", because two vocabularies had to
           coexist. One mapping means one strip. Each chip's tooltip carries what
           the category means, since a truncating subtitle under a heading was
-          the only explanation of a state (root visual review, finding 1). */}
+          the only explanation of a state. */}
       <div className={styles.fleet} role="group" aria-label="Capacity summary">
         <button
           type="button"
@@ -1010,21 +1009,6 @@ export function AccountBoard({
             </button>
           </Tooltip>
         ))}
-        <Tooltip label="Any other provider, with its credential options">
-          <Button
-            size="xs"
-            variant="default"
-            leftSection={<Icon name="i-add" />}
-            aria-expanded={adding === ''}
-            disabled={snapshot?.isolated}
-            ref={(node) => {
-              quickRefs.current[''] = node;
-            }}
-            onClick={() => setAdding((previous) => (previous === '' ? null : ''))}
-          >
-            Other
-          </Button>
-        </Tooltip>
         {reading ? (
           <span className={styles.muted} role="status" aria-live="polite">
             {reading.done} / {reading.total}
@@ -1145,8 +1129,7 @@ export function AccountBoard({
           the heading: the chip above already counts and its tooltip already
           explains, and a second copy was a second thing to truncate. No
           fixed-height wrapper either, so an empty category renders nothing at
-          all rather than a blank vertical band (root visual review, finding 1
-          and 3). Within a group the order is that category's own question:
+          all rather than a blank vertical band. Within a group the order is that category's own question:
           most headroom where work goes next, soonest return where the
           operator is waiting. */}
       {!advanced

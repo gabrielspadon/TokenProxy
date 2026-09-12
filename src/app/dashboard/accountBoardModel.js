@@ -10,11 +10,7 @@ import {
 } from './accountControlPanelModel';
 import { groupQuotaProducts } from './quotaProductGroups';
 
-// The seven-way split src/app/dashboard/connections/page.js:42 still reads.
-// The Capacity board no longer uses it: `CATEGORIES` further down is that
-// board's one mapping. Kept exported because deleting it would break a page
-// this packet does not own; recorded for root in
-// coordination/ui_accounts-to-root.md.
+// Detailed evidence buckets remain available to internal consumers.
 export const BUCKETS = [
   { id: 'ready', label: 'Ready', tone: 'positive' },
   { id: 'low', label: 'Low quota', tone: 'ember' },
@@ -54,7 +50,7 @@ export const LOW_REMAINING = 20;
 // The windows the low line is read from: current, readable, limited, and the
 // account's OWN entitlement. A sub-quota was included here, so an account whose
 // Codex Spark lane was empty reported "Low quota" beside a plan-wide window at
-// 52%. Same classifier the router uses (src/shared/utils/quotaRanking.js:132).
+// 52%. Use the same classifier as the router.
 // Observation age only. `accountWindowStale` also folds in "the reset passed",
 // which would drop exactly the windows that have just been handed a fresh
 // period; windowHeadroom below already answers that question, and answering it
@@ -90,9 +86,7 @@ export function accountBucket(account, now) {
   // No LIVE window. An unlimited one is still evidence of capacity, so that
   // stays ready, and a window present but unreadable means the account WAS
   // measured. What must not stay ready is evidence that has aged out: `ready`
-  // claims the account can take work and nothing supports it. Measured
-  // 2026-09-11, ten of thirty-one windows sat inside the fifteen-minute line,
-  // so two accounts in the SAME state sorted differently on refresh timing.
+  // claims capacity that an expired observation cannot establish.
   if (accountWindows(account).some((window) => window.unlimited)) {
     return state === 'Unknown' ? 'unknown' : 'ready';
   }
@@ -115,57 +109,27 @@ export function accountBucket(account, now) {
 // to percent remaining, so a full window is 100.
 const FULL = 100;
 
-/**
- * Has this window's period already rolled over?
- *
- * A recorded reset at or before `now` means the provider has handed the account
- * a whole fresh period, so the depleted reading that predates it describes a
- * period that no longer exists. This is the router's rule at
- * src/shared/utils/quotaRanking.js:291, and the provider-side exhaustion check
- * refuses to call a model exhausted past its reset for the same reason at
- * open-sse/services/accountFallback.js:290.
- */
+/** Whether the stored reset has passed at the supplied clock. */
 export function windowReplenished(window, now) {
   const resetAt = Date.parse(window.resetAt);
   return Number.isFinite(resetAt) && resetAt <= now;
 }
 
-/**
- * What this window has left RIGHT NOW, in percent, or null when unreadable.
- *
- * src/shared/utils/quotaRanking.js:300 in the board's units: a replenished
- * window reads full, never the zero on record. Reading that zero as depletion
- * is what parked replenished accounts beside genuinely exhausted ones.
- */
+/** Effective percentage remaining; reset projections are estimates. */
 export function windowHeadroom(window, now) {
   if (window.unlimited) return FULL;
   if (!Number.isFinite(window.remaining)) return null;
   return windowReplenished(window, now) ? FULL : window.remaining;
 }
 
-/**
- * An account's GENERAL windows, the ones that constrain the whole connection.
- *
- * A sub-quota (`spark_weekly`, `weekly opus (7d)`) is not the account's
- * entitlement and must never bench it, which is why the router classifies
- * before it ranks (src/shared/utils/quotaRanking.js:132). Same classifier here,
- * so the board and the router cannot disagree about which windows count.
- */
+/** Readable general windows constrain the whole account; model subquotas do not. */
 export function generalWindows(account, now) {
   return accountWindows(account).filter(
     (window) => classifyWindow(window.key) === 'general' && windowHeadroom(window, now) !== null
   );
 }
 
-/**
- * How much the board is entitled to claim about this account.
- *
- * The router's two bands, in order: completeness first, then confidence
- * (src/shared/utils/quotaRanking.js:323 and :312). No readable general window
- * is `unknown`. A general window we could not read, or a reading older than the
- * observation line, is `stale`. Everything readable and current is `fresh`.
- * The worst window sets the band, exactly as `bandOf` takes the maximum.
- */
+/** The least reliable general window determines the evidence band. */
 export function accountEvidence(account, now) {
   const general = accountWindows(account).filter(
     (window) => classifyWindow(window.key) === 'general'
@@ -176,16 +140,7 @@ export function accountEvidence(account, now) {
   return readable.some((window) => accountWindowObservationStale(window, now)) ? 'stale' : 'fresh';
 }
 
-/**
- * Is this account out of quota right now?
- *
- * ANY general window at or below zero, not every one. The router's rule 2 is
- * that every KNOWN hard window must have headroom, so a single exhausted weekly
- * takes the connection out of service however full its five-hour window reads
- * (src/shared/utils/quotaRanking.js:301, `if (effectiveRemaining <= 0) usable
- * = false`). The board's old rule was `every`, which is why an account the
- * router refuses to select still rendered as serving.
- */
+/** Any exhausted general window depletes the account. */
 export function accountDepleted(account, now) {
   const general = generalWindows(account, now);
   return general.length > 0 && general.some((window) => windowHeadroom(window, now) <= 0);
@@ -381,11 +336,7 @@ export function accountReturnsAt(account, now) {
 
 // --- seat labels -------------------------------------------------------------
 // One login can hold several DISTINCT upstream accounts, a personal seat and an
-// organisation seat. Verified 2026-09-11 across seven logins: every pair held
-// two different weekly windows, four days apart in one case, which a single
-// account cannot do. The seat is kept as a LABEL on the card rather than as a
-// nested group, so the relationship survives while the nesting that made the
-// board hard to read does not.
+// organisation seat. Keep the seat label without introducing nested groups.
 const SEAT_SUFFIX = /\s*\(([^)]+)\)\s*$/;
 
 /** The login an account belongs to, and its seat name within that login. */
@@ -556,30 +507,7 @@ export function orderSection(accounts, section, now) {
   return [...accounts].sort(byName);
 }
 
-/**
- * Bar colour scale. Depleted is nothing left; low is at or under the larger of
- * 20% and the account's own auto-pause threshold; warn is at or under half.
- *
- * Reads `windowHeadroom`, not the stored `remaining`. It read the stored number
- * and was the last reader on the board that did, so it disagreed with every
- * other one about a replenished window. Probed 2026-09-12 with a general window
- * recorded at 0% whose `resetAt` had passed: `accountBucket` answered `ready`,
- * `headroomOf` answered 100, `accountEvidence` answered `fresh`, and this
- * function answered `depleted`. The card led with "100% left" above a red
- * depleted hatch, and `visibleWindowLines` used the same verdict to decide
- * which shorter windows to hide, so a fresh period could suppress its own
- * sibling lines.
- *
- * `now` is a parameter rather than a `Date.now()` default because the board
- * pins its clock to the capture time in an isolated snapshot, and a function
- * that reached for the wall clock would contradict the card beside it. Called
- * without one it degrades to the stored reading, which is the pre-fix
- * behaviour: src/app/dashboard/QuotaLine.js:38 still calls it that way and is
- * outside this packet's ownership, so the meter it draws keeps the old verdict
- * until that one-line call is updated. Requested in
- * coordination/ui_accounts-to-root.md; `visibleWindowLines` below, which IS
- * owned here, passes the clock and is fixed.
- */
+/** Quota color follows effective headroom at the supplied observation clock. */
 export function windowLevel(window, now) {
   const headroom = windowHeadroom(window, now);
   if (window.unlimited || headroom === null) return null;
@@ -618,22 +546,7 @@ export function providerList(accounts) {
   return [...new Set(accounts.map((account) => account.provider).filter(Boolean))].sort();
 }
 
-/**
- * How a provider entry can be credentialed, derived from the registry entry.
- *
- * The fallback below was audited as a candidate for presenting "API key" on an
- * OAuth-only provider and REJECTED on the evidence. It is unreachable for every
- * shipped provider: src/shared/constants/providers.js:16 always sets
- * `authModes` on the entry it builds, so the `Array.isArray && length` test
- * above is true for all 136 registry entries. Enumerated 2026-09-12 with the
- * real registry: zero entries reach the fallback, and the 14 OAuth-only ones
- * (claude, codex, cursor, gitlab, grok-cli, iflow, ...) all arrive carrying
- * `authModes: ['oauth']`. The fallback only misreports for a hand-built object
- * that sets `hasOAuth` without `authModes`, which is a test fixture
- * (tests/unit/account-board-model.test.js:224 asserts exactly that shape) and
- * never a provider. Left as-is: changing it would edit a provider-capability
- * contract to fix a presentation defect that does not occur.
- */
+/** Declared registry authModes take precedence over legacy entry fields. */
 export function credentialModes(entry) {
   if (Array.isArray(entry.authModes) && entry.authModes.length) return entry.authModes;
   const modes = [];
