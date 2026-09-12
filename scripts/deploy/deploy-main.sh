@@ -23,15 +23,8 @@ PYTHON=${TOKENPROXY_DEPLOY_PYTHON:-python3}
 DRIVER="$SCRIPT_DIR/deploy_driver.py"
 AI_DOTFILES=${TOKENPROXY_AI_DOTFILES:-$HOME/Codebases/ai-dotfiles}
 FRONT_INSTALLER="$AI_DOTFILES/libexec/shared/bin/tokenproxy-install-front.sh"
-READY_URL=${TOKENPROXY_BACKEND_READY_URL:-http://127.0.0.1:20127/api/ready}
 
-ready=$(curl -q -sS --max-time 1 "$READY_URL" 2>/dev/null || true)
-printf '%s' "$ready" | jq -e '.ready == true and (.buildSha | type == "string")' >/dev/null || {
-  printf 'deployment refused: the running backend lacks the versioned local readiness contract; bootstrap once with ai-dotfiles update-tokenproxy.sh in a maintenance window\n' >&2
-  exit 1
-}
-
-stage_json=$($PYTHON "$DRIVER" stage --sha "$SHA")
+stage_json=$($PYTHON "$DRIVER" stage --sha "$SHA" --expected-old-sha "$OLD_SHA")
 manifest=$($PYTHON -c 'import json,sys; print(json.load(sys.stdin)["manifest"])' <<<"$stage_json")
 "$FRONT_INSTALLER" --manifest "$manifest"
 "$SCRIPT_DIR/await-quiet-cutover.sh" \

@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import socket
@@ -57,9 +58,7 @@ def pause_budget(seconds):
     previous_handler = signal.getsignal(signal.SIGALRM)
 
     def expired(_signum, _frame):
-        raise GuardError(
-            "Atomic pause budget exceeded; restoring the previous release"
-        )
+        raise GuardError("Atomic pause budget exceeded; restoring the previous release")
 
     signal.signal(signal.SIGALRM, expired)
     signal.setitimer(signal.ITIMER_REAL, seconds)
@@ -93,9 +92,7 @@ def run(argv, *, cwd=None, env=None, logfile=None, timeout=120):
         timeout=timeout,
         check=False,
     )
-    require(
-        result.returncode == 0, f"Command failed ({argv[0]}, exit {result.returncode})"
-    )
+    require(result.returncode == 0, f"Command failed ({argv[0]}, exit {result.returncode})")
     return result.stdout.strip()
 
 
@@ -147,8 +144,15 @@ def front_source_manifest():
 
 def verify_front_provenance(manifest):
     require(manifest.get("schema") == 1, "Unsupported front provenance manifest")
+    validate_sha(manifest.get("sourceSha", ""))
     files = manifest.get("files")
-    require(isinstance(files, dict) and files, "Front provenance manifest has no files")
+    require(
+        isinstance(files, dict)
+        and {"front-proxy.mjs", "tokenproxy-front.service"} <= set(files)
+        and all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) for name in files)
+        and all(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) for digest in files.values()),
+        "Front provenance manifest has an invalid closure",
+    )
     for relative, expected in files.items():
         installed = FRONT_UNIT if relative == "tokenproxy-front.service" else FRONT_PACKAGE / relative
         require(installed.is_file(), f"Installed front file is missing: {relative}")
@@ -225,16 +229,11 @@ def auth_headers(path):
     )
     value = json.loads(Path(path).read_text())
     require(
-        isinstance(value, dict)
-        and len(value) == 1
-        and set(value) <= {"Cookie", "x-tp-cli-token"},
+        isinstance(value, dict) and len(value) == 1 and set(value) <= {"Cookie", "x-tp-cli-token"},
         "Unsupported operator authentication file",
     )
     require(
-        all(
-            isinstance(v, str) and v and "\n" not in v and "\r" not in v
-            for v in value.values()
-        ),
+        all(isinstance(v, str) and v and "\n" not in v and "\r" not in v for v in value.values()),
         "Invalid operator authentication header",
     )
     return value
@@ -257,29 +256,50 @@ def request_json(port, path, headers=None):
     return json.loads(content)
 
 
+def version_matches(version, sha):
+    return version.get("buildSha") in {sha, sha[:12]}
+
+
 def verify_backend(port, sha, headers, *, features):
     require(
         request_json(port, "/api/ready").get("ready") is True,
         "Backend local readiness contract failed",
     )
     version = request_json(port, "/api/version", headers)
-    require(
-        version.get("buildSha") in {sha, sha[:12]},
-        "Running version does not match the artifact",
-    )
+    require(version_matches(version, sha), "Running version does not match the artifact")
     if features:
         context = request_json(port, "/api/context", headers)
         tools = request_json(port, "/api/tools", headers)
         require(
-            isinstance(context.get("summary"), dict)
-            and isinstance(context.get("sessions"), list),
+            isinstance(context.get("summary"), dict) and isinstance(context.get("sessions"), list),
             "Context endpoint contract failed",
         )
         require(
-            isinstance(tools.get("presets"), list)
-            and tools.get("scope") == "local-process",
+            isinstance(tools.get("presets"), list) and tools.get("scope") == "local-process",
             "Tools endpoint contract failed",
         )
+    return version
+
+
+def verify_existing_backend(port, sha, headers, backend_unit):
+    """Accept the manifest-pinned pre-readiness release during one front transition."""
+    status, content = request_http(port, "/api/ready")
+    if status == 200:
+        require(
+            json.loads(content).get("ready") is True,
+            "Backend local readiness contract failed",
+        )
+    else:
+        require(status == 404, "Legacy readiness transition requires /api/ready 404")
+        environment = shlex.split(backend_unit.get("Environment", ""))
+        require(
+            "TOKENPROXY_NO_UPDATE=1" in environment,
+            "Legacy version verification requires TOKENPROXY_NO_UPDATE=1",
+        )
+        health = request_json(port, "/api/health")
+        require(health.get("ok") is True, "Legacy backend health contract failed")
+    version = request_json(port, "/api/version", headers)
+    require(version_matches(version, sha), "Running version does not match the artifact")
     return version
 
 
@@ -291,6 +311,17 @@ def wait_backend(port, sha, headers, *, features):
         except (OSError, ValueError, GuardError):
             if time.monotonic() >= deadline:
                 raise GuardError("Backend validation deadline exceeded") from None
+            time.sleep(0.2)
+
+
+def wait_existing_backend(port, sha, headers):
+    deadline = time.monotonic() + 20
+    while True:
+        try:
+            return verify_existing_backend(port, sha, headers, unit_state(BACKEND))
+        except (OSError, ValueError, GuardError):
+            if time.monotonic() >= deadline:
+                raise GuardError("Legacy backend validation deadline exceeded") from None
             time.sleep(0.2)
 
 
@@ -329,6 +360,8 @@ def unit_state(unit):
             "WorkingDirectory",
             "-p",
             "ExecStart",
+            "-p",
+            "Environment",
         ]
     )
     return dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
@@ -364,10 +397,7 @@ def fresh_units():
 
 
 def quiet(status):
-    return all(
-        type(status.get(key)) is int and status[key] == 0
-        for key in ("active", "dispatching", "queued")
-    )
+    return all(type(status.get(key)) is int and status[key] == 0 for key in ("active", "dispatching", "queued"))
 
 
 def require_quiet_front():
@@ -377,9 +407,7 @@ def require_quiet_front():
         "Front already paused or draining; its state is owned by another operation",
     )
     require(
-        state.get("backend_ready") is True
-        and state.get("public_ready") is True
-        and quiet(state),
+        state.get("backend_ready") is True and state.get("public_ready") is True and quiet(state),
         "Front is not quiescent; production remains unchanged",
     )
     return state
@@ -395,9 +423,7 @@ def stopped():
 
 def snapshot_database(destination):
     require(DATABASE.is_file(), "Production database is missing")
-    source = sqlite3.connect(
-        "file:" + urllib.parse.quote(str(DATABASE)) + "?mode=ro", uri=True
-    )
+    source = sqlite3.connect("file:" + urllib.parse.quote(str(DATABASE)) + "?mode=ro", uri=True)
     try:
         with sqlite3.connect(destination) as target:
             source.backup(target)
@@ -424,16 +450,8 @@ def smoke_inner(sha):
         "iat": int(time.time()),
         "exp": int(time.time()) + 300,
     }
-    unsigned = (
-        encode(b'{"alg":"HS256","typ":"JWT"}')
-        + "."
-        + encode(json.dumps(payload).encode())
-    )
-    token = (
-        unsigned
-        + "."
-        + encode(hmac.digest(env["JWT_SECRET"].encode(), unsigned.encode(), "sha256"))
-    )
+    unsigned = encode(b'{"alg":"HS256","typ":"JWT"}') + "." + encode(json.dumps(payload).encode())
+    token = unsigned + "." + encode(hmac.digest(env["JWT_SECRET"].encode(), unsigned.encode(), "sha256"))
     headers = {"Cookie": "auth_token=" + token}
     resolve_script = """
       const {createRequire}=require('node:module');const fs=require('node:fs');
@@ -539,15 +557,15 @@ def qualify(package, sha, area):
     return json.loads(result.splitlines()[-1])
 
 
-def stage(sha):
+def stage(sha, expected_old_sha):
     validate_sha(sha)
+    validate_sha(expected_old_sha)
     require(
         run(["git", "rev-parse", REF], cwd=SOURCE) == sha,
         "Received integration ref is not the requested SHA",
     )
     require(
-        run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=CHECKOUT)
-        == "",
+        run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=CHECKOUT) == "",
         "Build checkout has tracked changes",
     )
     run(["git", "switch", "--detach", sha], cwd=CHECKOUT)
@@ -555,14 +573,10 @@ def stage(sha):
     runtime_version = run([str(RUNTIME_NODE), "--version"])
     require(build_version.startswith("v24."), "Build runtime must be Node 24")
     require(runtime_version.startswith("v24."), "Production runtime must be Node 24")
-    area = (
-        CHECKOUT / ".deploy-prep" / f"{sha}-{int(time.time())}-{secrets.token_hex(3)}"
-    )
+    area = CHECKOUT / ".deploy-prep" / f"{sha}-{int(time.time())}-{secrets.token_hex(3)}"
     area.mkdir(parents=True, mode=0o700)
     env = clean_environment(BUILD_NODE, area / "build-data")
-    env.pop(
-        "NODE_ENV"
-    )  # Install build-time dependencies as well as runtime dependencies.
+    env.pop("NODE_ENV")  # Install build-time dependencies as well as runtime dependencies.
     npm = [str(BUILD_NODE), str(BUILD_NODE.parent / "npm")]
     for folder in (CHECKOUT, CHECKOUT / "tests", CHECKOUT / "cli"):
         run(
@@ -648,13 +662,13 @@ def stage(sha):
         "Staged smoke modified package or failed",
     )
     require(
-        run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=CHECKOUT)
-        == "",
+        run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=CHECKOUT) == "",
         "Build changed tracked source",
     )
     manifest = {
         "schema": 1,
         "sha": sha,
+        "expectedOldSha": expected_old_sha,
         "createdAt": int(time.time()),
         "archive": str(archive),
         "archiveSha256": file_sha(archive),
@@ -675,12 +689,30 @@ def stage(sha):
     }
 
 
-def validate_manifest(path):
-    manifest = json.loads(Path(path).read_text())
-    sha = validate_sha(manifest["sha"])
-    candidate = Path(manifest["package"])
+def validate_manifest(path, expected_old_sha=None):
+    manifest_path = Path(path)
+    preparation_root = (CHECKOUT / ".deploy-prep").resolve()
     require(
-        candidate.resolve().is_relative_to(CHECKOUT / ".deploy-prep"),
+        manifest_path.is_file()
+        and not manifest_path.is_symlink()
+        and manifest_path.resolve().is_relative_to(preparation_root),
+        "Manifest is outside the owned preparation area",
+    )
+    manifest = json.loads(manifest_path.read_text())
+    sha = validate_sha(manifest["sha"])
+    manifest_old_sha = validate_sha(manifest["expectedOldSha"])
+    if expected_old_sha is not None:
+        require(
+            manifest_old_sha == validate_sha(expected_old_sha),
+            "Manifest previous release differs from the cutover request",
+        )
+    candidate = Path(manifest["package"])
+    archive = Path(manifest["archive"])
+    require(
+        candidate.resolve().is_relative_to(preparation_root)
+        and archive.is_file()
+        and not archive.is_symlink()
+        and archive.resolve().is_relative_to(preparation_root),
         "Package is outside the owned preparation area",
     )
     require(
@@ -692,7 +724,7 @@ def validate_manifest(path):
         "Artifact is unqualified",
     )
     require(
-        file_sha(manifest["archive"]) == manifest["archiveSha256"],
+        file_sha(archive) == manifest["archiveSha256"],
         "Packed artifact checksum changed",
     )
     require(
@@ -787,8 +819,7 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
         verify_backend(20128, sha, headers, features=True)
         final = control()
         require(
-            final.get("activation_paused") is False
-            and final.get("backend_ready") is True,
+            final.get("activation_paused") is False and final.get("backend_ready") is True,
             "Front did not return to ready admission",
         )
         return {
@@ -810,9 +841,7 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
             # New generations may already exist. Never roll them back blindly.
             with contextlib.suppress(OSError, GuardError):
                 control("resume")
-            raise GuardError(
-                "Validation failed after resume; backend left running for inspection"
-            ) from None
+            raise GuardError("Validation failed after resume; backend left running for inspection") from None
         # Reconcile from the filesystem as well as flags. SIGALRM can arrive
         # after an atomic rename returns but before the following assignment.
         if old_moved or old.exists():
@@ -827,7 +856,7 @@ def cutover_transaction(candidate, old, sha, old_sha, headers, front_pid):
             old.rename(PACKAGE)
         if not backend_usable:
             service("start")
-            wait_backend(20127, old_sha, headers, features=False)
+            wait_existing_backend(20127, old_sha, headers)
             backend_usable = True
         raise
     finally:
@@ -848,7 +877,7 @@ def cutover(
     )
     require_quiet_front()  # Refuse a busy attempt before copying packages or the database.
     validate_sha(expected_old_sha)
-    manifest = validate_manifest(manifest_path)
+    manifest = validate_manifest(manifest_path, expected_old_sha)
     headers = auth_headers(authentication)
     require(
         PACKAGE.is_dir() and not PACKAGE.is_symlink(),
@@ -858,8 +887,8 @@ def cutover(
         package_sha(PACKAGE) == expected_old_sha,
         "Installed package differs from expected previous release",
     )
-    _, front = fresh_units()
-    verify_backend(20127, expected_old_sha, headers, features=False)
+    backend, front = fresh_units()
+    verify_existing_backend(20127, expected_old_sha, headers, backend)
     area = Path(manifest_path).parent
     stamp = f"{int(time.time())}-{secrets.token_hex(3)}"
     backup_dir = area / f"rollback-{stamp}"
@@ -867,9 +896,7 @@ def cutover(
     snapshot_database(backup_dir / "data.sqlite")
     shutil.copytree(PACKAGE, backup_dir / "package", symlinks=True)
     old_digest = tree_sha(PACKAGE)
-    require(
-        tree_sha(backup_dir / "package") == old_digest, "Old package backup differs"
-    )
+    require(tree_sha(backup_dir / "package") == old_digest, "Old package backup differs")
     candidate = PACKAGE.parent / f".tokenproxy-prepared-{manifest['sha'][:12]}-{stamp}"
     old = PACKAGE.parent / f".tokenproxy-rollback-{expected_old_sha[:12]}-{stamp}"
     require(
@@ -895,9 +922,7 @@ def cutover(
         "Front process changed during preparation",
     )
     try:
-        result = cutover_transaction(
-            candidate, old, manifest["sha"], expected_old_sha, headers, front["MainPID"]
-        )
+        result = cutover_transaction(candidate, old, manifest["sha"], expected_old_sha, headers, front["MainPID"])
         result["backup"] = str(backup_dir)
         result["directBackendTraffic"] = "operator-attested direct-caller inventory"
         write_json(backup_dir / "result.json", result)
@@ -932,9 +957,8 @@ def main():
         help="Build and qualify an exact received SHA without production changes",
     )
     prepare.add_argument("--sha", required=True)
-    deploy = subcommands.add_parser(
-        "cutover", help="Explicitly perform the guarded production package switch"
-    )
+    prepare.add_argument("--expected-old-sha", required=True)
+    deploy = subcommands.add_parser("cutover", help="Explicitly perform the guarded production package switch")
     deploy.add_argument("--manifest", required=True)
     deploy.add_argument("--expected-old-sha", required=True)
     deploy.add_argument("--operator-auth-file", required=True)
@@ -948,7 +972,7 @@ def main():
     smoke.add_argument("--sha", required=True)
     args = parser.parse_args()
     if args.action == "stage":
-        result = stage(args.sha)
+        result = stage(args.sha, args.expected_old_sha)
     elif args.action == "cutover":
         result = cutover(
             args.manifest,

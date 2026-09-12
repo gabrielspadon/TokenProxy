@@ -1,6 +1,7 @@
 """Filesystem swaps are real temporary directories; every service/control action is mocked."""
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -22,9 +23,7 @@ class CutoverTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.live, self.candidate, self.old = (
-            self.root / name for name in ("live", "candidate", "old")
-        )
+        self.live, self.candidate, self.old = (self.root / name for name in ("live", "candidate", "old"))
         self.live.mkdir()
         self.candidate.mkdir()
         (self.live / "BUILD_SHA").write_text(OLD_SHA)
@@ -62,6 +61,14 @@ class CutoverTests(unittest.TestCase):
             ("unit_state", self.unit),
             ("wait_backend", self.verify),
             ("verify_backend", self.verify),
+            (
+                "wait_existing_backend",
+                lambda port, sha, headers: self.verify(port, sha, headers, features=False),
+            ),
+            (
+                "verify_existing_backend",
+                lambda port, sha, headers, _unit: self.verify(port, sha, headers, features=False),
+            ),
         ):
             mock = patch.object(driver, name, value)
             mock.start()
@@ -98,9 +105,7 @@ class CutoverTests(unittest.TestCase):
         if self.socket_error:
             raise self.socket_error
         self.clock += self.socket_scan_seconds
-        output = (
-            self.socket_outputs.pop(0) if self.socket_outputs else self.socket_output
-        )
+        output = self.socket_outputs.pop(0) if self.socket_outputs else self.socket_output
         if not output:
             self.actions.append("sockets:empty")
         return subprocess.CompletedProcess(argv, self.socket_returncode, output)
@@ -128,6 +133,7 @@ class CutoverTests(unittest.TestCase):
         return {
             "MainPID": "backend-1" if self.running else "0",
             "ActiveState": "active" if self.running else "inactive",
+            "Environment": "TOKENPROXY_NO_UPDATE=1",
         }
 
     def service(self, action):
@@ -151,9 +157,7 @@ class CutoverTests(unittest.TestCase):
         return {"buildSha": sha[:12]}
 
     def invoke(self):
-        return driver.cutover_transaction(
-            self.candidate, self.old, NEW_SHA, OLD_SHA, {}, "front-1"
-        )
+        return driver.cutover_transaction(self.candidate, self.old, NEW_SHA, OLD_SHA, {}, "front-1")
 
     def test_active_generation_refuses_before_pause_or_stop(self):
         self.active = 1
@@ -213,18 +217,14 @@ class CutoverTests(unittest.TestCase):
             result["pausedBackendSocketGate"],
             {"port": 20127, "establishedSockets": 0, "frontPID": "front-1"},
         )
-        self.assertLess(
-            self.actions.index("sockets:empty"), self.actions.index("backend:stop")
-        )
+        self.assertLess(self.actions.index("sockets:empty"), self.actions.index("backend:stop"))
         self.assertEqual(self.socket_timeouts, [0.750])
         self.assertEqual(self.clock, 0)
         self.assertEqual(result["pauseToResumeSeconds"], 0)
         self.assertLess(result["pauseToResumeSeconds"], driver.PAUSE_BUDGET_SECONDS)
         self.assertEqual(driver.package_sha(self.live), NEW_SHA)
         self.assertEqual(driver.package_sha(self.old), OLD_SHA)
-        self.assertLess(
-            self.actions.index("verify:20127:b"), self.actions.index("front:resume")
-        )
+        self.assertLess(self.actions.index("verify:20127:b"), self.actions.index("front:resume"))
         self.assertFalse(self.paused)
 
     def assert_socket_refusal_preserved_backend(self):
@@ -254,9 +254,7 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(len(self.socket_timeouts), 2)
         self.assertAlmostEqual(self.socket_timeouts[1], 0.700)
         self.assertAlmostEqual(self.clock, 0.050)
-        self.assertLess(
-            self.actions.index("sockets:empty"), self.actions.index("backend:stop")
-        )
+        self.assertLess(self.actions.index("sockets:empty"), self.actions.index("backend:stop"))
 
     def test_socket_timeout_tracks_remaining_deadline_after_scan_and_sleep(self):
         self.socket_outputs = ["established socket", ""]
@@ -308,9 +306,7 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(driver.package_sha(self.candidate), NEW_SHA)
         self.assertTrue(self.running)
         self.assertFalse(self.paused)
-        self.assertLess(
-            self.actions.index("verify:20127:a"), self.actions.index("front:resume")
-        )
+        self.assertLess(self.actions.index("verify:20127:a"), self.actions.index("front:resume"))
 
     def test_failed_second_rename_restores_the_first(self):
         original = Path.rename
@@ -421,6 +417,7 @@ class FrontProvenanceTests(unittest.TestCase):
     def manifest(self):
         return {
             "schema": 1,
+            "sourceSha": OLD_SHA,
             "files": {
                 "front-proxy.mjs": driver.file_sha(self.front / "front-proxy.mjs"),
                 "tokenproxy-front.service": driver.file_sha(self.unit),
@@ -434,34 +431,105 @@ class FrontProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(driver.GuardError, "front-proxy.mjs"):
             driver.verify_front_provenance(manifest)
 
+    def test_front_manifest_rejects_a_path_escape_before_reading_it(self):
+        manifest = self.manifest()
+        manifest["files"]["../outside"] = "0" * 64
+        with self.assertRaisesRegex(driver.GuardError, "invalid closure"):
+            driver.verify_front_provenance(manifest)
+
 
 class PauseBudgetTests(unittest.TestCase):
     def test_wall_timer_interrupts_a_blocking_cutover_operation(self):
-        with self.assertRaisesRegex(driver.GuardError, "pause budget"):
-            with driver.pause_budget(0.02):
-                driver.signal.pause()
+        with self.assertRaisesRegex(driver.GuardError, "pause budget"), driver.pause_budget(0.02):
+            driver.signal.pause()
+
+
+class LegacyReadinessTests(unittest.TestCase):
+    def test_manifest_pinned_legacy_health_requires_disabled_updates_and_exact_build(self):
+        replies = {
+            "/api/ready": (404, b'{"error":"not found"}'),
+            "/api/health": (200, b'{"ok":true}'),
+            "/api/version": (200, json.dumps({"buildSha": OLD_SHA[:12]}).encode()),
+        }
+        with patch.object(driver, "request_http", side_effect=lambda _port, path, _headers=None: replies[path]):
+            result = driver.verify_existing_backend(
+                20127,
+                OLD_SHA,
+                {},
+                {"Environment": "NODE_ENV=production TOKENPROXY_NO_UPDATE=1"},
+            )
+        self.assertEqual(result["buildSha"], OLD_SHA[:12])
+
+    def test_legacy_health_refuses_without_disabled_updates(self):
+        with (
+            patch.object(
+                driver,
+                "request_http",
+                return_value=(404, b'{"error":"not found"}'),
+            ),
+            self.assertRaisesRegex(driver.GuardError, "TOKENPROXY_NO_UPDATE"),
+        ):
+            driver.verify_existing_backend(20127, OLD_SHA, {}, {"Environment": ""})
+
+    def test_versioned_readiness_never_uses_legacy_health(self):
+        replies = {
+            "/api/ready": (200, b'{"ready":true}'),
+            "/api/version": (200, json.dumps({"buildSha": OLD_SHA[:12]}).encode()),
+        }
+        paths = []
+
+        def request(_port, path, _headers=None):
+            paths.append(path)
+            return replies[path]
+
+        with patch.object(driver, "request_http", side_effect=request):
+            driver.verify_existing_backend(20127, OLD_SHA, {}, {"Environment": ""})
+        self.assertEqual(paths, ["/api/ready", "/api/version"])
+
+
+class DeploymentManifestTests(unittest.TestCase):
+    def test_manifest_path_must_be_inside_the_owned_preparation_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkout = root / "checkout"
+            (checkout / ".deploy-prep").mkdir(parents=True)
+            manifest = root / "outside.json"
+            manifest.write_text("{}")
+            with (
+                patch.object(driver, "CHECKOUT", checkout),
+                self.assertRaisesRegex(driver.GuardError, "outside the owned"),
+            ):
+                driver.validate_manifest(manifest, OLD_SHA)
+
+    def test_manifest_binds_the_previous_release_before_package_access(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            checkout = Path(temporary) / "checkout"
+            preparation = checkout / ".deploy-prep" / "candidate"
+            preparation.mkdir(parents=True)
+            manifest = preparation / "manifest.json"
+            manifest.write_text(json.dumps({"sha": NEW_SHA, "expectedOldSha": NEW_SHA}))
+            with (
+                patch.object(driver, "CHECKOUT", checkout),
+                self.assertRaisesRegex(driver.GuardError, "previous release"),
+            ):
+                driver.validate_manifest(manifest, OLD_SHA)
 
 
 class DeploymentEntrypointTests(unittest.TestCase):
-    def test_front_install_is_refused_before_staging_without_versioned_readiness(self):
+    def test_stage_receives_the_manifest_pinned_previous_release(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             fake_bin = root / "bin"
             fake_bin.mkdir()
-            curl = fake_bin / "curl"
-            curl.write_text("#!/usr/bin/env bash\nprintf '{\"ok\":true}\\n'\n")
-            curl.chmod(0o755)
             python = root / "python"
             invoked = root / "python-invoked"
-            python.write_text(
-                f"#!/usr/bin/env bash\ntouch {invoked!s}\nexit 99\n"
-            )
+            python.write_text(f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >{invoked!s}\nexit 99\n")
             python.chmod(0o755)
             auth = root / "auth.json"
             auth.write_text('{"Cookie":"fixture"}')
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 - isolated fixed fixture
                 [
-                    "bash",
+                    "/usr/bin/bash",
                     str(Path(__file__).parents[2] / "scripts/deploy/deploy-main.sh"),
                     "--sha",
                     NEW_SHA,
@@ -480,9 +548,13 @@ class DeploymentEntrypointTests(unittest.TestCase):
                 capture_output=True,
                 check=False,
             )
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("update-tokenproxy.sh in a maintenance window", result.stderr)
-            self.assertFalse(invoked.exists())
+            self.assertEqual(result.returncode, 99)
+            self.assertEqual(
+                invoked.read_text().strip(),
+                f"{Path(__file__).parents[2] / 'scripts/deploy/deploy_driver.py'} "
+                f"stage --sha {NEW_SHA} --expected-old-sha {OLD_SHA}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
