@@ -18,9 +18,10 @@
 .wordmark {
   display: flex;
   align-items: center;
+  justify-content: center;
   height: 44px;
-  width: 208px;
-  padding-inline: 24px;
+  width: var(--rail);
+  padding-inline: 12px;
   flex-shrink: 0;
   background: var(--navy);
   font-size: 1.25rem;
@@ -81,55 +82,44 @@
   flex: 1;
   padding-block: 8px;
 }
-.navigationMode {
-  padding: 4px 12px 12px;
-}
-/* Every segmented control on the rail, in ONE rule. The navigation-mode control
-   and the two preference controls used to repeat the same three declarations in
-   separate blocks, which is how they came to sit at different sizes on the same
-   rail. */
-.navigationMode :global(.mantine-SegmentedControl-root),
+/* Every segmented control on the rail, in ONE rule, so they cannot drift to
+   different sizes on the same rail. */
 .railSetting :global(.mantine-SegmentedControl-root) {
   background: var(--nav-track);
   border: 1px solid var(--nav-track-edge);
   padding: 2px;
 }
-.navigationMode :global(.mantine-SegmentedControl-label),
 .railSetting :global(.mantine-SegmentedControl-label) {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 26px;
+  min-height: var(--rail-control-height);
+  padding-inline: 6px;
   /* Unselected is muted, so the chosen segment is the bright one. It used to be
      --nav-text, the same value a nav destination's label carries, which left
      every segment reading as selected. */
   color: var(--nav-muted);
   font-size: var(--type-dense);
 }
-.navigationMode :global(.mantine-SegmentedControl-label:hover),
 .railSetting :global(.mantine-SegmentedControl-label:hover) {
   color: var(--nav-text);
 }
-.navigationMode :global(.mantine-SegmentedControl-label[data-active]),
 .railSetting :global(.mantine-SegmentedControl-label[data-active]),
-.navigationMode :global(.mantine-SegmentedControl-label[data-active]:hover),
 .railSetting :global(.mantine-SegmentedControl-label[data-active]:hover) {
   color: var(--nav-selected-text);
   font-weight: 600;
 }
-.navigationMode :global(.mantine-SegmentedControl-indicator),
 .railSetting :global(.mantine-SegmentedControl-indicator) {
   background: var(--nav-selected-surface);
 }
 /* The rail is navy in both schemes, so the page's --signal focus ring lands on
    a surface it was never measured against. Use the rail's own light edge. */
-.navigationMode :global(.mantine-SegmentedControl-input:focus-visible + .mantine-SegmentedControl-label),
 .railSetting :global(.mantine-SegmentedControl-input:focus-visible + .mantine-SegmentedControl-label) {
   outline: 2px solid var(--nav-selected-edge);
   outline-offset: -2px;
 }
 .navGroup {
-  padding: 6px 12px;
+  padding: 4px 12px;
 }
 .navGroupLabel {
   color: var(--nav-muted);
@@ -152,7 +142,6 @@
 .navItem[data-active] {
   background: var(--nav-active);
   color: var(--nav-text);
-  box-shadow: inset 2px 0 var(--nav-selected-edge);
 }
 .navItem :global(.mantine-NavLink-label) {
   font-size: var(--type-ui);
@@ -172,15 +161,15 @@
 }
 .navBottom {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border-top: 1px solid var(--nav-active);
-  padding: 10px 12px 12px;
+  padding: 8px 12px 10px;
 }
 /* Rail settings apply in place: a small heading with the current state, one
    segmented choice, and at most a short line under it. */
 .railSetting {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 .railHead,
@@ -200,11 +189,24 @@
   color: var(--nav-text);
 }
 .railAccount {
-  min-height: 26px;
+  min-height: var(--rail-control-height);
   color: var(--nav-text);
 }
 .railAccount button {
   color: var(--nav-text);
+}
+.railSignOut {
+  flex-shrink: 0;
+  min-height: var(--rail-control-height);
+  padding-inline: 6px;
+  font-size: var(--type-dense);
+  font-weight: 500;
+}
+.railSignOut :global(.mantine-Button-section) {
+  margin-inline-end: 5px;
+}
+.railSignOut:hover {
+  background: var(--nav-active);
 }
 /* A disabled sign-out on the navy rail reads as muted, not as a light tile. */
 .railAccount button:disabled {
@@ -616,11 +618,22 @@
 .searchSection { font-size: var(--type-dense); color: var(--slate); font-weight: 500; margin: 12px 10px 4px; }
 .searchEmpty { padding: 20px 10px; color: var(--slate); }
 @media (max-width: 62em) {
-  .headerContent { padding-inline: 12px; gap: 12px; }
-  .wordmark { width: auto; padding: 0; background: transparent; color: var(--ink); }
+  .headerContent { padding-inline: 12px; gap: 10px; }
+  .wordmark { width: auto; justify-content: flex-start; padding: 0; background: transparent; color: var(--ink); }
   .wordmarkPoint { color: var(--signal); }
+  /* The four header items compete for one narrow row. The label and the
+     snapshot identity give up their space first so the burger, the wordmark and
+     search keep their full hit targets and never overlap. */
+  .workspaceLabel { display: none; }
+  .snapshot { min-width: 0; gap: 6px; }
+  .snapshotIdentity { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .snapshotIdentity time { display: none; }
+}
+@media (max-width: 480px) {
+  .isolation { display: none; }
 }
 @media (max-width: 360px) {
   .headerContent { padding-inline: 8px; gap: 6px; }
   .wordmark { font-size: 1.125rem; }
+  .snapshotIdentity { display: none; }
 }
