@@ -23,7 +23,7 @@ const BEHAVIORS = [
 // authoritative for when each source last succeeded.
 const BEHAVIOR_NOTE = {
   summary: 'Reads each source once when a page opens. Refresh to read again.',
-  live: 'Rechecks every 15 seconds and follows supported streams.',
+  live: 'Refreshes automatically and follows supported streams. Refreshes slow under load.',
   paused: 'No repeating reads or streams. Shown values are held until you refresh.',
 };
 const utcClock = (value) => `${new Date(value).toISOString().slice(11, 19)} UTC`;
