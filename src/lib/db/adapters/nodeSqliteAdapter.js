@@ -2,6 +2,7 @@
 // No native build, no npm install. API mirrors betterSqliteAdapter.
 import { PRAGMA_SQL } from "../schema.js";
 import { registerShutdownFlusher } from "../../shutdown.js";
+import { createTransactionController } from "./criticalTransaction.js";
 
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
@@ -33,6 +34,12 @@ export async function createNodeSqliteAdapter(filePath) {
     return stmt;
   }
 
+  const transactions = createTransactionController({
+    exec: (sql) => db.exec(sql),
+    readSynchronous: () => db.prepare("PRAGMA synchronous").get()?.synchronous,
+    isInTransaction: () => db.isTransaction,
+  });
+
   // Periodic WAL checkpoint to keep -wal/-shm small
   const checkpointTimer = setInterval(() => {
     // Never wait on an analytics snapshot from the request-serving thread.
@@ -61,18 +68,21 @@ export async function createNodeSqliteAdapter(filePath) {
     },
     exec(sql) { return db.exec(sql); },
     transaction(fn) {
-      // node:sqlite has no transaction wrapper. Use SAVEPOINT for nested support.
-      const sp = `sp_${Math.random().toString(36).slice(2)}`;
-      db.exec(`SAVEPOINT ${sp}`);
-      try {
-        const r = fn();
-        db.exec(`RELEASE ${sp}`);
-        return r;
-      } catch (e) {
-        try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
-        throw e;
-      }
+      return transactions.transaction(() => {
+        // node:sqlite has no transaction wrapper. Use SAVEPOINT for nested support.
+        const sp = `sp_${Math.random().toString(36).slice(2)}`;
+        db.exec(`SAVEPOINT ${sp}`);
+        try {
+          const r = fn();
+          db.exec(`RELEASE ${sp}`);
+          return r;
+        } catch (e) {
+          try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
+          throw e;
+        }
+      });
     },
+    criticalTransaction: transactions.criticalTransaction,
     checkpoint() { try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {} },
     close() {
       clearInterval(checkpointTimer);

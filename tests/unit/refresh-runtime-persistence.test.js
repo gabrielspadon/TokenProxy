@@ -1,4 +1,7 @@
-import {beforeEach,describe,it,expect,vi} from 'vitest';
+import {afterEach,beforeEach,describe,it,expect,vi} from 'vitest';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 vi.mock('@/lib/localDb',()=>({getProviderConnectionById:vi.fn(),updateProviderConnection:vi.fn()}));
 vi.mock('open-sse/services/oauthCredentialManager.js',async original=>({...await original(),refreshProviderCredentials:vi.fn(),shouldRefreshCredentials:vi.fn(()=>true)}));
 vi.mock('open-sse/services/projectId.js',()=>({getProjectIdForConnection:vi.fn(),removeConnection:vi.fn()}));
@@ -10,6 +13,43 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});retur
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
 const original={id:'synthetic',provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:'one-use',providerSpecificData:{strictProxy:true}};
 beforeEach(()=>{vi.clearAllMocks();getProviderConnectionById.mockResolvedValue(original);updateProviderConnection.mockResolvedValue(original);});
+
+const adapterFixtures=[];
+afterEach(()=>{while(adapterFixtures.length){const {adapter,dir}=adapterFixtures.pop();adapter.close();rmSync(dir,{recursive:true,force:true});}});
+async function nativeAdapter(kind){
+ const dir=mkdtempSync(join(tmpdir(),`tokenproxy-critical-${kind}-`));
+ const file=join(dir,'data.sqlite');
+ const adapter=kind==='node'
+  ? await (await import('@/lib/db/adapters/nodeSqliteAdapter.js')).createNodeSqliteAdapter(file)
+  : (await import('@/lib/db/adapters/betterSqliteAdapter.js')).createBetterSqliteAdapter(file);
+ adapterFixtures.push({adapter,dir});
+ adapter.exec('CREATE TABLE critical_probe(id INTEGER PRIMARY KEY,value TEXT)');
+ return adapter;
+}
+
+describe.each(['node','better'])('native %s critical transaction boundary',kind=>{
+ it('uses FULL for the outer commit and restores the exact prior mode',async()=>{
+  const db=await nativeAdapter(kind);
+  expect(db.get('PRAGMA synchronous').synchronous).toBe(1);
+  const result=db.criticalTransaction(()=>{
+   expect(db.get('PRAGMA synchronous').synchronous).toBe(2);
+   db.run('INSERT INTO critical_probe(id,value) VALUES(1,?)',['acknowledged']);
+   return 'committed';
+  });
+  expect(result).toBe('committed');
+  expect(db.get('PRAGMA synchronous').synchronous).toBe(1);
+  expect(db.get('SELECT value FROM critical_probe WHERE id=1')).toEqual({value:'acknowledged'});
+ });
+ it('preserves EXTRA and rejects async or nested callbacks without committing',async()=>{
+  const db=await nativeAdapter(kind);
+  db.exec('PRAGMA synchronous=EXTRA');
+  expect(()=>db.criticalTransaction(()=>db.transaction(()=>{}))).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_NESTED'}));
+  expect(()=>db.transaction(()=>db.criticalTransaction(()=>{}))).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_NESTED'}));
+  expect(()=>db.criticalTransaction(async()=>{db.run('INSERT INTO critical_probe(id,value) VALUES(1,?)',['must-rollback']);})).toThrowError(expect.objectContaining({code:'CRITICAL_TRANSACTION_ASYNC'}));
+  expect(db.get('SELECT value FROM critical_probe WHERE id=1')).toBeUndefined();
+  expect(db.get('PRAGMA synchronous').synchronous).toBe(3);
+ });
+});
 describe('refresh persistence revision and stop boundary',()=>{
  it('preserves the selected command transport only while its account snapshot remains current',async()=>{
   refreshProviderCredentials.mockResolvedValue(null);

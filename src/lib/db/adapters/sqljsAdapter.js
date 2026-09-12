@@ -153,5 +153,12 @@ export async function createSqlJsAdapter(filePath) {
   };
   registerShutdownFlusher(flushOnShutdown, 100);
 
-  return { driver: "sql.js", run, get, all, exec, transaction, flush, close, raw: db };
+  function criticalTransaction() {
+    throw Object.assign(
+      new Error("Critical writes are unavailable for the sql.js adapter"),
+      { code: "CRITICAL_TRANSACTION_UNSUPPORTED" },
+    );
+  }
+
+  return { driver: "sql.js", run, get, all, exec, transaction, criticalTransaction, flush, close, raw: db };
 }
