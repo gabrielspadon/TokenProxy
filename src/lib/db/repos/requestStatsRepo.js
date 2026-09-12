@@ -95,7 +95,26 @@ export function buildStatsWhere(filter = {}) {
   return { where, params };
 }
 
-export async function saveRequestStats(detail) {
+const pendingWrites = new Map();
+export function saveRequestStats(detail) {
+  const logicalId = detail?.contextTelemetry?.logicalRequestId;
+  const write = saveRequestStatsInternal(detail);
+  if (!logicalId) return write;
+  const pending = pendingWrites.get(logicalId) || new Set();
+  pendingWrites.set(logicalId, pending);
+  const tracked = write.finally(() => {
+    pending.delete(tracked);
+    if (!pending.size) pendingWrites.delete(logicalId);
+  });
+  pending.add(tracked);
+  return tracked;
+}
+
+export async function flushRequestStats(logicalId) {
+  while (pendingWrites.has(logicalId)) await Promise.allSettled([...pendingWrites.get(logicalId)]);
+}
+
+async function saveRequestStatsInternal(detail) {
   if (!detail || typeof detail !== "object" || !detail.id) return;
   try {
     const terminalEvidence = normalizeTerminalEvidence(detail.terminalEvidence, detail.status);

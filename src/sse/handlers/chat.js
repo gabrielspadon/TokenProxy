@@ -1,6 +1,7 @@
 import { withResourceAdmission } from '../services/resourceAdmission.js';
 import "open-sse/index.js";
 import { getRequestIdentity } from "../services/requestIdentity.js";
+import { withLogicalRequestLifecycle } from "../services/logicalRequestLifecycle.js";
 import { getRequestFallbackDeadline, isFallbackDeadlineError } from "open-sse/utils/fallbackDeadline.js";
 import { withRequestLifetime } from "open-sse/utils/requestLifetime.js";
 
@@ -357,21 +358,29 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
+  return withLogicalRequestLifecycle(request, () => handleChatLifecycle(request, clientRawRequest, options));
+}
+
+async function handleChatLifecycle(request, clientRawRequest, options) {
   const fallbackDeadline = getRequestFallbackDeadline(request);
   if (Number.isFinite(options.deadline)) {
     const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(options.deadline - Date.now())));
     const caller = options.signal || request?.signal;
     options = { ...options, signal: caller ? AbortSignal.any([caller, timeout]) : timeout };
   }
+  const endQueue = getRequestIdentity(request).startSpan('queue');
   try {
-    return await withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline, fallbackDeadline });
+    return await withResourceAdmission(request, () => {
+      endQueue('succeeded');
+      return handleChatAdmitted(request, clientRawRequest, options);
+    }, { signal: options.signal || request?.signal, deadline: options.deadline, fallbackDeadline });
   } catch (error) {
     if (isFallbackDeadlineError(error)) return terminalAttemptResponse(errorResponse(504, error.message, { failurePhase: "routing" }));
     if (error?.code === 'CREDENTIAL_SELECTION_CHANGED') {
       return terminalAttemptResponse(errorResponse(503, 'Selected credentials changed before dispatch', { failurePhase: 'routing' }));
     }
     throw error;
-  }
+  } finally { endQueue('unknown'); }
 }
 
 async function handleChatAdmitted(request, clientRawRequest = null, options = {}) {
@@ -1021,10 +1030,15 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       credentialOptions.preferredConnectionId = requestedConnectionId;
       credentialOptions.strictPreferredConnection = true;
     }
-    const credentials = await fallbackDeadline.run(signal => withRequestLifetime(signal,
-      () => getProviderCredentials(provider, excludeConnectionIds, model, credentialOptions), { admitted: true }), {
-      signal: callerSignal, onLateResult: value => releaseAccountLease(value?.accountLease),
-    });
+    const endSelection = requestIdentity.startSpan('selection');
+    let credentials;
+    try {
+      credentials = await fallbackDeadline.run(signal => withRequestLifetime(signal,
+        () => getProviderCredentials(provider, excludeConnectionIds, model, credentialOptions), { admitted: true }), {
+        signal: callerSignal, onLateResult: value => releaseAccountLease(value?.accountLease),
+      });
+      endSelection(credentials && !credentials.allRateLimited ? 'succeeded' : 'failed');
+    } finally { endSelection('unknown'); }
     // The slot this selection reserved (auth.js reserve). It is held for the
     // WHOLE attempt and given back exactly once, whichever of this loop's many
     // exits ends it: the four aborts, the empty-stream rotation, the replay

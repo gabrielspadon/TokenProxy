@@ -537,6 +537,7 @@ async function handleChatCoreAttempt({
         }
       : null;
   const requestStartTime = Date.now();
+  const endPreparationSpan = contextIdentity.startSpan?.('preparation');
   // Stable per-session color so all lines of one CLI conversation share a tag
   const sessionSeed = (() => {
     try {
@@ -1850,6 +1851,7 @@ async function handleChatCoreAttempt({
     logicalRequestId: { get: () => contextTelemetry.logicalRequestId },
   });
   await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
+  endPreparationSpan?.('succeeded', contextTelemetry.requestId);
   // MCP context_status state: sid-keyed self-sizing snapshot for the
   // /api/v1/mcp tool. Written before dispatch so an upstream failure still
   // leaves fresh telemetry. The store swallows its own errors; this catch is
@@ -2232,6 +2234,8 @@ async function handleChatCoreAttempt({
     let dispatches = 0;
     releaseFallbackPreparation?.();
     const execute = async (signal, releaseHeaderBudget) => {
+      const endDispatch = contextIdentity.startSpan?.('dispatch');
+      try {
       const result = await executor.execute({ ...args, signal, beforeDispatch: async (wire = {}) => {
       signal?.throwIfAborted();
       connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
@@ -2250,7 +2254,9 @@ async function handleChatCoreAttempt({
       // Internal rejected responses can precede another executor dispatch.
       // Only the executor's final result transfers ownership to the stream.
       releaseHeaderBudget?.();
+      endDispatch?.('succeeded', contextTelemetry.requestId);
       return result;
+      } finally { endDispatch?.('unknown', contextTelemetry.requestId); }
     };
     return connectTimeout?.fallbackDeadline
       ? connectTimeout.fallbackDeadline.run(execute, { signal: executionSignal, onLateResult: discardLateResponse })
