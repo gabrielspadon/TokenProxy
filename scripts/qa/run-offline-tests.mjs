@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, readdirSync, statSync, writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,6 @@ const canonicalManifest = join(testsDir, "__baseline__", "test-manifest.json");
 const canonicalBaseline = join(testsDir, "__baseline__", "regression-baseline.json");
 const vitest = join(testsDir, "node_modules", "vitest", "vitest.mjs");
 const liveFlags = ["RUN_REAL", "RUN_E2E", "RUN_LIVE_MIMO", "REAL_PROVIDERS", "NV_E2E_KEY", "RTK_E2E_KEY"];
-const secretPattern = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|PROXY/u;
 
 function fail(message) {
   console.error(`offline test runner: ${message}`);
@@ -51,33 +50,76 @@ function prepareArtifacts(path) {
   } else {
     mkdirSync(path, { recursive: true, mode: 0o700 });
   }
-  for (const child of ["home", "tmp", "data", "fake-production-home"]) mkdirSync(join(path, child), { mode: 0o700 });
+  for (const child of [
+    "home", "tmp", "data", "xdg-config", "xdg-data", "xdg-cache", "xdg-state", "fake-production-home",
+  ]) mkdirSync(join(path, child), { mode: 0o700 });
   mkdirSync(join(path, "fake-production-home", ".tokenproxy"), { mode: 0o700 });
   writeFileSync(join(path, "fake-production-home", ".tokenproxy", "data.sqlite"), "production-canary\n", { mode: 0o600 });
 }
 
 function sanitizedEnvironment(artifacts) {
-  const env = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (secretPattern.test(key.toUpperCase())
-        || ["HOME", "TMPDIR", "DATA_DIR", "NODE_ENV", "CI", "NODE_OPTIONS", "NODE_PATH", "XDG_CONFIG_HOME"].includes(key)) continue;
-    env[key] = value;
-  }
   return {
-    ...env,
+    PATH: process.env.PATH || "/usr/bin:/bin",
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    USER: "tokenproxy-test",
+    LOGNAME: "tokenproxy-test",
+    SHELL: process.env.SHELL || "/bin/sh",
+    GIT_AUTHOR_NAME: "TokenProxy Test",
+    GIT_AUTHOR_EMAIL: "tokenproxy-test@invalid.example",
+    GIT_COMMITTER_NAME: "TokenProxy Test",
+    GIT_COMMITTER_EMAIL: "tokenproxy-test@invalid.example",
     HOME: join(artifacts, "home"),
     TMPDIR: join(artifacts, "tmp"),
+    TMP: join(artifacts, "tmp"),
+    TEMP: join(artifacts, "tmp"),
     DATA_DIR: join(artifacts, "data"),
+    XDG_CONFIG_HOME: join(artifacts, "xdg-config"),
+    XDG_DATA_HOME: join(artifacts, "xdg-data"),
+    XDG_CACHE_HOME: join(artifacts, "xdg-cache"),
+    XDG_STATE_HOME: join(artifacts, "xdg-state"),
     NODE_ENV: "test",
     CI: "1",
     TOKENPROXY_TEST_RUN_ROOT: artifacts,
     ISOLATION_CANARY_PATH: process.env.ISOLATION_CANARY_PATH
       || join(artifacts, "fake-production-home", ".tokenproxy", "data.sqlite"),
+    ...(process.env.TAMPER_ISOLATION_CANARY === "1" ? { TAMPER_ISOLATION_CANARY: "1" } : {}),
   };
+}
+
+function currentNetworkNamespace() {
+  try { return readlinkSync("/proc/self/ns/net"); } catch { return null; }
+}
+
+function isolatedNetworkShape() {
+  try {
+    const interfaces = readFileSync("/proc/net/dev", "utf8").split("\n").slice(2)
+      .filter((line) => line.includes(":"))
+      .map((line) => line.split(":", 1)[0].trim()).sort();
+    const routes = readFileSync("/proc/net/route", "utf8").trim().split("\n").slice(1)
+      .filter(Boolean).map((line) => line.trim().split(/\s+/u)[0]);
+    return interfaces.length === 1 && interfaces[0] === "lo"
+      && routes.every((name) => name === "lo");
+  } catch {
+    return false;
+  }
 }
 
 function networkBoundary(env) {
   if (process.env.TOKENPROXY_NETWORK_BOUNDARY === "linux-user-netns") {
+    const current = currentNetworkNamespace();
+    const parent = process.env.TOKENPROXY_NETWORK_PARENT_NETNS;
+    const init = (() => { try { return readlinkSync("/proc/1/ns/net"); } catch { return null; } })();
+    if (!current || !parent || current === parent || current === init || !isolatedNetworkShape()) {
+      return {
+        kind: "invalid-inherited-linux-user-netns",
+        verified: false,
+        reason: "inherited network-boundary marker has no matching isolated namespace receipt",
+        commandPrefix: [],
+      };
+    }
+    env.TOKENPROXY_NETWORK_BOUNDARY = "linux-user-netns";
+    env.TOKENPROXY_NETWORK_PARENT_NETNS = parent;
     return { kind: "inherited-linux-user-netns", verified: true, commandPrefix: [] };
   }
   if (process.platform !== "linux") {
@@ -89,12 +131,24 @@ function networkBoundary(env) {
   if (probe.status !== 0) {
     return { kind: "unavailable", verified: false, reason: String(probe.stderr || probe.error?.message || "unshare probe failed").trim(), commandPrefix: [] };
   }
+  const parent = currentNetworkNamespace();
+  if (!parent) {
+    return { kind: "unavailable", verified: false, reason: "cannot read the parent network namespace", commandPrefix: [] };
+  }
+  env.TOKENPROXY_NETWORK_PARENT_NETNS = parent;
   return {
     kind: "linux-user-netns",
     verified: true,
     commandPrefix: [
       "unshare", "--user", "--map-root-user", "--net", "--",
-      "/bin/sh", "-c", "/usr/sbin/ip link set lo up && exec \"$@\"", "tokenproxy-offline",
+      "/bin/sh", "-c", [
+        "set -eu",
+        "current=$(readlink /proc/self/ns/net)",
+        "[ \"$current\" != \"$TOKENPROXY_NETWORK_PARENT_NETNS\" ]",
+        "[ \"$(awk -F: 'NR > 2 { gsub(/ /, \"\", $1); print $1 }' /proc/net/dev)\" = lo ]",
+        "/usr/sbin/ip link set lo up",
+        "exec \"$@\"",
+      ].join(" && "), "tokenproxy-offline",
     ],
   };
 }
@@ -127,6 +181,7 @@ prepareArtifacts(artifacts);
 if (!existsSync(vitest)) fail(`local Vitest binary is missing: ${vitest}; run a clean tests-package install first`);
 
 const env = sanitizedEnvironment(artifacts);
+const canaryBefore = readFileSync(env.ISOLATION_CANARY_PATH, "utf8");
 const boundary = networkBoundary(env);
 if (!boundary.verified) {
   writeFileSync(join(artifacts, "evidence.json"), `${JSON.stringify({
@@ -181,10 +236,17 @@ writeFileSync(join(artifacts, "gate-stderr.log"), gateStderr, { mode: 0o600 });
 writeFileSync(join(artifacts, "gate-exit.txt"), `${gateExit}\n`, { mode: 0o600 });
 
 const git = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8", env });
+let canaryUnchanged = false;
+try {
+  canaryUnchanged = readFileSync(env.ISOLATION_CANARY_PATH, "utf8") === canaryBefore;
+} catch {}
+const passed = runnerExit === 0 && gateExit === 0 && canaryUnchanged;
 const evidence = {
-  state: runnerExit === 0 && gateExit === 0 ? "passed" : "failed",
+  state: passed ? "passed" : "failed",
   scope: tests.length ? "offline-tests-targeted" : "offline-tests-full",
-  reason: runnerExit === 0 && gateExit === 0 ? "runner and canonical regression gate passed" : "runner or canonical regression gate failed",
+  reason: passed
+    ? "runner, canonical regression gate and fake-production canary passed"
+    : "runner, canonical regression gate or fake-production canary failed",
   startedAt,
   finishedAt: new Date().toISOString(),
   gitSha: git.status === 0 ? git.stdout.trim() : null,
@@ -196,6 +258,7 @@ const evidence = {
   runnerSignal: run.signal || null,
   runnerError: run.error?.message || null,
   gateExit,
+  canaryUnchanged,
   tests,
   artifacts: relative("/", artifacts).startsWith("..") ? artifacts : `/${relative("/", artifacts)}`,
 };

@@ -6031,9 +6031,14 @@
       "a deferred tool never carries a cache anchor (#3567) the prepare path applies the same rule"
     ],
     "tests/unit/dev-test-server-process-ownership.test.js": [
+      "dev test server process and data ownership aborts credential sync when process ownership cannot be established",
       "dev test server process and data ownership allocates fresh state and only stops the process recorded with matching start time and command",
+      "dev test server process and data ownership does not accept another process's healthy listener",
       "dev test server process and data ownership keeps credential cloning behind an explicit source and opt-in",
+      "dev test server process and data ownership refuses an inherited DATA_DIR during normal startup",
       "dev test server process and data ownership refuses to signal an unrelated live PID",
+      "dev test server process and data ownership rejects a credential clone target outside the isolated state namespace",
+      "dev test server process and data ownership uses an allowlisted fake home and data directory for both build and server",
       "dev test server process and data ownership uses curl with config disabled and bounded deadlines"
     ],
     "tests/unit/developer-role-normalized-1028.test.js": [
@@ -9719,11 +9724,13 @@
       "offline runner isolation clears credentials, isolates paths and records a verified network boundary",
       "offline runner isolation executes the canonical runner from the repository root npm test entry point",
       "offline runner isolation executes the canonical runner from the tests package npm test entry point",
+      "offline runner isolation fails the canonical verdict when a test alters the fake-production canary",
       "offline runner isolation keeps the direct explicit-config path away from a fake production home",
       "offline runner isolation refuses a nonempty artifact directory",
       "offline runner isolation refuses enabled live flag RUN_E2E",
       "offline runner isolation refuses enabled live flag RUN_LIVE_MIMO",
-      "offline runner isolation refuses enabled live flag RUN_REAL"
+      "offline runner isolation refuses enabled live flag RUN_REAL",
+      "offline runner isolation rejects a forged inherited network-boundary marker"
     ],
     "tests/unit/oidc-auth-mode.test.js": [
       "getOidcRuntimeConfig resolves a config when password and SSO login are both enabled",

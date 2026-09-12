@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -62,16 +64,53 @@ describe("offline runner isolation", () => {
       OPENAI_API_KEY: "must-not-cross",
       HTTPS_PROXY: "http://127.0.0.1:9",
       TOKENPROXY_PEER_TOKEN: "must-not-cross",
+      XDG_DATA_HOME: join(work.fakeHome, ".local", "share"),
+      XDG_CACHE_HOME: join(work.fakeHome, ".cache"),
+      ARBITRARY_PROVIDER_ACCOUNT: "must-not-cross",
     });
     expect(result.status, result.stderr).toBe(0);
     const evidence = JSON.parse(readFileSync(join(work.artifacts, "evidence.json"), "utf8"));
-    expect(evidence).toMatchObject({ state: "passed", runnerExit: 0, gateExit: 0 });
+    expect(evidence).toMatchObject({
+      state: "passed", runnerExit: 0, gateExit: 0, canaryUnchanged: true,
+    });
     expect(evidence.networkBoundary.verified).toBe(true);
     expect(evidence.command).toContain("tests/node_modules/vitest/vitest.mjs");
-    for (const name of ["", "home", "tmp", "data"]) {
+    for (const name of ["", "home", "tmp", "data", "xdg-config", "xdg-data", "xdg-cache", "xdg-state"]) {
       expect(statSync(join(work.artifacts, name)).mode & 0o777).toBe(0o700);
     }
     expect(readFileSync(work.canary, "utf8")).toBe("production-canary\n");
+  });
+
+  it("rejects a forged inherited network-boundary marker", () => {
+    const work = workspace();
+    const result = run(["--artifacts", work.artifacts, "--", probe], {
+      TOKENPROXY_NETWORK_BOUNDARY: "linux-user-netns",
+      TOKENPROXY_NETWORK_PARENT_NETNS: readlinkSync("/proc/self/ns/net"),
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("no matching isolated namespace receipt");
+    expect(JSON.parse(readFileSync(join(work.artifacts, "evidence.json"), "utf8"))).toMatchObject({
+      state: "blocked",
+      networkBoundary: { kind: "invalid-inherited-linux-user-netns", verified: false },
+    });
+  });
+
+  it("fails the canonical verdict when a test alters the fake-production canary", () => {
+    const work = workspace();
+    const result = run([
+      "--artifacts", work.artifacts, "--", "fixtures/offline-runner/config-canary.test.js",
+    ], {
+      HOME: work.fakeHome,
+      ISOLATION_CANARY_PATH: work.canary,
+      TAMPER_ISOLATION_CANARY: "1",
+    });
+    expect(result.status).toBe(1);
+    expect(JSON.parse(readFileSync(join(work.artifacts, "evidence.json"), "utf8"))).toMatchObject({
+      state: "failed",
+      runnerExit: 0,
+      gateExit: 0,
+      canaryUnchanged: false,
+    });
   });
 
   it.each([
@@ -100,6 +139,7 @@ describe("offline runner isolation", () => {
       runnerExit: 0,
       gateExit: 0,
       maxWorkers: 1,
+      canaryUnchanged: true,
     });
     expect(readFileSync(work.canary, "utf8")).toBe("production-canary\n");
   });

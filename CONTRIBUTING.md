@@ -170,12 +170,14 @@ scripts/dev-test-server.sh down   # stop it
 
 `dev-test-server.sh up` runs `npm run build`, starts
 `.next/standalone/custom-server.js` on port 20129 bound to `127.0.0.1` with
-a newly allocated mode-0700 `DATA_DIR`, and polls `/dashboard` with bounded
-`curl -q` deadlines. PID, process start time, command and working directory must
-all match before the helper sends a signal. `SKIP_BUILD=1` reuses an existing
-`.next`. Credential cloning requires both `ALLOW_CREDENTIAL_CLONE=1` and an
-explicit `CLONE_FROM_DATA_DIR` and `CLONE_TO_DATA_DIR`; normal smoke startup
-never clones credentials.
+a newly allocated mode-0700 `HOME` and `DATA_DIR`, and polls `/dashboard` with
+bounded `curl -q` deadlines. Build and server processes receive an allowlisted
+test environment. PID, process start time, command, working directory and
+listening socket must all match before the helper accepts health or sends a
+signal. `SKIP_BUILD=1` reuses an existing `.next`. Credential cloning requires
+`ALLOW_CREDENTIAL_CLONE=1` and explicit source and target paths under the test
+state root. Run `sync` and then `up-clone`; normal `up` always creates fresh
+state.
 
 `smoke-test.mjs` checks that the dashboard page loads, that dashboard login
 returns a session cookie, that `/api/usage/statistics` returns its documented

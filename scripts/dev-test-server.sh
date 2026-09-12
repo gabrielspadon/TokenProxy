@@ -11,6 +11,7 @@ LOG_FILE=${LOG_FILE:-/tmp/tokenproxy-test-$PORT.log}
 NODE_BIN=${NODE_BIN:-node}
 SERVER_ENTRY=${SERVER_ENTRY:-.next/standalone/custom-server.js}
 REQUESTED_DATA_DIR=${DATA_DIR:-}
+STATE_ROOT=${TOKENPROXY_TEST_STATE_ROOT:-${TMPDIR:-/tmp}}
 cd "$REPO_DIR"
 
 pid() {
@@ -32,6 +33,24 @@ process_command() {
 process_cwd() {
   local process_id=$1
   readlink -f "/proc/$process_id/cwd" 2>/dev/null
+}
+
+process_owns_listener() {
+  local process_id=$1 port_hex inode fd socket
+  [[ "$PORT" =~ ^[0-9]+$ ]] || return 1
+  printf -v port_hex '%04X' "$PORT"
+  while read -r inode; do
+    [ -n "$inode" ] || continue
+    for fd in "/proc/$process_id/fd/"*; do
+      socket=$(readlink "$fd" 2>/dev/null || true)
+      [ "$socket" = "socket:[$inode]" ] && return 0
+    done
+  done < <(
+    awk -v suffix=":$port_hex" '
+      $4 == "0A" && substr($2, length($2) - length(suffix) + 1) == suffix { print $10 }
+    ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+  )
+  return 1
 }
 
 read_metadata() {
@@ -67,19 +86,58 @@ clear_stale_control_files() {
   unlink "$META_FILE" 2>/dev/null || true
 }
 
+validate_isolated_target() {
+  local target root
+  target=$(readlink -m "$1")
+  root=$(readlink -m "$STATE_ROOT")
+  case "$target" in
+    "$root"/tokenproxy-test-*) return 0 ;;
+    *)
+      echo "test state must be under $root with a tokenproxy-test- prefix: $target" >&2
+      return 2
+      ;;
+  esac
+}
+
 allocate_data_dir() {
-  if [ -n "$REQUESTED_DATA_DIR" ]; then
-    DATA_DIR=$REQUESTED_DATA_DIR
-    mkdir -p -m 700 "$DATA_DIR"
+  local mode=${1:-fresh}
+  mkdir -p "$STATE_ROOT"
+  if [ "$mode" = "clone" ]; then
+    validate_isolated_target "$CLONE_TO_DATA_DIR" || return $?
+    DATA_DIR=$(readlink -m "$CLONE_TO_DATA_DIR")
+    [ -f "$DATA_DIR/.tokenproxy-test-clone" ] || {
+      echo "cloned startup requires the marker written by sync: $DATA_DIR/.tokenproxy-test-clone" >&2
+      return 2
+    }
   else
-    DATA_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tokenproxy-test-${PORT}-XXXXXX")
-    chmod 700 "$DATA_DIR"
+    [ -z "$REQUESTED_DATA_DIR" ] || {
+      echo "normal startup always uses fresh state; use sync then up-clone for an explicit clone" >&2
+      return 2
+    }
+    DATA_DIR=$(mktemp -d "$STATE_ROOT/tokenproxy-test-${PORT}-XXXXXX")
   fi
-  export DATA_DIR
+  TEST_HOME="$DATA_DIR/home"
+  TEST_TMP="$DATA_DIR/tmp"
+  mkdir -p -m 700 "$DATA_DIR" "$TEST_HOME" "$TEST_TMP" "$DATA_DIR/npm-cache"
+  chmod 700 "$DATA_DIR" "$TEST_HOME" "$TEST_TMP" "$DATA_DIR/npm-cache"
+  RUNTIME_ENV=(
+    "PATH=${PATH:-/usr/bin:/bin}"
+    "HOME=$TEST_HOME"
+    "TMPDIR=$TEST_TMP"
+    "DATA_DIR=$DATA_DIR"
+    "NODE_ENV=production"
+    "NEXT_TELEMETRY_DISABLED=1"
+    "npm_config_cache=$DATA_DIR/npm-cache"
+    "PORT=$PORT"
+    "HOSTNAME=127.0.0.1"
+    "JWT_SECRET=${TEST_JWT_SECRET:-tokenproxy-local-test-jwt-secret-000000000000}"
+    "API_KEY_SECRET=${TEST_API_KEY_SECRET:-tokenproxy-local-test-api-secret-111111111111}"
+    "MACHINE_ID_SALT=${TEST_MACHINE_ID_SALT:-tokenproxy-local-test-machine-salt-2222}"
+  )
 }
 
 up() {
-  local state process_id start_time entry_path
+  local mode=${1:-fresh} state process_id start_time entry_path
   set +e
   owned_process
   state=$?
@@ -94,15 +152,19 @@ up() {
   fi
   clear_stale_control_files
 
-  if [ "${SKIP_BUILD:-0}" != "1" ] || { [ "$SERVER_ENTRY" = ".next/standalone/custom-server.js" ] && [ ! -d .next ]; }; then
+  allocate_data_dir "$mode" || return $?
+
+  if [ "${SKIP_BUILD:-0}" != "1" ]; then
     echo "[1/3] build"
-    npm run build >/dev/null 2>&1
+    env -i "${RUNTIME_ENV[@]}" npm run build >/dev/null 2>&1
+  elif [ "$SERVER_ENTRY" = ".next/standalone/custom-server.js" ] && [ ! -f "$SERVER_ENTRY" ]; then
+    echo "SKIP_BUILD=1 requested but the standalone server is missing: $SERVER_ENTRY" >&2
+    return 1
   fi
   entry_path=$(readlink -f "$SERVER_ENTRY")
   [ -f "$entry_path" ] || { echo "server entry does not exist: $SERVER_ENTRY" >&2; return 1; }
-  allocate_data_dir
-  echo "[2/3] start standalone on :$PORT (DATA_DIR=$DATA_DIR)"
-  DATA_DIR="$DATA_DIR" PORT="$PORT" HOSTNAME=127.0.0.1 nohup "$NODE_BIN" "$entry_path" >"$LOG_FILE" 2>&1 &
+  echo "[2/3] start standalone on :$PORT (HOME=$TEST_HOME DATA_DIR=$DATA_DIR)"
+  nohup env -i "${RUNTIME_ENV[@]}" "$NODE_BIN" "$entry_path" >"$LOG_FILE" 2>&1 &
   process_id=$!
   printf '%s\n' "$process_id" > "$PID_FILE"
   for _ in $(seq 1 50); do
@@ -120,10 +182,23 @@ up() {
 
   echo "[3/3] health check"
   for _ in $(seq 1 30); do
-    local code
-    code=$(curl -q --silent --show-error --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 1 --max-time 2 "http://localhost:$PORT/dashboard" 2>/dev/null || true)
-    if [ "$code" = "200" ]; then
+    local code current_state
+    set +e
+    owned_process
+    current_state=$?
+    set -e
+    if [ "$current_state" != "0" ]; then
+      echo "server process exited or changed identity during health check" >&2
+      tail -20 "$LOG_FILE" >&2 || true
+      clear_stale_control_files
+      return 1
+    fi
+    code=
+    if process_owns_listener "$process_id"; then
+      code=$(curl -q --silent --show-error --output /dev/null --write-out '%{http_code}' \
+        --connect-timeout 1 --max-time 2 "http://localhost:$PORT/dashboard" 2>/dev/null || true)
+    fi
+    if [ "$code" = "200" ] && process_owns_listener "$process_id"; then
       echo "ok: pid $process_id at http://localhost:$PORT (log: $LOG_FILE)"
       return 0
     fi
@@ -177,17 +252,25 @@ sync_credentials() {
     echo "credential clone requires explicit CLONE_TO_DATA_DIR" >&2
     return 2
   fi
+  validate_isolated_target "$CLONE_TO_DATA_DIR" || return $?
   [ -f "$CLONE_FROM_DATA_DIR/db/data.sqlite" ] || {
     echo "clone source has no db/data.sqlite: $CLONE_FROM_DATA_DIR" >&2
     return 2
   }
   DATA_DIR=$CLONE_TO_DATA_DIR
-  mkdir -p -m 700 "$DATA_DIR"
-  [ "$(readlink -f "$CLONE_FROM_DATA_DIR")" != "$(readlink -f "$DATA_DIR")" ] || {
+  [ "$(readlink -m "$CLONE_FROM_DATA_DIR")" != "$(readlink -m "$DATA_DIR")" ] || {
     echo "clone source and target must differ" >&2
     return 2
   }
-  down >/dev/null 2>&1 || true
+  if ! down >/dev/null; then
+    echo "credential clone aborted because the existing process could not be stopped safely" >&2
+    return 1
+  fi
+  if [ -e "$DATA_DIR" ] && { [ ! -d "$DATA_DIR" ] || [ -n "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; }; then
+    echo "credential clone target must be absent or empty: $DATA_DIR" >&2
+    return 2
+  fi
+  mkdir -p -m 700 "$DATA_DIR"
   mkdir -p -m 700 "$DATA_DIR/db"
   echo "[sync] explicit source $CLONE_FROM_DATA_DIR to isolated target $DATA_DIR"
   sqlite3 "$CLONE_FROM_DATA_DIR/db/data.sqlite" ".backup '$DATA_DIR/db/data.sqlite'"
@@ -196,7 +279,9 @@ sync_credentials() {
   for file in usage.json log.txt; do
     [ -f "$CLONE_FROM_DATA_DIR/$file" ] && cp "$CLONE_FROM_DATA_DIR/$file" "$DATA_DIR/$file"
   done
-  echo "credential clone complete; start explicitly with DATA_DIR=$DATA_DIR"
+  printf 'explicit test credential clone\n' > "$DATA_DIR/.tokenproxy-test-clone"
+  chmod 600 "$DATA_DIR/.tokenproxy-test-clone"
+  echo "credential clone complete; start with ALLOW_CREDENTIAL_CLONE=1 CLONE_TO_DATA_DIR=$DATA_DIR $0 up-clone"
 }
 
 status() {
@@ -217,10 +302,21 @@ status() {
 }
 
 case "${1:-up}" in
-  up) up ;;
+  up) up fresh ;;
+  up-clone)
+    [ "${ALLOW_CREDENTIAL_CLONE:-0}" = "1" ] || {
+      echo "cloned startup requires ALLOW_CREDENTIAL_CLONE=1" >&2
+      exit 2
+    }
+    [ -n "${CLONE_TO_DATA_DIR:-}" ] || {
+      echo "cloned startup requires CLONE_TO_DATA_DIR" >&2
+      exit 2
+    }
+    up clone
+    ;;
   down) down ;;
-  restart) down && up ;;
+  restart) down && up fresh ;;
   sync) sync_credentials ;;
   status) status ;;
-  *) echo "usage: $0 [up|down|restart|sync|status]" >&2; exit 2 ;;
+  *) echo "usage: $0 [up|up-clone|down|restart|sync|status]" >&2; exit 2 ;;
 esac

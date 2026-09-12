@@ -10,6 +10,9 @@ it("uses only the runner-owned home, tmp and data roots", () => {
   expect(resolve(process.env.HOME).startsWith(`${root}/`)).toBe(true);
   expect(resolve(process.env.TMPDIR).startsWith(`${root}/`)).toBe(true);
   expect(resolve(process.env.DATA_DIR).startsWith(`${root}/`)).toBe(true);
+  for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]) {
+    expect(resolve(process.env[key]).startsWith(`${root}/`), key).toBe(true);
+  }
   expect(readFileSync(process.env.ISOLATION_CANARY_PATH, "utf8")).toBe("production-canary\n");
 });
 
@@ -17,6 +20,7 @@ it("does not inherit provider or proxy credentials", () => {
   for (const key of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "HTTPS_PROXY", "TOKENPROXY_PEER_TOKEN"]) {
     expect(process.env[key], key).toBeUndefined();
   }
+  expect(process.env.ARBITRARY_PROVIDER_ACCOUNT).toBeUndefined();
 });
 
 it("blocks raw sockets and child-process egress", async () => {
