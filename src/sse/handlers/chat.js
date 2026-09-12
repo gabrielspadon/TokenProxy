@@ -505,14 +505,6 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
     return errorResponse(HTTP_STATUS.BAD_REQUEST, requestShapeError);
   }
 
-  const pathname = new URL(request.url).pathname;
-  const requestShapeError = validateClientRequestShape(pathname, body);
-  if (requestShapeError) {
-    log.warn("CHAT", requestShapeError);
-    reqSummary("refused", { rid, why: "invalid-request-shape" });
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, requestShapeError);
-  }
-
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
     const url = new URL(request.url);

@@ -6,11 +6,10 @@ import { saveRequestStats } from '../../src/lib/db/repos/requestStatsRepo.js';
 let db;
 beforeAll(async () => {
   db = await getAdapter();
-  // Schema registration belongs to the release lead; test the additive shape.
   const columns = new Set(db.all('PRAGMA table_info(requestStats)').map((row) => row.name));
-  for (const [column, definition] of Object.entries(REQUEST_TERMINAL_COLUMNS)) {
-    if (!columns.has(column)) db.run(`ALTER TABLE requestStats ADD COLUMN ${column} ${definition}`);
-  }
+  for (const column of Object.keys(REQUEST_TERMINAL_COLUMNS)) expect(columns.has(column)).toBe(true);
+  expect(columns.has('sourceUsageId')).toBe(true);
+  expect(db.all('PRAGMA index_info(idx_rs_source_usage)').map(row => row.name)).toEqual(['sourceUsageId']);
 });
 
 it('persists allowlisted terminal evidence with its outcome and resists late pending writes', async () => {

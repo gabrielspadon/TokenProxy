@@ -13,9 +13,7 @@ let db, store;
 beforeAll(async () => {
   db = await getAdapter();
   const columns = new Set(db.all('PRAGMA table_info(requestStats)').map((row) => row.name));
-  for (const [column, definition] of Object.entries(REQUEST_TERMINAL_COLUMNS)) {
-    if (!columns.has(column)) db.run(`ALTER TABLE requestStats ADD COLUMN ${column} ${definition}`);
-  }
+  for (const column of Object.keys(REQUEST_TERMINAL_COLUMNS)) expect(columns.has(column)).toBe(true);
   store = createLogicalOutcomeStore(db);
 });
 const request = () => new Request('http://localhost/v1/chat/completions', { method: 'POST', body: '{}' });

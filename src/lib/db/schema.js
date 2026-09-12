@@ -24,6 +24,7 @@ import { NOTIFICATION_DELIVERY_TABLES, PROJECT_NOTIFICATION_COLUMNS } from './no
 import { NOTIFICATION_AUTOMATION_TABLES } from './notificationAutomationSchema.js';
 import { CONTEXT_STAGE_OUTCOME_COLUMNS } from './contextStageOutcomeSchema.js';
 import { TELEMETRY_ORIGIN_COLUMNS, TELEMETRY_OUTCOME_TABLES } from './telemetryOutcomeSchema.js';
+import { REQUEST_TERMINAL_COLUMNS } from './terminalEvidence.js';
 import { ECONOMICS_PROJECTION_TABLES } from './economicsProjectionSchema.js';
 import {
   PROJECT_TABLES,
@@ -53,7 +54,8 @@ import {
 // 35 = trusted telemetry origins, logical/client outcomes, timing and reversible quarantine.
 // 36 = transactionally maintained normalized economics analytics projection.
 // 37 = preserve integer/real token storage classes in the economics projection.
-export const SCHEMA_VERSION = 37;
+// 38 = durable semantic terminal evidence and explicit usage backfill provenance.
+export const SCHEMA_VERSION = 38;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -353,7 +355,9 @@ export const TABLES = {
     columns: {
       ...TELEMETRY_ORIGIN_COLUMNS,
       ...REQUEST_IDENTITY_COLUMNS,
+      ...REQUEST_TERMINAL_COLUMNS,
       id: 'TEXT PRIMARY KEY',
+      sourceUsageId: 'INTEGER',
       timestamp: 'TEXT NOT NULL',
       provider: 'TEXT',
       model: 'TEXT',
@@ -402,6 +406,7 @@ export const TABLES = {
       'CREATE INDEX IF NOT EXISTS idx_rs_provider ON requestStats(provider)',
       'CREATE INDEX IF NOT EXISTS idx_rs_model ON requestStats(model)',
       'CREATE INDEX IF NOT EXISTS idx_rs_conn ON requestStats(connectionId)',
+      'CREATE INDEX IF NOT EXISTS idx_rs_source_usage ON requestStats(sourceUsageId)',
     ],
   },
   // Normalized quota evidence, one row per (connection, window). The shape is
