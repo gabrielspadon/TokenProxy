@@ -1081,13 +1081,13 @@ async function handleChatCoreAttempt({
   // entry bytes and losing it from save=.
   const schemaDistillRan =
     tokenSaverEnabled && schemaDistillEnabled && Array.isArray(translatedBody.tools);
-  if (schemaDistillRan) stageGuard.sync("schema", () => {
+  stageGuard.sync("schema", () => {
     const distilled = distillToolSchemas(translatedBody.tools, { allowLossy: schemaAllowLossy });
     if (distilled.savedBytes > 0) {
       translatedBody.tools = distilled.tools;
       notePath(rid, "XFORM.tool-distill");
     }
-  });
+  }, schemaDistillRan);
   measureSaverStage("schema", schemaDistillRan);
 
   // Prefix token-savers (#token-savers). The pipeline is in two halves.
@@ -1141,7 +1141,7 @@ async function handleChatCoreAttempt({
   const anthropicNative = provider === "claude" || provider === "anthropic";
   const thinkingWillRun =
     tokenSaverEnabled && thinkingStripEnabled && claudePrefixTarget && !anthropicNative && !!prefixMessages();
-  if (thinkingWillRun) stageGuard.sync("thinking", () => {
+  stageGuard.sync("thinking", () => {
     const res = stripHistoricalThinking(translatedBody.messages, { keepRecentTurns: 1 });
     if (res.stripped > 0) {
       translatedBody.messages = res.messages;
@@ -1155,7 +1155,7 @@ async function handleChatCoreAttempt({
         .slice(0, 8);
       pushPrefixNote({ kind: "thinking", text: `stripped ${res.stripped} reasoning block(s)` });
     }
-  });
+  }, thinkingWillRun);
   measureSaverStage("thinking", thinkingWillRun);
 
   // RTK rewrites only this attempt's privately owned request containers.
@@ -1190,14 +1190,14 @@ async function handleChatCoreAttempt({
   // stage measures; without its own stage those bytes were attributed to
   // headroom (wrong save= and a false saver-guard).
   let privacyRan = false;
-  if (privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming)) stageGuard.sync("privacy", () => {
+  stageGuard.sync("privacy", () => {
     privacyRan = true;
     privacyFilter = redactOutbound(translatedBody, privacyTerms);
     if (privacyFilter) {
       log?.debug?.("PRIVACY", `pseudonymised ${privacyFilter.size} value(s)`);
       if (privacyFilter.size > 0) notePath(rid, "XFORM.privacy-applied");
     }
-  });
+  }, privacyEnabled && !(providerRequiresStreaming && !clientRequestedStreaming));
   measureSaverStage("privacy", privacyRan);
 
   // Token-saver flags accumulator for the single "⚙" log line below.
@@ -1230,7 +1230,7 @@ async function handleChatCoreAttempt({
 
   // PXPIPE: image bulky context (Claude-format bodies only), last saver before dispatch
   let pxpipeSummary = null;
-  if (pxpipeEnabled) await stageGuard.async("pxpipe", async () => {
+  await stageGuard.async("pxpipe", async () => {
     const pxpipeResult = await compressWithPxpipe(translatedBody, {
       enabled: tokenSaverEnabled,
       allowLossy: pxpipeAllowLossy,
@@ -1253,11 +1253,11 @@ async function handleChatCoreAttempt({
       /* stats must not break requests */
     }
     stageGuard.report("pxpipe", pxpipeSummary);
-  });
+  }, pxpipeEnabled);
   measureSaverStage("pxpipe", pxpipeEnabled);
 
   // Memory & Context Optimizer (Tool & Media Pruning, Compaction, Cache Anchoring, Handoffs)
-  if (tokenSaverEnabled && memorySettings) await stageGuard.async("mem", async () => {
+  await stageGuard.async("mem", async () => {
     // THE MODEL'S OWN WINDOW decides when history has to be cut, and the
     // capability table already knows it (1,000,000 for the Opus and Sonnet 5
     // class, and a conservative default for anything it has not heard of).
@@ -1296,7 +1296,7 @@ async function handleChatCoreAttempt({
       xf.push(`COMPACT:${memRes.stats.compaction.savedTokens}t`);
       notePath(rid, "XFORM.compact-applied");
     }
-  });
+  }, tokenSaverEnabled && memorySettings);
   measureSaverStage("mem", tokenSaverEnabled && memorySettings);
 
   // ---- Pressure-driven prefix rungs. A rung rewrites the cached prefix, so
@@ -1419,7 +1419,7 @@ async function handleChatCoreAttempt({
   // requests.
   const qacWillRun =
     tokenSaverEnabled && queryAwareCompressionEnabled && claudePrefixTarget && !!prefixMessages();
-  if (qacWillRun) stageGuard.sync("qac", () => {
+  stageGuard.sync("qac", () => {
     let qacMemo = sessionKey ? memoGet("qac", sessionKey) : null;
     if (sessionKey && !qacMemo) {
       qacMemo = new Set();
@@ -1448,7 +1448,7 @@ async function handleChatCoreAttempt({
         });
       }
     } else stageGuard.report("qac", { outcome: "skipped" });
-  });
+  }, qacWillRun);
   measureSaverStage("qac", qacWillRun);
 
   // Pair dropping: demand-driven, like the memory pruner. The deficit is how
@@ -1460,7 +1460,7 @@ async function handleChatCoreAttempt({
   // pairs first would spend them before the cheaper, larger reclaim ran.
   const pairsWillRun =
     tokenSaverEnabled && pairDropEnabled && claudePrefixTarget && !!prefixMessages();
-  if (pairsWillRun) stageGuard.sync("pairs", () => {
+  stageGuard.sync("pairs", () => {
     const pairsPressure = measurePrefixPressure();
     if (pairsPressure.deficitChars > 0 && mayDecideAnew()) {
       const res = dropOldestPairs(translatedBody.messages, {
@@ -1483,7 +1483,7 @@ async function handleChatCoreAttempt({
         });
       }
     } else stageGuard.report("pairs", { outcome: "skipped" });
-  });
+  }, pairsWillRun);
   measureSaverStage("pairs", pairsWillRun);
 
   // Epoch-aligned compaction cascade (#context-tuning): diet prunes expired
@@ -1512,7 +1512,7 @@ async function handleChatCoreAttempt({
   // never touched. Default off (dietEnabled).
   const dietWillRun = epochStageWanted && dietEnabled;
   let dietApplied = false;
-  if (dietWillRun && epochCutIndex > 0) stageGuard.sync("diet", () => {
+  stageGuard.sync("diet", () => {
     const res = pruneExpiredToolResults(translatedBody, {
       epochCutIndex,
       minAgeTurns: 8,
@@ -1529,7 +1529,7 @@ async function handleChatCoreAttempt({
         text: `pruned ${res.prunedBlocks} expired tool_result(s) (~${res.prunedChars} chars)`,
       });
     }
-  });
+  }, dietWillRun && epochCutIndex > 0);
   measureSaverStage("diet", dietApplied, undefined, dietWillRun && epochCutIndex > 0);
 
   // LLMLingua-2 selective compression: large natural-language-ish user/
@@ -1543,7 +1543,7 @@ async function handleChatCoreAttempt({
   const linguaWillRun = epochStageWanted && linguaEnabled;
   let linguaApplied = false;
   let linguaSkip = null;
-  if (linguaWillRun && epochCutIndex > 0) await stageGuard.async("lingua", async () => {
+  await stageGuard.async("lingua", async () => {
     const res = await compressBlobs(translatedBody, {
       epochCutIndex,
       endpoint: resolveLinguaEndpoint(),
@@ -1562,12 +1562,12 @@ async function handleChatCoreAttempt({
         text: `compressed ${res.compressedBlocks} blob(s) (~${res.savedChars} chars)`,
       });
     }
-  });
+  }, linguaWillRun && epochCutIndex > 0);
   measureSaverStage("lingua", linguaApplied, undefined, linguaWillRun && epochCutIndex > 0);
 
   const epochMicroWillRun = epochStageWanted && epochMicroEnabled;
   let epochMicroApplied = false;
-  if (epochMicroWillRun && epochCutIndex > 0) stageGuard.sync("epochMicro", () => {
+  stageGuard.sync("epochMicro", () => {
     const res = microcompact(translatedBody, {
       epochCutIndex,
       keepLastTurns: 4,
@@ -1582,7 +1582,7 @@ async function handleChatCoreAttempt({
         text: `cleared ${res.clearedBlocks} block(s) (~${res.clearedChars} chars)`,
       });
     }
-  });
+  }, epochMicroWillRun && epochCutIndex > 0);
   measureSaverStage("epochMicro", epochMicroApplied, undefined, epochMicroWillRun && epochCutIndex > 0);
 
   const epochAutoWillRun = epochStageWanted && epochAutoEnabled;
@@ -1596,7 +1596,7 @@ async function handleChatCoreAttempt({
   if (epochAutoWillRun && epochCutIndex === 0) {
     epochAutoSkipReason = "epoch_boundary";
   }
-  if (epochAutoWillRun && epochCutIndex > 0) await stageGuard.async("epochAuto", async () => {
+  await stageGuard.async("epochAuto", async () => {
     // The model's own window from the capability table, same lookup the
     // memory ladder and pair dropping use.
     const epochWindowTokens =
@@ -1623,7 +1623,7 @@ async function handleChatCoreAttempt({
         epochAutoSkipReason = "window_pressure";
       }
     }
-  });
+  }, epochAutoWillRun && epochCutIndex > 0);
   measureSaverStage("epochAuto", epochAutoApplied, undefined, epochAutoWillRun && epochCutIndex > 0);
 
   // Embedding reorder: moves the most relevant historical pairs next to the
@@ -1635,7 +1635,7 @@ async function handleChatCoreAttempt({
   // debug line and leaves the prefix in order.
   const reorderWillRun =
     tokenSaverEnabled && embedReorderEnabled && claudePrefixTarget && !!prefixMessages();
-  if (reorderWillRun) await stageGuard.async("reorder", async () => {
+  await stageGuard.async("reorder", async () => {
     let reorderMemo = sessionKey ? memoGet("reorder", sessionKey) : null;
     if (sessionKey && !reorderMemo) {
       reorderMemo = { order: [] };
@@ -1673,7 +1673,7 @@ async function handleChatCoreAttempt({
         }
       }
     } else stageGuard.report("reorder", { outcome: "skipped" });
-  });
+  }, reorderWillRun);
   measureSaverStage("reorder", reorderWillRun);
 
   // Boundary note: after the prefix rungs reshaped history, one short note
@@ -1690,7 +1690,7 @@ async function handleChatCoreAttempt({
     prefixNotes.length > 0 &&
     !!prefixMessages();
   let midinjectApplied = false;
-  if (midinjectWillRun) stageGuard.sync("midinject", () => {
+  stageGuard.sync("midinject", () => {
     const noteText = composeBoundaryNote(prefixNotes);
     let insertIndex = -1;
     for (let i = translatedBody.messages.length - 1; i >= 0; i--) {
@@ -1705,7 +1705,7 @@ async function handleChatCoreAttempt({
       midinjectApplied = true;
       notePath(rid, "XFORM.midinject-applied");
     }
-  });
+  }, midinjectWillRun);
 
   measureSaverStage("midinject", midinjectApplied, undefined, midinjectWillRun);
 
@@ -1714,7 +1714,7 @@ async function handleChatCoreAttempt({
   // final anchoring and wire measurements then see the complete body.
   const handoffWillRun = tokenSaverEnabled && memorySettings?.memoryHandoffEnabled === true;
   let handoffApplications = [];
-  if (handoffWillRun) await stageGuard.async("handoff", async () => {
+  await stageGuard.async("handoff", async () => {
     const packets = await pendingShapingHandoffs(contextCapture.identity);
     callerSignal?.throwIfAborted();
     if (!packets.length) return;
@@ -1725,11 +1725,12 @@ async function handleChatCoreAttempt({
     if (pressure.over) throw Object.assign(new Error("handoff exceeds context allowance"), { code: "capacity_exceeded" });
     handoffApplications = result.applied;
     notePath(rid, "XFORM.handoff");
-  });
+  }, handoffWillRun);
   measureSaverStage("handoff", handoffWillRun);
   if (stageGuard.measurement("handoff", handoffWillRun, false).outcome !== "failed") contextHandoffs.push(...handoffApplications);
 
   if (xf.length && log?.line) log.line(reqTag, "⚙", xf.join(" · "));
+  const endFinalStage = stageGuard.start('final');
 
   // Pin cache breakpoints to the final body — every saver above can reshape
   // system/tools/messages, and a stale anchor costs a full prefix rewrite.
@@ -1782,6 +1783,7 @@ async function handleChatCoreAttempt({
   if (saverPrev || sid) {
     finalSerialized = JSON.stringify(translatedBody);
     finalBodyBytes = Buffer.byteLength(finalSerialized);
+    endFinalStage();
     measureSaverStage("final", true, finalBodyBytes);
     if (contextScope) {
       const tracked = trackCacheEpoch(contextScope, finalSerialized);

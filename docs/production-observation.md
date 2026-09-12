@@ -4,6 +4,10 @@ Start the window only after the approved paired front and gateway release is ins
 
 Integrate `REQUEST_TERMINAL_COLUMNS` from `src/lib/db/terminalEvidence.js` into the `requestStats` schema before starting the candidate. These four nullable columns expand the existing table. The migration owner must register, migrate, reopen and rollback-test the expansion. Existing rows without terminal evidence stay unknown. The signed journal retains schema version 2 and adds `observationVersion=1`, `requestClass` and `terminalReason`.
 
+Managed chat ingress records one logical lifecycle before admission and echoes its server-owned identity on early refusals and final responses. The finalizer waits for body completion and pending statistics writes, then joins ordered attempts to semantic terminal evidence. Multiple successful attempts, missing evidence and unsupported output remain unknown. Caller cancellation and transport interruption settle pending attempt rows without inventing provider completion. Restart reconciliation changes only clocks whose recorded host, boot and process start identity prove the previous owner dead; unknown or live ownership remains pending.
+
+Backend timing uses one process's monotonic clock. Response-header and stream envelope spans partition the logical duration. Admission, selection, preparation and executor dispatch spans overlap that envelope and must not be summed with it. No backend retry-wait value is inferred from timestamps. Context stage guards measure actual execution and bypass checks, retain the source execution identity across retries, and export their persisted duration. Historical stages retain a null duration and an unknown source.
+
 Use an existing private evidence directory. Set `TP_RELEASE_ID` to the actual approved release artifact hash, never a placeholder. Verify the installed writer adapter and pass that exact driver. The example uses the deployed native `better-sqlite3` adapter. Outputs use exclusive creation and mode 0600; choose a fresh filename for every sample.
 
 ```bash

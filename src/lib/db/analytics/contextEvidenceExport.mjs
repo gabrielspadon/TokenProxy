@@ -30,7 +30,7 @@ export function readContextEvidenceExport(db, definition, mode, limit) {
   const related = readContextRelated(db, rows.map((row) => row.id)), stages = new Map();
   for (let offset=0;offset<rows.length;offset+=100) {
     const ids=rows.slice(offset,offset+100).map((row)=>row.id);
-    for (const {requestId,...stage} of db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk,outcomeSource,errorCode,executionRequestId FROM contextStages WHERE requestId IN (${ids.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,ids)) {
+    for (const {requestId,...stage} of db.all(`SELECT requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk,outcomeSource,errorCode,executionRequestId,durationMs,durationSource FROM contextStages WHERE requestId IN (${ids.map(()=>'?').join(',')}) ORDER BY requestId,ordinal`,ids)) {
       if (!stages.has(requestId)) stages.set(requestId,[]);
       stages.get(requestId).push(stage);
     }

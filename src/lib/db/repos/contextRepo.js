@@ -32,10 +32,13 @@ export function normalizeContextStages(stages) {
     if (explicit && ((s.outcome === "cancelled") !== (s.errorCode === "caller_cancelled"))) throw new Error("Invalid stage cancellation evidence");
     if (explicit && s.executionRequestId != null &&
       (typeof s.executionRequestId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(s.executionRequestId))) throw new Error("Invalid stage execution identity");
+    const measuredDuration = explicit && s.durationSource === "monotonic";
+    if (measuredDuration && number(s.durationMs) === null) throw new Error("Invalid stage duration");
     return { ordinal, stage: s.stage, beforeBytes: s.in, afterBytes: s.out, deltaBytes: s.out - s.in,
       outcome: explicit ? s.outcome : s.ran === false ? "skipped" : s.in === s.out ? "unchanged" : "applied",
       errorCode: explicit ? s.errorCode ?? null : null, outcomeSource: explicit ? "execution" : null,
       executionRequestId: explicit ? s.executionRequestId ?? null : null,
+      durationMs: measuredDuration ? s.durationMs : null, durationSource: measuredDuration ? "monotonic" : "unknown",
       risk: s.stage === "rtk" && s.semanticPreserving ? "semantic-preserving" : ["tools", "final"].includes(s.stage) ? "normalization" : "content-changing" };
   });
 }
@@ -88,10 +91,11 @@ export function saveContextMetrics(db, detail) {
   for (const s of stages) {
     const stored = storedStages.get(s.ordinal);
     if (stored && Object.entries(s).every(([field, value]) => stored[field] === value)) continue;
-    db.run(`INSERT INTO contextStages(requestId, ordinal, stage, beforeBytes, afterBytes, deltaBytes, outcome, risk, errorCode, outcomeSource, executionRequestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    db.run(`INSERT INTO contextStages(requestId, ordinal, stage, beforeBytes, afterBytes, deltaBytes, outcome, risk, errorCode, outcomeSource, executionRequestId, durationMs, durationSource) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(requestId,ordinal) DO UPDATE SET stage=excluded.stage,beforeBytes=excluded.beforeBytes,afterBytes=excluded.afterBytes,
-        deltaBytes=excluded.deltaBytes,outcome=excluded.outcome,risk=excluded.risk,errorCode=excluded.errorCode,outcomeSource=excluded.outcomeSource,executionRequestId=excluded.executionRequestId`,
-      [detail.id, s.ordinal, s.stage, s.beforeBytes, s.afterBytes, s.deltaBytes, s.outcome, s.risk, s.errorCode, s.outcomeSource, s.executionRequestId]);
+        deltaBytes=excluded.deltaBytes,outcome=excluded.outcome,risk=excluded.risk,errorCode=excluded.errorCode,outcomeSource=excluded.outcomeSource,executionRequestId=excluded.executionRequestId,
+        durationMs=excluded.durationMs,durationSource=excluded.durationSource`,
+      [detail.id, s.ordinal, s.stage, s.beforeBytes, s.afterBytes, s.deltaBytes, s.outcome, s.risk, s.errorCode, s.outcomeSource, s.executionRequestId, s.durationMs, s.durationSource]);
   }
   if ([...storedStages.keys()].some((ordinal) => ordinal >= stages.length)) {
     db.run(`DELETE FROM contextStages WHERE requestId=? AND ordinal>=?`, [detail.id, stages.length]);

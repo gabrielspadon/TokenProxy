@@ -79,6 +79,7 @@ vi.mock("@/lib/usageDb.js", () => ({
 }));
 
 const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+const { saveRequestDetail } = await import("@/lib/usageDb.js");
 const { DEFAULT_THINKING_CLAUDE_SIGNATURE } = await import(
   "../../open-sse/config/defaultThinkingSignature.js"
 );
@@ -359,6 +360,9 @@ describe("query-aware compression stage (chatCore pipeline)", () => {
     expect(first.success).toBe(true);
     const firstFlat = JSON.stringify(dispatchedBody().messages[0]);
     expect(firstFlat).toContain("compressed, low relevance to the current query");
+    const firstDuration = saveRequestDetail.mock.calls.at(-1)[0].contextTelemetry.stages.find((stage) => stage.stage === 'qac');
+    expect(firstDuration).toMatchObject({ durationSource: 'monotonic' });
+    expect(firstDuration.durationMs).toBeGreaterThanOrEqual(0);
 
     // Next request of the same session: the live turn is a tool_result, so
     // there is no query to score against and the request is back inside its
@@ -379,6 +383,10 @@ describe("query-aware compression stage (chatCore pipeline)", () => {
     });
     expect(second.success).toBe(true);
     expect(JSON.stringify(dispatchedBody().messages[0])).toBe(firstFlat);
+    const secondStages = saveRequestDetail.mock.calls.at(-1)[0].contextTelemetry.stages;
+    expect(secondStages.find((stage) => stage.stage === 'qac').durationSource).toBe('monotonic');
+    expect(secondStages.every((stage) => stage.durationSource === 'monotonic' && stage.durationMs >= 0)).toBe(true);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 describe("pair dropping stage (chatCore pipeline)", () => {
