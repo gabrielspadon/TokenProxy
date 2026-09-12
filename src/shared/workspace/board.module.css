@@ -57,27 +57,20 @@
 .fleetChip[aria-pressed='true'] { background: var(--raised); border-color: var(--control-edge); color: var(--ink); }
 .fleetNote { white-space: nowrap; }
 
-/* The capacity strip is the primary read, so its chips carry the figure at a
-   larger size than the health strip below it. Health stays available on its
-   own row, dimmer, because the two axes answer different questions. */
-.fleet[data-axis='capacity'] { padding-bottom: 4px; border-bottom: 0; }
-.fleet[data-axis='capacity'] .fleetChip strong { font-size: var(--type-ui); }
-/* Indented under the section row, because it subdivides it rather than
-   competing with it. The figures stay small here; the section row above carries
-   the ones a glance is for. */
-.fleet[data-axis='health'] { padding-top: 0; padding-inline-start: 20px; gap: 4px; }
-.fleet[data-axis='health'] .fleetChip { color: var(--slate); opacity: 0.8; }
-.fleet[data-axis='health'] .fleetChip strong { font-weight: 600; }
-.fleet[data-axis='health'] .fleetChip i { width: 5px; height: 5px; }
-.fleet[data-axis='health'] .fleetChip:hover,
-.fleet[data-axis='health'] .fleetChip[aria-pressed='true'] { opacity: 1; }
-.axisLabel {
-  align-self: center;
-  margin-inline-end: 2px;
-  color: var(--slate);
-  font-size: var(--type-dense);
-  white-space: nowrap;
+/* One strip, so its figures are the ones a glance is for. The `data-axis`
+   variants and the `.axisLabel` that indented a second strip under this one are
+   gone with the second vocabulary they existed to separate. */
+.fleet .fleetChip strong { font-size: var(--type-ui); }
+/* Unknown is the one hollow dot: filled means a state somebody asserted,
+   a ring means nobody has established one. It is the only structural device
+   this board spends, and it encodes real information rather than decorating. */
+.fleetChip[data-tone='unknown'] i,
+.stateWord[data-tone='unknown'] i,
+.groupTitle[data-tone='unknown'] i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--control-edge);
 }
+.stateWord[data-tone='unknown'] { color: var(--slate); }
 
 .toolbar {
   display: flex;
@@ -108,6 +101,48 @@
 .providerChip[aria-pressed='true'] { opacity: 1; border-color: var(--signal); background: var(--signal-wash); }
 .providerChip :global(.provider-mark) { width: 18px; height: 18px; min-width: 18px; }
 .providerChip :global(.provider-mark img) { width: 16px; height: 16px; }
+
+/* Branded quick connections. A button is the provider's mark, its name and a
+   plus, on the provider's own --brand-* token at wash strength so the label
+   keeps its contrast against it. Not a filled brand-colour button: three
+   saturated blocks in a toolbar would outshout the accounts, which are the
+   thing this page is for. */
+.quickConnect {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--brand) 40%, var(--rule));
+  border-radius: var(--radius-button);
+  background: color-mix(in srgb, var(--brand) 10%, var(--raised));
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--type-dense);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.quickConnect[data-brand='openai'] { --brand: var(--brand-openai); }
+.quickConnect[data-brand='claude'] { --brand: var(--brand-claude); }
+.quickConnect[data-brand='kimi'] { --brand: var(--brand-kimi); }
+.quickConnect :global(.provider-mark) { width: 16px; height: 16px; min-width: 16px; }
+.quickConnect :global(.provider-mark img) { width: 14px; height: 14px; }
+.quickConnect :global(.icon) { font-size: 13px; width: 13px; height: 13px; color: var(--slate); }
+.quickConnect:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--brand) 18%, var(--raised));
+  border-color: color-mix(in srgb, var(--brand) 60%, var(--rule));
+}
+.quickConnect:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.quickConnect[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--brand) 22%, var(--raised));
+  border-color: var(--brand);
+}
+.quickConnect[aria-expanded='true'] :global(.icon) { color: var(--ink); }
+/* A snapshot is read-only, so connecting is refused rather than offered. */
+.quickConnect:disabled { opacity: 0.5; cursor: default; }
+@media (pointer: coarse) { .quickConnect { min-height: 32px; } }
 
 .addRow {
   display: flex;
@@ -467,12 +502,14 @@
 .groupTitle[data-tone='positive'] i { background: var(--positive); }
 .groupTitle[data-tone='ember'] i { background: var(--ember); }
 .groupTitle[data-tone='refusal'] i { background: var(--refusal); }
+/* The count, and only the count. This span carried "N accounts \00b7 <sentence>",
+   which truncated with an ellipsis at every viewport and was the only place a
+   state was explained. The explanation moved to the chip tooltip above, where
+   nothing cuts it, so what is left always fits. */
 .groupTitle span {
   color: var(--slate);
   font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 /* The unverified section is a disclosure, so its heading is the control. */
@@ -507,21 +544,22 @@
   background: var(--raised);
 }
 .card[data-expanded] { grid-column: 1 / -1; border-color: var(--signal); box-shadow: inset 3px 0 var(--signal); }
-/* Colour on a card is ONE hue, and it comes from the card's own bucket rather
-   than from the heading above it, so the rail, the dot in the state chip and
-   the headline figure can never disagree. A depleted card inside "Cooling
-   down" is red because that is what it is, not ember because of its neighbours.
-   Two colours on one card was most of what made these unreadable: the section
-   painted an ember rail while the bucket painted a red border around it. */
-.card { --card-rail: var(--rule); --card-ink: var(--ink); }
-.card[data-tone='positive'] { --card-rail: var(--positive); --card-ink: var(--positive); }
-.card[data-tone='ember'] { --card-rail: var(--ember); --card-ink: var(--ember); }
-.card[data-tone='refusal'] { --card-rail: var(--refusal); --card-ink: var(--refusal); }
-.card[data-tone='slate'] { --card-rail: var(--slate); --card-ink: var(--ink); }
-/* A card with no rail has its border to warn with. Every surface sharing
-   src/shared/workspace/Board.js renders one, so this stays unscoped; the
-   section rules further down are later in the file and override it where a
-   rail is drawn, which is also where the two used to disagree. */
+/* Colour on a card is ONE hue and it comes from the card's own state, so the
+   dot in the state chip and the headline figure can never disagree. A depleted
+   card inside Cooldown is the category's ember because that is the question it
+   answers, rather than one hue from a heading and another from a border.
+   `--card-rail` is gone with the inset rail that read it; only `--card-ink` is
+   left, and it tints the headline alone. */
+.card { --card-ink: var(--ink); }
+.card[data-tone='positive'] { --card-ink: var(--positive); }
+.card[data-tone='ember'] { --card-ink: var(--ember); }
+.card[data-tone='refusal'] { --card-ink: var(--refusal); }
+.card[data-tone='slate'] { --card-ink: var(--ink); }
+.card[data-tone='unknown'] { --card-ink: var(--slate); }
+/* `data-bucket` is still set by src/app/dashboard/connections/page.js:469 and
+   src/shared/workspace/Board.js:137, which carry the seven-way split, so these
+   two borders stay for those surfaces. Capacity's cards set `data-category`
+   and never match them. */
 .card[data-bucket='low'] { border-color: color-mix(in srgb, var(--ember) 45%, var(--rule)); }
 .card[data-bucket='attention'] { border-color: color-mix(in srgb, var(--refusal) 45%, var(--rule)); }
 /* The head reserves the same height whether the name takes one line or two, so
@@ -587,32 +625,30 @@
 }
 .cardWindows { display: grid; gap: 4px; margin-top: var(--card-gap); }
 
-/* A card that is not serving is not a tinted copy of one that is. Three
-   devices, declared once and shared by every non-serving section so none of
-   them can drift into its own visual language: the surface recedes to the
-   page, a rail at the inline start carries the card's single hue, and the
-   headline takes that hue too. An account that cannot take work must never
-   look like one that can. */
-.card[data-section='action']:not([data-expanded]),
-.card[data-section='resting']:not([data-expanded]),
-.card[data-section='held']:not([data-expanded]) {
-  background: var(--paper);
-  border-color: color-mix(in srgb, var(--card-rail) 30%, var(--rule));
-  box-shadow: inset 3px 0 var(--card-rail);
-  padding-inline-start: 13px;
-}
-.card[data-section='action'] .cardFact strong,
-.card[data-section='resting'] .cardFact strong,
-.card[data-section='held'] .cardFact strong { color: var(--card-ink); }
+/* EVERY CATEGORY KEEPS THE SAME GEOMETRY. A card that cannot take work used to
+   get three stacked devices at once: a receding --paper surface, a mixed border
+   AND `inset 3px 0` with 13px of compensating inline padding. That is the grey
+   slab with a coloured stripe the review rejected, and because the rail came
+   from the card's tone while the heading above came from its section, the two
+   could disagree on the same card.
+
+   All three are gone. One device carries state now, the dot in the state chip,
+   and the headline says it in words. Same padding, same border, same surface on
+   all four categories, so a row of cards is one grid and nothing is a tinted
+   copy of anything. */
+.card[data-category] .cardFact strong { color: var(--card-ink); }
 /* The evidence line. On these cards it carries a sentence rather than a label,
    so it gets two lines and RESERVES both whether or not it fills them: a row
    whose notes run one line, then two, then one is the ragged edge that makes a
    grid unreadable. It breaks on words, and only inside a word when a single
    token is wider than the card. */
-.card[data-section='action'] .cardFact small,
-.card[data-section='resting'] .cardFact small,
-.card[data-section='held'] .cardFact small,
-.card[data-section='unverified'] .cardFact small {
+/* The evidence line carries a sentence rather than a label, so it gets two
+   lines and RESERVES both whether or not it fills them: notes running one line,
+   then two, then one is the ragged lower edge that makes a grid unreadable. It
+   breaks on words, and inside a word only when a single token is wider than the
+   card. Applied to every category, not a listed subset, because the reserved
+   height is what keeps all four aligned in one row. */
+.card[data-category] .cardFact small {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -621,22 +657,15 @@
   line-height: 1.35;
   min-height: 2.7em;
 }
-/* Their meters are history, not status: they say how the account got here, so
-   they read as a flat trace rather than competing with the headline above. */
-.card[data-section='action'] .cardWindows,
-.card[data-section='resting'] .cardWindows,
-.card[data-section='held'] .cardWindows,
-.card[data-section='unverified'] .cardWindows { opacity: 0.72; }
-.card[data-section='action'] .cardWindows .meter,
-.card[data-section='resting'] .cardWindows .meter,
-.card[data-section='held'] .cardWindows .meter,
-.card[data-section='unverified'] .cardWindows .meter { box-shadow: inset 0 0 0 1px var(--rule); }
+/* On a card that is not serving, the meters are history rather than status:
+   they say how the account got here, so they read as a flat trace instead of
+   competing with the headline above. Opacity only, which keeps every value
+   legible and the geometry identical. */
+.card[data-category]:not([data-category='active']) .cardWindows { opacity: 0.78; }
+.card[data-category]:not([data-category='active']) .cardWindows .meter {
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
 .cardWindows:empty { display: none; }
-
-/* Unverified has no reading to show at all, so the card says so by being
-   drawn with nothing filled in. */
-.card[data-section='unverified'] { background: transparent; border-style: dashed; }
-.card[data-section='unverified'] .cardFact strong { color: var(--slate); font-weight: 600; }
 .cardWindows .line { grid-template-columns: minmax(76px, 1fr) minmax(56px, 1.2fr) minmax(40px, auto) minmax(0, auto); }
 .cardWindows .lineReset { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cardWindows .meter { height: 7px; border-radius: 4px; }
@@ -670,16 +699,58 @@
   .horizonChart { display: none; }
 }
 
-/* Density. Tidy is the default; comfy adds room everywhere. */
+/* Density, four ordered stops from the shared control in
+   src/shared/workspace/Board.js: compact, dense, tidy, comfy. `tidy` is the
+   default and the unprefixed rules above ARE it, so only the other three
+   declare anything and legacy stored `tidy` / `comfy` keep rendering exactly as
+   they did.
+
+   WHITESPACE FIRST, NEVER TRUNCATION. Each denser stop takes padding, gap and
+   row rhythm out; not one of them reduces a font size below --type-dense or
+   clamps a line that was not already clamped. At `compact` the card grid narrows
+   to 210px and .cardFact small is allowed a THIRD line, because a narrower card
+   needs more lines to show the same sentence: fitting more cards on screen must
+   not cost the reason an account is unavailable. */
+
+/* compact: the densest. Cards narrow, every gap at its floor. */
+.board[data-density='compact'] .card { --card-pad: 5px 7px; --card-gap: 3px; }
+.board[data-density='compact'] .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr)); gap: 5px; }
+.board[data-density='compact'] .cardHead { min-height: 40px; gap: 6px; }
+.board[data-density='compact'] .cardWindows { gap: 2px; }
+.board[data-density='compact'] .cardState { gap: 5px; }
+/* A narrower card fits fewer words per line, so the reason gets another line
+   rather than losing its tail. */
+.board[data-density='compact'] .card[data-category] .cardFact small { -webkit-line-clamp: 3; min-height: 4.05em; }
+.board[data-density='compact'] .cardFact strong { font-size: var(--type-ui); }
+.board[data-density='compact'] .main { min-height: 32px; padding-block: 1px; }
+.board[data-density='compact'] .quota { gap: 1px; }
+.board[data-density='compact'] .line { min-height: 16px; }
+.board[data-density='compact'] .fleet,
+.board[data-density='compact'] .toolbar { padding-block: 4px; }
+.board[data-density='compact'] .group { padding: 4px 7px 7px; }
+.board[data-density='compact'] .groupTitle { margin-block: 1px 5px; }
+
+/* dense: between compact and tidy. Denser than the old Tidy, which is what the
+   brief asked for and neither previous option provided. */
+.board[data-density='dense'] .card { --card-pad: 6px 8px; --card-gap: 4px; }
+.board[data-density='dense'] .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 228px), 1fr)); gap: 6px; }
+.board[data-density='dense'] .cardHead { min-height: 46px; }
+.board[data-density='dense'] .cardWindows { gap: 3px; }
+.board[data-density='dense'] .main { min-height: 36px; padding-block: 2px; }
+.board[data-density='dense'] .quota { gap: 2px; }
+.board[data-density='dense'] .line { min-height: 17px; }
+.board[data-density='dense'] .fleet,
+.board[data-density='dense'] .toolbar { padding-block: 5px; }
+.board[data-density='dense'] .group { padding: 5px 8px 8px; }
+
+/* comfy: room everywhere. Unchanged from what it rendered before, minus the
+   left-rail padding compensation, which no longer exists. */
 .board[data-density='comfy'] .main { min-height: 52px; padding-block: 8px; }
 .board[data-density='comfy'] .quota { gap: 6px; }
 .board[data-density='comfy'] .line { min-height: 22px; }
 .board[data-density='comfy'] .cards { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
 /* One place sets the card's scale; every part of it reads the same two numbers. */
 .board[data-density='comfy'] .card { --card-pad: 14px 16px; --card-gap: 10px; }
-.board[data-density='comfy'] .card[data-section='action']:not([data-expanded]),
-.board[data-density='comfy'] .card[data-section='resting']:not([data-expanded]),
-.board[data-density='comfy'] .card[data-section='held']:not([data-expanded]) { padding-inline-start: 19px; }
 .board[data-density='comfy'] .cardWindows { gap: 8px; }
 .board[data-density='comfy'] .fleet,
 .board[data-density='comfy'] .toolbar { padding-block: 10px; }
