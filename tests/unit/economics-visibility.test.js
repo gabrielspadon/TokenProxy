@@ -148,7 +148,10 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
 
   it('updates only dependent projection rows and uses indexed source lookups', () => {
     db.exec('CREATE TABLE projectionTouches(id INTEGER)');
-    db.exec('CREATE TRIGGER track_projection AFTER INSERT ON usageEconomicsProjection BEGIN INSERT INTO projectionTouches VALUES(NEW.id); END');
+    for (const operation of ['INSERT', 'UPDATE']) {
+      db.exec(`CREATE TRIGGER track_projection_${operation} AFTER ${operation} ON usageEconomicsProjection
+        BEGIN INSERT INTO projectionTouches VALUES(NEW.id); END`);
+    }
     const selected = manifest([{ sourceTable: 'usageHistory', rowId: '1' }]);
     applyQuarantine(db, selected, { evidence });
     expect(db.all('SELECT DISTINCT id FROM projectionTouches ORDER BY id').map(row => row.id)).toEqual([1, 5]);
@@ -162,7 +165,7 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
       'quarantine_row_economics_after_insert', 'quarantine_row_economics_after_update', 'quarantine_row_economics_after_delete',
       'quarantine_receipt_economics_after_insert', 'quarantine_receipt_economics_after_update', 'quarantine_receipt_economics_after_delete']) {
       const trigger = db.get('SELECT sql FROM sqlite_master WHERE name=?', [name]).sql, args = [];
-      const select = trigger.slice(trigger.indexOf('SELECT u.id')).split(';')[0].replace(/(?:NEW|OLD)\.(sourceTable|rowId|id)/g, (_, field) => {
+      const select = trigger.slice(trigger.indexOf('SELECT u.id')).split('ON CONFLICT(id)')[0].replace(/(?:NEW|OLD)\.(sourceTable|rowId|id)/g, (_, field) => {
         args.push(field === 'sourceTable' ? 'usageHistory' : field === 'rowId' || name.startsWith('usage_') ? 1 : selected.id);
         return '?';
       });
@@ -219,7 +222,7 @@ describe.each(['node:sqlite', 'sql.js'])('economics visibility using %s', driver
     db.run("UPDATE _meta SET value='5' WHERE key='schemaVersion'");
     db.run("UPDATE _meta SET value='38' WHERE key='backupSchemaVersion'");
     const failing = { ...db, exec(sql) {
-      if (sql.trimStart().startsWith('INSERT OR REPLACE INTO usageEconomicsProjection')) throw new Error('fixture migration rebuild failure');
+      if (sql.trimStart().startsWith('INSERT INTO usageEconomicsProjection')) throw new Error('fixture migration rebuild failure');
       return db.exec(sql);
     } };
     await expect(runMigrationOnce(failing)).rejects.toThrow('fixture migration rebuild failure');

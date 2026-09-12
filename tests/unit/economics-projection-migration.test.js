@@ -58,7 +58,7 @@ describe('migration-governed economics projection', () => {
       db.run('UPDATE _meta SET value=? WHERE key=?', [value, key]);
     }
     const failing = { ...db, exec(sql) {
-      if (sql.trimStart().startsWith('INSERT OR REPLACE INTO usageEconomicsProjection')) throw new Error('cache presence rebuild failure');
+      if (sql.trimStart().startsWith('INSERT INTO usageEconomicsProjection')) throw new Error('cache presence rebuild failure');
       return db.exec(sql);
     } };
     await expect(runMigrationOnce(failing)).rejects.toThrow('cache presence rebuild failure');
@@ -276,7 +276,7 @@ describe('migration-governed economics projection', () => {
     db.run("UPDATE _meta SET value='0' WHERE key='economicsProjectionVersion'");
     const exec = db.exec.bind(db);
     const failing = { ...db, exec(sql) {
-      if (sql.trimStart().startsWith('INSERT OR REPLACE INTO usageEconomicsProjection')) throw new Error('fixture projection backfill failed');
+      if (sql.trimStart().startsWith('INSERT INTO usageEconomicsProjection')) throw new Error('fixture projection backfill failed');
       return exec(sql);
     } };
     await expect(runMigrationOnce(failing)).rejects.toThrow('fixture projection backfill failed');

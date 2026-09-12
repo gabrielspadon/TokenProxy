@@ -182,7 +182,11 @@ function projectionSelect(where = '') {
       AND ${telemetryFilterSql('requestStats', 'r')} ${where}`;
 }
 
-const replaceProjection = where => `INSERT OR REPLACE INTO ${TABLE}(${COLUMNS.join(',')}) ${projectionSelect(where)};`;
+// A trigger's OR REPLACE policy can be overridden by the source UPSERT.
+// An explicit conflict target updates the existing projection in that case.
+const upsertProjection = where => `INSERT INTO ${TABLE}(${COLUMNS.join(',')})
+  ${projectionSelect(where || 'WHERE true')} ON CONFLICT(id) DO UPDATE SET
+  ${COLUMNS.filter(name => name !== 'id').map(name => `${name}=excluded.${name}`).join(',')};`;
 
 // Refresh exact dependent identities through the existing request/source indexes.
 // Every source usage row remains projected, including excluded rows. Visibility
@@ -205,32 +209,32 @@ const quarantineReceipt = receiptIds => `WHERE u.id IN (
 
 const triggerDefinitions = () => ({
   usage_economics_after_insert: `CREATE TRIGGER usage_economics_after_insert AFTER INSERT ON usageHistory BEGIN
-    ${replaceProjection(`WHERE u.id IN (SELECT NEW.id UNION ${usageDependents('NEW')})`)} END`,
+    ${upsertProjection(`WHERE u.id IN (SELECT NEW.id UNION ${usageDependents('NEW')})`)} END`,
   usage_economics_after_update: `CREATE TRIGGER usage_economics_after_update AFTER UPDATE ON usageHistory BEGIN
     DELETE FROM ${TABLE} WHERE id=OLD.id AND OLD.id<>NEW.id;
-    ${replaceProjection(`WHERE u.id IN (SELECT NEW.id UNION ${usageDependents('NEW')} UNION ${usageDependents('OLD')})`)} END`,
+    ${upsertProjection(`WHERE u.id IN (SELECT NEW.id UNION ${usageDependents('NEW')} UNION ${usageDependents('OLD')})`)} END`,
   usage_economics_after_delete: `CREATE TRIGGER usage_economics_after_delete AFTER DELETE ON usageHistory BEGIN
     DELETE FROM ${TABLE} WHERE id=OLD.id;
-    ${replaceProjection(`WHERE u.id IN (${usageDependents('OLD')})`)} END`,
+    ${upsertProjection(`WHERE u.id IN (${usageDependents('OLD')})`)} END`,
   request_economics_after_insert: `CREATE TRIGGER request_economics_after_insert AFTER INSERT ON requestStats BEGIN
-    ${replaceProjection('WHERE u.requestId=NEW.id')} END`,
+    ${upsertProjection('WHERE u.requestId=NEW.id')} END`,
   request_economics_after_update: `CREATE TRIGGER request_economics_after_update AFTER UPDATE ON requestStats BEGIN
-    ${replaceProjection('WHERE u.requestId=NEW.id OR u.requestId=OLD.id')} END`,
+    ${upsertProjection('WHERE u.requestId=NEW.id OR u.requestId=OLD.id')} END`,
   request_economics_after_delete: `CREATE TRIGGER request_economics_after_delete AFTER DELETE ON requestStats BEGIN
-    ${replaceProjection('WHERE u.requestId=OLD.id')} END`,
+    ${upsertProjection('WHERE u.requestId=OLD.id')} END`,
   quarantine_row_economics_after_insert: `CREATE TRIGGER quarantine_row_economics_after_insert AFTER INSERT ON telemetryQuarantineRows BEGIN
-    ${replaceProjection(quarantineIdentity('NEW'))} END`,
+    ${upsertProjection(quarantineIdentity('NEW'))} END`,
   quarantine_row_economics_after_update: `CREATE TRIGGER quarantine_row_economics_after_update AFTER UPDATE ON telemetryQuarantineRows BEGIN
-    ${replaceProjection(quarantineIdentity('OLD'))}
-    ${replaceProjection(quarantineIdentity('NEW'))} END`,
+    ${upsertProjection(quarantineIdentity('OLD'))}
+    ${upsertProjection(quarantineIdentity('NEW'))} END`,
   quarantine_row_economics_after_delete: `CREATE TRIGGER quarantine_row_economics_after_delete AFTER DELETE ON telemetryQuarantineRows BEGIN
-    ${replaceProjection(quarantineIdentity('OLD'))} END`,
+    ${upsertProjection(quarantineIdentity('OLD'))} END`,
   quarantine_receipt_economics_after_insert: `CREATE TRIGGER quarantine_receipt_economics_after_insert AFTER INSERT ON telemetryQuarantineReceipts BEGIN
-    ${replaceProjection(quarantineReceipt('NEW.id'))} END`,
+    ${upsertProjection(quarantineReceipt('NEW.id'))} END`,
   quarantine_receipt_economics_after_update: `CREATE TRIGGER quarantine_receipt_economics_after_update AFTER UPDATE OF state,id ON telemetryQuarantineReceipts BEGIN
-    ${replaceProjection(quarantineReceipt('OLD.id,NEW.id'))} END`,
+    ${upsertProjection(quarantineReceipt('OLD.id,NEW.id'))} END`,
   quarantine_receipt_economics_after_delete: `CREATE TRIGGER quarantine_receipt_economics_after_delete AFTER DELETE ON telemetryQuarantineReceipts BEGIN
-    ${replaceProjection(quarantineReceipt('OLD.id'))} END`,
+    ${upsertProjection(quarantineReceipt('OLD.id'))} END`,
 });
 const canonicalSql = sql => sql.replace(/\s+/g, ' ').replace(/;\s*$/, '').trim();
 
@@ -266,7 +270,7 @@ export function ensureEconomicsProjection(db, { verifiedReady } = {}) {
     db.exec(`DROP TABLE ${TABLE}`);
     db.exec(`CREATE TABLE ${TABLE} (${COLUMNS.map(name => `${name} ${ECONOMICS_PROJECTION_TABLES[TABLE].columns[name]}`).join(',')})`);
   } else db.exec(`DELETE FROM ${TABLE}`);
-  db.exec(`${replaceProjection('')} `);
+  db.exec(`${upsertProjection('')} `);
   createTriggers(db);
   setMetaSync(db, ECONOMICS_PROJECTION_META_KEY, ECONOMICS_PROJECTION_VERSION);
   return true;
