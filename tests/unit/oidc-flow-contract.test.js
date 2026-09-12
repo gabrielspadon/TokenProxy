@@ -133,6 +133,7 @@ describe('fetchOidcDiscovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(fetchOidcDiscovery('http://localhost:8080')).rejects.toThrow();
     await expect(fetchOidcDiscovery('http://169.254.169.254')).rejects.toThrow();
+    await expect(fetchOidcDiscovery('http://93.184.216.34')).rejects.toThrow(/HTTPS/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -252,6 +253,14 @@ describe('exchangeOidcCode', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(exchangeOidcCode({ ...base, tokenEndpoint: 'http://127.0.0.1/token', clientSecret: 's' }))
       .rejects.toThrow(/Blocked/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects public cleartext token endpoints before delivering the client secret', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(exchangeOidcCode({ ...base, tokenEndpoint: 'http://93.184.216.34/token', clientSecret: 's' }))
+      .rejects.toThrow(/HTTPS/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -22,6 +22,13 @@ function safeProviderMessage(message, secret, fallback) {
   return text || fallback;
 }
 
+function assertOidcEndpoint(rawUrl) {
+  assertPublicUrl(rawUrl);
+  if (new URL(rawUrl).protocol !== "https:") {
+    throw new Error("OIDC endpoints must use HTTPS");
+  }
+}
+
 // OIDC Core 1.0 section 3.1.2.1 makes "openid" the value that marks an
 // authorization request as an OIDC one. Drop it and a compliant provider runs a
 // plain OAuth2 flow and issues no id_token, which the callback then rejects with
@@ -84,7 +91,7 @@ export async function getOidcRuntimeConfig() {
 
 export async function fetchOidcDiscovery(issuerUrl) {
   const trimmed = trimTrailingSlashes(issuerUrl);
-  assertPublicUrl(trimmed);
+  assertOidcEndpoint(trimmed);
   const discoveryUrl = `${trimmed}/.well-known/openid-configuration`;
   // Discovery is credential-free and may follow public redirects used by
   // enterprise IdP front doors. The dispatcher validates every resolved and
@@ -139,6 +146,7 @@ export async function exchangeOidcCode({
   redirectUri,
   codeVerifier,
 }) {
+  assertOidcEndpoint(tokenEndpoint);
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: clientId,
@@ -187,6 +195,7 @@ export async function probeOidcClientSecret({
       message: "No client secret was provided, so secret validation was skipped.",
     };
   }
+  assertOidcEndpoint(tokenEndpoint);
 
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -247,7 +256,7 @@ export async function verifyOidcIdToken({
   jwksUri,
   nonce,
 }) {
-  assertPublicUrl(jwksUri);
+  assertOidcEndpoint(jwksUri);
   // jose deliberately uses redirect:"manual" for remote JWKS. Its custom
   // fetch still needs our dispatcher so DNS rebinding cannot reach a private
   // address after the initial URL-string check.
