@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { startProviderStub } from "../contracts/provider-stub.mjs";
 import { runCapabilityMatrix } from "../contracts/run-capability-matrix.mjs";
 
-describe("offline capability provider", () => {
-  it("executes every valid primary cell and rejects malformed input before dispatch", async () => {
+describe("capability matrix runner", () => {
+  it("sends every primary fixture to its supplied endpoint and observes provider dispatch", async () => {
     const stub = await startProviderStub({ port: 20210 });
     try {
       const report = await runCapabilityMatrix({
-        baseUrl: stub.baseUrl,
-        controlUrl: stub.controlUrl,
-        requestHeaders: { authorization: "Bearer fixture-client-key" },
+        gatewayBaseUrl: stub.baseUrl,
+        providerControlUrl: stub.controlUrl,
+        authorization: "Bearer fixture-client-key",
         model: "fixture-model-override",
       });
       expect(report.primary).toEqual({ passed: 36, dispatched: 30, rejectedBeforeUpstream: 6 });
