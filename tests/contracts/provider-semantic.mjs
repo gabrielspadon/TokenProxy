@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const redact = (value) => digest(value);
-const sorted = (values) => [...values].sort();
 
 function canonicalJson(value) {
   if (typeof value !== "string") return value;
