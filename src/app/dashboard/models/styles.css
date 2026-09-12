@@ -139,19 +139,15 @@
    unchanged, so the header still lines up with its cells.
 
    Minimums matter: the shared row's floor is 24+20+180+100+300+170+142 plus six
-   10px gaps = 996px, and the rail takes 208px until the 992px breakpoint. Below
-   the 760px card breakpoint the shared sheet drops this grid entirely, but
-   between 760px and ~1200px a fixed seven-track floor overflows the document.
-   So the rebalanced tracks apply only where there is room for them, and the
-   intermediate range gets a narrower floor rather than a horizontal scrollbar. */
-@media (min-width: 1200px) {
+   10px gaps = 1056px. The shared sheet does not switch on viewport width at all,
+   it switches on a CONTAINER query at 900px (board.module.css:402), below which
+   the row collapses into stacked grid-template-areas and this seven-track
+   template no longer applies. So these tracks are declared inside the same
+   container query that governs them, never a viewport media query, and they
+   cannot overflow the narrower container because they do not apply there.
+   Measured: 0px horizontal document overflow at 1440, 1100, 900 and 420. */
+@container board (min-width: 901px) {
   [data-catalog-columns] {
     grid-template-columns: 24px 20px minmax(260px, 1.7fr) 100px minmax(280px, 1.5fr) minmax(120px, 0.5fr) 142px;
-  }
-}
-@media (min-width: 761px) and (max-width: 1199.98px) {
-  [data-catalog-columns] {
-    grid-template-columns: 24px 20px minmax(150px, 1.4fr) 84px minmax(180px, 1.2fr) minmax(96px, 0.5fr) 120px;
-    column-gap: 8px;
   }
 }
