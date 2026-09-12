@@ -45,13 +45,10 @@ describe("AUDIT-002: API key masking", () => {
     const maskedCount = (source.match(/apiKeyMasked/g) || []).length;
     expect(maskedCount).toBeGreaterThanOrEqual(4); // function def + 3 usage sites
 
-    // Both aggregate paths still route the raw key through the opaque-identity
-    // helper rather than keying on it directly. The daily-summary path builds
-    // its key inline from apiKeyVal (usageRepo.js aggregateEntryToDay) and the
-    // live path calls the helper with the row's key; assert each where it
-    // actually lives instead of pinning one spelling to both.
+    // Public aggregates use opaque identities. Private daily counters have a
+    // different shape; usage-api-key-identity.test.js checks all public periods.
     expect(source).toContain("getApiKeyAggregate(r.apiKey");
-    expect(source).toContain("const apiKeyVal = entry.apiKey && typeof entry.apiKey === \"string\"");
+    expect(source).toContain("stats.byApiKey[identity.aggregateKey]");
     expect(source).toContain("apiKeyMasked: identity.apiKeyMasked");
     expect(source).toContain("apiKeyKey: identity.apiKeyKey");
   });

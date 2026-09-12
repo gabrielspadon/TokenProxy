@@ -10,12 +10,8 @@ const src = readFileSync(new URL("../../custom-server.js", import.meta.url), "ut
 // an unhandled rejection in the log even though the request simply went away.
 describe("a client disconnect is not reported as a server error (#3564)", () => {
   it("catches the handler rejection instead of leaving it unhandled", () => {
-    // BEHAVIOUR, not call text. The handler is now invoked through the live
-    // safety scanner when one is installed, so pinning the bare
-    // `handler(req, res)` spelling asserted a refactor had not happened rather
-    // than that a disconnect is still swallowed. What must hold is that the
-    // handler's result is awaited, a disconnect returns quietly, and anything
-    // else is rethrown.
+    // Keep the structural rejection guard around both direct and safety-scanned
+    // handler calls. Runtime disconnect coverage lives in the gateway tests.
     const wrap = src.slice(src.indexOf("const safety = globalThis.__tokenproxyLiveSafety;"));
     const body = wrap.slice(0, wrap.indexOf("// Next creates one server"));
     expect(body).toContain("handler(req, res)");
