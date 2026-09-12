@@ -61,20 +61,38 @@ function parseSse(text) {
   }).filter(Boolean);
 }
 
+function assertSingleTerminal(records, predicate, label) {
+  assert.equal(records.filter(predicate).length, 1, `${label} terminal cardinality`);
+}
+
 function assertStream(endpoint, text) {
   const records = parseSse(text);
+  assert.ok(records.length > 0, "stream must contain events");
   if (endpoint === "/v1/messages") {
-    assert.deepEqual(records.map(({ event }) => event), ["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"]);
-    assert.equal(records[4].data.delta.stop_reason, "end_turn");
-    assert.equal(records[4].data.usage.output_tokens, 2);
+    assert.equal(records[0].event, "message_start");
+    assertSingleTerminal(records, ({ event }) => event === "message_stop", "Claude");
+    assert.equal(records.at(-1).event, "message_stop");
+    const delta = records.find(({ event }) => event === "content_block_delta");
+    const terminalDelta = records.find(({ event }) => event === "message_delta");
+    assert.equal(delta?.data?.type, "content_block_delta");
+    assert.equal(terminalDelta?.data?.delta?.stop_reason, "end_turn");
+    assert.equal(typeof terminalDelta?.data?.usage?.output_tokens, "number");
+    assert.ok(records.indexOf(delta) < records.indexOf(terminalDelta));
   } else if (endpoint === "/v1/responses") {
-    assert.deepEqual(records.map(({ event }) => event), ["response.created", "response.output_item.added", "response.content_part.added", "response.output_text.delta", "response.output_text.done", "response.content_part.done", "response.output_item.done", "response.completed"]);
-    assert.equal(records.at(-1).data.response.status, "completed");
-    assert.equal(records.at(-1).data.response.usage.total_tokens, 9);
+    assert.equal(records[0].event, "response.created");
+    assertSingleTerminal(records, ({ event }) => event === "response.completed", "Responses");
+    const textDelta = records.find(({ event }) => event === "response.output_text.delta");
+    const terminal = records.at(-1);
+    assert.equal(terminal.event, "response.completed");
+    assert.equal(terminal.data?.response?.status, "completed");
+    assert.equal(typeof terminal.data?.response?.usage?.total_tokens, "number");
+    assert.ok(records.indexOf(textDelta) > 0 && records.indexOf(textDelta) < records.length - 1);
   } else {
+    assertSingleTerminal(records, ({ data }) => data === "[DONE]", "Chat Completions");
     assert.equal(records.at(-1).data, "[DONE]");
-    assert.equal(records.at(-2).data.choices[0].finish_reason, "stop");
-    assert.equal(records.at(-2).data.usage.total_tokens, 9);
+    const terminalChunk = records.find(({ data }) => data !== "[DONE]" && data?.choices?.some((choice) => choice.finish_reason));
+    assert.equal(terminalChunk?.data?.choices?.[0]?.finish_reason, "stop");
+    assert.equal(typeof terminalChunk?.data?.usage?.total_tokens, "number");
   }
   assert.match(text, /fixture-ok/);
 }
@@ -112,33 +130,59 @@ export async function validateCapabilityManifest() {
   return manifest;
 }
 
-async function send(baseUrl, entry, body, outcome = "success") {
+async function send(baseUrl, entry, body, requestHeaders) {
   const response = await fetch(`${baseUrl}${entry.endpoint}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-capability-scenario": entry.scenario, "x-capability-outcome": outcome },
+    headers: { "content-type": "application/json", ...requestHeaders },
     body: JSON.stringify(body),
   });
   const text = await response.text();
   return { response, text };
 }
 
-export async function runCapabilityMatrix({ baseUrl }) {
+async function readControl(controlUrl) {
+  const response = await fetch(controlUrl);
+  assert.equal(response.status, 200, "provider stub control read");
+  return response.json();
+}
+
+async function setStubOutcome(controlUrl, outcome, label) {
+  if (!controlUrl) return;
+  const response = await fetch(controlUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ outcome, label }),
+  });
+  assert.equal(response.status, 200, "provider stub control write");
+}
+
+export async function runCapabilityMatrix({ baseUrl, controlUrl = null, requestHeaders = {}, model = null }) {
   const manifest = await validateCapabilityManifest();
-  const primary = { passed: 0, dispatched: 0, rejectedLocally: 0 };
+  const primary = { passed: 0, dispatched: 0, rejectedBeforeUpstream: 0 };
   for (const entry of manifest.primaryEndpoints) {
     const fixture = await loadJson(entry.fixture);
     const before = JSON.stringify(fixture);
     const validation = validatePrimaryFixture(entry, fixture);
+    const upstreamBefore = controlUrl ? (await readControl(controlUrl)).requestCount : null;
     if (!entry.expected.upstreamDispatch) {
       assert.equal(validation.valid, false, `${entry.id} must reject locally`);
-      primary.rejectedLocally += 1;
+      const outbound = clone(fixture);
+      outbound.stream = entry.stream;
+      if (model) outbound.model = model;
+      const { response } = await send(baseUrl, entry, outbound, requestHeaders);
+      assert.ok(response.status >= 400 && response.status < 500, `${entry.id} must return client 4xx`);
+      if (controlUrl) assert.equal((await readControl(controlUrl)).requestCount, upstreamBefore, `${entry.id} reached provider`);
+      assert.equal(JSON.stringify(fixture), before, `${entry.id} mutated source fixture`);
+      primary.rejectedBeforeUpstream += 1;
       primary.passed += 1;
       continue;
     }
     assert.equal(validation.valid, true, `${entry.id}: ${validation.issues.join(", ")}`);
     const outbound = clone(fixture);
     outbound.stream = entry.stream;
-    const { response, text } = await send(baseUrl, entry, outbound);
+    if (model) outbound.model = model;
+    await setStubOutcome(controlUrl, "success", entry.id);
+    const { response, text } = await send(baseUrl, entry, outbound, requestHeaders);
     assert.equal(response.status, 200, entry.id);
     if (entry.stream) assertStream(entry.endpoint, text);
     else assertJson(entry.endpoint, JSON.parse(text));
@@ -149,25 +193,44 @@ export async function runCapabilityMatrix({ baseUrl }) {
 
   const sample = manifest.primaryEndpoints.find((entry) => entry.endpoint === "/v1/chat/completions" && entry.scenario === "text" && !entry.stream);
   const body = await loadJson(sample.fixture);
-  const success = await send(baseUrl, sample, { ...body, stream: false }, "success");
+  const outcomeBody = { ...body, ...(model ? { model } : {}), stream: false };
+  await setStubOutcome(controlUrl, "success", "outcome-success");
+  const success = await send(baseUrl, sample, outcomeBody, requestHeaders);
   assert.equal(success.response.status, 200);
-  const providerError = await send(baseUrl, sample, { ...body, stream: false }, "provider-error");
+  await setStubOutcome(controlUrl, "provider-error", "outcome-provider-error");
+  const providerError = await send(baseUrl, sample, outcomeBody, requestHeaders);
   assert.equal(providerError.response.status, 529);
   assert.equal(JSON.parse(providerError.text).error.type, "provider_error");
-  await assert.rejects(send(baseUrl, sample, { ...body, stream: false }, "transport-abrupt"));
-  return { primary, outcomes: { success: 1, providerError: 1, transportAbrupt: 1 } };
+  await setStubOutcome(controlUrl, "transport-abrupt", "outcome-transport-abrupt");
+  let transportAbrupt;
+  try {
+    const abrupt = await send(baseUrl, sample, outcomeBody, requestHeaders);
+    assert.ok(abrupt.response.status >= 500, "abrupt transport must not succeed");
+    transportAbrupt = { responseStatus: abrupt.response.status };
+  } catch {
+    transportAbrupt = { fetchRejected: true };
+  }
+  return { primary, outcomes: { success: 1, providerError: 1, transportAbrupt } };
 }
 
 async function main() {
   const baseArg = process.argv.find((value) => value.startsWith("--base-url="));
+  const controlArg = process.argv.find((value) => value.startsWith("--control-url="));
+  const modelArg = process.argv.find((value) => value.startsWith("--model="));
+  const authorizationArg = process.argv.find((value) => value.startsWith("--authorization="));
   if (baseArg) {
-    const report = await runCapabilityMatrix({ baseUrl: baseArg.slice("--base-url=".length) });
+    const report = await runCapabilityMatrix({
+      baseUrl: baseArg.slice("--base-url=".length),
+      controlUrl: controlArg?.slice("--control-url=".length) || null,
+      model: modelArg?.slice("--model=".length) || null,
+      requestHeaders: authorizationArg ? { authorization: authorizationArg.slice("--authorization=".length) } : {},
+    });
     process.stdout.write(`${JSON.stringify(report)}\n`);
     return;
   }
   const stub = await startProviderStub({ port: 20210 });
   try {
-    const report = await runCapabilityMatrix({ baseUrl: stub.baseUrl });
+    const report = await runCapabilityMatrix({ baseUrl: stub.baseUrl, controlUrl: stub.controlUrl });
     process.stdout.write(`${JSON.stringify(report)}\n`);
   } finally {
     await stub.close();

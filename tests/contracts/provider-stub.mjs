@@ -6,6 +6,7 @@ const ALLOWED_PORTS = new Set(Array.from({ length: 10 }, (_, index) => 20210 + i
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const ENDPOINTS = new Set(["/v1/chat/completions", "/v1/messages", "/v1/responses"]);
 const OUTCOMES = new Set(["success", "provider-error", "transport-abrupt"]);
+const CONTROL_PATH = "/__tokenproxy_fixture/control";
 
 function readJson(request, maxBytes) {
   return new Promise((resolve, reject) => {
@@ -34,6 +35,14 @@ function readJson(request, maxBytes) {
 function writeJson(response, status, value) {
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(value));
+}
+
+function isMalformedClientRequest(pathname, body) {
+  if (pathname === "/v1/responses") {
+    if (!Array.isArray(body?.input)) return true;
+    return body.input.some((item) => item?.type === "function_call" && (!item.name || !item.call_id));
+  }
+  return !Array.isArray(body?.messages);
 }
 
 function sse(response, events) {
@@ -95,18 +104,52 @@ function completion(pathname) {
 export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxRequestBytes = MAX_REQUEST_BYTES } = {}) {
   if (!ALLOWED_PORTS.has(port)) throw new Error(`provider stub port must be in 20210-20219, got ${port}`);
   const requests = [];
+  let next = { outcome: "success", label: "unspecified" };
   const server = http.createServer(async (request, response) => {
     const pathname = new URL(request.url, `http://${host}`).pathname;
+    if (pathname === CONTROL_PATH) {
+      if (request.method === "GET") {
+        writeJson(response, 200, { requestCount: requests.length, next });
+        return;
+      }
+      if (request.method === "POST") {
+        try {
+          const command = await readJson(request, 4096);
+          if (!OUTCOMES.has(command?.outcome)) {
+            writeJson(response, 400, { error: { type: "invalid_control" } });
+            return;
+          }
+          next = {
+            outcome: command.outcome,
+            label: typeof command.label === "string" ? command.label.slice(0, 80) : "unspecified",
+          };
+          writeJson(response, 200, { accepted: true });
+        } catch (error) {
+          writeJson(response, error?.status || 400, { error: { type: "invalid_control" } });
+        }
+        return;
+      }
+    }
     if (request.method !== "POST" || !ENDPOINTS.has(pathname)) {
       writeJson(response, 404, { error: { type: "not_found" } });
       return;
     }
     try {
       const body = await readJson(request, maxRequestBytes);
-      const outcomeHeader = String(request.headers["x-capability-outcome"] || "success");
-      const outcome = OUTCOMES.has(outcomeHeader) ? outcomeHeader : "success";
-      const scenario = String(request.headers["x-capability-scenario"] || "unspecified").slice(0, 32);
-      requests.push({ pathname, scenario, stream: body?.stream === true, outcome, bytes: Number(request.headers["content-length"] || 0) });
+      if (isMalformedClientRequest(pathname, body)) {
+        writeJson(response, 400, { error: { type: "invalid_request" } });
+        return;
+      }
+      const { outcome, label } = next;
+      next = { outcome: "success", label: "unspecified" };
+      requests.push({
+        pathname,
+        label,
+        model: typeof body?.model === "string" ? body.model : null,
+        stream: body?.stream === true,
+        outcome,
+        bytes: Number(request.headers["content-length"] || 0),
+      });
       if (outcome === "transport-abrupt") {
         response.socket?.destroy();
         return;
@@ -127,6 +170,7 @@ export async function startProviderStub({ host = "127.0.0.1", port = 20210, maxR
   });
   return {
     baseUrl: `http://${host}:${port}`,
+    controlUrl: `http://${host}:${port}${CONTROL_PATH}`,
     requests,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
