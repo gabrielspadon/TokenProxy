@@ -1,4 +1,5 @@
 'use client';
+import { useOAuthCodeInput } from '@/shared/components/OAuthCodeInput';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -570,6 +571,7 @@ function ConnectionRow(props) {
 // workspace field, which the inline Add account row deliberately does not
 // carry. It saves from this form; there is no review dialog.
 function AddConnectionForm({ entries, onSaved }) {
+  const { requestCode, codeInput } = useOAuthCodeInput();
   const [form, setForm] = useState({
     providerId: '',
     mode: '',
@@ -668,6 +670,7 @@ function AddConnectionForm({ entries, onSaved }) {
         const controller = new AbortController();
         abortRef.current = controller;
         out = await runGrant(form.providerId, kind, {
+          requestCode,
           deviceOptions: form,
           meta: { baseUrl: form.baseUrl, clientId: form.clientId, clientSecret: form.clientSecret },
           signal: controller.signal,
@@ -924,6 +927,7 @@ function AddConnectionForm({ entries, onSaved }) {
             </Text>
           ) : null}
         </fieldset>
+        {codeInput}
         <div className={styles.formActions}>
           <Button size="xs" variant="default" onClick={resetDraft} disabled={busy}>
             Reset draft

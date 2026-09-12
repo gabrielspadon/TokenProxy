@@ -127,7 +127,7 @@ function waitForCallback(expectedState, signal) {
 // reauth: {reauthConnectionId, forceReauth} carried into exchange for rebinds.
 // onFallback({provider, state}) fires once a fixed-port sign-in is live, so the
 // caller can offer the paste-back fallback WHILE the grant runs.
-export async function runGrant(provider, flowType, { report, signal, reauth, deviceHook, onFallback, deviceOptions = {}, meta = {} } = {}) {
+export async function runGrant(provider, flowType, { report, signal, reauth, deviceHook, onFallback, requestCode, deviceOptions = {}, meta = {} } = {}) {
   if (reauth?.reauthConnectionId && requiresCredentialDocument(provider)) return { ok: false, status: 409, body: { error: 'Use a credential document to replace this account. The local callback flow creates a new account.' } };
   const say = report || (() => {});
   const origin = window.location.origin;
@@ -237,8 +237,9 @@ export async function runGrant(provider, flowType, { report, signal, reauth, dev
   // Plain browser redirect through /callback (authorization_code[_pkce]).
   const shown = showAuthUrl(win, a.authUrl);
   if (shown !== "shown") return stop({ ok: false, status: 0, body: { error: shown === "closed" ? POPUP_CLOSED : POPUP_BLOCKED } });
-  say("Finish the sign-in in the window that opened.");
-  const data = await waitForCallback(a.state, signal);
+  say(a.manualCode ? "Finish signing in to Claude, then paste the displayed code below." : "Finish the sign-in in the window that opened.");
+  if (a.manualCode && !requestCode) return stop({ ok: false, status: 0, body: { error: 'This sign-in requires a code entry field. Reload the dashboard and try again.' } });
+  const data = a.manualCode ? await requestCode({ state: a.state, signal }) : await waitForCallback(a.state, signal);
   if (!data) return stop({ ok: false, status: 0, body: { error: "Cancelled." } });
   if (data.error) return stop({ ok: false, status: 0, body: { error: data.error } });
   const ex = await call(`/api/oauth/${provider}/exchange`, {
