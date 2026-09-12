@@ -324,7 +324,7 @@ export const capacityShiftMonth = (ms, months) => {
 export const capacityCalendarLevel = (value, max) =>
   !Number.isFinite(value) || value <= 0 || !(max > 0) ? 0 : Math.min(4, Math.ceil((value / max) * 4));
 
-export function capacityCalendarMonth(points, monthMs) {
+export function capacityCalendarMonth(points, monthMs, window = null) {
   const byDay = capacityCalendarDays(points);
   const monthStartMs = capacityMonthStart(monthMs);
   const monthEndMs = capacityShiftMonth(monthStartMs, 1);
@@ -335,7 +335,15 @@ export function capacityCalendarMonth(points, monthMs) {
   const days = Array.from({ length: dayCount }, (_, index) => {
     const dayMs = monthStartMs + index * DAY;
     const key = day(dayMs);
-    return { dayMs, day: key, date: index + 1, entry: byDay.get(key) || null };
+    // Outside the asked period the query never looked, so the day is unasked
+    // rather than unreported. Saying "not reported" there would claim evidence
+    // of absence the request never sought.
+    const outside = Boolean(
+      window &&
+        ((Number.isFinite(window.startMs) && dayMs + DAY <= window.startMs) ||
+          (Number.isFinite(window.endMs) && dayMs >= window.endMs))
+    );
+    return { dayMs, day: key, date: index + 1, outside, entry: outside ? null : byDay.get(key) || null };
   });
   const maxima = Object.fromEntries(
     CALENDAR_METRICS.map((item) => [
@@ -360,6 +368,7 @@ export function capacityCalendarMonth(points, monthMs) {
     days,
     maxima,
     recordedDays: days.filter((cell) => cell.entry).length,
+    askedDays: days.filter((cell) => !cell.outside).length,
   };
 }
 
@@ -369,6 +378,7 @@ export function capacityCalendarMonth(points, monthMs) {
 // when no bucket carried the field.
 export function capacityCalendarReading(cell) {
   const values = CALENDAR_METRICS.map((item) => {
+    if (cell?.outside) return { ...item, reported: false, text: 'outside the selected period' };
     const metric = cell?.entry?.metrics[item.value];
     if (!metric || !metric.measured) return { ...item, reported: false, text: 'not reported' };
     const partial = metric.measured < cell.entry.buckets;
@@ -384,7 +394,7 @@ export function capacityCalendarReading(cell) {
     date,
     values,
     label: cell
-      ? `${date}. ${cell.entry ? '' : 'No recorded attempts. '}${values.map((item) => `${item.label} ${item.text}`).join('. ')}.`
+      ? `${date}. ${cell.outside ? 'Outside the selected period. ' : cell.entry ? '' : 'No recorded attempts. '}${values.map((item) => `${item.label} ${item.text}`).join('. ')}.`
       : null,
   };
 }
@@ -401,6 +411,7 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
     (focused && inMonth(focused) && focused) ||
     (selectedDay && inMonth(selectedDay) && selectedDay) ||
     month.days.find((cell) => cell.entry)?.day ||
+    month.days.find((cell) => !cell.outside)?.day ||
     month.days[0].day;
   useEffect(() => {
     if (!moved.current) return;
@@ -497,7 +508,7 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
                             <b
                               key={item.value}
                               style={{ '--quadrant': `var(${item.token})` }}
-                              data-absent={reported ? undefined : 'true'}
+                              data-absent={reported ? undefined : cell.outside ? 'unasked' : 'true'}
                               data-level={
                                 reported
                                   ? capacityCalendarLevel(metric.total, month.maxima[item.value])
@@ -532,8 +543,9 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
           <>
             <b>{month.label}</b>
             <span>
-              {number(month.recordedDays)} of {number(month.days.length)} days carry recorded
-              attempts. Hover or focus a day for its four totals.
+              {month.askedDays
+                ? `${number(month.recordedDays)} of ${number(month.askedDays)} days in the selected period carry recorded attempts. Hover or focus a day for its four totals.`
+                : 'No day of this month is inside the selected period. Widen the period to read it.'}
             </span>
           </>
         )}
@@ -552,7 +564,7 @@ export function capacityRefreshStatus(observations, snapshot) {
   if (observations.mode === 'paused')
     return `Updates paused${observations.pausedAt ? ` at ${utc(observations.pausedAt)} UTC` : ''}. This panel is not refreshing, so later activity is not shown here.`;
   if (observations.mode === 'summary')
-    return 'Summary updates. This panel read once when opened and does not refresh on its own.';
+    return 'Manual updates. This panel read once when opened and does not refresh on its own.';
   if (observations.historical)
     return 'Fixed UTC range. Live updates apply to current evidence only, so this panel does not refresh.';
   return null;
@@ -606,7 +618,12 @@ export function CapacityActivity() {
     ? Date.parse(scopeEnd) - 1
     : (points.at(-1)?.bucketStartMs ?? (receivedAt ? Date.parse(receivedAt) : mountedAt));
   const shownMonthMs = monthMs ?? capacityMonthStart(latest);
-  const month = capacityCalendarMonth(points, shownMonthMs);
+  // What the current request actually covered, so an unasked day says so.
+  const observed = {
+    startMs: scopeStart ? Date.parse(scopeStart) : null,
+    endMs: scopeEnd ? Date.parse(scopeEnd) : null,
+  };
+  const month = capacityCalendarMonth(points, shownMonthMs, observed);
   // Only the future is out of bounds. A floor at the earliest retained bucket
   // was tried and locked the operator out of every earlier month the moment a
   // selection narrowed the series to one day.
