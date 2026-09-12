@@ -13,6 +13,7 @@
  * which the real-IO guard permits.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import http from 'node:http';
 
 vi.mock('@/lib/oauth/providers', () => ({ exchangeTokens: vi.fn() }));
 vi.mock('@/models', () => ({ createProviderConnection: vi.fn() }));
@@ -63,6 +64,19 @@ import {
 async function get(port, path, headers = {}) {
   const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers });
   return { status: res.status, body: await res.text() };
+}
+
+async function withListenFailure(invoke) {
+  const error = Object.assign(new Error('synthetic listen permission denial'), { code: 'EACCES' });
+  const listen = vi.spyOn(http.Server.prototype, 'listen').mockImplementationOnce(function failListen() {
+    queueMicrotask(() => this.emit('error', error));
+    return this;
+  });
+  try {
+    return await invoke();
+  } finally {
+    listen.mockRestore();
+  }
 }
 
 beforeEach(() => {
@@ -391,8 +405,8 @@ afterEach(() => {
 });
 
 describe('startLocalServer listen errors', () => {
-  it('rejects with the raw error for a non-EADDRINUSE failure (privileged port)', async () => {
-    await expect(startLocalServer(() => {}, 80)).rejects.toThrow(/EACCES|EPERM/);
+  it('rejects with the raw error for a synthetic non-EADDRINUSE listen failure', async () => {
+    await expect(withListenFailure(() => startLocalServer(() => {}, 20160))).rejects.toMatchObject({ code: 'EACCES' });
   });
 });
 
@@ -604,8 +618,8 @@ describe('Zed proxy edges', () => {
     });
   });
 
-  it('fails outright on a non-EADDRINUSE listen error (privileged port)', async () => {
-    const res = await startZedProxy(80);
+  it('fails outright on a synthetic non-EADDRINUSE listen error', async () => {
+    const res = await withListenFailure(() => startZedProxy(20161));
     expect(res.success).toBe(false);
     expect(res.reason).toMatch(/EACCES|EPERM|listen/);
   });

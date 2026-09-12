@@ -16,7 +16,7 @@ const certInstallPath = fileURLToPath(new URL('../../src/mitm/cert/install.js', 
 // never through a real sudo/exec/spawn. A guaranteed-dead pid (0x7fffffff, above
 // any real pid_max) stands in for "process is gone" the same way
 // mitm-stale-handle-1462.test.js does.
-function run(body, { dns = {}, cert = {}, files = {}, settingsSeed = {}, platform = 'linux' } = {}) {
+function run(body, { dns = {}, cert = {}, files = {}, settingsSeed = {}, platform = 'linux', uid = 1000 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'tokenproxy-mitm-lifecycle-'));
   try {
     const script = `
@@ -25,6 +25,7 @@ function run(body, { dns = {}, cert = {}, files = {}, settingsSeed = {}, platfor
     const root = ${JSON.stringify(root)};
     process.env.DATA_DIR = root;
     Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });
+    Object.defineProperty(process, "getuid", { value: () => ${Number(uid)} });
     const cp = require("node:child_process");
     for (const method of ["exec", "execSync", "spawn"]) {
       cp[method] = () => { throw new Error("Unexpected child_process." + method); };

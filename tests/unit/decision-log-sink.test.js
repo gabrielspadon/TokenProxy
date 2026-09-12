@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -75,31 +76,40 @@ describe('sink failure and recovery (D-9, SEC-5b)', () => {
     await __decide.flush();
     expect(fs.statSync(path.join(logDir, 'decisions.ndjson')).mode & 0o777).toBe(0o600);
 
-    // Kill the sink: with the file gone, a read-only directory blocks the
-    // create. (Appending to an existing file would need no dir write.)
+    // Kill the sink and inject the same EACCES that an unwritable filesystem
+    // returns. This stays deterministic for rootless and user-namespace CI.
     fs.rmSync(path.join(logDir, 'decisions.ndjson'));
-    fs.chmodSync(logDir, 0o500);
-    decide('UP', 'failover', { conn: 'c1', why: 'x' }, T0 + 1000);
-    await __decide.flush();
-    expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(1);
-    decide('UP', 'failover', { conn: 'c2', why: 'x' }, T0 + 2000);
-    await __decide.flush();
-    expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(1); // dead, no re-probe
+    const realAppendFile = fsPromises.appendFile.bind(fsPromises);
+    let denyAppend = true;
+    const appendFile = vi.spyOn(fsPromises, 'appendFile').mockImplementation((...args) => {
+      if (denyAppend) return Promise.reject(Object.assign(new Error('synthetic append denied'), { code: 'EACCES' }));
+      return realAppendFile(...args);
+    });
+    try {
+      decide('UP', 'failover', { conn: 'c1', why: 'x' }, T0 + 1000);
+      await __decide.flush();
+      expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(1);
+      decide('UP', 'failover', { conn: 'c2', why: 'x' }, T0 + 2000);
+      await __decide.flush();
+      expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(1); // dead, no re-probe
 
-    // Past the retry interval the probe runs again and fails again.
-    decide('UP', 'failover', { conn: 'c3', why: 'x' }, T0 + FIVE_MIN + 1000);
-    await __decide.flush();
-    expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(2);
+      // Past the retry interval the probe runs again and fails again.
+      decide('UP', 'failover', { conn: 'c3', why: 'x' }, T0 + FIVE_MIN + 1000);
+      await __decide.flush();
+      expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(2);
 
-    // Recovery: the re-probe append succeeds and says so.
-    fs.chmodSync(logDir, 0o700);
-    decide('UP', 'failover', { conn: 'c4', why: 'x' }, T0 + 2 * FIVE_MIN + 1000);
-    await __decide.flush();
-    expect(lines.some((l) => l.includes('LOG.resumed why=sink-recovered'))).toBe(true);
-    expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(2); // no new failure
-    const file = path.join(logDir, 'decisions.ndjson');
-    expect(fs.existsSync(file)).toBe(true);
-    expect(fs.readFileSync(file, 'utf8')).toContain('"conn":"c4"');
+      // Recovery: the re-probe append succeeds and says so.
+      denyAppend = false;
+      decide('UP', 'failover', { conn: 'c4', why: 'x' }, T0 + 2 * FIVE_MIN + 1000);
+      await __decide.flush();
+      expect(lines.some((l) => l.includes('LOG.resumed why=sink-recovered'))).toBe(true);
+      expect(lines.filter((l) => l.includes('LOG.sink-failed'))).toHaveLength(2); // no new failure
+      const file = path.join(logDir, 'decisions.ndjson');
+      expect(fs.existsSync(file)).toBe(true);
+      expect(fs.readFileSync(file, 'utf8')).toContain('"conn":"c4"');
+    } finally {
+      appendFile.mockRestore();
+    }
   });
 });
 

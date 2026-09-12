@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -41,13 +41,21 @@ describe("sqljs atomic persist", () => {
     adapter.close();
     const oldBytes = fs.readFileSync(dbPath);
 
-    // ponytail: simulate the ENOSPC/EIO failure by a read-only directory;
-    // the real failure modes hit the same open/write/fsync path.
+    // Inject the same EACCES as an unwritable filesystem. Permission bits do
+    // not deny writes to uid 0 inside a user namespace, so chmod is not a
+    // portable failure mechanism for this integration test.
     const next = await createSqlJsAdapter(dbPath);
     next.run("INSERT INTO t (v) VALUES (?)", ["new"]);
-    fs.chmodSync(tempDir, 0o555);
-    expect(() => next.close()).toThrow(/EACCES/); // persist surfaces the failure, db stays in memory
-    fs.chmodSync(tempDir, 0o755);
+    const realOpenSync = fs.openSync.bind(fs);
+    const openSync = vi.spyOn(fs, "openSync").mockImplementation((file, ...args) => {
+      if (file === dbPath + ".tmp") throw Object.assign(new Error("synthetic persist EACCES"), { code: "EACCES" });
+      return realOpenSync(file, ...args);
+    });
+    try {
+      expect(() => next.close()).toThrow(/EACCES/); // persist surfaces the failure, db stays in memory
+    } finally {
+      openSync.mockRestore();
+    }
 
     expect(fs.readFileSync(dbPath).equals(oldBytes)).toBe(true);
   });

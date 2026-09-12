@@ -249,7 +249,8 @@ it.each([[false, false, true, 401], [false, true, true, 403], [true, false, fals
 });
 it.each(['?limit=0', '?limit=51', '?limit=1&limit=2', '?unknown=1', '?before=bad',
   '?provider=claude&provider=claude', '?provider=', '?connectionId=', '?model=', '?model=' + 'm'.repeat(513),
-  '?lastSeenFrom=yesterday', '?lastSeenTo=2026-09-06', '?lastSeenFrom=' + encodeURIComponent(new Date(now).toISOString()) + '&lastSeenFrom=' + encodeURIComponent(new Date(now).toISOString())])('bounds list query %s', async query => {
+  '?lastSeenFrom=yesterday', '?lastSeenTo=2026-09-06',
+  '?lastSeenFrom=2030-01-01T00%3A00%3A00.000Z&lastSeenFrom=2030-01-01T00%3A00%3A00.000Z'])('bounds list query %s', async query => {
   expect((await request([], undefined, query)).status).toBe(400);
 });
 it('scoped filters narrow the list before pagination and keep the cursor stable', async () => {

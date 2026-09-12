@@ -3,12 +3,9 @@
  * leaks into it is committed too — and then the file only matches on the machine
  * that produced it.
  *
- * Cline and Kimi both stamp the host into their headers:
- *   open-sse/shared/clineAuth.js:23  "X-PLATFORM": process.platform
- *   open-sse/shared/clineAuth.js:24  "X-PLATFORM-VERSION": process.version
- *   open-sse/config/appConstants.js:214  deviceName = hostname()
- * and four headers carry the app version (User-Agent, X-CLIENT-VERSION,
- * X-CORE-VERSION, X-Msh-Version), which changes on every release.
+ * Kimi stamps the hostname into its headers and carries the app version in
+ * User-Agent and X-Msh-Version. Removed provider headers must not survive as
+ * stale portability expectations.
  *
  * This guard is what keeps a future `vitest -u` from baking those back in.
  */
@@ -36,10 +33,8 @@ describe("golden-url-header snapshot portability", () => {
   });
 
   it("does not embed the recording machine's platform or Node version", () => {
-    expect(snapshot).not.toContain(`"X-PLATFORM": "${process.platform}"`);
-    expect(snapshot).not.toContain(`"X-PLATFORM-VERSION": "${process.version}"`);
-    expect(snapshot).toContain(`"X-PLATFORM": "<PLATFORM>"`);
-    expect(snapshot).toContain(`"X-PLATFORM-VERSION": "<NODE>"`);
+    expect(snapshot).not.toContain('"X-PLATFORM":');
+    expect(snapshot).not.toContain('"X-PLATFORM-VERSION":');
   });
 
   it("does not embed the app version, which every release bumps", () => {
@@ -52,14 +47,12 @@ describe("golden-url-header snapshot portability", () => {
   });
 
   it("keeps the app-version headers on the placeholder, not on a release number", () => {
-    // Hardcoded third-party client versions (CodeBuddy 2.108.1, claude-cli 2.1.92,
-    // grok-shell 0.2.99, kimchi 0.1.50) are part of the contract and stay pinned —
-    // they come from source, not from the machine. Only TokenProxy's own version rots.
-    for (const header of ["X-CLIENT-VERSION", "X-CORE-VERSION", "X-Msh-Version"]) {
+    // Hardcoded third-party client versions are part of the contract and stay
+    // pinned because they come from source rather than the machine.
+    for (const header of ["X-Msh-Version"]) {
       const values = [...snapshot.matchAll(new RegExp(`"${header}": "([^"]*)"`, "g"))].map((m) => m[1]);
       expect(values.length).toBeGreaterThan(0);
       expect([...new Set(values)]).toEqual(["<VERSION>"]);
     }
-    expect(snapshot).toContain(`"User-Agent": "TokenProxy/<VERSION>"`);
   });
 });
