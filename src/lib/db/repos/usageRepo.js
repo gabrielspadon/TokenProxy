@@ -524,6 +524,8 @@ export async function saveRequestUsage(entry) {
       entry.tokens = canonicalizeUsage(entry.tokens) || entry.tokens;
       entry.tokens.input_tokens_present = presence.input;
       entry.tokens.output_tokens_present = presence.output;
+      entry.tokens.cache_read_tokens_present = presence.cacheRead;
+      entry.tokens.cache_write_tokens_present = presence.cacheWrite;
     }
     const context = entry.contextTelemetry;
     const requestId = context?.requestId || entry.requestId || null;
@@ -641,6 +643,7 @@ export async function reconcileBudgetUsage(apiKeyId, requestId, evidence) {
   const presence = usageQuantityPresence(evidence.tokens);
   const tokens = canonicalizeUsage(evidence.tokens) || {};
   tokens.input_tokens_present = presence.input; tokens.output_tokens_present = presence.output;
+  tokens.cache_read_tokens_present = presence.cacheRead; tokens.cache_write_tokens_present = presence.cacheWrite;
   const costs = priceUsage(evidence.tokens, snapshot, presence.input && presence.output);
   if (!presence.input && !presence.output && costs.reportedCostUsd === null) throw new TypeError("Receipt contains no measured quantity");
   const descriptor = { source: "operator-supplied-provider-usage", reference: evidence.reference.trim(), currency: costs.reportedCostUsd !== null ? "USD" : null };

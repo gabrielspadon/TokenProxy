@@ -130,7 +130,12 @@ function filterFor(query, columns) {
 const validNumber = (field) => `(typeof(${field}) IN ('integer','real') AND ${field}>=0 AND ${field}<=1.7976931348623157e308)`;
 const validToken = (field) => `(${validNumber(field)} AND ${field}<=9007199254740991)`;
 const quantity = (field) => `CASE WHEN ${validToken(field)} THEN ${field} END`;
-const jsonQuantity = (field) => quantity(`json_extract(safeTokens,'$.${field}')`);
+// A recorded false presence flag means the provider never reported the field,
+// so the stored 0 is a synthesized default rather than an observation. Older
+// rows carry no flag at all and keep whatever they recorded, honestly.
+const jsonQuantity = (field, presence) => presence
+  ? `CASE WHEN json_extract(safeTokens,'$.${presence}')=0 THEN NULL ELSE ${quantity(`json_extract(safeTokens,'$.${field}')`)} END`
+  : quantity(`json_extract(safeTokens,'$.${field}')`);
 
 const ATTRIBUTION = ['dispatchCoverage','requestId','logicalRequestId','attempt','projectId','rateSnapshotId','pricingCapturedAt','costSource','costEvidence','usageSource','estimatedCostUsd','reportedCostUsd'];
 function baseQuery(db, query) {
@@ -150,14 +155,15 @@ function baseQuery(db, query) {
       SELECT id,timestamp,provider,model,connectionId,status,${ATTRIBUTION.join(',')},contextSessionId,${ECONOMICS_LINK_FIELDS.join(',')},
         CASE WHEN json_extract(safeTokens,'$.input_tokens_present')=0 THEN NULL ELSE ${quantity('promptTokens')} END AS prompt,
         CASE WHEN json_extract(safeTokens,'$.output_tokens_present')=0 THEN NULL ELSE ${quantity('completionTokens')} END AS output,
-        ${jsonQuantity('cached_tokens')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens')} AS cacheWrite,
+        ${jsonQuantity('cached_tokens', 'cache_read_tokens_present')} AS cacheRead,${jsonQuantity('cache_creation_input_tokens', 'cache_write_tokens_present')} AS cacheWrite,
         ${jsonQuantity('reasoning_tokens')} AS reasoningTokens,
         CASE WHEN ${validNumber('cost')} THEN cost END AS recordedCost,
         CASE WHEN invalidTokenDetail=1 OR NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
           OR (json_type(safeTokens,'$.cached_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")})
           OR (json_type(safeTokens,'$.cache_creation_input_tokens') IS NOT NULL AND NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")})
           THEN 1 ELSE 0 END AS invalidTokens,
-        CASE WHEN NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")} OR NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")}
+        CASE WHEN json_extract(safeTokens,'$.cache_read_tokens_present')=0 OR json_extract(safeTokens,'$.cache_write_tokens_present')=0
+          OR NOT ${validToken("json_extract(safeTokens,'$.cached_tokens')")} OR NOT ${validToken("json_extract(safeTokens,'$.cache_creation_input_tokens')")}
           THEN 1 ELSE 0 END AS missingTokenDetail,
         CASE WHEN ${validNumber('linkedLatency')} AND linkedLatency>0 THEN linkedLatency END AS latencyMs,
         CASE WHEN ${validNumber('linkedTtft')} AND linkedTtft>0 THEN linkedTtft END AS ttftMs
@@ -165,15 +171,19 @@ function baseQuery(db, query) {
     ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
       CASE WHEN cacheRead+cacheWrite>prompt THEN 1 ELSE 0 END AS inconsistentCache FROM quantities)` };
   }
+  const absentCacheRead = columns.has('cacheReadPresent') ? 'cacheReadPresent=0' : '0';
+  const absentCacheWrite = columns.has('cacheWritePresent') ? 'cacheWritePresent=0' : '0';
   return { params, sql: `WITH quantities AS (
     SELECT id,timestamp,provider,model,connectionId,status,${attribution},
       ${ECONOMICS_LINK_FIELDS.map(field=>field === 'requestedModel' && columns.has(field) ? field : `NULL AS ${field}`).join(',')},NULL AS reasoningTokens,
       ${quantity('promptTokens')} AS prompt,${quantity('completionTokens')} AS output,
-      ${quantity('cachedTokens')} AS cacheRead,${quantity('cacheCreationTokens')} AS cacheWrite,
+      CASE WHEN ${absentCacheRead} THEN NULL ELSE ${quantity('cachedTokens')} END AS cacheRead,
+      CASE WHEN ${absentCacheWrite} THEN NULL ELSE ${quantity('cacheCreationTokens')} END AS cacheWrite,
       NULL AS recordedCost,
       CASE WHEN NOT ${validToken('promptTokens')} OR NOT ${validToken('completionTokens')}
         OR NOT ${validToken('cachedTokens')} OR NOT ${validToken('cacheCreationTokens')} THEN 1 ELSE 0 END AS invalidTokens,
-      0 AS missingTokenDetail,CASE WHEN ${validNumber('latencyTotal')} AND latencyTotal>0 THEN latencyTotal END AS latencyMs,
+      CASE WHEN ${absentCacheRead} OR ${absentCacheWrite} THEN 1 ELSE 0 END AS missingTokenDetail,
+      CASE WHEN ${validNumber('latencyTotal')} AND latencyTotal>0 THEN latencyTotal END AS latencyMs,
       CASE WHEN ${validNumber('latencyTtft')} AND latencyTtft>0 THEN latencyTtft END AS ttftMs,${contextId}
     FROM requestStats ${sql}
   ), records AS (SELECT *,MAX(0,prompt-cacheRead-cacheWrite) AS uncachedInput,
