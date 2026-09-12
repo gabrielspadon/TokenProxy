@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { calculateCostFromTokens } from "open-sse/providers/pricing.js";
 import { getPricingRecordForModel } from "./pricingRepo.js";
+import { resolveCacheTokens } from "../../../../open-sse/utils/usageTracking.js";
 
 const RATE_FIELDS = ["input", "output", "cached", "cache_creation", "reasoning"];
 const COST_FIELDS = ["cost_usd", "cost_in_usd", "cost_in_usd_ticks"];
@@ -38,7 +39,15 @@ export function persistUsagePricing(db, snapshot) {
 
 export function usageQuantityPresence(tokens) {
   const present = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-  return { input: present(tokens?.prompt_tokens ?? tokens?.input_tokens), output: present(tokens?.completion_tokens ?? tokens?.output_tokens) };
+  // Capture cache presence from the RAW tokens, before canonicalizeUsage
+  // synthesizes a 0 that reads identically to a reported one. An explicit
+  // false flag on a re-presented object stays false rather than being revived.
+  const cache = resolveCacheTokens(tokens || {});
+  const observedCache = (flag, value) => tokens?.estimated !== true
+    && tokens?.[flag] !== false && present(value);
+  return { input: present(tokens?.prompt_tokens ?? tokens?.input_tokens), output: present(tokens?.completion_tokens ?? tokens?.output_tokens),
+    cacheRead: observedCache('cache_read_tokens_present', cache.read),
+    cacheWrite: observedCache('cache_write_tokens_present', cache.write) };
 }
 
 export function priceUsage(tokens, snapshot, quantityComplete = true) {

@@ -3,7 +3,7 @@ import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../../
 import { recordCostLedgerForRequest } from "../../../src/lib/db/repos/costLedgerRepo.js";
 import { extractThinking } from "../../translator/concerns/thinkingUnified.js";
 import { COLORS } from "../../utils/stream.js";
-import { canonicalizeUsage, clampReasoningTokens } from "../../utils/usageTracking.js";
+import { canonicalizeUsage, clampReasoningTokens, resolveCacheTokens } from "../../utils/usageTracking.js";
 import { priceUsage, usageQuantityPresence } from "../../../src/lib/db/repos/usagePricing.js";
 
 const OPTIONAL_PARAMS = [
@@ -37,8 +37,17 @@ export function extractUsageFromResponse(responseBody) {
       cached_tokens: responseBody.usage.input_tokens_details?.cached_tokens,
       cache_read_input_tokens: responseBody.usage.cache_read_input_tokens,
       cache_creation_input_tokens: responseBody.usage.cache_creation_input_tokens,
+      // A Responses body matches this branch too (both report input_tokens).
+      // Forward the object so resolveCacheTokens sees every nested spelling.
+      // A flat alias would add an own key with an undefined value and trip the
+      // alias-dropped log on every Claude request.
+      ...(responseBody.usage.input_tokens_details && typeof responseBody.usage.input_tokens_details === "object"
+        ? { input_tokens_details: responseBody.usage.input_tokens_details }
+        : {}),
+      // Claude spells thinking, Responses spells reasoning; accept either.
       reasoning_tokens: clampReasoningTokens(
-        responseBody.usage.output_tokens_details?.thinking_tokens,
+        responseBody.usage.output_tokens_details?.thinking_tokens
+          ?? responseBody.usage.output_tokens_details?.reasoning_tokens,
         completionTokens,
       ),
       cost_usd: responseBody.usage.cost_usd,
@@ -53,6 +62,10 @@ export function extractUsageFromResponse(responseBody) {
       prompt_tokens: responseBody.usage.prompt_tokens,
       completion_tokens: responseBody.usage.completion_tokens,
       cached_tokens: responseBody.usage.prompt_tokens_details?.cached_tokens,
+      // As above: forward the object, resolve centrally.
+      ...(responseBody.usage.prompt_tokens_details && typeof responseBody.usage.prompt_tokens_details === "object"
+        ? { prompt_tokens_details: responseBody.usage.prompt_tokens_details }
+        : {}),
       reasoning_tokens: responseBody.usage.completion_tokens_details?.reasoning_tokens,
       cost_usd: responseBody.usage.cost_usd,
       cost_in_usd: responseBody.usage.cost_in_usd,
@@ -102,12 +115,13 @@ export function buildRequestDetail(base, overrides = {}) {
  */
 export function doneFields({ usage, latency }) {
   const u = usage || {};
+  const cache = resolveCacheTokens(u);
   const fields = {
     t: latency?.total ?? 0,
     in: u.prompt_tokens ?? u.input_tokens ?? 0,
     out: u.completion_tokens ?? u.output_tokens ?? 0,
-    cr: u.cache_read_input_tokens ?? u.cached_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0,
-    cw: u.cache_creation_input_tokens ?? 0,
+    cr: cache.read ?? 0,
+    cw: cache.write ?? 0,
   };
   // Only observed, cache-inclusive input can calibrate the next request.
   // The display fields above preserve the provider convention.
@@ -123,8 +137,9 @@ export function formatDoneLine({ usage, latency }) {
   const u = usage || {};
   const inTok = u.prompt_tokens ?? u.input_tokens ?? 0;
   const outTok = u.completion_tokens ?? u.output_tokens ?? 0;
-  const cacheRead = u.cache_read_input_tokens ?? u.cached_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0;
-  const cacheCreate = u.cache_creation_input_tokens ?? 0;
+  const cache = resolveCacheTokens(u);
+  const cacheRead = cache.read ?? 0;
+  const cacheCreate = cache.write ?? 0;
   let inStr = `IN ${inTok}`;
   if (cacheRead || cacheCreate) {
     const parts = [];
