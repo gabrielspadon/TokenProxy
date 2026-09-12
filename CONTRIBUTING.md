@@ -103,20 +103,16 @@ pass; fix the code or argue the rule change on its own merits in its own commit.
 
 ## Tests
 
-`tests/` is an independent ESM package with its own `package.json` and its own
-dependency tree. It is not wired into the root `npm test`, so it needs two
-installs.
+`tests/` is an independent ESM package with its own `package.json` and lockfile.
+Use the same Node 24.15.0 binary for installation and execution.
 
 ```bash
-npm install              # repository root, first
-cd tests && npm install  # then the suite's own dependencies
-npx vitest run           # the whole suite
-npx vitest run unit/capabilities.test.js   # one file, path relative to tests/
+npm ci --no-audit --no-fund
+(cd tests && npm ci --no-audit --no-fund)
+(cd cli && DATA_DIR="$(mktemp -d)" npm ci --no-audit --no-fund)
 ```
 
-Run vitest from inside `tests/`. It discovers `tests/vitest.config.js`, which
-resolves the `open-sse` and `@/` aliases back to the repository root, so the
-suite works regardless of where the vitest binary lives.
+The root and tests-package `npm test` scripts both invoke the canonical runner.
 
 Live provider tests under `tests/translator/real/` stay inert unless you opt in.
 The `.real.test.js` files are gated behind `RUN_REAL=1` and
@@ -124,64 +120,29 @@ The `.real.test.js` files are gated behind `RUN_REAL=1` and
 `describe.skip`. Leave them inert unless you are deliberately testing against
 real upstreams with your own credentials, and note that they cost money.
 
-### The baseline gate
+### The offline regression gate
 
-The suite is **not** expected to be green on a plain checkout. A set of failures
-predates this fork and is catalogued in `tests/__baseline__/known-fails.txt`.
-What matters for a change is whether it turns a passing test into a failing one.
-That question is answered by the baseline gate, not by a raw pass count.
+The suite, its exact assertion inventory and every suite-level outcome must be
+green. The runner creates isolated home, temporary and data paths, removes
+inherited provider credentials and uses a verified network boundary.
 
 ```bash
-cd tests
-npx vitest run --testTimeout=30000 --hookTimeout=30000 \
-  --reporter=default --reporter=json \
-  --outputFile.json=/tmp/tokenproxy-vitest.json
-cd ..
-node tests/__baseline__/verify-no-regression.mjs /tmp/tokenproxy-vitest.json
+node scripts/qa/run-offline-tests.mjs \
+  --artifacts /tmp/tokenproxy-qualification/full
 ```
 
-That is exactly what CI runs. Both reporters are needed, because the gate reads
-only the JSON and the json reporter on its own silences the console, leaving a
-failure with no message to read. The default reporter puts that detail back on
-screen. The raised timeouts are explained below.
-
-The gate reads the vitest JSON report, subtracts the catalogued failures, and
-exits 0 printing `No regression` when nothing else fails. It exits 1 and names
-every offending test otherwise. Tests that are new, or that were already
-failing, do not trip it.
+That is exactly what CI runs. Evidence under the requested artifact directory
+contains the raw runner exit, JSON report, canonical gate verdict, environment
+boundary and Git SHA.
 
 Quote the command, not a number. Pass and fail counts move with every provider
 addition and go stale in days.
 
-Two limits are worth knowing. A test file that fails during **collection**, from
-an import error or a missing environment variable, contributes no individual
-test results at all, so its failure never reaches the gate. And the gate says
-nothing about tests that were removed. Read the vitest summary alongside the
-gate verdict.
-
-Three further things about running the whole suite locally.
-
-It writes snapshots. A full run rewrites the committed files under
-`tests/translator/__snapshots__/`, so `git status` comes back dirty afterwards
-through no fault of your change. Check the diff, and
-`git checkout -- tests/translator/__snapshots__/` if it is not yours. CI sets
-`CI=true`, under which vitest refuses to write a snapshot, so this affects local
-runs only.
-
-It is timing sensitive, which is why the command above raises two timeouts.
-Several tests dynamically import a large module graph inside the test body, and
-vitest's 5000ms default counts that import against the test. On a loaded machine
-those time out and the gate reports regressions that are not real. Raising a
-timeout can only turn a failing test into a passing one, and the gate flags only
-the pass to fail direction, so it cannot mask a real regression. If phantom
-failures persist, lower `--maxConcurrency` before raising the timeouts further;
-the config sets it to 60 for the sake of real provider runs.
-
-And it needs a matching native build. `better-sqlite3` is a compiled optional
-dependency. If `node_modules` was installed under a different Node version than
-the one you are running, the tests that open a database fail with `Module did
-not self-register` or a `NODE_MODULE_VERSION` mismatch. That is an install
-artifact, not a regression. Run `npm rebuild better-sqlite3`, or reinstall.
+Collection, import, setup, snapshot teardown, removed files and removed
+assertions are gate failures even when Vitest records zero failed assertions.
+Update `tests/__baseline__/test-manifest.json` in the same reviewed change as an
+intentional test addition, rename or removal. Never rebuild a dependency tree
+under another Node version. Run a clean `npm ci` with the executing runtime.
 
 ### Snapshot baselines
 
@@ -209,11 +170,12 @@ scripts/dev-test-server.sh down   # stop it
 
 `dev-test-server.sh up` runs `npm run build`, starts
 `.next/standalone/custom-server.js` on port 20129 bound to `127.0.0.1` with
-`DATA_DIR=/tmp/tokenproxy-test-data`, and polls `/dashboard` until it answers 200
-or 30 seconds elapse, printing the log tail on failure. The separate `DATA_DIR`
-means a fresh SQLite database with the default password, entirely apart from any
-production instance and its stored credentials. `SKIP_BUILD=1` reuses an
-existing `.next`.
+a newly allocated mode-0700 `DATA_DIR`, and polls `/dashboard` with bounded
+`curl -q` deadlines. PID, process start time, command and working directory must
+all match before the helper sends a signal. `SKIP_BUILD=1` reuses an existing
+`.next`. Credential cloning requires both `ALLOW_CREDENTIAL_CLONE=1` and an
+explicit `CLONE_FROM_DATA_DIR` and `CLONE_TO_DATA_DIR`; normal smoke startup
+never clones credentials.
 
 `smoke-test.mjs` checks that the dashboard page loads, that dashboard login
 returns a session cookie, that `/api/usage/statistics` returns its documented

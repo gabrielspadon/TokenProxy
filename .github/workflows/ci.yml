@@ -18,7 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NODE_VERSION: "24"
+  NODE_VERSION: "24.15.0"
+  PYTHON_VERSION: "3.14.4"
 
 jobs:
   lint:
@@ -35,12 +36,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      # package-lock.json is in .gitignore and no lockfile is committed, so
-      # `npm ci` cannot resolve a tree and setup-node's npm cache has nothing to
-      # key on. `npm install` is the install command everywhere in this repo,
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # Two-tier on purpose. `npx eslint .` is red on main with a backlog of
       # react-hooks findings in the routing and store layers that predate this
@@ -136,64 +135,47 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
+            cli/package-lock.json
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
       # Root dependencies first. The suite imports from src/ and open-sse/, so
       # it cannot run on the tests package alone.
       - name: Install root dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # tests/ is an independent ESM package with its own package.json.
       - name: Install test dependencies
         working-directory: tests
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+
+      - name: Install CLI dependencies in isolated state
+        working-directory: cli
+        env:
+          DATA_DIR: ${{ runner.temp }}/cli-install-data
+        run: npm ci --no-audit --no-fund
 
       - name: Verify offline legacy history import
         run: python3 -m unittest discover -s tests -p 'history_import_test.py' -v
 
-      # The suite is deliberately not green on a plain checkout. A set of
-      # failures predates this fork and is catalogued in
-      # tests/__baseline__/known-fails.txt, so vitest exits nonzero by design and
-      # its exit code is not the verdict. Swallow it here, then fail if no report
-      # was written, which is what a crash rather than a test failure looks like.
-      #
-      # Both reporters are needed. The json reporter is the gate's only input,
-      # and on its own it silences the console, leaving a failure with no message
-      # to read. The default reporter puts that detail back in this job's log.
-      #
-      # The raised timeouts are not a way of letting slow code pass. Several
-      # tests dynamically import a large module graph inside the test body, and
-      # vitest's 5000ms default counts that import against the test. On a loaded
-      # machine, and a 2-vCPU hosted runner is one, those tests time out for
-      # reasons that have nothing to do with the change under review, which would
-      # make the gate below report phantom regressions. Raising a timeout can
-      # only turn a failing test into a passing one, and the gate flags only the
-      # pass to fail direction, so it cannot hide a real regression. If phantom
-      # failures persist, lower --maxConcurrency (the config sets 60, for real
-      # provider runs) before raising these further.
-      - name: Run the suite and write a JSON report
-        working-directory: tests
-        run: |
-          # `devin-cli-executor` asserts the executor does not set
-          # XDG_CONFIG_HOME when DEVIN_MCP_SERVERS is absent. GitHub runners
-          # define XDG_CONFIG_HOME in the ambient environment, so the assertion
-          # sees an inherited value and fails there while passing on a developer
-          # machine where it is unset. Reproduced locally by exporting it, and
-          # fixed by unsetting rather than blanking: the assertion is on the
-          # variable being defined, so an empty string still fails.
-          unset XDG_CONFIG_HOME
-          npx vitest run \
-            --testTimeout=30000 \
-            --hookTimeout=30000 \
-            --reporter=default \
-            --reporter=json \
-            --outputFile.json="$RUNNER_TEMP/vitest-results.json" || true
-          test -s "$RUNNER_TEMP/vitest-results.json"
+      - name: Run the isolated suite and canonical regression gate
+        env:
+          TOKENPROXY_TEST_MAX_WORKERS: "2"
+        run: node scripts/qa/run-offline-tests.mjs --artifacts "$RUNNER_TEMP/tokenproxy-offline"
 
-      # The verdict. Exits 0 only when every currently failing test is already in
-      # the baseline, and names the offenders otherwise. Reads the report path as
-      # its one argument, which is the interface the script defines.
-      - name: Verify no regression against the baseline
-        run: node tests/__baseline__/verify-no-regression.mjs "$RUNNER_TEMP/vitest-results.json"
+      - name: Upload offline gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-gate-${{ github.sha }}
+          path: ${{ runner.temp }}/tokenproxy-offline
+          if-no-files-found: warn
 
       # Byte-for-byte snapshots of the provider registry, alias resolution and
       # OAuth endpoints. Each takes no arguments and exits nonzero on any drift.
@@ -235,15 +217,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
-      # `npm install`, not `npm ci`: package-lock.json is in .gitignore and no
-      # lockfile is committed, so `npm ci` has no tree to resolve and fails
-      # outright. This matches the install step in the other two jobs. It is also
-      # why playwright and @axe-core/playwright are pinned to exact versions in
-      # devDependencies rather than carets — without a lockfile the version range
-      # is the only thing holding the resolution steady across runs.
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # No continue-on-error. A nonzero exit here fails the workflow, which is
       # the entire point of the job.
