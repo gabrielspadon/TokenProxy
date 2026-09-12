@@ -16,6 +16,16 @@ process.env.FETCH_CONNECT_TIMEOUT_MS = '150';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Resolved lazily INSIDE the test: a top-level import of the registry pulls in
+// the real proxyFetch before vi.mock hoists, which silently unmocks the module
+// this file depends on. The subject is the generic PATH, not any one provider.
+async function genericProvider() {
+  const { PROVIDERS } = await import('../../open-sse/providers/index.js');
+  const id = Object.entries(PROVIDERS).find(([, p]) => p?.refreshUrl && p?.clientId)?.[0];
+  if (!id) throw new Error('no provider carries refreshUrl + clientId');
+  return id;
+}
+
 vi.mock('../../open-sse/utils/proxyFetch.js', () => ({
   proxyAwareFetch: vi.fn(),
   installGlobalProxyFetch: () => {},
@@ -74,7 +84,7 @@ describe('a token refresh is bounded when the upstream body stalls (#1450)', () 
     const seen = [];
     proxyFetch.mockImplementation(headersThenSilence(seen));
 
-    const result = await mod.refreshAccessToken('cline', token('stall'), {}, null);
+    const result = await mod.refreshAccessToken(await genericProvider(), token('stall'), {}, null);
 
     expect(result).toBeNull();
     expect(seen).toHaveLength(1);
@@ -97,11 +107,10 @@ describe('a token refresh is bounded when the upstream body stalls (#1450)', () 
     const seen = [];
     proxyFetch.mockImplementation(ok(seen));
 
-    await mod.refreshAccessToken('cline', token('generic'), {}, null);
+    await mod.refreshAccessToken(await genericProvider(), token('generic'), {}, null);
     await mod.refreshGoogleToken(token('google'), 'cid', 'csecret', null);
     await mod.refreshCodexToken(token('codex'), null);
     await mod.refreshCopilotToken(token('copilot'), null);
-    await mod.refreshClineToken(token('cline'), null, null);
     await mod.refreshCodebuddyToken(token('cb-cn'), null);
     await mod.refreshCodebuddyIntlToken(token('cb-intl'), null);
     await mod.refreshKiroToken(token('kiro-social'), { authMethod: 'social' }, null, null);
@@ -117,7 +126,7 @@ describe('a token refresh is bounded when the upstream body stalls (#1450)', () 
       null
     );
 
-    expect(seen).toHaveLength(9);
+    expect(seen).toHaveLength(8);
     for (const call of seen) {
       expect(call.options.signal, `no deadline on ${call.url}`).toBeInstanceOf(AbortSignal);
     }

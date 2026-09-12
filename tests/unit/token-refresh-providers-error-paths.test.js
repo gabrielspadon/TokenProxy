@@ -1,6 +1,6 @@
 // Coverage for open-sse/services/tokenRefresh/providers.js error and delegate
 // paths: xai classification, the thin delegate wrappers, kiro external_idp,
-// kiro AWS/social failures, copilot/cline/codebuddy/trae failure and catch
+// kiro AWS/social failures, copilot/codebuddy/trae failure and catch
 // exits. proxyAwareFetch captures globalThis.fetch at import time, so the
 // network seam is the proxyFetch module itself, mocked below; nothing here
 // can reach the wire. Tokens are unique per test so the module's 10s dedup
@@ -179,15 +179,6 @@ describe('refreshCopilotToken failure exits', () => {
     respondThrow('ECONNREFUSED');
     expect(await mod.refreshCopilotToken(`gh-cop-net-${Date.now()}`, null)).toBeNull();
     expect(await mod.refreshCopilotToken('', null)).toBeNull();
-  });
-});
-
-describe('refreshClineToken failure exits', () => {
-  it('returns null on HTTP failure and on a thrown fetch', async () => {
-    respondWith({ error: 'bad' }, { ok: false, status: 400 });
-    expect(await mod.refreshClineToken(`cline-bad-${Date.now()}`, null, null)).toBeNull();
-    respondThrow('socket hang up');
-    expect(await mod.refreshClineToken(`cline-net-${Date.now()}`, null, null)).toBeNull();
   });
 });
 

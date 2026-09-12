@@ -275,18 +275,7 @@ describe('refreshKiroToken profileArn resolution and region guard', () => {
   });
 });
 
-describe('cline and trae payload fallbacks', () => {
-  it('cline returns null with no token and accepts an unwrapped payload', async () => {
-    expect(await mod.refreshClineToken('')).toBeNull();
-    const future = new Date(Date.now() + 60000).toISOString();
-    respondWith({ accessToken: 'workos:already', expiresAt: future });
-    const token = `cline-flat-${Date.now()}`;
-    const out = await mod.refreshClineToken(token);
-    expect(out.accessToken).toBe('workos:already');
-    expect(out.refreshToken).toBe(token);
-    expect(out.expiresIn).toBeGreaterThanOrEqual(1);
-  });
-
+describe('trae payload fallbacks', () => {
   it('trae returns null with no token and with no configured exchange URL', async () => {
     expect(await mod.refreshTraeToken('', {}, null)).toBeNull();
     // The live registry carries no PROVIDER_OAUTH.trae entry, so the URL

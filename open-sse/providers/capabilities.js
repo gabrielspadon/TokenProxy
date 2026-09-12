@@ -185,22 +185,6 @@ const XIAOMI_TOKENPLAN_CAPABILITIES = {
   "mimo-v2.5-tts-voicedesign": XIAOMI_TOKENPLAN_TTS_CAPS,
 };
 
-// DeepSeek's own platform runs web search SERVER-SIDE for the V4 family: the
-// Responses API guide lists `web_search` / `web_search_2025_08_26` as Supported
-// (executed server side, auto-continuation capped at 10 rounds) with the model
-// row naming deepseek-v4-flash / deepseek-v4-pro, and the Anthropic-compatible
-// endpoint accepts the `server_tool_use` / `web_search_tool_result` blocks
-// (api-docs.deepseek.com/guides/responses_api, /guides/anthropic_api). #3045
-//
-// Scoped to this provider on purpose. Third-party hosts of the same weights
-// (fireworks, volcengine-ark, nvidia, siliconflow) serve the model without
-// DeepSeek's hosted search tool, so the generic "*deepseek-v4*" pattern must
-// keep search:false for them.
-//
-// A provider entry REPLACES the pattern caps rather than merging over them
-// (getStaticCapabilitiesForModel step 1), so this restates every non-default
-// capability "*deepseek-v4*" supplies. Dropping one silently reverts it.
-
 
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.

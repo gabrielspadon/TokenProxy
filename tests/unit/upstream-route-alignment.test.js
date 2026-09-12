@@ -41,7 +41,6 @@ describe("upstream route: unpinned models keep the sourceFormat-matched transpor
   const cases = [
     { alias: "minimax", model: "MiniMax-M2.7", sourceFormat: "openai", expected: "openai" },
     { alias: "minimax", model: "MiniMax-M2.7", sourceFormat: "claude", expected: "claude" },
-    { alias: "deepseek", model: "deepseek-chat", sourceFormat: "claude", expected: "claude" },
   ];
   for (const { alias, model, sourceFormat, expected } of cases) {
     it(`${alias}/${model} on a ${sourceFormat} client stays ${expected}`, () => {

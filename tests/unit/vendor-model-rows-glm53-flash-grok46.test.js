@@ -14,7 +14,6 @@ describe('vendor model rows resolve on their providers', () => {
     ['glm-cn', 'glm-5.3-flash'],
     ['glm-cn', 'glm-4.6v'],
     ['opencode-go', 'glm-5.3-flash'],
-    ['deepseek', 'deepseek-v4-flash-vision-exp'],
     ['opencode-go', 'deepseek-v4-flash-vision-exp'],
   ])('%s lists %s', (alias, model) => {
     expect(idsFor(alias)).toContain(model);
@@ -26,7 +25,7 @@ describe('vendor model rows resolve on their providers', () => {
   });
 
   // getDefaultModel returns models[0], so an insert must not land at the top.
-  it.each(['glm', 'glm-cn', 'opencode-go', 'deepseek'])(
+  it.each(['glm', 'glm-cn', 'opencode-go'])(
     '%s default model is unchanged by the inserts',
     (alias) => {
       expect(idsFor(alias)[0]).not.toBe('glm-5.3-flash');
