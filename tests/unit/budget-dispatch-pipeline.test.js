@@ -16,7 +16,9 @@ import { getBudgetStatus } from '../../src/lib/db/repos/budgetRepo.js';
 import { dispatchBudgetBounds } from '../../src/sse/services/budgetDispatch.js';
 import { LocalTransportPoolRefusal, revokeLocalTransportRefusalProof } from '../../open-sse/utils/dispatcherCache.js';
 import { readActivityAnalytics } from '../../src/lib/db/analytics/activityQueries.mjs';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 const db=await getAdapter();
+const visibleFixture=createVisibleTelemetryFixture(db,'budget-dispatch-pipeline');
 const completion=()=>new Response('data: '+JSON.stringify({id:'fixture',object:'chat.completion.chunk',choices:[{index:0,delta:{role:'assistant',content:'answer'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:7}})+'\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
 beforeEach(()=>{
  for(const t of ['apiKeyBudgetReservations','apiKeyBudgetAccounts','usageHistory','requestStats','contextSessions','apiKeys']) db.run(`DELETE FROM ${t}`);
@@ -121,8 +123,10 @@ describe('API key through real admission, transport, ledger and query',()=>{
  it('strict default admits a documented output bound and joins one exact request',async()=>{
   const k=await key({maxCompletionTokens:100});expect(k.budgetPolicy).toBe('strict');
   let atWire;mocks.fetch.mockImplementation(async()=>{atWire=db.get("SELECT * FROM apiKeyBudgetReservations WHERE state='dispatched'");expect(atWire.reservedCompletionTokens).toBe(20);return completion();});
-  const result=await request(k);expect(result.response.status).toBe(200);await result.response.text();
-  const status=await settled(k);expect(status.account.recordedCompletionTokens).toBe(7);
+  const status=await visibleFixture(async()=>{
+   const result=await request(k);expect(result.response.status).toBe(200);await result.response.text();return settled(k);
+  });
+  expect(status.account.recordedCompletionTokens).toBe(7);
   const usage=readActivityAnalytics(db,{operation:'activity',view:'economics',requestId:atWire.requestId,pageSize:1});
   expect(usage.items).toHaveLength(1);expect(usage.items[0].requestId).toBe(status.reservations[0].requestId);
   expect(usage.items[0].rateSnapshotId).toBe(atWire.rateSnapshotId);expect(status.outstanding.completionTokens).toBe(0);
@@ -160,7 +164,7 @@ describe('API key through real admission, transport, ledger and query',()=>{
   const reader=result.response.body.getReader();await reader.read();await reader.cancel('fixture-client-disconnect');
   await vi.waitFor(async()=>expect((await getBudgetStatus(k.id)).reservations[0].state).toBe('uncertain'));
   const status=await getBudgetStatus(k.id);expect(status.account.recordedCompletionTokens+status.outstanding.completionTokens).toBeGreaterThanOrEqual(100);
-  expect(cancelled).toBe(true);expect(mocks.fetch).toHaveBeenCalledTimes(1);
+  await vi.waitFor(()=>expect(cancelled).toBe(true));expect(mocks.fetch).toHaveBeenCalledTimes(1);
  });
  it('no structural or compatible endpoint assumption manufactures a token bound',()=>{
   expect(dispatchBudgetBounds({url:'https://api.openai.com/v1/chat/completions',body:{max_completion_tokens:10,n:3}}).completionTokens).toBe(30);
