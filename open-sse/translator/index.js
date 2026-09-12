@@ -1,5 +1,6 @@
 import { EXECUTOR_MANAGED_FORMATS, FORMATS } from "./formats.js";
 import { assertTranslationContent, TranslationRouteError } from "./concerns/translationError.js";
+import { isolateRequestBody } from "./concerns/requestIsolation.js";
 import { ensureToolCallIds, fixMissingToolResponses, repairOrphanToolResults } from "./concerns/toolCall.js";
 import { prepareClaudeRequest } from "./formats/claude.js";
 import { cloakClaudeTools } from "../utils/claudeCloaking.js";
@@ -108,9 +109,12 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   requireTranslationRoute(sourceFormat, targetFormat, "request");
   assertTranslationContent(sourceFormat, targetFormat, body);
   // Translation normalizes tool transactions and provider-specific envelopes.
-  // Work on a private JSON value so routing probes, logs and fallback policy
-  // can still inspect the exact client request after a successful conversion.
-  let result = structuredClone(body);
+  // Work on a private copy so routing probes, logs and fallback policy can
+  // still inspect the exact client request after a successful conversion.
+  // isolateRequestBody, not structuredClone: a direct engine caller may attach
+  // an AbortSignal or a callback alongside the JSON, and structuredClone throws
+  // DataCloneError on those instead of translating the request.
+  let result = isolateRequestBody(body);
 
   // Null blocks are malformed, but must not abort routes with no media strip configured.
   // Do this before generic normalization walks content blocks for tool IDs.

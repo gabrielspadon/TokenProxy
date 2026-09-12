@@ -124,6 +124,7 @@ import {
 } from "../translator/concerns/adaptiveStripper.js";
 import { MediaAggregateLimitError, prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { defaultClaudeToolType } from "../translator/concerns/toolCall.js";
+import { isolateRequestBody } from "../translator/concerns/requestIsolation.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { applyMemoryEnhancements } from "../services/memory/index.js";
 // Imported from contextBudget directly rather than through the memory index:
@@ -134,24 +135,6 @@ import { memoGet, memoSet } from "../services/memory/sessionMemo.js";
 import { isConnectTimeoutError } from "../utils/responseHeaderTimeout.js";
 import { applyCodexFastMode } from "../config/codexFastMode.js";
 import { projectClientModelStatus } from "../config/modelErrorClassifier.js";
-
-// Own every JSON container before translation or shaping mutates it. Direct
-// engine callers can also attach opaque signals/streams/functions; retain
-// those handles without sharing their surrounding mutable request records.
-function isolateRequestBody(value, copies = new WeakMap()) {
-  if (!value || typeof value !== "object") return value;
-  const prototype = Object.getPrototypeOf(value);
-  if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) return value;
-  if (copies.has(value)) return copies.get(value);
-  const copy = Array.isArray(value) ? new Array(value.length) : Object.create(prototype);
-  copies.set(value, copy);
-  for (const [key, item] of Object.entries(value)) {
-    Object.defineProperty(copy, key, {
-      value: isolateRequestBody(item, copies), enumerable: true, writable: true, configurable: true,
-    });
-  }
-  return copy;
-}
 
 /**
  * One PROXY line per request, describing which egress the attempt uses.
