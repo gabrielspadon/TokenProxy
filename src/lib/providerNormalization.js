@@ -1,4 +1,5 @@
 import { AI_PROVIDERS } from "../shared/constants/providers.js";
+import { holdsCredential } from "../shared/utils/accountCredential.js";
 
 /**
  * Detect xAI Grok models by id pattern (grok-*, Grok_*, etc).
@@ -73,9 +74,15 @@ const SECRET_PROVIDER_SPECIFIC_FIELDS = [
   "customHeaders",
 ];
 
+// Removing the credential also removes the ANSWER to "does this row have one",
+// and the dashboard needs that answer: three legacy rows holding no token at
+// all rendered as "Paused", which claims an operator decision nobody made. The
+// boolean is derived here, at the one choke point that still holds the secret,
+// so the board can name the state without the token ever leaving the server.
+// Same predicate the gateway admits on, never a second rule.
 export function redactConnectionSecrets(connection) {
   if (!connection || typeof connection !== "object") return connection;
-  const safe = { ...connection };
+  const safe = { ...connection, hasCredential: holdsCredential(connection) };
   for (const field of SECRET_CONNECTION_FIELDS) delete safe[field];
   const specific = safe.providerSpecificData;
   if (specific && typeof specific === "object" && !Array.isArray(specific)) {

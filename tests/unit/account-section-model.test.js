@@ -151,17 +151,22 @@ describe('an account with no quota evidence', () => {
 });
 
 describe('gates and return times', () => {
-  it('files a held account under cooling down whatever its quota says', () => {
-    for (const held of [
-      { isActive: false },
-      { status: 'cooldown' },
-      { isDraining: true },
-      { status: 'degraded' },
-    ])
-      expect(accountSection(account(held), NOW)).toBe('resting');
-    // A quota pause is the operator's own threshold firing.
+  // "Cooling down" promises a return, so only the holds a CLOCK clears may be
+  // filed there. This case used to put all four of these in that one section,
+  // which is how an account nobody had paused and nothing would revive read as
+  // though it were merely waiting. Full taxonomy in
+  // tests/unit/account-state-taxonomy.test.js.
+  it('files only the self-clearing holds under cooling down', () => {
+    // A recorded cooldown is timed, and a quota pause clears when the window it
+    // crossed rolls over.
+    expect(accountSection(account({ status: 'cooldown' }), NOW)).toBe('resting');
     const paused = account({ quotaPauseThresholds: { weekly: 70 } });
     expect(accountSection(paused, NOW)).toBe('resting');
+    // The operator's own two holds end when the operator says so.
+    for (const held of [{ isActive: false }, { isDraining: true }])
+      expect(accountSection(account(held), NOW)).toBe('held');
+    // A failed connection test needs a person, not a wait.
+    expect(accountSection(account({ status: 'degraded' }), NOW)).toBe('action');
   });
   it('returns when the LAST exhausted window rolls, not the first', () => {
     const both = account({}, [
@@ -193,7 +198,7 @@ describe('sections', () => {
       ],
       NOW
     );
-    expect(counts).toEqual({ serving: 1, resting: 1, unverified: 1 });
+    expect(counts).toEqual({ serving: 1, action: 0, resting: 1, held: 0, unverified: 1 });
     expect(Object.keys(counts)).toEqual(SECTIONS.map((item) => item.id));
   });
   it('orders serving by headroom, most first, with a proof-only account last', () => {

@@ -42,6 +42,7 @@ import {
   BUCKETS,
   SORTS,
   accountBucket,
+  accountHeld,
   accountStateWord,
   credentialModes,
   filterAccounts,
@@ -113,18 +114,15 @@ const MODE_WORD = {
 // whose qualification has never been established is not ready, it is unknown,
 // and this page exists to say which.
 const unchecked = (account, state) => state === 'Not checked' || !account.status;
-const bucketOf = (account, now) => {
-  const state = accountControlState(account, now);
-  if (state === 'Paused' || state === 'Quota pause') return 'paused';
-  if (state === 'Draining' || state === 'Cooldown' || state === 'Needs attention') return 'attention';
-  return unchecked(account, state) ? 'unknown' : accountBucket(account, now);
-};
-const wordOf = (account, now) => {
-  const state = accountControlState(account, now);
-  if (state === 'Paused' || state === 'Quota pause' || state === 'Draining' || state === 'Cooldown')
-    return state;
-  return unchecked(account, state) ? 'Not checked' : accountStateWord(account, now);
-};
+// A held account is KNOWN whether or not a qualification probe ever ran, so it
+// keeps its own word instead of collapsing into "unknown". That exception used
+// to be spelled out as its own list of state names here, which is how a page
+// carrying a private copy of the grouping rules ends up disagreeing with the
+// board it mirrors: the copy still read a quota pause as the operator's own.
+// accountHeld answers the same question from the one model.
+const known = (account, now) => accountHeld(account, now) || !unchecked(account, accountControlState(account, now));
+const bucketOf = (account, now) => (known(account, now) ? accountBucket(account, now) : 'unknown');
+const wordOf = (account, now) => (known(account, now) ? accountStateWord(account, now) : 'Not checked');
 const summaryOf = (accounts, now) => {
   const counts = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, 0]));
   for (const account of accounts) counts[bucketOf(account, now)] += 1;

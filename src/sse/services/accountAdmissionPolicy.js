@@ -5,16 +5,12 @@ import { getExhaustedQuotaWindow } from 'open-sse/services/accountFallback.js';
 // An account that holds no credential at all cannot answer. Admitting it only
 // spends a cascade slot on an upstream 401, which a client such as Claude Code
 // then reads as its own sign-out ("Not logged in") while the real accounts
-// were merely out of quota. Cookie, public and credential-free providers keep
-// their access elsewhere, so only the two credential-bearing types are judged.
-// Live selection applies this before admission; a captured account for the
-// routing simulation carries no secret, so the simulator does not judge it.
-export function holdsCredential(connection) {
-  const type = connection.authType;
-  if (type === 'apikey' || type === 'api_key') return Boolean(connection.apiKey);
-  if (type === 'oauth' || type === 'access_token') return Boolean(connection.accessToken || connection.refreshToken);
-  return true;
-}
+// were merely out of quota. Live selection applies this before admission; a
+// captured account for the routing simulation carries no secret, so the
+// simulator does not judge it. The predicate itself lives in
+// src/shared/utils/accountCredential.js because the dashboard API needs the
+// same answer; it is re-exported here so this file stays the gate's front door.
+export { holdsCredential } from '@/shared/utils/accountCredential.js';
 
 export function accountAdmissionReason(connection, { model, preferredConnectionId = null,
   strictPreferredConnection = false, excluded = false, disabled = false,
