@@ -1,5 +1,5 @@
 // Self-contained synthetic benchmark. No live database or provider calls.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ if(economicsMode){
   ]);
   const requestedRows=process.argv.find(arg=>arg.startsWith('--rows='));
   const db=await getAdapter(),rowsPerTable=requestedRows?Number(requestedRows.slice(7)):process.argv.includes('--million')?1000000:250000;
+  const output=process.argv.find((arg,index)=>index>1 && !arg.startsWith('--'));
   let client,rssTimer,peakRss=process.memoryUsage.rss();
   const samples=[],failures=[],plans=[],writeDurations=[];
   const percentile=(values,p)=>values.toSorted((a,b)=>a-b)[Math.max(0,Math.ceil(values.length*p)-1)]??null;
@@ -30,7 +31,7 @@ if(economicsMode){
     for(const operation of operations){
       const query=operation.query;
       let captured;
-      const tracing={get:(sql,args=[])=>db.get(sql,args),all:(sql,args=[])=>{if(sql.includes('records AS MATERIALIZED'))captured={sql,args};return db.all(sql,args);}};
+      const tracing={get:(sql,args=[])=>db.get(sql,args),all:(sql,args=[])=>{if(!captured&&sql.includes(' AS MATERIALIZED')&&sql.includes(' UNION ALL '))captured={sql,args};return db.all(sql,args);}};
       readActivityAnalytics(tracing,query);
       plans.push({operation:operation.name,view:query.view,facets:query.facets,steps:db.all(`EXPLAIN QUERY PLAN ${captured.sql}`,captured.args).map(row=>row.detail)});
     }
@@ -52,7 +53,10 @@ if(economicsMode){
         const durationMs=performance.now()-started;
         assert.equal(operation.expected(value),rowsPerTable);
         if(expectedDelivery)assert.equal(value.freshness.delivery,expectedDelivery);
-        if(record)samples.push({operation:operation.name,...scenario,durationMs,delivery:value.freshness.delivery,queueDurationMs:value.freshness.queueDurationMs,executionDurationMs:value.freshness.executionDurationMs,queryDurationMs:value.freshness.queryDurationMs});
+        if(record)samples.push({operation:operation.name,...scenario,durationMs,delivery:value.freshness.delivery,cacheHit:value.freshness.cacheHit,
+          queueDurationMs:value.freshness.queueDurationMs,executionDurationMs:value.freshness.executionDurationMs,
+          computationQueueDurationMs:value.freshness.computationQueueDurationMs,computationExecutionDurationMs:value.freshness.computationExecutionDurationMs,
+          queryDurationMs:value.freshness.queryDurationMs});
         return value;
       }catch(error){failures.push({operation:operation.name,...scenario,error:error.constructor.name});return null;}
       finally{activeReads--;}
@@ -80,23 +84,45 @@ if(economicsMode){
       await cold(operation,10,concurrency,true);
       clearInterval(writer);
     }
+    const profileRows=()=>{
+      const result=[];
+      for(const operation of operations)for(const cacheState of ['result-cache-cold','result-cache-warm'])for(const concurrency of [1,5])for(const writer of [false,true]){
+        const rows=samples.filter(row=>row.operation===operation.name&&row.cacheState===cacheState&&row.concurrency===concurrency&&row.writer===writer);
+        if(rows.length)result.push({operation:operation.name,facets:operation.query.facets,cacheState,concurrency,writer,count:rows.length,p95Ms:percentile(rows.map(row=>row.durationMs),0.95),p99Ms:percentile(rows.map(row=>row.durationMs),0.99)});
+      }
+      return result;
+    };
+    const scheduledSamples=operations.length*2*(50+200+10),scheduledProfiles=operations.length*2*3;
+    const receipt=(status,currentProfile=null)=>({fixture:{version:'economics-analytics-v1',rowsPerTable,requestRows:rowsPerTable,usageRows:rowsPerTable},
+      settings:{cacheTtlMs:1000,serviceDeadlineMs:15000},progress:{status,completedSamples:samples.length,scheduledSamples,completedProfiles:profileRows().length,scheduledProfiles,currentProfile},
+      profiles:profileRows(),samples,
+      syntheticWriteHealth:{writes,overlappingWrites,failures:writerFailures,p95Ms:percentile(writeDurations,0.95),maxMs:writeDurations.length?Math.max(...writeDurations):null,maxTickDelayMs:maxWriterTickDelayMs,finalValue:db.get("SELECT value FROM _meta WHERE key='economics-benchmark-write'")?.value??null},
+      plans,failures,peakAnalyticsProcessRssBytes:peakRss,isolatedTemporaryData:true});
+    const checkpoint=(status,currentProfile=null)=>{
+      if(!output)return;
+      const temporaryOutput=`${output}.tmp`;
+      writeFileSync(temporaryOutput,JSON.stringify(receipt(status,currentProfile),null,2)+'\n');
+      renameSync(temporaryOutput,output);
+    };
+    checkpoint('fixture-ready');
     for(const operation of operations)for(const concurrency of [1,5]){
       await cold(operation,50,concurrency);
+      checkpoint('running',{operation:operation.name,cacheState:'result-cache-cold',concurrency,writer:false});
       await warm(operation,200,concurrency);
+      checkpoint('running',{operation:operation.name,cacheState:'result-cache-warm',concurrency,writer:false});
       await withWriter(operation,concurrency);
+      checkpoint('running',{operation:operation.name,cacheState:'result-cache-cold',concurrency,writer:true});
     }
-    const profiles=[];
-    for(const operation of operations)for(const cacheState of ['result-cache-cold','result-cache-warm'])for(const concurrency of [1,5])for(const writer of [false,true]){
-      const rows=samples.filter(row=>row.operation===operation.name&&row.cacheState===cacheState&&row.concurrency===concurrency&&row.writer===writer);
-      if(rows.length)profiles.push({operation:operation.name,facets:operation.query.facets,cacheState,concurrency,writer,count:rows.length,p95Ms:percentile(rows.map(row=>row.durationMs),0.95),p99Ms:percentile(rows.map(row=>row.durationMs),0.99)});
-    }
-    const receipt={fixture:{version:'economics-analytics-v1',rowsPerTable,requestRows:rowsPerTable,usageRows:rowsPerTable},
-      settings:{cacheTtlMs:1000,serviceDeadlineMs:15000},profiles,samples,
-      syntheticWriteHealth:{writes,overlappingWrites,failures:writerFailures,p95Ms:percentile(writeDurations,0.95),maxMs:Math.max(...writeDurations),maxTickDelayMs:maxWriterTickDelayMs,finalValue:db.get("SELECT value FROM _meta WHERE key='economics-benchmark-write'")?.value??null},
-      plans,failures,peakAnalyticsProcessRssBytes:peakRss,isolatedTemporaryData:true};
-    const output=process.argv.find((arg,index)=>index>1 && !arg.startsWith('--'));
-    if(output)writeFileSync(output,JSON.stringify(receipt,null,2)+'\n');
-    console.log(JSON.stringify(receipt,null,2));
+    const profiles=profileRows();
+    const violations=profiles.filter(row=>row.cacheState==='result-cache-cold'&&(row.p95Ms>=2000||row.p99Ms>=5000))
+      .map(row=>({operation:row.operation,concurrency:row.concurrency,writer:row.writer,p95Ms:row.p95Ms,p99Ms:row.p99Ms}));
+    if(failures.length)violations.push({kind:'read-failures',count:failures.length});
+    if(writerFailures)violations.push({kind:'writer-failures',count:writerFailures});
+    if(!overlappingWrites)violations.push({kind:'missing-write-overlap'});
+    if(peakRss>=512*1024*1024)violations.push({kind:'rss',bytes:peakRss});
+    const finalReceipt={...receipt(violations.length?'qualification-failed':'qualification-passed'),qualification:{passed:violations.length===0,violations}};
+    if(output){writeFileSync(`${output}.tmp`,JSON.stringify(finalReceipt,null,2)+'\n');renameSync(`${output}.tmp`,output);}
+    console.log(JSON.stringify(finalReceipt,null,2));
     assert.equal(failures.length,0);
     assert.equal(writerFailures,0);assert(overlappingWrites>0);
     for(const profile of profiles.filter(row=>row.cacheState==='result-cache-cold')){assert(profile.p95Ms<2000);assert(profile.p99Ms<5000);}
