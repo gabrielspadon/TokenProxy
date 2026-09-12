@@ -7,6 +7,7 @@ vi.mock('open-sse/services/oauthCredentialManager.js',async original=>({...await
 vi.mock('open-sse/services/projectId.js',()=>({getProjectIdForConnection:vi.fn(),removeConnection:vi.fn()}));
 import {getProviderConnectionById,updateProviderConnection} from '@/lib/localDb';
 import {refreshProviderCredentials} from 'open-sse/services/oauthCredentialManager.js';
+import {waitForRefresh} from 'open-sse/services/tokenRefresh/credentialRevision.js';
 import {getProjectIdForConnection} from 'open-sse/services/projectId.js';
 import {checkAndRefreshToken} from '@/sse/services/tokenRefresh.js';
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
@@ -61,40 +62,45 @@ describe('refresh persistence revision and stop boundary',()=>{
   expect(refreshProviderCredentials.mock.calls[1][1].providerSpecificData.connectionProxyUrl).toBeUndefined();
  });
  it('supplies the initiating persisted revision to the atomic writer',async()=>{
-  refreshProviderCredentials.mockResolvedValue({accessToken:'new',refreshToken:'rotated'});
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed({accessToken:'new',refreshToken:'rotated'},{expectedCredentials:options.expectedCredentials}));
   await checkAndRefreshToken('codex',original,{force:true});
   expect(updateProviderConnection.mock.calls[0][2].expectedCredentials).toEqual(original);
+  expect(updateProviderConnection.mock.calls[0][2].durability).toBe('critical');
  });
  it('returns the winning operator revision on conflict without continuing with stale tokens',async()=>{
   const winner={...original,accessToken:'operator',refreshToken:'operator-rotation'};
-  refreshProviderCredentials.mockResolvedValue({accessToken:'late',refreshToken:'late-rotation'});
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed({accessToken:'late',refreshToken:'late-rotation'},{expectedCredentials:options.expectedCredentials}));
   updateProviderConnection.mockImplementation(async()=>{getProviderConnectionById.mockResolvedValue(winner);throw Object.assign(new Error('conflict'),{code:'CREDENTIAL_CONFLICT'});});
-  expect(await checkAndRefreshToken('codex',original,{force:true})).toEqual(winner);
+  await expect(checkAndRefreshToken('codex',original,{force:true})).resolves.toMatchObject({
+   ...winner,
+   connectionId:winner.id,
+   _connection:winner,
+  });
   expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });
- it('does not persist a refresh completing after cancellation',async()=>{
-  const controller=new AbortController(),d=deferred();refreshProviderCredentials.mockReturnValue(d.promise);
+ it('persists a refresh completing after consumer cancellation',async()=>{
+  const controller=new AbortController(),d=deferred();refreshProviderCredentials.mockImplementation((_provider,_credentials,_log,options)=>waitForRefresh(d.promise.then(value=>options.onCredentialsRefreshed(value,{expectedCredentials:options.expectedCredentials})),options.signal));
   const call=checkAndRefreshToken('codex',original,{force:true,signal:controller.signal});await flush();
-  controller.abort();await expect(call).rejects.toMatchObject({name:'AbortError'});d.resolve({accessToken:'late'});await flush();expect(updateProviderConnection).not.toHaveBeenCalled();
+  controller.abort();await expect(call).rejects.toMatchObject({name:'AbortError'});d.resolve({accessToken:'late'});await flush();expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });
- it('keeps background ownership until a cancelled redemption settles and never writes afterward',async()=>{
-  const controller=new AbortController(),d=deferred();refreshProviderCredentials.mockReturnValue(d.promise);
+ it('keeps background ownership until a cancelled redemption is durably stored',async()=>{
+  const controller=new AbortController(),d=deferred();refreshProviderCredentials.mockImplementation((_provider,_credentials,_log,options)=>waitForRefresh(d.promise.then(value=>options.onCredentialsRefreshed(value,{expectedCredentials:options.expectedCredentials})),options.signal));
   let settled=false;const call=checkAndRefreshToken('codex',original,{force:true,signal:controller.signal,waitForSettled:true}).finally(()=>{settled=true;});await flush();
-  controller.abort();await flush();expect(settled).toBe(false);d.resolve({accessToken:'late'});await expect(call).rejects.toMatchObject({name:'AbortError'});expect(updateProviderConnection).not.toHaveBeenCalled();
+  controller.abort();await flush();expect(settled).toBe(false);d.resolve({accessToken:'late'});await expect(call).rejects.toMatchObject({name:'AbortError'});expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });
  it.each([null,{...original,isActive:false},{...original,authType:'apikey'}])('skips removed or no-longer-eligible background rows %#',async current=>{
   getProviderConnectionById.mockResolvedValue(current);await checkAndRefreshToken('codex',original,{force:true,requireCurrent:true});expect(refreshProviderCredentials).not.toHaveBeenCalled();
  });
  it('drains background project enrichment before releasing its scheduler permit',async()=>{
   const credentials={...original,provider:'antigravity'},controller=new AbortController(),d=deferred();getProviderConnectionById.mockResolvedValue(credentials);
-  refreshProviderCredentials.mockResolvedValue({accessToken:'old',refreshToken:'one-use'});getProjectIdForConnection.mockReturnValue(d.promise);
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed({accessToken:'old',refreshToken:'one-use'},{expectedCredentials:options.expectedCredentials}));getProjectIdForConnection.mockReturnValue(d.promise);
   let settled=false;const call=checkAndRefreshToken('antigravity',credentials,{force:true,signal:controller.signal,waitForSettled:true}).finally(()=>{settled=true;});await flush();
   expect(getProjectIdForConnection).toHaveBeenCalledTimes(1);expect(settled).toBe(false);
   controller.abort();d.resolve('late-project');await expect(call).rejects.toMatchObject({name:'AbortError'});expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });
  it('does not persist a detached project lookup after the owner stops',async()=>{
   const credentials={...original,provider:'antigravity'},controller=new AbortController(),d=deferred();getProviderConnectionById.mockResolvedValue(credentials);
-  refreshProviderCredentials.mockResolvedValue({accessToken:'old',refreshToken:'one-use'});getProjectIdForConnection.mockReturnValue(d.promise);
+  refreshProviderCredentials.mockImplementation(async(_provider,_credentials,_log,options)=>options.onCredentialsRefreshed({accessToken:'old',refreshToken:'one-use'},{expectedCredentials:options.expectedCredentials}));getProjectIdForConnection.mockReturnValue(d.promise);
   await checkAndRefreshToken('antigravity',credentials,{force:true,signal:controller.signal});expect(getProjectIdForConnection).toHaveBeenCalledTimes(1);
   controller.abort();d.resolve('late-project');await flush();expect(updateProviderConnection).toHaveBeenCalledTimes(1);
  });

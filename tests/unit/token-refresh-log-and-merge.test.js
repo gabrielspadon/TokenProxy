@@ -22,7 +22,7 @@ vi.mock('../../src/lib/localDb.js', () => ({
 beforeEach(() => {
   logInfo.mockReset();
   updateProviderConnection.mockReset();
-  updateProviderConnection.mockResolvedValue({ id: 'c' });
+  updateProviderConnection.mockImplementation(async (id, updates) => ({ id, ...updates }));
 });
 
 it('a credentials object with a real expiresAt logs a numeric expiresIn, not null', async () => {
@@ -48,11 +48,12 @@ it('mergedCreds passed to updateProviderCredentials carries existingProviderSpec
   vi.doMock('open-sse/services/oauthCredentialManager.js', async (orig) => ({
     ...(await orig()),
     shouldRefreshCredentials: () => true,
-    refreshProviderCredentials: async () => ({
-      accessToken: 'new-a',
-      expiresIn: 60,
-      providerSpecificData: { added: 1 },
-    }),
+    refreshProviderCredentials: async (_provider, _credentials, _log, options) =>
+      options.onCredentialsRefreshed({
+        accessToken: 'new-a',
+        expiresIn: 60,
+        providerSpecificData: { added: 1 },
+      }, { expectedCredentials: options.expectedCredentials }),
   }));
   const fresh = await import('@/sse/services/tokenRefresh.js');
   await fresh.checkAndRefreshToken('claude', {

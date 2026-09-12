@@ -46,6 +46,23 @@ function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   );
 }
 
+function safeStatus(status) {
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : 0;
+}
+
+function safeDuration(value) {
+  const duration = Number(value);
+  return Number.isFinite(duration) && duration >= 0 ? duration : null;
+}
+
+function safeNetworkReason(error) {
+  return error?.name === "AbortError" ? "timeout-or-cancelled" : "network";
+}
+
+function httpFailure(response, errorText) {
+  return { status: safeStatus(response?.status), reason: refreshFailureWhy(errorText) };
+}
+
 import { buildExternalIdpRefreshParams } from "../../../src/lib/oauth/kiroExternalIdp.js";
 
 let _xaiServiceSingleton = null;
@@ -65,11 +82,12 @@ export async function refreshXaiToken(refreshToken, log) {
         idToken: tokens.id_token,
       };
     } catch (e) {
-      log?.warn?.("TOKEN_REFRESH", `xai refresh failed: ${e?.message || e}`);
       const msg = String(e?.message || "");
       if (msg.includes("invalid_grant") || msg.includes("invalid_request")) {
+        log?.warn?.("TOKEN_REFRESH", "xAI refresh failed", { reason: "invalid-grant" });
         return { error: "invalid_grant" };
       }
+      log?.warn?.("TOKEN_REFRESH", "xAI refresh failed", { reason: safeNetworkReason(e) });
       return null;
     }
   }, log);
@@ -136,10 +154,8 @@ function credConn(credentials, refreshToken) {
     credentials?.connectionId ||
     credentials?.id ||
     credentials?.email ||
-    credentials?.name ||
-    refreshToken?.slice?.(-16) ||
-    "default";
-  return String(id).slice(0, 8);
+    credentials?.name;
+  return id ? String(id).slice(0, 8) : tokenFingerprint(refreshToken) || "default";
 }
 
 // Per-connection refresh-token issue record: which fingerprint was issued
@@ -202,13 +218,13 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
 
   if (!config || !url) {
     decide("CRED", "no-refresh-path", { conn, prov, which: "url" });
-    log?.warn?.("TOKEN_REFRESH", `No refresh URL configured for provider: ${provider}`);
+    log?.warn?.("TOKEN_REFRESH", "No refresh URL configured", { provider: prov });
     return null;
   }
 
   if (!refreshToken) {
     decide("CRED", "no-refresh-path", { conn, prov, which: "token" });
-    log?.warn?.("TOKEN_REFRESH", `No refresh token available for provider: ${provider}`);
+    log?.warn?.("TOKEN_REFRESH", "No refresh token available", { provider: prov });
     return null;
   }
 
@@ -250,9 +266,9 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
           });
         }
       }
-      log?.error?.("TOKEN_REFRESH", `Failed to refresh token for ${provider}`, {
-        status: response.status,
-        error: errorText,
+      log?.error?.("TOKEN_REFRESH", "Provider token refresh failed", {
+        provider: prov,
+        ...httpFailure(response, errorText),
       });
       return null;
     }
@@ -262,7 +278,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
     log?.info?.("TOKEN_REFRESH", `Successfully refreshed token for ${provider}`, {
       hasNewAccessToken: !!tokens.access_token,
       hasNewRefreshToken: !!tokens.refresh_token,
-      expiresIn: tokens.expires_in,
+      expiresIn: safeDuration(tokens.expires_in),
     });
 
     const fp = tokenFingerprint(tokens.refresh_token || refreshToken);
@@ -279,8 +295,9 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
     };
   } catch (error) {
     decide("CRED", "refresh-failed", { conn, prov, why: "network", fp0, age: age() });
-    log?.error?.("TOKEN_REFRESH", `Error refreshing token for ${provider}`, {
-      error: error.message,
+    log?.error?.("TOKEN_REFRESH", "Provider token refresh failed", {
+      provider: prov,
+      reason: safeNetworkReason(error),
     });
     return null;
   }
@@ -318,15 +335,15 @@ export async function refreshGoogleToken(refreshToken, clientId, clientSecret, l
 
     if (!response.ok) {
       const errorText = await response.text();
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Google token", { status: response.status, error: errorText });
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh Google token", httpFailure(response, errorText));
       return null;
     }
 
     const tokens = await response.json();
-    log?.info?.("TOKEN_REFRESH", "Successfully refreshed Google token", { hasNewAccessToken: !!tokens.access_token, expiresIn: tokens.expires_in });
+    log?.info?.("TOKEN_REFRESH", "Successfully refreshed Google token", { hasNewAccessToken: !!tokens.access_token, expiresIn: safeDuration(tokens.expires_in) });
     return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token || refreshToken, expiresIn: tokens.expires_in };
   } catch (error) {
-    log?.error?.("TOKEN_REFRESH", `Network error refreshing Google token: ${error.message}`);
+    log?.error?.("TOKEN_REFRESH", "Network error refreshing Google token", { reason: safeNetworkReason(error) });
     return null;
   }
   }, log, null, credentialContentRevision({providerSpecificData:{clientId,clientSecret}}));
@@ -355,6 +372,11 @@ export function classifyOAuthRefreshError(errorText = "", status = 0) {
   return { status, code, description, permanent };
 }
 
+function safeOAuthCode(code) {
+  return ["token_expired", "refresh_token_reused", "refresh_token_invalidated", "invalid_grant", "invalid_client"]
+    .includes(code) ? code : "oauth_error";
+}
+
 export async function refreshCodexToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("codex", refreshToken, async () => {
@@ -377,16 +399,16 @@ export async function refreshCodexToken(refreshToken, log) {
         const failure = classifyOAuthRefreshError(errorText, response.status);
         if (failure.permanent) {
           log?.error?.("TOKEN_REFRESH", "Codex refresh token already used or invalid. Re-auth required.", {
-            status: response.status,
-            code: failure.code,
+            status: safeStatus(response.status),
+            code: safeOAuthCode(failure.code),
           });
-          return { error: "unrecoverable_refresh_error", code: failure.code };
+          return { error: "unrecoverable_refresh_error", code: safeOAuthCode(failure.code) };
         }
 
         log?.error?.("TOKEN_REFRESH", "Failed to refresh Codex token", {
-          status: response.status,
-          error: errorText,
-          code: failure.code,
+          status: safeStatus(response.status),
+          code: safeOAuthCode(failure.code),
+          reason: "http",
           permanent: failure.permanent,
         });
         return null;
@@ -398,7 +420,7 @@ export async function refreshCodexToken(refreshToken, log) {
         hasNewAccessToken: !!tokens.access_token,
         hasNewRefreshToken: !!tokens.refresh_token,
         hasIdToken: !!tokens.id_token,
-        expiresIn: tokens.expires_in,
+        expiresIn: safeDuration(tokens.expires_in),
       });
 
       return {
@@ -408,7 +430,7 @@ export async function refreshCodexToken(refreshToken, log) {
         expiresIn: tokens.expires_in,
       };
     } catch (error) {
-      log?.error?.("TOKEN_REFRESH", `Network error refreshing Codex token: ${error.message}`);
+      log?.error?.("TOKEN_REFRESH", "Network error refreshing Codex token", { reason: safeNetworkReason(error) });
       return null;
     }
   }, log);
@@ -437,7 +459,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
     try {
       refreshRequest = buildExternalIdpRefreshParams(refreshToken, providerSpecificData);
     } catch (error) {
-      log?.warn?.("TOKEN_REFRESH", `Invalid Kiro external_idp refresh config: ${error.message}`);
+      log?.warn?.("TOKEN_REFRESH", "Invalid Kiro external_idp refresh config", { reason: "invalid-config" });
       return null;
     }
 
@@ -452,10 +474,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
     if (!response.ok) {
       const errorText = await response.text();
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro external_idp token", {
-        status: response.status,
-        error: errorText,
-      });
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro external_idp token", httpFailure(response, errorText));
       return null;
     }
 
@@ -464,7 +483,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
     log?.info?.("TOKEN_REFRESH", "Successfully refreshed Kiro external_idp token", {
       hasNewAccessToken: !!tokens.access_token,
       hasNewRefreshToken: !!tokens.refresh_token,
-      expiresIn: tokens.expires_in,
+      expiresIn: safeDuration(tokens.expires_in),
     });
 
     return {
@@ -509,10 +528,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
     if (!response.ok) {
       const errorText = await response.text();
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro AWS token", {
-        status: response.status,
-        error: errorText,
-      });
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro AWS token", httpFailure(response, errorText));
       return null;
     }
 
@@ -520,7 +536,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
     log?.info?.("TOKEN_REFRESH", "Successfully refreshed Kiro AWS token", {
       hasNewAccessToken: !!tokens.accessToken,
-      expiresIn: tokens.expiresIn,
+      expiresIn: safeDuration(tokens.expiresIn),
     });
 
     return {
@@ -545,10 +561,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
   if (!response.ok) {
     const errorText = await response.text();
-    log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro social token", {
-      status: response.status,
-      error: errorText,
-    });
+    log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro social token", httpFailure(response, errorText));
     return null;
   }
 
@@ -556,7 +569,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
   log?.info?.("TOKEN_REFRESH", "Successfully refreshed Kiro social token", {
     hasNewAccessToken: !!tokens.accessToken,
-    expiresIn: tokens.expiresIn,
+    expiresIn: safeDuration(tokens.expiresIn),
   });
 
   return {
@@ -595,10 +608,7 @@ export async function refreshCopilotToken(githubAccessToken, log) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Copilot token", {
-        status: response.status,
-        error: errorText
-      });
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh Copilot token", httpFailure(response, errorText));
       return null;
     }
 
@@ -606,7 +616,7 @@ export async function refreshCopilotToken(githubAccessToken, log) {
 
     log?.info?.("TOKEN_REFRESH", "Successfully refreshed Copilot token", {
       hasToken: !!data.token,
-      expiresAt: data.expires_at
+      hasExpiration: Number.isFinite(Number(data.expires_at)),
     });
 
     return {
@@ -614,9 +624,7 @@ export async function refreshCopilotToken(githubAccessToken, log) {
       expiresAt: data.expires_at
     };
   } catch (error) {
-    log?.error?.("TOKEN_REFRESH", "Error refreshing Copilot token", {
-      error: error.message
-    });
+    log?.error?.("TOKEN_REFRESH", "Error refreshing Copilot token", { reason: safeNetworkReason(error) });
     return null;
   }
   }, log);
@@ -647,26 +655,20 @@ export async function refreshCodebuddyToken(refreshToken, log) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        log?.error?.("TOKEN_REFRESH", "Failed to refresh CodeBuddy token", {
-          status: response.status,
-          error: errorText,
-        });
+        log?.error?.("TOKEN_REFRESH", "Failed to refresh CodeBuddy token", httpFailure(response, errorText));
         return null;
       }
 
       const data = await response.json();
       if (data.code !== 0 || !data.data?.accessToken) {
-        log?.error?.("TOKEN_REFRESH", "CodeBuddy token refresh returned no token", {
-          code: data.code,
-          msg: data.msg,
-        });
+        log?.error?.("TOKEN_REFRESH", "CodeBuddy token refresh returned no token", { reason: "provider-response" });
         return null;
       }
 
       log?.info?.("TOKEN_REFRESH", "Successfully refreshed CodeBuddy token", {
         hasNewAccessToken: !!data.data.accessToken,
         hasNewRefreshToken: !!data.data.refreshToken,
-        expiresIn: data.data.expiresIn,
+        expiresIn: safeDuration(data.data.expiresIn),
       });
 
       return {
@@ -678,7 +680,7 @@ export async function refreshCodebuddyToken(refreshToken, log) {
       // Every other exit here returns null and lets the caller decide, so a
       // thrown transport error must not be the one that escapes: it surfaced
       // as an unhandled 500 on the request path instead of a refresh failure.
-      log?.error?.("TOKEN_REFRESH", "Error refreshing CodeBuddy token", { error: error.message });
+      log?.error?.("TOKEN_REFRESH", "Error refreshing CodeBuddy token", { reason: safeNetworkReason(error) });
       return null;
     }
   }, log);
@@ -706,26 +708,20 @@ export async function refreshCodebuddyIntlToken(refreshToken, log) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        log?.error?.("TOKEN_REFRESH", "Failed to refresh CodeBuddy intl token", {
-          status: response.status,
-          error: errorText,
-        });
+        log?.error?.("TOKEN_REFRESH", "Failed to refresh CodeBuddy intl token", httpFailure(response, errorText));
         return null;
       }
 
       const data = await response.json();
       if (data.code !== 0 || !data.data?.accessToken) {
-        log?.error?.("TOKEN_REFRESH", "CodeBuddy intl token refresh returned no token", {
-          code: data.code,
-          msg: data.msg,
-        });
+        log?.error?.("TOKEN_REFRESH", "CodeBuddy intl token refresh returned no token", { reason: "provider-response" });
         return null;
       }
 
       log?.info?.("TOKEN_REFRESH", "Successfully refreshed CodeBuddy intl token", {
         hasNewAccessToken: !!data.data.accessToken,
         hasNewRefreshToken: !!data.data.refreshToken,
-        expiresIn: data.data.expiresIn,
+        expiresIn: safeDuration(data.data.expiresIn),
       });
 
       return {
@@ -737,7 +733,7 @@ export async function refreshCodebuddyIntlToken(refreshToken, log) {
       // Every other exit here returns null and lets the caller decide, so a
       // thrown transport error must not be the one that escapes: it surfaced
       // as an unhandled 500 on the request path instead of a refresh failure.
-      log?.error?.("TOKEN_REFRESH", "Error refreshing CodeBuddy International token", { error: error.message });
+      log?.error?.("TOKEN_REFRESH", "Error refreshing CodeBuddy International token", { reason: safeNetworkReason(error) });
       return null;
     }
   }, log);
@@ -773,10 +769,7 @@ export async function refreshTraeToken(refreshToken, credentials, log) {
 
       if (!response.ok) {
         const errorText = await response.text();
-        log?.error?.("TOKEN_REFRESH", "Failed to refresh Trae token", {
-          status: response.status,
-          error: errorText,
-        });
+        log?.error?.("TOKEN_REFRESH", "Failed to refresh Trae token", httpFailure(response, errorText));
         return null;
       }
 
@@ -784,7 +777,7 @@ export async function refreshTraeToken(refreshToken, credentials, log) {
       const result = payload?.Result || payload?.result || payload;
       const accessToken = result?.AccessToken || result?.accessToken;
       if (!accessToken) {
-        log?.error?.("TOKEN_REFRESH", "Trae refresh returned no AccessToken", { payload });
+        log?.error?.("TOKEN_REFRESH", "Trae refresh returned no AccessToken", { reason: "provider-response" });
         return null;
       }
 
@@ -810,7 +803,7 @@ export async function refreshTraeToken(refreshToken, credentials, log) {
         expiresIn,
       };
     } catch (error) {
-      log?.error?.("TOKEN_REFRESH", `Error refreshing Trae token: ${error.message}`);
+      log?.error?.("TOKEN_REFRESH", "Error refreshing Trae token", { reason: safeNetworkReason(error) });
       return null;
     }
   }, log, null, credentialContentRevision(credentials));

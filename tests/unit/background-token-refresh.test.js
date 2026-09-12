@@ -93,6 +93,30 @@ describe("selectConnectionsNeedingRefresh", () => {
     );
     expect(list).toHaveLength(1);
   });
+
+  it('selects stale declared refresh chains with missing or distant expiry', async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      '../../src/sse/services/backgroundTokenRefresh.js'
+    );
+    const stale = new Date(NOW - 9 * 24 * 60 * 60 * 1000).toISOString();
+    const list = selectConnectionsNeedingRefresh([
+      conn({ id: 'missing-expiry', provider: 'codex', expiresAt: null, lastRefreshAt: stale }),
+      conn({ id: 'distant-expiry', provider: 'codex', expiresAt: new Date(NOW + 30 * 24 * 60 * 60 * 1000).toISOString(), lastRefreshAt: stale }),
+    ], NOW);
+    expect(list.map(item => item.id)).toEqual(['missing-expiry', 'distant-expiry']);
+  });
+
+  it('skips a fresh maximum-age chain and disabled connections', async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      '../../src/sse/services/backgroundTokenRefresh.js'
+    );
+    const fresh = new Date(NOW - 60 * 60 * 1000).toISOString();
+    const distant = new Date(NOW + 30 * 24 * 60 * 60 * 1000).toISOString();
+    expect(selectConnectionsNeedingRefresh([
+      conn({ id: 'fresh', provider: 'codex', expiresAt: distant, lastRefreshAt: fresh }),
+      conn({ id: 'disabled', provider: 'codex', expiresAt: null, lastRefreshAt: null, isActive: false }),
+    ], NOW)).toEqual([]);
+  });
 });
 
 describe("runBackgroundTokenRefreshTick", () => {
@@ -195,8 +219,9 @@ describe("runBackgroundTokenRefreshTick", () => {
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const opaque = 'opaque-canary {"refresh_token":"credential-value"}\nhttps://idp.invalid/path?secret=1';
     const refreshConnection = vi.fn(async (connection) => {
-      if (connection === failed) throw new Error("upstream rejected refresh");
+      if (connection === failed) throw new Error(opaque);
     });
 
     const { runBackgroundTokenRefreshTick } = await import(
@@ -211,6 +236,9 @@ describe("runBackgroundTokenRefreshTick", () => {
     const output = [...logSpy.mock.calls, ...warnSpy.mock.calls].flat().join(" ");
     expect(output).not.toContain(completed.id);
     expect(output).not.toContain(failed.id);
+    expect(output).not.toContain(opaque);
+    expect(output).not.toContain('credential-value');
+    expect(output).toContain('reason');
     expect(output).toContain("grok-cli");
     logSpy.mockRestore();
     warnSpy.mockRestore();

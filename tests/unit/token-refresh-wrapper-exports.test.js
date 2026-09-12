@@ -111,7 +111,7 @@ describe('_refreshProjectId gating (via checkAndRefreshToken)', () => {
       ...(await importOriginal()),
       refreshProviderCredentials: vi
         .fn()
-        .mockResolvedValue({ accessToken: 'acc-new', expiresIn: 60 }),
+        .mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'acc-new', expiresIn: 60 }),
       shouldRefreshCredentials: vi.fn().mockReturnValue(true),
     }));
     vi.doMock('@/lib/antigravityVerification', () => ({
@@ -141,7 +141,7 @@ describe('_refreshProjectId gating (via checkAndRefreshToken)', () => {
       ...(await importOriginal()),
       refreshProviderCredentials: vi
         .fn()
-        .mockResolvedValue({ accessToken: 'acc-new', expiresIn: 60 }),
+        .mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'acc-new', expiresIn: 60 }),
       shouldRefreshCredentials: vi.fn().mockReturnValue(true),
     }));
     const { checkAndRefreshToken } = await import('@/sse/services/tokenRefresh.js');
@@ -165,7 +165,7 @@ describe('_refreshProjectId gating (via checkAndRefreshToken)', () => {
       ...(await importOriginal()),
       refreshProviderCredentials: vi
         .fn()
-        .mockResolvedValue({ accessToken: 'acc-new', expiresIn: 60 }),
+        .mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'acc-new', expiresIn: 60 }),
       shouldRefreshCredentials: vi.fn().mockReturnValue(true),
     }));
     const { checkAndRefreshToken } = await import('@/sse/services/tokenRefresh.js');

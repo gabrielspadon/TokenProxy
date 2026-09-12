@@ -56,7 +56,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
-  updateProviderConnection.mockResolvedValue({ id: 'conn-1' });
+  updateProviderConnection.mockImplementation(async (id, updates) => ({
+    id,
+    provider: 'claude',
+    authType: 'oauth',
+    isActive: true,
+    credentialRevisionId: 'stored-revision',
+    ...updates,
+  }));
   getProviderConnectionById.mockResolvedValue(null);
 });
 afterEach(() => vi.useRealTimers());
@@ -133,9 +140,26 @@ describe('updateProviderCredentials — expiry normalization', () => {
     expect(updateProviderConnection.mock.calls[0][1].providerSpecificData).toEqual({ a: 1, b: 2 });
   });
 
-  it('returns false and swallows a localDb write failure', async () => {
-    updateProviderConnection.mockRejectedValue(new Error('db locked'));
-    await expect(updateProviderCredentials('conn-1', { accessToken: 'a' })).resolves.toBe(false);
+  it('fails closed when localDb rejects or reports a missing row', async () => {
+    updateProviderConnection.mockRejectedValueOnce(new Error('db locked'));
+    await expect(updateProviderCredentials('conn-1', { accessToken: 'a' })).rejects.toMatchObject({
+      code: 'CREDENTIAL_PERSISTENCE_UNCONFIRMED',
+    });
+    updateProviderConnection.mockResolvedValueOnce(null);
+    await expect(updateProviderCredentials('conn-1', { accessToken: 'b' })).rejects.toMatchObject({
+      code: 'CREDENTIAL_PERSISTENCE_UNCONFIRMED',
+    });
+  });
+
+  it('requests critical durability and returns the authoritative stored revision', async () => {
+    const expected = { id: 'conn-1', accessToken: 'old', credentialRevisionId: 'old-revision' };
+    const stored = { ...expected, accessToken: 'new', credentialRevisionId: 'new-revision' };
+    updateProviderConnection.mockResolvedValue(stored);
+    await expect(updateProviderCredentials('conn-1', { accessToken: 'new' }, { expectedCredentials: expected })).resolves.toBe(stored);
+    expect(updateProviderConnection.mock.calls[0][2]).toMatchObject({
+      durability: 'critical',
+      expectedCredentials: expected,
+    });
   });
 });
 
@@ -162,24 +186,25 @@ describe('checkAndRefreshToken', () => {
     expect(updateProviderConnection).not.toHaveBeenCalled();
   });
 
-  it('an error-object refresh (invalid_grant) also leaves the stored bag untouched', async () => {
+  it('an invalid grant surfaces reauthentication instead of presenting the old chain as healthy', async () => {
     shouldRefreshCredentials.mockReturnValue(true);
     refreshProviderCredentials.mockResolvedValue({ error: 'invalid_grant' });
-    const out = await checkAndRefreshToken('claude', {
+    await expect(checkAndRefreshToken('claude', {
       connectionId: 'conn-1',
       accessToken: 'acc-old',
-    });
-    expect(out.accessToken).toBe('acc-old');
+    })).rejects.toMatchObject({ code: 'REAUTH_REQUIRED', reauthRequired: true });
     expect(updateProviderConnection).not.toHaveBeenCalled();
   });
 
   it('persists and returns the refreshed bag with a recomputed expiresAt', async () => {
     shouldRefreshCredentials.mockReturnValue(true);
-    refreshProviderCredentials.mockResolvedValue({
+    const issued = {
       accessToken: 'acc-new',
       refreshToken: 'rt-new',
       expiresIn: 3600,
-    });
+    };
+    refreshProviderCredentials.mockImplementation(async (_provider, _credentials, _log, options) =>
+      options.onCredentialsRefreshed(issued, { expectedCredentials: options.expectedCredentials }));
     const out = await checkAndRefreshToken('claude', {
       connectionId: 'conn-1',
       accessToken: 'acc-old',
@@ -189,11 +214,87 @@ describe('checkAndRefreshToken', () => {
     expect(out.refreshToken).toBe('rt-new');
     expect(out.expiresAt).toBe(new Date(NOW + 3600_000).toISOString());
     expect(updateProviderConnection).toHaveBeenCalledTimes(1);
+    expect(out._connection).toMatchObject({
+      id: 'conn-1',
+      accessToken: 'acc-new',
+      refreshToken: 'rt-new',
+      credentialRevisionId: 'stored-revision',
+    });
+  });
+
+  it('advances the authoritative revision across two successive one-use rotations', async () => {
+    shouldRefreshCredentials.mockReturnValue(true);
+    let stored = {
+      id: 'conn-1',
+      provider: 'claude',
+      authType: 'oauth',
+      isActive: true,
+      accessToken: 'acc-0',
+      refreshToken: 'rt-0',
+      credentialRevisionId: 'revision-0',
+      providerSpecificData: { persisted: true },
+    };
+    getProviderConnectionById.mockImplementation(async () => stored);
+    const expectedRevisions = [];
+    updateProviderConnection.mockImplementation(async (_id, updates, options) => {
+      expectedRevisions.push(options.expectedCredentials.credentialRevisionId);
+      stored = {
+        ...stored,
+        ...updates,
+        credentialRevisionId: `revision-${expectedRevisions.length}`,
+      };
+      return stored;
+    });
+    let rotation = 0;
+    refreshProviderCredentials.mockImplementation(async (_provider, _credentials, _log, options) => {
+      rotation += 1;
+      return options.onCredentialsRefreshed(
+        { accessToken: `acc-${rotation}`, refreshToken: `rt-${rotation}` },
+        { expectedCredentials: options.expectedCredentials },
+      );
+    });
+
+    const selected = {
+      ...stored,
+      connectionId: stored.id,
+      providerSpecificData: {
+        ...stored.providerSpecificData,
+        connectionProxyEnabled: true,
+        connectionProxyUrl: 'http://127.0.0.1:20190',
+      },
+      _connection: stored,
+    };
+    const first = await checkAndRefreshToken('claude', selected, { force: true });
+    const second = await checkAndRefreshToken('claude', first, { force: true });
+
+    expect(expectedRevisions).toEqual(['revision-0', 'revision-1']);
+    expect(second).toMatchObject({ accessToken: 'acc-2', refreshToken: 'rt-2' });
+    expect(second._connection).toBe(stored);
+    expect(second._connection.credentialRevisionId).toBe('revision-2');
+    expect(second.providerSpecificData.connectionProxyUrl).toBe('http://127.0.0.1:20190');
+    expect(second._connection.providerSpecificData).toEqual({ persisted: true });
+  });
+
+  it('never returns an issued replacement when durable publication fails', async () => {
+    shouldRefreshCredentials.mockReturnValue(true);
+    updateProviderConnection.mockRejectedValue(new Error('synthetic storage fault with opaque-canary'));
+    refreshProviderCredentials.mockImplementation(async (_provider, _credentials, _log, options) =>
+      options.onCredentialsRefreshed(
+        { accessToken: 'must-not-dispatch', refreshToken: 'must-not-cache' },
+        { expectedCredentials: options.expectedCredentials },
+      ));
+    await expect(checkAndRefreshToken('claude', {
+      connectionId: 'conn-1', accessToken: 'acc-old', refreshToken: 'rt-old',
+    }, { force: true })).rejects.toMatchObject({ code: 'CREDENTIAL_PERSISTENCE_UNCONFIRMED' });
   });
 
   it('falls back to creds.id as connectionId so persistence targets the right row', async () => {
     shouldRefreshCredentials.mockReturnValue(true);
-    refreshProviderCredentials.mockResolvedValue({ accessToken: 'acc-new', expiresIn: 60 });
+    refreshProviderCredentials.mockImplementation(async (_provider, _credentials, _log, options) =>
+      options.onCredentialsRefreshed(
+        { accessToken: 'acc-new', expiresIn: 60 },
+        { expectedCredentials: options.expectedCredentials },
+      ));
     await checkAndRefreshToken('claude', { id: 'row-9', accessToken: 'acc-old' });
     expect(updateProviderConnection.mock.calls[0][0]).toBe('row-9');
   });

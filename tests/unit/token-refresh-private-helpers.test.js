@@ -38,7 +38,7 @@ describe('needsProjectId allowlist (via checkAndRefreshToken, provider not in th
     vi.doMock('open-sse/services/oauthCredentialManager.js', async (orig) => ({
       ...(await orig()),
       shouldRefreshCredentials: () => true,
-      refreshProviderCredentials: async () => ({ accessToken: 'new-a', expiresIn: 60 }),
+      refreshProviderCredentials: async () => ({ id: 'c1', connectionId: 'c1', accessToken: 'new-a', expiresIn: 60 }),
     }));
     const { createAntigravityVerificationHooks } = await import('@/lib/antigravityVerification');
     const { checkAndRefreshToken } = await import('@/sse/services/tokenRefresh.js');
@@ -61,7 +61,7 @@ describe('_refreshProjectId verification-hooks branch: only antigravity gets rea
     vi.doMock('open-sse/services/oauthCredentialManager.js', async (orig) => ({
       ...(await orig()),
       shouldRefreshCredentials: () => true,
-      refreshProviderCredentials: async () => ({ accessToken: 'new-a', expiresIn: 60 }),
+      refreshProviderCredentials: async () => ({ id: 'c1', connectionId: 'c1', accessToken: 'new-a', expiresIn: 60 }),
     }));
     const { createAntigravityVerificationHooks } = await import('@/lib/antigravityVerification');
     const { checkAndRefreshToken } = await import('@/sse/services/tokenRefresh.js');

@@ -3,7 +3,7 @@
 
 import * as log from "../utils/logger.js";
 import { getEffectiveRefreshLeadMs } from "open-sse/services/tokenRefresh.js";
-import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.js";
+import { getCredentialExpiryMs, shouldRefreshCredentials } from "open-sse/services/oauthCredentialManager.js";
 
 /** Refresh when expiry is within 30 minutes (or the provider on-request lead, whichever larger). */
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
@@ -39,6 +39,14 @@ function isNonServerRuntime() {
   return false;
 }
 
+function safeRefreshFailureReason(error) {
+  if (error?.name === "AbortError") return "cancelled";
+  if (error?.code === "REAUTH_REQUIRED") return "reauth-required";
+  if (error?.code === "CREDENTIAL_CONFLICT") return "credential-conflict";
+  if (error?.code === "CREDENTIAL_PERSISTENCE_UNCONFIRMED") return "persistence-unconfirmed";
+  return "refresh-error";
+}
+
 /**
  * Pure selection: OAuth connections with a refreshToken whose access token
  * expires within max(provider on-request lead, BACKGROUND_REFRESH_LEAD_MS).
@@ -53,13 +61,14 @@ export function selectConnectionsNeedingRefresh(connections, nowMs = Date.now())
   const out = [];
   for (const conn of connections) {
     if (!conn) continue;
+    if (conn.isActive === false) continue;
 
     const authType = String(conn.authType || "").toLowerCase().replace(/_/g, "");
     if (authType !== "oauth") continue;
     if (!conn.refreshToken) continue;
 
     const expiresAtMs = getCredentialExpiryMs(conn);
-    if (expiresAtMs === null) continue;
+    const sharedDue = shouldRefreshCredentials(conn.provider, conn, nowMs);
 
     const providerLead = getEffectiveRefreshLeadMs(conn.provider, conn, nowMs);
     const leadMs = Math.max(
@@ -67,7 +76,7 @@ export function selectConnectionsNeedingRefresh(connections, nowMs = Date.now())
       BACKGROUND_REFRESH_LEAD_MS
     );
 
-    if (expiresAtMs - nowMs < leadMs) {
+    if (sharedDue || expiresAtMs !== null && expiresAtMs - nowMs < leadMs) {
       out.push(conn);
     }
   }
@@ -130,7 +139,7 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
         } catch (err) {
           if (!signal.aborted) log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
             provider: conn?.provider,
-            error: err?.message ?? String(err),
+            reason: safeRefreshFailureReason(err),
           });
         }
       }
@@ -143,7 +152,7 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
     });
   } catch (err) {
     log.warn("BG_TOKEN_REFRESH", "Tick failed (swallowed)", {
-      error: err?.message ?? String(err),
+      reason: safeRefreshFailureReason(err),
     });
   } finally {
     tickRunning = false;
@@ -175,7 +184,7 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
     if (!started || epoch !== generation) return;
     runBackgroundTokenRefreshTick().catch((err) => {
       log.warn("BG_TOKEN_REFRESH", "Unhandled tick rejection (swallowed)", {
-        error: err?.message ?? String(err),
+        reason: safeRefreshFailureReason(err),
       });
     });
   };

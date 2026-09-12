@@ -146,15 +146,31 @@ export const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) 
     let response = await fetchFn(accessToken, connection);
     if (!response.ok && (response.status === 401 || response.status === 403) && refreshToken) {
       const refreshed = await refreshFn(connection);
-      if (refreshed?.accessToken) {
-        await updateProviderCredentials(connection.id, {
-          accessToken: refreshed.accessToken,
-          refreshToken: refreshed.refreshToken || refreshToken,
-          expiresIn: refreshed.expiresIn,
-        });
-        connection.accessToken = refreshed.accessToken;
-        if (refreshed.refreshToken) connection.refreshToken = refreshed.refreshToken;
-        response = await fetchFn(refreshed.accessToken, connection);
+      if (
+        refreshed?.accessToken
+        && refreshed.error !== "unrecoverable_refresh_error"
+        && refreshed.error !== "invalid_grant"
+        && refreshed.reauthRequired !== true
+      ) {
+        const authoritative = await updateProviderCredentials(
+          connection.id,
+          {
+            ...refreshed,
+            refreshToken: refreshed.refreshToken || refreshToken,
+            existingProviderSpecificData: connection.providerSpecificData,
+          },
+          { expectedCredentials: connection },
+        );
+        if (!authoritative?.accessToken) {
+          throw Object.assign(new Error("Credential publication was not acknowledged"), {
+            code: "CREDENTIAL_PERSISTENCE_UNCONFIRMED",
+          });
+        }
+        // The catalog publisher hashes this object after the resolver returns.
+        // Install the full durable revision only after acknowledgement so its
+        // credentialRevisionId and provider evidence match that comparison.
+        Object.assign(connection, authoritative);
+        response = await fetchFn(authoritative.accessToken, connection);
       }
     }
     if (response.ok) {
@@ -162,13 +178,12 @@ export const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) 
       const models = parseFn(data);
       if (models.length > 0) return { models };
     } else {
-      const errorText = await response.text();
-      warning = `${errorLabel}: ${response.status} ${errorText}`;
-      console.log(`${errorLabel} (falling back to static):`, errorText);
+      warning = `${errorLabel}: HTTP ${response.status}`;
+      console.log(`${errorLabel} (falling back to static): HTTP ${response.status}`);
     }
-  } catch (error) {
-    warning = `${errorLabel}: ${error.message}`;
-    console.log(`${errorLabel} (falling back to static):`, error.message);
+  } catch {
+    warning = `${errorLabel}: unavailable`;
+    console.log(`${errorLabel} (falling back to static): unavailable`);
   }
   return { models: [], warning };
 };

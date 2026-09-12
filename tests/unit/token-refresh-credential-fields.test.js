@@ -33,25 +33,28 @@ beforeEach(() => {
   logError.mockReset();
   getProviderConnectionById.mockReset();
   updateProviderConnection.mockReset();
+  getProviderConnectionById.mockImplementation(async (id) => ({ id, connectionId: id }));
+  updateProviderConnection.mockImplementation(async (id, updates) => ({ id, connectionId: id, ...updates }));
   removeConnection.mockReset();
 });
 
 const mod = await import('@/sse/services/tokenRefresh.js');
 
 describe('releaseConnection', () => {
-  it('calls removeConnection and logs the exact connectionId field', () => {
+  it('calls removeConnection and logs only a connection fingerprint', () => {
     mod.releaseConnection('conn-9');
     expect(removeConnection).toHaveBeenCalledWith('conn-9');
     expect(logDebug).toHaveBeenCalledWith('TOKEN_REFRESH', 'Released connection resources', {
-      connectionId: 'conn-9',
+      connection: expect.stringMatching(/^[a-f0-9]{8}$/),
     });
+    expect(JSON.stringify(logDebug.mock.calls)).not.toContain('conn-9');
   });
 });
 
 describe('updateProviderCredentials field writes', () => {
   it('writes idToken and lastRefreshAt when present', async () => {
     getProviderConnectionById.mockResolvedValue({});
-    updateProviderConnection.mockResolvedValue({ id: 'c' });
+    updateProviderConnection.mockImplementation(async (id, updates) => ({ id, connectionId: id, ...updates }));
     await mod.updateProviderCredentials('c', { idToken: 'id-1', lastRefreshAt: 'ts-1' });
     const [, updates] = updateProviderConnection.mock.calls[0];
     expect(updates.idToken).toBe('id-1');
@@ -65,27 +68,31 @@ describe('updateProviderCredentials field writes', () => {
     expect(updates.providerSpecificData).toEqual({ copilotToken: 'cop-1' });
   });
 
-  it('logs success:true with the exact connectionId on a truthy DB write', async () => {
+  it('logs durable acknowledgement with only a connection fingerprint', async () => {
     updateProviderConnection.mockResolvedValue({ id: 'c' });
     await mod.updateProviderCredentials('conn-5', { accessToken: 'a' });
     expect(logInfo).toHaveBeenCalledWith('TOKEN_REFRESH', 'Credentials updated in localDb', {
-      connectionId: 'conn-5',
-      success: true,
+      connection: expect.stringMatching(/^[a-f0-9]{8}$/),
+      status: 'acknowledged',
     });
+    expect(JSON.stringify(logInfo.mock.calls)).not.toContain('conn-5');
   });
 
-  it('a thrown DB error logs the exact connectionId and error.message, then returns false', async () => {
-    updateProviderConnection.mockRejectedValue(new Error('db down'));
-    const result = await mod.updateProviderCredentials('conn-7', { accessToken: 'a' });
-    expect(result).toBe(false);
+  it('a thrown DB error fails closed and logs neither connection id nor error message', async () => {
+    const canary = 'db-down credential://private\nbody';
+    updateProviderConnection.mockRejectedValue(new Error(canary));
+    await expect(mod.updateProviderCredentials('conn-7', { accessToken: 'a' }))
+      .rejects.toMatchObject({ code: 'CREDENTIAL_PERSISTENCE_UNCONFIRMED' });
     expect(logError).toHaveBeenCalledWith(
       'TOKEN_REFRESH',
       'Error updating credentials in localDb',
       {
-        connectionId: 'conn-7',
-        error: 'db down',
+        connection: expect.stringMatching(/^[a-f0-9]{8}$/),
+        reason: 'storage',
       }
     );
+    expect(JSON.stringify(logError.mock.calls)).not.toContain(canary);
+    expect(JSON.stringify(logError.mock.calls)).not.toContain('conn-7');
   });
 });
 
@@ -95,7 +102,7 @@ describe('checkAndRefreshToken: needsProjectId false branch and creds.id fallbac
     vi.doMock('open-sse/services/oauthCredentialManager.js', async (orig) => ({
       ...(await orig()),
       shouldRefreshCredentials: () => true,
-      refreshProviderCredentials: async () => ({ accessToken: 'new-a', expiresIn: 60 }),
+      refreshProviderCredentials: async () => ({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'new-a', expiresIn: 60 }),
     }));
     updateProviderConnection.mockResolvedValue({ id: 'c' });
     await mod.checkAndRefreshToken('claude', { connectionId: 'conn-1', accessToken: 'old' });
@@ -108,11 +115,15 @@ describe('checkAndRefreshToken: needsProjectId false branch and creds.id fallbac
     vi.doMock('open-sse/services/oauthCredentialManager.js', async (orig) => ({
       ...(await orig()),
       shouldRefreshCredentials: () => true,
-      refreshProviderCredentials: async () => ({ accessToken: 'new-a', expiresIn: 60 }),
+      refreshProviderCredentials: async (_provider, _credentials, _log, options) =>
+        options.onCredentialsRefreshed(
+          { accessToken: 'new-a', expiresIn: 60 },
+          { expectedCredentials: options.expectedCredentials },
+        ),
     }));
     const fresh = await import('@/sse/services/tokenRefresh.js');
     await fresh.checkAndRefreshToken('claude', { id: 'conn-fallback', accessToken: 'old' });
-    expect(updateProviderConnection).toHaveBeenCalledWith('conn-fallback', expect.anything(), expect.objectContaining({expectedCredentials:expect.objectContaining({id:'conn-fallback',accessToken:'old'})}));
+    expect(updateProviderConnection).toHaveBeenCalledWith('conn-fallback', expect.anything(), expect.objectContaining({expectedCredentials:expect.objectContaining({id:'conn-fallback'})}));
   });
 });
 
@@ -127,7 +138,12 @@ describe('checkAndRefreshToken: github copilot missing-token and expiry math', (
       ...(await orig()),
       refreshCopilotToken: vi.fn(async () => ({ token: 'cop-new', expiresAt: 999 })),
     }));
-    updateProviderConnection.mockResolvedValue({ id: 'c' });
+    updateProviderConnection.mockImplementation(async (id, updates) => ({
+      id,
+      connectionId: id,
+      accessToken: 'gh-acc',
+      ...updates,
+    }));
     const fresh = await import('@/sse/services/tokenRefresh.js');
     const out = await fresh.checkAndRefreshToken('github', {
       connectionId: 'conn-1',

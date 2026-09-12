@@ -75,3 +75,85 @@ describe('background stop and restart',()=>{
   expect(credentialRevision({...base,providerSpecificData:{connectionProxyUrl:'synthetic'}})).not.toBe(credentialRevision(base));
  });
 });
+
+describe('credential redemption publication ownership',()=>{
+ it('coalesces one redemption and one durable publication for concurrent callers',async()=>{
+  vi.resetModules();
+  const issued=deferred(),refreshTokenByProvider=vi.fn(()=>issued.promise);
+  vi.doMock('open-sse/services/tokenRefresh.js',()=>({
+   getEffectiveRefreshLeadMs:()=>300000,
+   isUnrecoverableRefreshError:value=>!!value?.error,
+   refreshTokenByProvider,
+  }));
+  const manager=await import('open-sse/services/oauthCredentialManager.js');
+  const credentials={id:fresh(),provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:fresh(),credentialRevisionId:fresh()};
+  const stored={...credentials,accessToken:'stored',refreshToken:'stored-rotation',credentialRevisionId:fresh()};
+  const publish=vi.fn(async(_replacement,context)=>{expect(context.expectedCredentials).toBe(credentials);return stored;});
+  const options={expectedCredentials:credentials,onCredentialsRefreshed:publish};
+  const first=manager.refreshProviderCredentials('codex',credentials,null,options);
+  const second=manager.refreshProviderCredentials('codex',credentials,null,options);
+  await flush();expect(refreshTokenByProvider).toHaveBeenCalledTimes(1);
+  issued.resolve({accessToken:'issued',refreshToken:'issued-rotation'});
+  expect(await first).toBe(stored);expect(await second).toBe(stored);expect(publish).toHaveBeenCalledTimes(1);
+  vi.doUnmock('open-sse/services/tokenRefresh.js');vi.resetModules();
+ });
+
+ it('lets a persistent follower publish a provider-only owner result before delivery',async()=>{
+  vi.resetModules();
+  const issued=deferred(),refreshTokenByProvider=vi.fn(()=>issued.promise);
+  vi.doMock('open-sse/services/tokenRefresh.js',()=>({
+   getEffectiveRefreshLeadMs:()=>300000,
+   isUnrecoverableRefreshError:value=>!!value?.error,
+   refreshTokenByProvider,
+  }));
+  const manager=await import('open-sse/services/oauthCredentialManager.js');
+  const credentials={id:fresh(),provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:fresh(),credentialRevisionId:fresh()};
+  const providerOnly=manager.refreshProviderCredentials('codex',credentials,null);
+  const stored={...credentials,accessToken:'stored',credentialRevisionId:fresh()};
+  const publish=vi.fn(async()=>stored);
+  const persistent=manager.refreshProviderCredentials('codex',credentials,null,{expectedCredentials:credentials,onCredentialsRefreshed:publish});
+  issued.resolve({accessToken:'issued',refreshToken:'issued-rotation'});
+  await expect(providerOnly).resolves.toMatchObject({accessToken:'issued'});
+  await expect(persistent).resolves.toBe(stored);
+  expect(refreshTokenByProvider).toHaveBeenCalledTimes(1);expect(publish).toHaveBeenCalledTimes(1);
+  vi.doUnmock('open-sse/services/tokenRefresh.js');vi.resetModules();
+ });
+
+ it('publishes a recently cached provider-only result before persistent delivery',async()=>{
+  vi.resetModules();
+  const issued={accessToken:'issued',refreshToken:'issued-rotation'};
+  const refreshTokenByProvider=vi.fn(async()=>issued);
+  vi.doMock('open-sse/services/tokenRefresh.js',()=>({
+   getEffectiveRefreshLeadMs:()=>300000,
+   isUnrecoverableRefreshError:value=>!!value?.error,
+   refreshTokenByProvider,
+  }));
+  const manager=await import('open-sse/services/oauthCredentialManager.js');
+  const credentials={id:fresh(),provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:fresh(),credentialRevisionId:fresh()};
+  await expect(manager.refreshProviderCredentials('codex',credentials,null)).resolves.toMatchObject(issued);
+  const stored={...credentials,accessToken:'stored',refreshToken:'stored-rotation',credentialRevisionId:fresh()};
+  const publish=vi.fn(async()=>stored);
+  await expect(manager.refreshProviderCredentials('codex',credentials,null,{expectedCredentials:credentials,onCredentialsRefreshed:publish})).resolves.toBe(stored);
+  expect(publish).toHaveBeenCalledTimes(1);
+  vi.doUnmock('open-sse/services/tokenRefresh.js');vi.resetModules();
+ });
+
+ it('continues durable publication after consumer cancellation and fails closed on no acknowledgement',async()=>{
+  vi.resetModules();
+  const issued=deferred(),refreshTokenByProvider=vi.fn(()=>issued.promise);
+  vi.doMock('open-sse/services/tokenRefresh.js',()=>({
+   getEffectiveRefreshLeadMs:()=>300000,
+   isUnrecoverableRefreshError:value=>!!value?.error,
+   refreshTokenByProvider,
+  }));
+  const manager=await import('open-sse/services/oauthCredentialManager.js');
+  const credentials={id:fresh(),provider:'codex',authType:'oauth',isActive:true,accessToken:'old',refreshToken:fresh(),credentialRevisionId:fresh()};
+  const controller=new AbortController(),publish=vi.fn(async()=>null);
+  const call=manager.refreshProviderCredentials('codex',credentials,null,{signal:controller.signal,expectedCredentials:credentials,onCredentialsRefreshed:publish});
+  controller.abort();await expect(call).rejects.toMatchObject({name:'AbortError'});
+  issued.resolve({accessToken:'issued',refreshToken:'issued-rotation'});await flush();
+  expect(publish).toHaveBeenCalledTimes(1);
+  await expect(manager.refreshProviderCredentials('codex',credentials,null,{expectedCredentials:credentials,onCredentialsRefreshed:publish})).rejects.toMatchObject({code:'CREDENTIAL_PERSISTENCE_UNCONFIRMED'});
+  vi.doUnmock('open-sse/services/tokenRefresh.js');vi.resetModules();
+ });
+});

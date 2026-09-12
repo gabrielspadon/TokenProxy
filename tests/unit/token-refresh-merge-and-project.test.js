@@ -37,7 +37,11 @@ describe('releaseConnection', () => {
 describe('updateProviderCredentials: field-by-field merge', () => {
   it('writes accessToken only when present, not when absent', async () => {
     await updateProviderCredentials('c1', { accessToken: 'tok' });
-    expect(updateProviderConnection).toHaveBeenCalledWith('c1', { accessToken: 'tok' }, {});
+    expect(updateProviderConnection).toHaveBeenCalledWith(
+      'c1',
+      { accessToken: 'tok' },
+      { expectedCredentials: null, durability: 'critical' },
+    );
   });
 
   it('restarts refreshTokenIssuedAt/Fp when the refresh token actually rotated', async () => {
@@ -103,17 +107,19 @@ describe('updateProviderCredentials: field-by-field merge', () => {
     expect(call.providerSpecificData).toEqual({ other: 1, copilotToken: 'cop' });
   });
 
-  it('returns false and logs, without throwing, when updateProviderConnection rejects', async () => {
+  it('fails closed when updateProviderConnection rejects', async () => {
     updateProviderConnection.mockRejectedValueOnce(new Error('db down'));
-    const ok = await updateProviderCredentials('c1', { accessToken: 'x' });
-    expect(ok).toBe(false);
+    await expect(updateProviderCredentials('c1', { accessToken: 'x' }))
+      .rejects.toMatchObject({ code: 'CREDENTIAL_PERSISTENCE_UNCONFIRMED' });
   });
 
-  it('returns true when updateProviderConnection resolves truthy, false when it resolves falsy', async () => {
-    updateProviderConnection.mockResolvedValueOnce({ id: 'c1' });
-    expect(await updateProviderCredentials('c1', { accessToken: 'x' })).toBe(true);
+  it('returns the authoritative object and rejects an unacknowledged write', async () => {
+    const stored = { id: 'c1', accessToken: 'stored' };
+    updateProviderConnection.mockResolvedValueOnce(stored);
+    expect(await updateProviderCredentials('c1', { accessToken: 'x' })).toBe(stored);
     updateProviderConnection.mockResolvedValueOnce(null);
-    expect(await updateProviderCredentials('c1', { accessToken: 'x' })).toBe(false);
+    await expect(updateProviderCredentials('c1', { accessToken: 'x' }))
+      .rejects.toMatchObject({ code: 'CREDENTIAL_PERSISTENCE_UNCONFIRMED' });
   });
 });
 
@@ -133,7 +139,7 @@ describe('_refreshProjectId: resolved projectId is persisted', () => {
       ...(await importOriginal()),
       refreshProviderCredentials: vi
         .fn()
-        .mockResolvedValue({ accessToken: 'acc-new', expiresIn: 60 }),
+        .mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'acc-new', expiresIn: 60 }),
       shouldRefreshCredentials: vi.fn().mockReturnValue(true),
     }));
     vi.doMock('@/lib/antigravityVerification', () => ({
@@ -165,7 +171,7 @@ describe('_refreshProjectId: resolved projectId is persisted', () => {
       ...(await importOriginal()),
       refreshProviderCredentials: vi
         .fn()
-        .mockResolvedValue({ accessToken: 'acc-new', expiresIn: 60 }),
+        .mockResolvedValue({ id: 'conn-1', connectionId: 'conn-1', accessToken: 'acc-new', expiresIn: 60 }),
       shouldRefreshCredentials: vi.fn().mockReturnValue(true),
     }));
     vi.doMock('@/lib/antigravityVerification', () => ({

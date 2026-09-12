@@ -470,11 +470,23 @@ export async function createProviderConnection(data) {
 }
 
 // Critical: OAuth refresh token race — atomic merge inside transaction
-export async function updateProviderConnection(id, data, { expectedControls, expectedCredentials, signal } = {}) {
+export async function updateProviderConnection(id, data, { expectedControls, expectedCredentials, signal, durability } = {}) {
   const db = await getAdapter();
+  if (durability !== undefined && durability !== "critical") {
+    throw new TypeError(`Unsupported connection durability mode: ${durability}`);
+  }
+  const transact = durability === "critical"
+    ? db.criticalTransaction?.bind(db)
+    : db.transaction.bind(db);
+  if (!transact) {
+    throw Object.assign(
+      new Error("Critical credential persistence is unavailable for this database driver"),
+      { code: "CRITICAL_TRANSACTION_UNSUPPORTED" },
+    );
+  }
   let result;
   let quotaPolicyChanged = false;
-  db.transaction(configurationDomainMutation(db, 'repo.connections.update', () => {
+  transact(configurationDomainMutation(db, 'repo.connections.update', () => {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);

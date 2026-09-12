@@ -1,7 +1,7 @@
 // Re-export from open-sse with local logger
 import * as log from "../utils/logger.js";
 import { getProviderConnectionById, updateProviderConnection } from "../../lib/localDb.js";
-import { credentialRevision, waitForRefresh } from "open-sse/services/tokenRefresh/credentialRevision.js";
+import { credentialContentRevision, credentialRevision, waitForRefresh } from "open-sse/services/tokenRefresh/credentialRevision.js";
 import { tokenFingerprint } from "open-sse/services/tokenRefresh/dedup.js";
 import {
   getProjectIdForConnection,
@@ -84,7 +84,7 @@ export const shouldRefreshCredentials = (provider, credentials) =>
 export function releaseConnection(connectionId) {
   if (!connectionId) return;
   removeConnection(connectionId);
-  log.debug("TOKEN_REFRESH", "Released connection resources", { connectionId });
+  log.debug("TOKEN_REFRESH", "Released connection resources", { connection: tokenFingerprint(connectionId) });
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -103,6 +103,53 @@ function normalizeExpiresAt(expiresAt) {
   const date = new Date(expiresAt);
   if (!Number.isFinite(date.getTime())) return null;
   return date.toISOString();
+}
+
+const SELECTED_TRANSPORT_FIELDS = [
+  "connectionProxyEnabled",
+  "connectionProxyUrl",
+  "connectionNoProxy",
+  "connectionProxyPoolId",
+  "vercelRelayUrl",
+  "strictProxy",
+  "resolutionKind",
+];
+
+function withAuthoritativeConnection(wrapper, authoritative, selectedTransport = null) {
+  if (!authoritative || typeof authoritative !== "object") return wrapper;
+  const next = { ...wrapper, ...authoritative, _connection: authoritative };
+  if (selectedTransport) {
+    next.providerSpecificData = { ...(authoritative.providerSpecificData || {}) };
+    for (const key of SELECTED_TRANSPORT_FIELDS) {
+      if (Object.hasOwn(selectedTransport, key)) {
+        next.providerSpecificData[key] = selectedTransport[key];
+      }
+    }
+  }
+  return next;
+}
+
+function persistenceFailure(error, { reauthRequired = false } = {}) {
+  if (error?.code === "CREDENTIAL_PERSISTENCE_UNCONFIRMED") return error;
+  return Object.assign(
+    new Error("Refreshed credentials were not durably stored; reauthentication may be required"),
+    {
+      code: "CREDENTIAL_PERSISTENCE_UNCONFIRMED",
+      cause: error,
+      reauthRequired,
+    },
+  );
+}
+
+function persistenceReason(error) {
+  if (error?.code === "CREDENTIAL_CONFLICT") return "conflict";
+  if (String(error?.code || "").startsWith("CRITICAL_TRANSACTION_")) return "durability";
+  return "storage";
+}
+
+function isUncertainCriticalWrite(error) {
+  return String(error?.code || "").startsWith("CRITICAL_TRANSACTION_")
+    && (error?.commitState === "committed" || error?.commitState === "uncertain");
 }
 
 /**
@@ -138,17 +185,17 @@ function _refreshProjectId(provider, connectionId, accessToken, options = {}) {
   return getProjectIdForConnection(connectionId, accessToken, provider, verificationHooks)
     .then((projectId) => {
       if (!projectId || options.signal?.aborted) return;
-      return updateProviderCredentials(connectionId, { projectId }, options).catch((err) => {
+      return updateProviderCredentials(connectionId, { projectId }, options).catch(() => {
         log.debug("TOKEN_REFRESH", "Failed to persist refreshed projectId", {
-          connectionId,
-          error: err?.message ?? err,
+          connection: tokenFingerprint(connectionId),
+          reason: "persistence",
         });
       });
     })
-    .catch((err) => {
+    .catch(() => {
       log.debug("TOKEN_REFRESH", "Failed to fetch projectId after token refresh", {
-        connectionId,
-        error: err?.message ?? err,
+        connection: tokenFingerprint(connectionId),
+        reason: "lookup",
       });
     });
 }
@@ -165,6 +212,9 @@ function _refreshProjectId(provider, connectionId, accessToken, options = {}) {
  */
 export async function updateProviderCredentials(connectionId, newCredentials, options = {}) {
   options.signal?.throwIfAborted();
+  let current = options.expectedCredentials;
+  let candidate = null;
+  let rotated = false;
   try {
     const updates = {};
 
@@ -174,7 +224,7 @@ export async function updateProviderCredentials(connectionId, newCredentials, op
       // Additive issue record for CRED.age/chain-diverged
       // (docs/logging-design.md §2 row 42): firstSeen/fp restart only on a
       // real rotation, so an unchanged token keeps its original age.
-      const current = await getProviderConnectionById(connectionId);
+      current ||= await getProviderConnectionById(connectionId);
       if (!current?.refreshTokenIssuedAt
           || (current.refreshToken && current.refreshToken !== newCredentials.refreshToken)) {
         updates.refreshTokenIssuedAt = new Date().toISOString();
@@ -209,19 +259,41 @@ export async function updateProviderCredentials(connectionId, newCredentials, op
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
 
     options.signal?.throwIfAborted();
-    const result = await updateProviderConnection(connectionId, updates, options);
+    current ||= await getProviderConnectionById(connectionId);
+    rotated = !!(
+      newCredentials.refreshToken
+      && current?.refreshToken
+      && newCredentials.refreshToken !== current.refreshToken
+    );
+    candidate = current ? { ...current, ...updates } : null;
+    const result = await updateProviderConnection(connectionId, updates, {
+      expectedCredentials: current,
+      durability: "critical",
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    if (!result || typeof result !== "object") throw persistenceFailure(null, { reauthRequired: rotated });
     log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
-      connectionId,
-      success: !!result
+      connection: tokenFingerprint(connectionId),
+      status: "acknowledged",
     });
-    return !!result;
+    return result;
   } catch (error) {
-    if (options.signal?.aborted || error.code === "CREDENTIAL_CONFLICT") throw error;
+    if (options.signal?.aborted) throw error;
+    if (error?.code === "CREDENTIAL_CONFLICT") {
+      const winner = await getProviderConnectionById(connectionId);
+      if (winner) return winner;
+    }
+    if (isUncertainCriticalWrite(error) && candidate) {
+      const stored = await getProviderConnectionById(connectionId);
+      if (stored && credentialContentRevision(stored) === credentialContentRevision(candidate)) {
+        return stored;
+      }
+    }
     log.error("TOKEN_REFRESH", "Error updating credentials in localDb", {
-      connectionId,
-      error: error.message,
+      connection: tokenFingerprint(connectionId),
+      reason: persistenceReason(error),
     });
-    return false;
+    throw persistenceFailure(error, { reauthRequired: rotated });
   }
 }
 
@@ -249,18 +321,15 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
   const stored = creds.connectionId ? await getProviderConnectionById(creds.connectionId) : null;
   signal?.throwIfAborted();
   if (options.requireCurrent && !stored) return creds;
-  if (stored?.isActive === false || stored?.provider && stored.provider !== provider || stored?.authType && stored.authType !== 'oauth') return stored;
+  if (stored?.isActive === false || stored?.provider && stored.provider !== provider || stored?.authType && stored.authType !== 'oauth') {
+    return withAuthoritativeConnection(creds, stored);
+  }
   if (stored) {
     const selectedTransport = !options.requireCurrent && credentials._connection
       && credentialRevision(credentials._connection) === credentialRevision(stored)
       ? credentials.providerSpecificData : null;
-    creds = {...creds,...stored};
-    if (selectedTransport) {
-      creds.providerSpecificData = {...stored.providerSpecificData};
-      for (const key of ['connectionProxyEnabled','connectionProxyUrl','connectionNoProxy','connectionProxyPoolId','vercelRelayUrl','strictProxy','resolutionKind']) {
-        if (Object.hasOwn(selectedTransport,key)) creds.providerSpecificData[key] = selectedTransport[key];
-      }
-    } else if (stored.providerSpecificData?.proxyPoolId) {
+    creds = withAuthoritativeConnection(creds, stored, selectedTransport);
+    if (!selectedTransport && stored.providerSpecificData?.proxyPoolId) {
       const {resolveConnectionProxyConfig,toConnectionProxyOptions} = await import('@/lib/network/connectionProxy');
       const proxy = await resolveConnectionProxyConfig(stored.providerSpecificData);
       signal?.throwIfAborted();
@@ -283,39 +352,35 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       lastRefreshAt: creds.lastRefreshAt || null,
     });
 
-    const newCreds = await waitForRefresh(_refreshProviderCredentials(provider, creds, log, {signal:waitSignal}), waitSignal);
+    const expectedCredentials = stored || creds;
+    const newCreds = await _refreshProviderCredentials(provider, creds, log, {
+      signal: waitSignal,
+      expectedCredentials,
+      onCredentialsRefreshed: (refreshed, context) => updateProviderCredentials(
+        creds.connectionId,
+        { ...refreshed, existingProviderSpecificData: creds.providerSpecificData },
+        { expectedCredentials: context.expectedCredentials },
+      ),
+    });
     signal?.throwIfAborted();
+    if (newCreds?.error === "unrecoverable_refresh_error" || newCreds?.error === "invalid_grant") {
+      throw Object.assign(new Error("Credential refresh was rejected; reauthentication is required"), {
+        code: "REAUTH_REQUIRED",
+        reauthRequired: true,
+      });
+    }
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
-      const mergedCreds = {
-        ...newCreds,
-        existingProviderSpecificData: creds.providerSpecificData,
-      };
-
-      // Persist to DB (non-blocking path continues below)
-      try {
-        await updateProviderCredentials(creds.connectionId, mergedCreds, {expectedCredentials:stored || creds,signal});
-      } catch (error) {
-        if (error.code !== "CREDENTIAL_CONFLICT") throw error;
-        return await getProviderConnectionById(creds.connectionId) || credentials;
-      }
-
-      creds = {
-        ...creds,
-        ...newCreds,
-        expiresAt: newCreds.expiresIn
-          ? toExpiresAt(newCreds.expiresIn)
-          : normalizeExpiresAt(newCreds.expiresAt) || newCreds.expiresAt || creds.expiresAt,
-        providerSpecificData: newCreds.providerSpecificData
-          ? { ...creds.providerSpecificData, ...newCreds.providerSpecificData }
-          : creds.providerSpecificData,
-      };
+      // A durable publisher returns the repository's authoritative row. Keep
+      // that exact revision so a CAS winner never inherits stale caller fields.
+      creds = withAuthoritativeConnection(creds, newCreds, creds.providerSpecificData);
 
       // Non-blocking: fetch projectId only when the connection has none
       if (!creds.projectId && needsProjectId(provider)) {
-        const current = await getProviderConnectionById(creds.connectionId);
+        const activeConnectionId = creds.connectionId || creds.id;
+        const current = await getProviderConnectionById(activeConnectionId);
         signal?.throwIfAborted();
         if (!current || current.isActive !== false && current.accessToken === creds.accessToken) {
-          const projectWork = _refreshProjectId(provider, creds.connectionId, creds.accessToken, {expectedCredentials:current || creds,signal});
+          const projectWork = _refreshProjectId(provider, activeConnectionId, creds.accessToken, {expectedCredentials:current || creds,signal});
           if (options.waitForSettled) await projectWork;
           signal?.throwIfAborted();
         }
@@ -339,29 +404,38 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
         expiresIn: copilotToken ? Math.round(remaining / 1000) : "missing",
       });
 
-      const copilotSnapshot = creds.connectionId ? await getProviderConnectionById(creds.connectionId) : creds;
+      const activeConnectionId = creds.connectionId || creds.id;
+      const copilotSnapshot = activeConnectionId ? await getProviderConnectionById(activeConnectionId) : creds;
       signal?.throwIfAborted();
       if (stored && !copilotSnapshot) return creds;
-      if (copilotSnapshot?.isActive === false || copilotSnapshot?.provider && copilotSnapshot.provider !== provider) return copilotSnapshot;
-      if (copilotSnapshot) creds = {...creds,...copilotSnapshot};
-      const copilotTokenResult = await waitForRefresh(refreshCopilotToken(creds.accessToken),waitSignal);
-      signal?.throwIfAborted();
-      if (copilotTokenResult) {
+      if (copilotSnapshot?.isActive === false || copilotSnapshot?.provider && copilotSnapshot.provider !== provider) {
+        return withAuthoritativeConnection(creds, copilotSnapshot);
+      }
+      if (copilotSnapshot) {
+        creds = withAuthoritativeConnection(creds, copilotSnapshot, creds.providerSpecificData);
+      }
+      const copilotOwner = Promise.resolve(refreshCopilotToken(creds.accessToken)).then(async (copilotTokenResult) => {
+        if (!copilotTokenResult) return null;
         const updatedSpecific = {
           ...creds.providerSpecificData,
-          copilotToken:          copilotTokenResult.token,
+          copilotToken: copilotTokenResult.token,
           copilotTokenExpiresAt: copilotTokenResult.expiresAt,
         };
-
-        try {
-          await updateProviderCredentials(creds.connectionId, {providerSpecificData:updatedSpecific}, {expectedCredentials:copilotSnapshot || creds,signal});
-        } catch (error) {
-          if (error.code !== "CREDENTIAL_CONFLICT") throw error;
-          return await getProviderConnectionById(creds.connectionId) || credentials;
-        }
-
-        creds.providerSpecificData = updatedSpecific;
-        creds.copilotToken = copilotTokenResult.token;
+        return updateProviderCredentials(
+          activeConnectionId,
+          { providerSpecificData: updatedSpecific },
+          { expectedCredentials: copilotSnapshot || creds },
+        );
+      });
+      const copilotTokenResult = await waitForRefresh(copilotOwner,waitSignal);
+      signal?.throwIfAborted();
+      if (copilotTokenResult) {
+        creds = withAuthoritativeConnection(
+          creds,
+          copilotTokenResult,
+          creds.providerSpecificData,
+        );
+        creds.copilotToken = copilotTokenResult.providerSpecificData?.copilotToken;
       }
     }
   }
