@@ -12,6 +12,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const LOOPBACK = /^(127\.|::1$|::ffff:127\.|localhost$|0\.0\.0\.0$)/i;
+const GUARDED_LOOKUP = Symbol("tokenproxy-real-io-guarded-lookup");
 
 const realConnect = net.Socket.prototype.connect;
 function isWithin(root, candidate) {
@@ -54,6 +55,30 @@ function assertAllowedConnection(args) {
   const host = opts.host ?? args[1];
   // A host-less connect is an existing file-descriptor reuse, not network egress.
   if (host !== undefined && !LOOPBACK.test(String(host))) {
+    if (typeof opts.lookup === "function") {
+      if (!opts.lookup[GUARDED_LOOKUP]) {
+        const lookup = opts.lookup;
+        const guardedLookup = function guardedRealIoLookup(...lookupArgs) {
+          const callbackIndex = lookupArgs.length - 1;
+          const callback = lookupArgs[callbackIndex];
+          lookupArgs[callbackIndex] = (error, address, family) => {
+            if (error) return callback(error);
+            const records = Array.isArray(address) ? address : [{ address, family }];
+            const remote = records.find((record) => !LOOPBACK.test(String(record?.address)));
+            if (remote) {
+              return callback(new Error(
+                `[real-io-guard] blocked a custom DNS lookup result ${JSON.stringify(remote.address)} for ${JSON.stringify(host)}.`,
+              ));
+            }
+            return callback(null, address, family);
+          };
+          return lookup.apply(this, lookupArgs);
+        };
+        Object.defineProperty(guardedLookup, GUARDED_LOOKUP, { value: true });
+        opts.lookup = guardedLookup;
+      }
+      return;
+    }
     throw new Error(
       `[real-io-guard] blocked a real network connection to "${host}". ` +
         `Mock fetch/http/net for this test instead of reaching the network.`,

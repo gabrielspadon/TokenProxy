@@ -25,7 +25,7 @@ if (!root?.trim()) {
   throw new Error("[DATA_DIR] test setup requires TOKENPROXY_TEST_DATA_ROOT from the explicit Vitest config");
 }
 mkdirSync(root, { recursive: true, mode: 0o700 });
-const dir = mkdtempSync(join(root, "file-"));
+const dir = mkdtempSync(join(root, "tokenproxy-test-file-"));
 process.env.DATA_DIR = dir;
 
 // Per-file directories would otherwise accumulate one tree per file per run on

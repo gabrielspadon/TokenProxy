@@ -451,8 +451,9 @@ describe('DevinCliExecutor ACP session/new', () => {
   });
 
   it('does not set XDG_CONFIG_HOME when DEVIN_MCP_SERVERS is absent', async () => {
+    const inheritedXdgConfigHome = process.env.XDG_CONFIG_HOME;
     const { child } = await runExecute();
-    expect(child.opts.env.XDG_CONFIG_HOME).toBeUndefined();
+    expect(child.opts.env.XDG_CONFIG_HOME).toBe(inheritedXdgConfigHome);
   });
 
   it('exposes body.tools as an MCP server (sets XDG_CONFIG_HOME + writes script)', async () => {
@@ -783,6 +784,7 @@ describe('DevinCliExecutor — protocol fallbacks and noise tolerance', () => {
 
   it('invalid DEVIN_MCP_SERVERS JSON is logged and does not create an MCP config', async () => {
     process.env.DEVIN_MCP_SERVERS = '{not json';
+    const inheritedXdgConfigHome = process.env.XDG_CONFIG_HOME;
     const log = { info: vi.fn(), debug() {} };
     try {
       const child = makeScriptableChild((msg, c) => {
@@ -797,7 +799,7 @@ describe('DevinCliExecutor — protocol fallbacks and noise tolerance', () => {
           });
       });
       const { child: spawned } = await runWith(child, { log });
-      expect(spawned.opts.env.XDG_CONFIG_HOME).toBeUndefined();
+      expect(spawned.opts.env.XDG_CONFIG_HOME).toBe(inheritedXdgConfigHome);
       expect(log.info).toHaveBeenCalledWith('DEVIN', expect.stringContaining('parse failed'));
     } finally {
       delete process.env.DEVIN_MCP_SERVERS;

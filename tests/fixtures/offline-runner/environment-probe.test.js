@@ -25,6 +25,15 @@ it("does not inherit provider or proxy credentials", () => {
 
 it("blocks raw sockets and child-process egress", async () => {
   expect(() => net.connect({ host: "1.1.1.1", port: 443 })).toThrow(/real-io-guard/);
+  await expect(new Promise((resolvePromise, reject) => {
+    const socket = net.connect({
+      host: "lookup-escape.invalid",
+      port: 443,
+      lookup: (_host, _options, callback) => callback(null, "1.1.1.1", 4),
+    });
+    socket.once("connect", () => resolvePromise());
+    socket.once("error", reject);
+  })).rejects.toThrow(/real-io-guard.*custom DNS lookup result/);
   const child = spawnSync(process.execPath, [
     "-e",
     "fetch('https://1.1.1.1', {signal:AbortSignal.timeout(500)}).then(()=>process.exit(90)).catch(()=>process.exit(0))",
