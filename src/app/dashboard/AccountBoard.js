@@ -1,13 +1,12 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
   Badge,
   Button,
   Checkbox,
   Loader,
-  SegmentedControl,
   Select,
   Table,
   Text,
@@ -19,6 +18,7 @@ import { Icon } from '@/shared/components/Icon';
 import { CommitNumber, NameField } from '@/shared/workspace/CommitFields';
 import { ProviderMark, providerIdentity } from '@/shared/components/ProviderMark';
 import { call } from '@/shared/api';
+import { DensitySwitch } from '@/shared/workspace/Board';
 import { useResource } from '@/shared/workspace/useResource';
 import { useWorkspace, analyticsUrl } from '@/shared/workspace/WorkspaceProvider';
 import {
@@ -37,22 +37,19 @@ import { applyDrainChanges } from './capacityControlsModel';
 import { HiddenCount, HiddenWindows, QuotaLine, useHiddenWindows } from './QuotaLine';
 import { ResetHorizon, UsageLine } from './ActivityEvidence';
 import {
-  BUCKETS,
-  SECTIONS,
+  CATEGORIES,
   SORTS,
-  accountBucket,
+  accountCategory,
   accountEvidence,
   accountReturnsAt,
   accountSeat,
-  accountSection,
   accountStateReason,
   accountStateWord,
+  categorySummary,
   filterAccounts,
-  fleetSummary,
   headroomOf,
-  orderSection,
+  orderCategory,
   providerList,
-  sectionSummary,
   visibleWindowLines,
   windowLines,
 } from './accountBoardModel';
@@ -61,7 +58,7 @@ import { AddAccountRow } from './AddAccountRow';
 import styles from '@/shared/workspace/board.module.css';
 
 const EMPTY = [];
-const TONE = Object.fromEntries(BUCKETS.map((bucket) => [bucket.id, bucket.tone]));
+const TONE = Object.fromEntries(CATEGORIES.map((item) => [item.id, item.tone]));
 // How much the card is entitled to claim, said in the operator's words rather
 // than the ranker's. `fresh` needs no badge: it is the case the meters already
 // describe, and a badge on every card is a badge that means nothing.
@@ -71,6 +68,31 @@ const EVIDENCE_NOTE = {
     label: 'No reading',
     title: 'No readable quota window. Shown here because it has served work or passed its test.',
   },
+};
+// The three sign-ins an operator reaches for first, as branded buttons instead
+// of a 136-entry <Select>. Every field is read from what ships: the ids are
+// registry entries with `category: 'oauth'` (open-sse/providers/registry),
+// `name` is that entry's own display name, the mark comes from
+// public/providers/<id>.png through ProviderMark, and `brand` names an existing
+// --brand-* token in src/app/workspace.css. No invented provider, no invented
+// logo, and each button opens the SAME AddAccountRow flow the picker opens, so
+// the grant, the paste-back fallback and the naming stage are the shipped ones.
+// Add-everything stays on Connections, reachable through "Other".
+const QUICK_CONNECTIONS = [
+  { id: 'codex', name: 'OpenAI Codex', label: 'Codex', brand: 'openai' },
+  { id: 'claude', name: 'Claude Code', label: 'Claude Code', brand: 'claude' },
+  { id: 'kimi', name: 'Kimi', label: 'Kimi', brand: 'kimi' },
+];
+
+// What each category MEANS, in the tooltip on its chip. It used to be a
+// `<span>` beside each group heading, where it truncated with an ellipsis and
+// was the only explanation the state had (root visual review, finding 1).
+const CATEGORY_MEANING = {
+  active: 'Can take work now.',
+  cooldown: 'Out of quota, rate limited or auto-paused. Each card leads with when it returns.',
+  paused: 'Your own hold. Nothing has failed on these.',
+  unknown:
+    'No evidence that this can take work: no credential, a failure needing you, or nothing measured yet. Not the same as zero quota.',
 };
 const number = (value) =>
   Number.isFinite(value)
@@ -136,7 +158,7 @@ function AccountRow({
 }) {
   const id = accountControlId(account);
   const name = account.displayName || account.name || id;
-  const bucket = accountBucket(account, now);
+  const category = accountCategory(account, now);
   const word = accountStateWord(account, now);
   const evidence = accountControlEvidence(account, now);
   const paused = account.isActive === false;
@@ -150,7 +172,7 @@ function AccountRow({
       className={styles.row}
       data-account-id={id}
       data-expanded={expanded || undefined}
-      data-bucket={bucket}
+      data-category={category}
       aria-label={name}
     >
       <div className={styles.main}>
@@ -197,7 +219,7 @@ function AccountRow({
               .filter(Boolean)
               .join('. ')}
           >
-            <span className={styles.stateWord} data-tone={TONE[bucket]}>
+            <span className={styles.stateWord} data-tone={TONE[category]}>
               <i />
               {word}
             </span>
@@ -349,10 +371,10 @@ function AccountRow({
   );
 }
 
-// Everyday: one compact card per account, progress first. Pause, rename and
-// expand stay direct; priority, drain, thresholds and comparison live in Advanced.
+// One compact card per account. Pause, rename and expand stay direct; priority,
+// drain, thresholds and comparison live in Advanced.
 // What the operator is being asked to DO, which is the only useful headline on
-// a card that no clock will clear. Keyed by state rather than by section, so a
+// a card that no clock will clear. Keyed by state rather than by category, so a
 // draining account cannot inherit "resume this" from the paused one beside it.
 const STATE_ASK = {
   'No credential': 'Add a credential',
@@ -364,28 +386,37 @@ const STATE_ASK = {
 };
 
 /**
- * The one fact the card exists to show, chosen by which section it is in.
+ * The one fact the card exists to show, chosen by its category.
  *
- * Serving leads with headroom because that is what decides where work goes
- * next. Cooling down leads with the return time because nothing else about a
- * drained account changes what the operator does. The two sections that need a
- * person lead with the instruction, because nothing about them changes until
- * someone acts. Unverified leads with the absence itself.
+ * Active leads with headroom because that is what decides where work goes next.
+ * Cooldown leads with the return time because nothing else about a drained
+ * account changes what the operator does. Paused and Unknown lead with the
+ * instruction or the absence, because nothing about either changes until
+ * someone acts.
  *
  * The note underneath is the EVIDENCE, one line, from whatever actually put the
- * account in this state. It used to be a restatement of the section, which is
- * how four accounts a 401 had killed carried the same words as four an operator
- * had paused.
+ * account in this state. It used to restate the section heading, which is how
+ * four accounts a 401 had killed carried the same words as four an operator had
+ * paused.
+ *
+ * NO CLAIM WITHOUT THE EVIDENCE FOR IT. The Active branch used to answer
+ * "Proven by use" whenever no quota window was readable, which rendered above a
+ * card whose own lines said "No attempts" and "No quota window to read" (root
+ * visual review, finding 2). `accountProven` is what the word asserts, so it is
+ * what gets asked: a served request or a passed test earns "Serving", and the
+ * absence of both says so plainly instead.
  */
-function cardFact(account, section, now) {
+function cardFact(account, category, now) {
   const why = accountStateReason(account, now);
-  if (section === 'action' || section === 'held')
+  const state = accountControlState(account, now);
+  if (category === 'paused')
+    return { value: STATE_ASK[state] || accountStateWord(account, now), note: why };
+  if (category === 'unknown')
     return {
-      value: STATE_ASK[accountControlState(account, now)] || accountStateWord(account, now),
-      note: why,
+      value: STATE_ASK[state] || accountStateWord(account, now),
+      note: why || 'No quota window to read, and nothing has proved this account works',
     };
-  if (section === 'unverified') return { value: 'No quota evidence', note: why };
-  if (section === 'resting') {
+  if (category === 'cooldown') {
     const returnsAt = accountReturnsAt(account, now);
     if (returnsAt === null)
       return { value: accountStateWord(account, now), note: why || 'No timed return recorded' };
@@ -397,14 +428,22 @@ function cardFact(account, section, now) {
     };
   }
   const headroom = headroomOf(account, now);
-  if (headroom === null) return { value: 'Proven by use', note: 'No quota window to read' };
-  return { value: `${number(headroom)}% left`, note: 'Least room across its quota windows' };
+  if (headroom !== null)
+    return { value: `${number(headroom)}% left`, note: 'Least room across its quota windows' };
+  // Active with no readable window. It is here because something proved it
+  // works, so the card says which proof it holds and never claims a quota
+  // reading it does not have.
+  const records = Number(account.activity?.records);
+  const failed = Number(account.activity?.failed) || 0;
+  if (Number.isFinite(records) && records > failed)
+    return { value: 'Serving', note: 'No quota window to read. It is here because it has served work.' };
+  return { value: 'Serving', note: 'No quota window to read. Its last connection test passed.' };
 }
 
 function AccountCard({
   account,
   now,
-  section,
+  category,
   anchor,
   expanded,
   selectedScope,
@@ -419,7 +458,6 @@ function AccountCard({
 }) {
   const id = accountControlId(account);
   const name = account.displayName || account.name || id;
-  const bucket = accountBucket(account, now);
   const word = accountStateWord(account, now);
   const evidence = accountControlEvidence(account, now);
   const band = EVIDENCE_NOTE[accountEvidence(account, now)];
@@ -436,15 +474,14 @@ function AccountCard({
   const lines = visibleWindowLines(account, hiddenWindows, now);
   const [showHidden, setShowHidden] = useState(false);
   const record = account.activity;
-  const fact = cardFact(account, section, now);
+  const fact = cardFact(account, category, now);
   return (
     <article
       className={styles.card}
       data-account-id={id}
       data-expanded={expanded || undefined}
-      data-bucket={bucket}
-      data-tone={TONE[bucket]}
-      data-section={section}
+      data-category={category}
+      data-tone={TONE[category]}
       aria-label={name}
     >
       <header className={styles.cardHead}>
@@ -522,7 +559,7 @@ function AccountCard({
         <Tooltip
           label={[evidence.health, ...evidence.gates, account.lastError].filter(Boolean).join('. ')}
         >
-          <span className={styles.stateWord} data-tone={TONE[bucket]}>
+          <span className={styles.stateWord} data-tone={TONE[category]}>
             <i />
             {word}
           </span>
@@ -651,15 +688,16 @@ export function AccountBoard({
   } = useWorkspace();
   const resource = useResource('/api/providers');
   const [query, setQuery] = useState('');
-  const [bucket, setBucket] = useState(null);
-  // Serving state is the primary axis and health the secondary one. They are
-  // separate state because they compose: narrowing to "cooling down" is not a
-  // request to forget which of those are also paused.
-  const [section, setSection] = useState(null);
+  // ONE filter axis. Two pieces of state used to hold two vocabularies that
+  // composed, which meant the board could be narrowed to a combination that
+  // matched nothing while both strips still showed non-zero counts.
+  const [category, setCategory] = useState(null);
   const [sort, setSort] = useState('name');
   const [sortAt, setSortAt] = useState(now);
   const [busy, setBusy] = useState({});
-  const [adding, setAdding] = useState(false);
+  // The provider a quick-connection button chose, or '' for the full picker.
+  // Null means the panel is closed.
+  const [adding, setAdding] = useState(null);
   const [comparing, setComparing] = useState(false);
   const { hiddenWindows, setWindowHidden: hideWindow } = useHiddenWindows();
   const accounts = useMemo(
@@ -672,10 +710,9 @@ export function AccountBoard({
       (!scope.provider || account.provider === scope.provider) &&
       (!scope.connectionId || accountControlId(account) === scope.connectionId)
   );
-  const summary = fleetSummary(scoped, now);
-  const sections = sectionSummary(scoped, now);
+  const summary = categorySummary(scoped, now);
   const visible = sortAccountControls(
-    filterAccounts(scoped, { query, bucket, section }, now),
+    filterAccounts(scoped, { query, category }, now),
     sort,
     sortAt
   );
@@ -809,6 +846,14 @@ export function AccountBoard({
       reread();
     });
   }
+  // The control that opened the add panel, so closing it returns focus there
+  // rather than dropping a keyboard operator at the start of the document.
+  const quickRefs = useRef({});
+  function closeAdding() {
+    const opener = quickRefs.current[adding];
+    setAdding(null);
+    opener?.focus();
+  }
   const rowBusy = (id) =>
     busy[id] || (Object.keys(busy).find((key) => key.split(',').includes(id)) && 'drain');
   const toggle = (id, windowScope = null) => {
@@ -824,79 +869,43 @@ export function AccountBoard({
       data-layout={advanced ? 'rows' : 'cards'}
       data-density={density}
     >
-      {/* Serving state first: what takes work now, what is out and when it
-          returns, and what nothing has proved. Health sits below it on its own
-          row, because "paused" and "attention" answer a different question and
-          neither axis replaces the other. One chip per section, counting the
-          same accounts the sections below hold. */}
-      <div className={styles.fleet} role="group" aria-label="Capacity summary" data-axis="capacity">
+      {/* One strip, four categories, and it is both the count and the filter.
+          Two same-weight strips stood here, the second indented under the first
+          with a \u21b3 and the word "Breakdown", because two vocabularies had to
+          coexist. One mapping means one strip. Each chip's tooltip carries what
+          the category means, since a truncating subtitle under a heading was
+          the only explanation of a state (root visual review, finding 1). */}
+      <div className={styles.fleet} role="group" aria-label="Capacity summary">
         <button
           type="button"
           className={styles.fleetChip}
-          aria-pressed={!section}
-          onClick={() => setSection(null)}
+          aria-pressed={!category}
+          onClick={() => setCategory(null)}
         >
           <strong>{scoped.length}</strong> accounts
         </button>
-        {SECTIONS.map((item) => (
-          <button
-            type="button"
-            key={item.id}
-            className={styles.fleetChip}
-            data-tone={item.tone}
-            aria-pressed={section === item.id}
-            title={item.note}
-            onClick={() => setSection(section === item.id ? null : item.id)}
-          >
-            <i />
-            <strong>{sections[item.id]}</strong> {item.label.toLowerCase()}
-          </button>
+        {CATEGORIES.map((item) => (
+          <Tooltip key={item.id} label={CATEGORY_MEANING[item.id]}>
+            <button
+              type="button"
+              className={styles.fleetChip}
+              data-tone={item.tone}
+              aria-pressed={category === item.id}
+              onClick={() => setCategory(category === item.id ? null : item.id)}
+            >
+              <i />
+              <strong>{summary[item.id]}</strong> {item.label.toLowerCase()}
+            </button>
+          </Tooltip>
         ))}
         <span className={styles.spacer} />
         <Text size="xs" c="dimmed" className={styles.fleetNote}>
           {health.loading || (resource.loading && !accounts.length)
-            ? 'Reading accounts…'
+            ? 'Reading accounts\u2026'
             : advanced
               ? 'Edits save on Enter or blur'
               : 'Advanced view adds priority, drain and auto-pause'}
         </Text>
-      </div>
-      {/* A breakdown OF the row above, not a rival vocabulary beside it. These
-          words subdivide the sections ("out of quota" and "paused" both live
-          inside Cooling down), and stacking two same-weight strips made a
-          reader work that containment out for themselves. Indented, dimmer,
-          and named for what it is. */}
-      <div
-        className={styles.fleet}
-        role="group"
-        aria-label="Breakdown of the sections above"
-        data-axis="health"
-      >
-        <span className={styles.axisLabel} aria-hidden="true">
-          ↳
-        </span>
-        <span className={styles.axisLabel}>Breakdown</span>
-        <button
-          type="button"
-          className={styles.fleetChip}
-          aria-pressed={!bucket}
-          onClick={() => setBucket(null)}
-        >
-          <strong>{scoped.length}</strong> all
-        </button>
-        {BUCKETS.filter((item) => summary[item.id] > 0 || item.id !== 'unknown').map((item) => (
-          <button
-            type="button"
-            key={item.id}
-            className={styles.fleetChip}
-            data-tone={item.tone}
-            aria-pressed={bucket === item.id}
-            onClick={() => setBucket(bucket === item.id ? null : item.id)}
-          >
-            <i />
-            <strong>{summary[item.id]}</strong> {item.label.toLowerCase()}
-          </button>
-        ))}
       </div>
       <div className={styles.toolbar}>
         <TextInput
@@ -948,19 +957,11 @@ export function AccountBoard({
             allowDeselect={false}
           />
         ) : null}
-        <Tooltip label="How much room each account takes">
-          <SegmentedControl
-            size="xs"
-            aria-label="Density"
-            value={density}
-            onChange={onDensity}
-            data={[
-              { value: 'comfy', label: 'Comfy' },
-              { value: 'tidy', label: 'Tidy' },
-            ]}
-            className={styles.density}
-          />
-        </Tooltip>
+        {/* The shared control (src/shared/workspace/Board.js), not a local
+            copy. This board carried its own two-value SegmentedControl, so the
+            board and every other surface could sit at different densities
+            while reading one stored value. */}
+        <DensitySwitch value={density} onChange={onDensity} />
         <span className={styles.spacer} />
         {advanced ? (
           <Button
@@ -989,14 +990,41 @@ export function AccountBoard({
             </ActionIcon>
           </Tooltip>
         ) : null}
-        <Button
-          size="xs"
-          leftSection={<Icon name="i-add" />}
-          aria-expanded={adding}
-          onClick={() => setAdding((previous) => !previous)}
-        >
-          Add account
-        </Button>
+        {QUICK_CONNECTIONS.map((item) => (
+          <Tooltip key={item.id} label={`Connect a ${item.name} account`}>
+            <button
+              type="button"
+              className={styles.quickConnect}
+              data-brand={item.brand}
+              aria-expanded={adding === item.id}
+              aria-label={`Connect a ${item.name} account`}
+              disabled={snapshot?.isolated}
+              ref={(node) => {
+                quickRefs.current[item.id] = node;
+              }}
+              onClick={() => setAdding((previous) => (previous === item.id ? null : item.id))}
+            >
+              <ProviderMark provider={item.id} size="small" />
+              <span>{item.label}</span>
+              <Icon name="i-add" />
+            </button>
+          </Tooltip>
+        ))}
+        <Tooltip label="Any other provider, with its credential options">
+          <Button
+            size="xs"
+            variant="default"
+            leftSection={<Icon name="i-add" />}
+            aria-expanded={adding === ''}
+            disabled={snapshot?.isolated}
+            ref={(node) => {
+              quickRefs.current[''] = node;
+            }}
+            onClick={() => setAdding((previous) => (previous === '' ? null : ''))}
+          >
+            Other
+          </Button>
+        </Tooltip>
         {reading ? (
           <span className={styles.muted} role="status" aria-live="polite">
             {reading.done} / {reading.total}
@@ -1019,9 +1047,13 @@ export function AccountBoard({
           </ActionIcon>
         </Tooltip>
       </div>
-      {adding ? (
+      {adding !== null ? (
         <AddAccountRow
-          onClose={() => setAdding(false)}
+          // Remounted per provider so the row starts on the chosen one and no
+          // state from a previous pick survives into it.
+          key={adding || 'other'}
+          provider={adding || null}
+          onClose={closeAdding}
           onAdded={(connection) => {
             if (connection) toast('teal', `${connection.name || connection.id} added.`);
             reread();
@@ -1109,77 +1141,60 @@ export function AccountBoard({
           <span>Priority · drain · pause</span>
         </div>
       ) : null}
-      {/* One section per serving state, flat. Grouping by login used to come
-          first, which put a drained seat and a full one under one heading and
-          left the operator to work out which was which. The seat relationship
-          survives as a label on each card; the nesting does not. Within a
-          section the order is the section's own question: most headroom where
-          work goes next, soonest return where the operator is waiting. */}
+      {/* One group per category, flat, in CATEGORIES order. No note beside
+          the heading: the chip above already counts and its tooltip already
+          explains, and a second copy was a second thing to truncate. No
+          fixed-height wrapper either, so an empty category renders nothing at
+          all rather than a blank vertical band (root visual review, finding 1
+          and 3). Within a group the order is that category's own question:
+          most headroom where work goes next, soonest return where the
+          operator is waiting. */}
       {!advanced
-        ? SECTIONS.map((item) => {
-            const members = orderSection(
-              visible.filter((account) => accountSection(account, now) === item.id),
+        ? CATEGORIES.map((item) => {
+            const members = orderCategory(
+              visible.filter((account) => accountCategory(account, now) === item.id),
               item.id,
               now
             );
             if (!members.length) return null;
-            const cards = members.map((account) => {
-              const id = accountControlId(account);
-              return (
-                <AccountCard
-                  key={id}
-                  account={account}
-                  now={now}
-                  section={item.id}
-                  anchor={anchor}
-                  expanded={selectedAccountId === id}
-                  selectedScope={selectedAccountId === id ? selectedScope : null}
-                  busy={rowBusy(id)}
-                  verdict={verdicts[id]}
-                  onToggle={() => toggle(id)}
-                  onInspect={(windowScope) => toggle(id, windowScope)}
-                  onRename={(name) => rename(account, name)}
-                  hiddenWindows={hiddenWindows}
-                  onHideWindow={(key, hide) => hideWindow(account, key, hide)}
-                  onPause={() =>
-                    savePolicy(
-                      account,
-                      'pause',
-                      { isActive: account.isActive === false },
-                      account.isActive === false ? 'Resume' : 'Pause'
-                    )
-                  }
-                />
-              );
-            });
-            const count = `${members.length} ${members.length === 1 ? 'account' : 'accounts'}`;
-            // An unverified account has nothing to show and nothing proving it
-            // works, so it is listed rather than laid out: it stays one click
-            // away instead of taking a card's worth of room from the accounts
-            // that are actually serving.
-            if (item.id === 'unverified')
-              return (
-                <details key={item.id} className={styles.group} data-collapsed="">
-                  <summary className={styles.groupTitle} data-tone={item.tone}>
-                    <i />
-                    {item.label}
-                    <span>
-                      {count} · {item.note}
-                    </span>
-                  </summary>
-                  <div className={styles.cards}>{cards}</div>
-                </details>
-              );
             return (
               <section key={item.id} className={styles.group} aria-label={`${item.label} accounts`}>
                 <h3 className={styles.groupTitle} data-tone={item.tone}>
                   <i />
                   {item.label}
-                  <span>
-                    {count} · {item.note}
-                  </span>
+                  <span>{members.length}</span>
                 </h3>
-                <div className={styles.cards}>{cards}</div>
+                <div className={styles.cards}>
+                  {members.map((account) => {
+                    const id = accountControlId(account);
+                    return (
+                      <AccountCard
+                        key={id}
+                        account={account}
+                        now={now}
+                        category={item.id}
+                        anchor={anchor}
+                        expanded={selectedAccountId === id}
+                        selectedScope={selectedAccountId === id ? selectedScope : null}
+                        busy={rowBusy(id)}
+                        verdict={verdicts[id]}
+                        onToggle={() => toggle(id)}
+                        onInspect={(windowScope) => toggle(id, windowScope)}
+                        onRename={(name) => rename(account, name)}
+                        hiddenWindows={hiddenWindows}
+                        onHideWindow={(key, hide) => hideWindow(account, key, hide)}
+                        onPause={() =>
+                          savePolicy(
+                            account,
+                            'pause',
+                            { isActive: account.isActive === false },
+                            account.isActive === false ? 'Resume' : 'Pause'
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </div>
               </section>
             );
           })
@@ -1258,8 +1273,7 @@ export function AccountBoard({
               className={styles.linkButton}
               onClick={() => {
                 setQuery('');
-                setBucket(null);
-                setSection(null);
+                setCategory(null);
                 if (scope.provider || scope.connectionId)
                   setScope({ provider: null, connectionId: null });
               }}

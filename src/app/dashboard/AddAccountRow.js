@@ -38,7 +38,12 @@ const OPTION_PROVIDERS = new Set([
 
 // The common path only: an API key or a provider sign-in. Providers that need
 // endpoint, region or workspace fields keep their full form in Connections.
-export function AddAccountRow({ onClose, onAdded }) {
+//
+// `provider` preselects one, which is how Capacity's branded quick-connection
+// buttons work: they open this same row already on Codex, Claude Code or Kimi
+// rather than reimplementing a grant. Nothing else about the flow changes, so
+// the epoch guard, the paste-back fallback and the naming stage are shared.
+export function AddAccountRow({ onClose, onAdded, provider = null }) {
   const entries = useMemo(
     () =>
       Object.values(AI_PROVIDERS)
@@ -46,7 +51,7 @@ export function AddAccountRow({ onClose, onAdded }) {
         .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
     []
   );
-  const [selection, setSelection] = useState(null);
+  const [selection, setSelection] = useState(provider);
   const providerId = providerChoiceId(selection);
   const choices = useMemo(() => providerChoices(entries), [entries]);
   const [mode, setMode] = useState('');
@@ -68,6 +73,14 @@ export function AddAccountRow({ onClose, onAdded }) {
       abortRef.current?.abort();
       document.removeEventListener('visibilitychange', clear);
     };
+  }, []);
+  // A preselected provider runs the SAME pick() the Select runs, so its
+  // credential mode and its authorize probe are established by one code path.
+  // Once on mount: the caller remounts this row per provider (`key`), and
+  // re-running it would abort a grant already in flight.
+  useEffect(() => {
+    if (provider) pick(provider);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const entry = entries.find((candidate) => candidate.id === providerId);
   const modes = entry ? credentialModes(entry) : [];
