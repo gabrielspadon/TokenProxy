@@ -454,12 +454,14 @@ describe("cascade flow through handleChat (executor mocked)", () => {
         bodyModel: opts.body.model,
       });
       if (outcome.ok) return { success: true, response: sseOk() };
+      // The escalation is authorized by proof the dispatch layer owns, never by
+      // the status alone. A scripted outcome states its own permission.
       return {
         success: false,
         status: outcome.status,
         error: `upstream ${outcome.status}`,
         response: new Response(`upstream ${outcome.status}`, { status: outcome.status }),
-        failureMetadata: {},
+        failureMetadata: { safeToReplay: outcome.safeToReplay !== false },
       };
     });
   }
@@ -555,6 +557,14 @@ describe("cascade flow through handleChat (executor mocked)", () => {
       expect(isSessionEscalated("sess-1")).toBe(true);
     },
   );
+
+  it("does not escalate an unproven 429: no second dispatch without replay proof", async () => {
+    scriptExecutor([{ status: 429, safeToReplay: false }, { ok: true }]);
+    const res = await handleChat(chatRequest(explorationRequest()));
+    expect(res.status).toBe(429);
+    expect(dispatches).toHaveLength(1);
+    expect(isSessionEscalated("sess-1")).toBe(false);
+  });
 
   it("does not escalate a 400: the cheap error is the answer", async () => {
     scriptExecutor([{ status: 400 }]);
