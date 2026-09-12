@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const priorDataDir = process.env.DATA_DIR;
 const oldTime = '2023-11-14T00:00:00.000Z';
 const fixtureKey = 'history-retention-fixture-key';
-let tempDir, db, saveRequestStats, ingestContextEvent, retentionDays, validateAnalyticsQuery;
+let tempDir, db, saveRequestStats, ingestContextEvent, cleanupContext, retentionDays, validateAnalyticsQuery;
 
 beforeEach(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenproxy-history-retention-'));
@@ -18,7 +18,7 @@ beforeEach(async () => {
   db = await getAdapter();
   ({ saveRequestStats } = await import('../../src/lib/db/repos/requestStatsRepo.js'));
   ({ ingestContextEvent } = await import('../../src/lib/db/repos/contextClientEventsRepo.js'));
-  ({ retentionDays } = await import('../../src/lib/db/repos/contextRepo.js'));
+  ({ cleanupContext, retentionDays } = await import('../../src/lib/db/repos/contextRepo.js'));
   ({ validateAnalyticsQuery } = await import('../../src/lib/db/analytics/contextQueries.mjs'));
   db.run('INSERT INTO apiKeys(id,key,createdAt) VALUES(?,?,?)', ['fixture-key-id', fixtureKey, oldTime]);
   db.run('INSERT INTO contextSessions(id,sessionHash,identitySource,firstSeenAt,lastSeenAt) VALUES(?,?,?,?,?)',
@@ -31,6 +31,7 @@ beforeEach(async () => {
   db.run('INSERT INTO contextClientEvents(id,clientKeyId,clientEventId,occurredAt,recordedAt,type,requestId,contextSessionId,clientRef,payloadHash) VALUES(?,?,?,?,?,?,?,?,?,?)',
     ['old-event', 'fixture-key-id', randomUUID(), oldTime, oldTime, 'task_start', 'old-request', 1, 'fixture-client', 'fixture-hash']);
   db.run('INSERT INTO usageHistory(timestamp,connectionId,promptTokens) VALUES(?,?,?)', [oldTime, 'historical-account', 71]);
+  db.run('INSERT INTO costLedger(id,ts,baselineUsd,actualUsd,savedUsd) VALUES(?,?,?,?,?)', ['old-ledger', oldTime, 2, 1, 1]);
 });
 
 afterEach(async () => {
@@ -55,6 +56,7 @@ function historicalEvidence() {
     session: db.get('SELECT * FROM contextSessions WHERE id=?', [1]),
     event: db.get('SELECT * FROM contextClientEvents WHERE id=?', ['old-event']),
     usage: db.get('SELECT * FROM usageHistory WHERE connectionId=?', ['historical-account']),
+    ledger: db.get('SELECT * FROM costLedger WHERE id=?', ['old-ledger']),
   };
 }
 
@@ -80,10 +82,12 @@ describe('explicit history retention policy', () => {
   it('deletes expired Context evidence only after explicit window selection while retaining usage', async () => {
     settings({ statsRetentionMode: 'window', statsRetentionDays: 45 });
     const usage = historicalEvidence().usage;
+    const ledger = historicalEvidence().ledger;
     await saveRequestStats({ id: 'new-request', timestamp: new Date().toISOString(), status: 'success' });
     const evidence = historicalEvidence();
     for (const name of ['request', 'stage', 'structure', 'session', 'event']) expect(evidence[name]).toBeFalsy();
     expect(evidence.usage).toEqual(usage);
+    expect(evidence.ledger).toEqual(ledger);
     expect(db.get('SELECT id FROM requestStats WHERE id=?', ['new-request'])).toBeTruthy();
   });
 
@@ -115,5 +119,35 @@ describe('explicit history retention policy', () => {
     expect(retentionDays({ statsRetentionMode: 'window', statsRetentionDays: 30 })).toBe(30);
     expect(validateAnalyticsQuery({ operation: 'overview', filter: {}, retainedDays: null }).retainedDays).toBeNull();
     expect(() => validateAnalyticsQuery({ operation: 'overview', filter: {}, retainedDays: 0 })).toThrow('Invalid retention');
+  });
+
+  it('keeps the exact cutoff and newer rows across every named Context store while preserving Usage and Economics history', () => {
+    const now = Date.parse('2026-09-12T12:00:00.000Z');
+    const cutoff = new Date(now - 45 * 86400000).toISOString();
+    const recent = new Date(now - 86400000).toISOString();
+    for (const [id, hash, at] of [[2, 'cutoff-session', cutoff], [3, 'recent-session', recent]]) {
+      const request = `${hash}-request`;
+      db.run('INSERT INTO contextSessions(id,sessionHash,identitySource,firstSeenAt,lastSeenAt) VALUES(?,?,?,?,?)', [id, hash, 'explicit', at, at]);
+      db.run('INSERT INTO requestStats(id,timestamp,contextSessionId) VALUES(?,?,?)', [request, at, id]);
+      db.run('INSERT INTO contextStages(requestId,ordinal,stage,beforeBytes,afterBytes,deltaBytes,outcome,risk) VALUES(?,?,?,?,?,?,?,?)', [request, 0, 'fixture-stage', 10, 9, -1, 'applied', 'none']);
+      db.run('INSERT INTO contextStructures(requestId,boundary,version,data) VALUES(?,?,?,?)', [request, 'fixture-boundary', 1, '{}']);
+      db.run('INSERT INTO contextClientEvents(id,clientKeyId,clientEventId,occurredAt,recordedAt,type,requestId,contextSessionId,clientRef,payloadHash) VALUES(?,?,?,?,?,?,?,?,?,?)', [`${hash}-event`, 'fixture-key-id', randomUUID(), at, at, 'task_start', request, id, 'fixture-client', `${hash}-digest`]);
+    }
+
+    cleanupContext(db, now, 45);
+
+    expect(historicalEvidence()).toMatchObject({
+      request: undefined, stage: undefined, structure: undefined, session: undefined, event: undefined,
+      usage: expect.objectContaining({ connectionId: 'historical-account' }),
+      ledger: expect.objectContaining({ id: 'old-ledger' }),
+    });
+    for (const hash of ['cutoff-session', 'recent-session']) {
+      const request = `${hash}-request`;
+      expect(db.get('SELECT id FROM requestStats WHERE id=?', [request])).toBeTruthy();
+      expect(db.get('SELECT requestId FROM contextStages WHERE requestId=?', [request])).toBeTruthy();
+      expect(db.get('SELECT requestId FROM contextStructures WHERE requestId=?', [request])).toBeTruthy();
+      expect(db.get('SELECT id FROM contextClientEvents WHERE id=?', [`${hash}-event`])).toBeTruthy();
+      expect(db.get('SELECT id FROM contextSessions WHERE sessionHash=?', [hash])).toBeTruthy();
+    }
   });
 });
