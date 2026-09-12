@@ -87,13 +87,18 @@
 .railSetting :global(.mantine-SegmentedControl-root) {
   background: var(--nav-track);
   border: 1px solid var(--nav-track-edge);
-  padding: 2px;
+  padding: 1px;
 }
 .railSetting :global(.mantine-SegmentedControl-label) {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: var(--rail-control-height);
+  /* Updates and Appearance are preferences, not destinations, so they sit
+     below the rail's control height rather than matching the nav items and the
+     sign-out button that share that token. Mantine's size="xs" sets its own
+     floor on this label, so the measured reduction comes from the 1px root
+     padding above; this keeps the intent explicit if that floor ever moves. */
+  min-height: 20px;
   padding-inline: 6px;
   /* Unselected is muted, so the chosen segment is the bright one. It used to be
      --nav-text, the same value a nav destination's label carries, which left

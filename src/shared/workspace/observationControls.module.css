@@ -1,10 +1,18 @@
 /* One line under the update control saying what the chosen behavior does. It
    sits on the navy rail, so it takes the rail's muted foreground rather than
    the page's. Local to this control; the rail's own layout stays in
-   workspace.module.css, which this job does not own. */
+   workspace.module.css, which this job does not own.
+
+   ONE line, truncated. Wrapped to three it made the update block the tallest
+   thing in the rail and pushed Appearance and sign-out toward the fold. The
+   full sentence is not lost: it is the tooltip on the control above, which
+   also carries the per-mode explanation. */
 .behavior {
   margin: 0;
   font-size: var(--type-dense);
-  line-height: 1.35;
+  line-height: 1.3;
   color: var(--nav-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
