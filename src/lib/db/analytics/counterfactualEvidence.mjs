@@ -1,4 +1,5 @@
 import { isCompletionId } from '../completionIdentity.mjs';
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 
 const signed = value => typeof value === 'number' && Number.isFinite(value);
 const nonnegative = value => signed(value) && value >= 0;
@@ -53,13 +54,17 @@ export function attachCounterfactualEvidence(db, rows) {
       const batch = ids.slice(offset, offset + 400), marks = batch.map(() => '?').join(',');
       for (const entry of db.all(`SELECT *,COUNT(*) OVER (PARTITION BY completionId) AS bindings
         FROM costLedger WHERE completionId IN (${marks})`, batch)) byId.set(entry.completionId, entry);
-      for (const mapping of db.all(`SELECT completionId,COUNT(*) AS matches FROM usageHistory
-        WHERE completionId IN (${marks}) GROUP BY completionId`, batch)) counts.set(mapping.completionId, mapping.matches);
+      // Visibility cannot repair ambiguous raw identity bindings. Keep the full
+      // retained count even when only one of several mappings is displayed.
+      for (const mapping of db.all(`SELECT completionId,COUNT(*) AS matches,
+        MAX(CASE WHEN ${telemetryFilterSql('usageHistory')} THEN 1 ELSE 0 END) AS visible
+        FROM usageHistory WHERE completionId IN (${marks}) GROUP BY completionId`, batch)) counts.set(mapping.completionId, mapping);
     }
   }
   for (const row of rows) {
-    const entry = byId.get(row.completionId);
-    const matches = entry?.bindings === 1 ? counts.get(row.completionId) : 0;
+    const mapping = counts.get(row.completionId);
+    const entry = mapping?.visible ? byId.get(row.completionId) : null;
+    const matches = entry?.bindings === 1 ? mapping?.matches : 0;
     row.counterfactual = counterfactualEvidence(row, entry, matches);
   }
 }

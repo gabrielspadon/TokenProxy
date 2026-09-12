@@ -1,5 +1,6 @@
 import { ContextQueryError, parseContextFilter, validId } from "./contextQueries.mjs";
 import { OWNED_EVENT_LINK } from './contextRelated.mjs';
+import { telemetryFilterSql } from './telemetryFilter.mjs';
 const EVENT_TYPES = ["compaction", "handoff", "task_start", "task_outcome"];
 const OWN_KEYS = ["type", "sessionId", "requestId", "logicalRequestId", "clientKeyId", "clientRef", "clientSessionRef", "taskRef", "projectRef"];
 const BASE_KEYS = ["provider", "model", "connectionId", "clientTool", "projectLabel", "from", "to", "until", "page", "pageSize"];
@@ -28,7 +29,7 @@ export function publicContextEvent(row) {
   return { ...event, source: "client-reported", providerVerified: false, tokenUnits: "client-reported tokens", linkStatus: row.requestId ? "owned-request" : "unlinked" };
 }
 export function readContextEvents(db, filter = {}) {
-  const conditions = [`(e.requestId IS NULL OR (${OWNED_EVENT_LINK}))`], args = [];
+  const conditions = [`(e.requestId IS NULL OR (${OWNED_EVENT_LINK} AND ${telemetryFilterSql('requestStats', 'r')}))`], args = [];
   for (const name of OWN_KEYS) if (filter[name] != null) { conditions.push(`e.${name === "sessionId" ? "contextSessionId" : name}=?`); args.push(filter[name]); }
   for (const name of ["provider", "model", "connectionId", "clientTool"]) if (filter[name]) { conditions.push(`r.${name}=?`); args.push(filter[name]); }
   if (filter.projectLabel) { conditions.push("s.projectLabel=?"); args.push(filter.projectLabel); }

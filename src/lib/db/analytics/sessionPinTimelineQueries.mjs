@@ -1,3 +1,5 @@
+import { telemetryFilterSql } from './telemetryFilter.mjs';
+
 // Read-only per-pin timeline projection for the bounded analytics worker.
 // Requests, account switches and control receipts merge into ONE time-ordered
 // stream. Same contract as operationEventsQueries: every supported filter is
@@ -157,7 +159,7 @@ const UNION = `
          r.status AS status, r.logicalRequestId AS logicalRequestId, NULL AS "trigger",
          NULL AS reason, NULL AS action, r.dispatchCoverage AS dispatchCoverage,
          NULL AS appliedAt
-    FROM requestStats r WHERE r.contextSessionId = ? AND r.model = ?
+    FROM requestStats r WHERE r.contextSessionId = ? AND r.model = ? AND ${telemetryFilterSql('requestStats', 'r')}
   UNION ALL
   SELECT s.switchedAt, 'switch', s.id, s.toConnectionId, s.fromConnectionId, s.model,
          NULL, NULL, NULL, s."trigger", s.reason, NULL, NULL, NULL

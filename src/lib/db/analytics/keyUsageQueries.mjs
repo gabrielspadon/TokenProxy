@@ -1,3 +1,5 @@
+import { telemetryFilterSql } from './telemetryFilter.mjs';
+
 const MAX_KEYS = 5000;
 
 export function validateKeyUsageQuery(query) {
@@ -16,7 +18,7 @@ export function readKeyUsage(db) {
     COUNT(u.id)-COUNT(u.cost) AS unknownCostRows,
     SUM(CASE WHEN u.cost=0 AND u.costSource IS NULL THEN 1 ELSE 0 END) AS ambiguousZeroCostRows,
     MIN(u.timestamp) AS firstRecordedAt,MAX(u.timestamp) AS lastRecordedAt
-    FROM apiKeys a LEFT JOIN usageHistory u ON u.apiKey=a.key GROUP BY a.id`);
+    FROM apiKeys a LEFT JOIN usageHistory u ON u.apiKey=a.key AND ${telemetryFilterSql('usageHistory', 'u')} GROUP BY a.id`);
   return { scope: 'retained-history-for-current-credential', totals: Object.fromEntries(rows.map(({id,...row}) => [id, {
     ...row, promptTokens: row.requests ? row.promptTokens : 0,
     completionTokens: row.requests ? row.completionTokens : 0, costUsd: row.requests ? row.costUsd : 0,
