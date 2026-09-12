@@ -921,7 +921,7 @@ export async function getProviderCredentials(
         if (!entry || entry.verdict === 'pin-hit') continue;
         const fields = { ...(entry.fields || {}) };
         if (entry.verdict === 'win' && !fields.why) {
-          if (decision.reason === 'pinned') fields.why = 'operator-pinned';
+          if (decision.reason === 'pinned') fields.why = 'session-pinned';
           else if (decision.reason === 'first-pin') fields.why = 'initial-pin';
         }
         if (entry.verdict === 'repin' && decision.receipt?.id) fields.rcpt = decision.receipt.id;

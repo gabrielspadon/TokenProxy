@@ -174,7 +174,8 @@ describe('auth.js selection emissions', () => {
     expect(second.connectionId).toBe('conn_aaaaaaaa');
     expect(emitted().some((l) => l.includes('SEL.pin-hit'))).toBe(false);
     const win = findLine('SEL.win');
-    expect(win).toContain('why=operator-pinned');
+    expect(win).toContain('why=session-pinned');
+    expect(emitted().some((line) => line.includes('operator-pinned'))).toBe(false);
     expect(second.selection.verdict).toBe('pin-hit');
     leases.releaseAccountLease(second.accountLease);
   });

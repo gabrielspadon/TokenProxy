@@ -53,6 +53,20 @@ describe('rankAccounts trace: the ordered path', () => {
     expect(result.trace[0].fields.alt).toEqual(['conn_bbb:stale:2h']);
   });
 
+  it.each([0, -HOUR, -11 * HOUR])('reports projected headroom and reset for elapsed offset %i', (offset) => {
+    const elapsed = loaded('conn_aaaaaaaa', [w('session (5h)', 0, 1000, iso(offset))]);
+    const later = loaded('conn_bbbbbbbb', [w('session (5h)', 50, 1000, iso(6 * HOUR))]);
+    const expectedReset = iso(offset + (Math.floor(-offset / (5 * HOUR)) + 1) * 5 * HOUR);
+    const result = rankAccounts([elapsed, later], { now: NOW });
+
+    expect(result.winner.id).toBe(elapsed.id);
+    expect(result.eligible.map((entry) => entry.id)).toEqual([elapsed.id, later.id]);
+    expect(result.trace.find((entry) => entry.verdict === 'win').fields).toMatchObject({
+      conn: 'conn_aaa', key: 'reset-horizon', rem: 1000, reset: expectedReset,
+    });
+    expect(elapsed.windows[0]).toMatchObject({ remaining: 0, resetAt: iso(offset) });
+  });
+
   it('reports pinned-continuity when the previous pin decides between equals', () => {
     // Identical evidence on both: only the pin separates them.
     const twinA = () => loaded('conn_aaaaaaaa', [w('session (5h)', 100, 1000, iso(2 * HOUR))]);
