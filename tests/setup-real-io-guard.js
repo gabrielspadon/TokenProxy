@@ -21,23 +21,22 @@ function isWithin(root, candidate) {
 }
 
 function assertAllowedUnixSocket(path) {
-  const runRoot = process.env.TOKENPROXY_TEST_RUN_ROOT;
   let owned = false;
-  if (typeof path === "string" && path && !path.includes("\0") && isAbsolute(path) && runRoot) {
+  const ownedRoots = [process.env.TOKENPROXY_TEST_RUN_ROOT, process.env.TOKENPROXY_TEST_SOCKET_ROOT].filter(Boolean);
+  if (typeof path === "string" && path && !path.includes("\0") && isAbsolute(path) && ownedRoots.length) {
     try {
-      const canonicalRoot = realpathSync(resolve(runRoot));
       const canonicalPath = existsSync(path)
         ? realpathSync(path)
         : join(realpathSync(dirname(path)), basename(path));
-      owned = isWithin(canonicalRoot, canonicalPath);
+      owned = ownedRoots.some((root) => isWithin(realpathSync(resolve(root)), canonicalPath));
     } catch {
       owned = false;
     }
   }
   if (!owned) {
     throw new Error(
-      `[real-io-guard] blocked a filesystem Unix socket outside the runner-owned root: ${JSON.stringify(path)}. ` +
-        `Create test listeners below TOKENPROXY_TEST_RUN_ROOT.`,
+      `[real-io-guard] blocked a filesystem Unix socket outside the runner-owned roots: ${JSON.stringify(path)}. ` +
+        `Create test listeners below TOKENPROXY_TEST_RUN_ROOT or TOKENPROXY_TEST_SOCKET_ROOT.`,
     );
   }
 }

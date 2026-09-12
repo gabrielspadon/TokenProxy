@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, readdirSync, statSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -193,6 +193,9 @@ env.TOKENPROXY_NETWORK_BOUNDARY = "linux-user-netns";
 
 const maxWorkers = Number.parseInt(process.env.TOKENPROXY_TEST_MAX_WORKERS || "2", 10);
 if (!Number.isInteger(maxWorkers) || maxWorkers < 1 || maxWorkers > 4) fail("TOKENPROXY_TEST_MAX_WORKERS must be an integer from 1 through 4");
+const socketRoot = mkdtempSync("/tmp/tokenproxy-offline-socket-");
+chmodSync(socketRoot, 0o700);
+env.TOKENPROXY_TEST_SOCKET_ROOT = socketRoot;
 const resultsPath = join(artifacts, "results.json");
 const vitestArgs = [
   vitest, "run", "--config", join(testsDir, "vitest.config.js"),
@@ -252,6 +255,7 @@ const evidence = {
   gitSha: git.status === 0 ? git.stdout.trim() : null,
   runtime: { node: process.version, modulesAbi: process.versions.modules },
   networkBoundary: { kind: boundary.kind, verified: boundary.verified },
+  ownedSocketRoot: socketRoot,
   command: command.map((part) => part.includes(" ") ? JSON.stringify(part) : part).join(" "),
   maxWorkers,
   runnerExit,
@@ -263,5 +267,6 @@ const evidence = {
   artifacts: relative("/", artifacts).startsWith("..") ? artifacts : `/${relative("/", artifacts)}`,
 };
 writeFileSync(join(artifacts, "evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
+rmSync(socketRoot, { recursive: true, force: true });
 console.log(`${evidence.state.toUpperCase()} ${evidence.reason}; evidence=${join(artifacts, "evidence.json")}`);
 process.exit(evidence.state === "passed" ? 0 : 1);

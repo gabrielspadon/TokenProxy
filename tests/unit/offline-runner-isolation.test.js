@@ -37,6 +37,14 @@ function run(args, env = {}) {
   });
 }
 
+function runnerDiagnostic(artifacts) {
+  return ["evidence.json", "gate-evidence.json", "results.json", "stdout.log", "stderr.log"]
+    .map((name) => {
+      try { return `${name}\n${readFileSync(join(artifacts, name), "utf8")}`; }
+      catch { return `${name}\n<missing>`; }
+    }).join("\n");
+}
+
 describe("offline runner isolation", () => {
   it("refuses a nonempty artifact directory", () => {
     const work = workspace();
@@ -68,7 +76,7 @@ describe("offline runner isolation", () => {
       XDG_CACHE_HOME: join(work.fakeHome, ".cache"),
       ARBITRARY_PROVIDER_ACCOUNT: "must-not-cross",
     });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}\n${runnerDiagnostic(work.artifacts)}`).toBe(0);
     const evidence = JSON.parse(readFileSync(join(work.artifacts, "evidence.json"), "utf8"));
     expect(evidence).toMatchObject({
       state: "passed", runnerExit: 0, gateExit: 0, canaryUnchanged: true,
@@ -133,7 +141,7 @@ describe("offline runner isolation", () => {
       },
     });
 
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}\n${runnerDiagnostic(artifacts)}`).toBe(0);
     expect(JSON.parse(readFileSync(join(artifacts, "evidence.json"), "utf8"))).toMatchObject({
       state: "passed",
       runnerExit: 0,
