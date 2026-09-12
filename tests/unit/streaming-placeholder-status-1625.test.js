@@ -101,7 +101,10 @@ describe("#1625 the in-progress row does not claim an outcome it has not seen", 
       reqTag: "REQ_1625",
     });
 
-    onStreamComplete({ content: "hello", thinking: null }, { prompt_tokens: 3, completion_tokens: 2 }, Date.now());
+    // A row reads success only from an observed terminal; without one it stays
+    // unknown, which is the invariant the first case in this file covers.
+    onStreamComplete({ content: "hello", thinking: null }, { prompt_tokens: 3, completion_tokens: 2 }, Date.now(),
+      { terminalEvidence: { state: "succeeded", reason: "stream-complete", source: "provider-stream" } });
 
     const finalRow = saveRequestDetail.mock.calls.find((c) => c[0].id === streamDetailId)[0];
     expect(finalRow.status).toBe("success");

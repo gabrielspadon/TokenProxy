@@ -1,6 +1,21 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleStreamingResponse } from "open-sse/handlers/chatCore/streamingHandler.js";
 
+// The success callback fires from the completion path the stream's own flush
+// drives, so a test must read the body to the end before asserting on it.
+async function drain(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return text;
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 describe("Streaming first-valid-event gate (Issue 2951 Finding 3)", () => {
   const baseParams = {
     provider: "nvidia",
@@ -219,15 +234,16 @@ describe("Streaming first-valid-event gate (Issue 2951 Finding 3)", () => {
     expect(res.success).toBe(true);
     expect(res.response).toBeDefined();
 
-    // Verify onRequestSuccess was triggered
-    await Promise.resolve();
-    expect(onRequestSuccess).toHaveBeenCalledTimes(1);
+    // The account is cleared on an observed terminal, not on the first frame:
+    // nothing is claimed until the client has actually consumed the stream.
+    expect(onRequestSuccess).not.toHaveBeenCalled();
 
     // Verify response body can be read and contains the original stream data
-    const reader = res.response.body.getReader();
-    const { value } = await reader.read();
-    const text = new TextDecoder().decode(value);
+    const text = await drain(res.response.body);
     expect(text).toContain("data:");
+
+    await settle();
+    expect(onRequestSuccess).toHaveBeenCalledTimes(1);
   });
 
   it("Case 5: Null body returns success=false and 502", async () => {
@@ -333,7 +349,8 @@ describe("Streaming first-valid-event gate (Issue 2951 Finding 3)", () => {
     });
 
     expect(res.success).toBe(true);
-    await Promise.resolve();
+    await drain(res.response.body);
+    await settle();
     expect(onRequestSuccess).toHaveBeenCalledTimes(1);
   });
 });
