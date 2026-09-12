@@ -16,10 +16,11 @@ const REJECTED_STATUSES = new Set([400, 401, 402, 403, 404, 405, 413, 415, 422, 
 // Use at an actual upstream response boundary. An adapter that turns an
 // accepted response or exposed output into an error must carry an explicit
 // false permission. A 5xx status alone says nothing about paid acceptance.
-export function isReplaySafeRejection(response) {
+export function isReplaySafeRejection(response, payload) {
   if (!response || response.status < 400 || response.status >= 600) return false;
   const permission = response.headers?.get?.('x-tokenproxy-replay-safe');
   if (permission === 'false' || response.headers?.get?.('x-should-retry') === 'false') return false;
+  if (response.status === 429) return isSafeQuotaAccountRejection(response, payload);
   return permission === 'true' || REJECTED_STATUSES.has(response.status);
 }
 
@@ -31,18 +32,14 @@ export function isSafeQuotaAccountRejection(response, payload) {
   if (Object.keys(payload).some(key => !['error', 'type', 'request_id', 'requestId'].includes(key))) return false;
   if (!payload.error || typeof payload.error !== 'object' || Array.isArray(payload.error)
       || typeof payload.error.message !== 'string' || !payload.error.message.trim()) return false;
-  const forbidden = /usage|tokens|cost|output|choices|content|completion|generation|tool|result|accepted/i;
-  const pending = [payload];
-  let inspected = 0;
-  while (pending.length) {
-    const value = pending.pop();
-    if (++inspected > 1024) return false;
-    if (value && typeof value === 'object') {
-      for (const [key, child] of Object.entries(value)) {
-        if (forbidden.test(key)) return false;
-        if (child && typeof child === 'object') pending.push(child);
-      }
-    }
+  // Known scalar error envelopes only. Arbitrary nested metadata cannot prove
+  // rejection, and a string reporting accepted work overrides HTTP 429.
+  if (Object.keys(payload.error).some(key => !['message', 'type', 'code', 'param', 'status'].includes(key))) return false;
+  const generationEvidence = /(?:^|[\W_])(?:accept(?:ed|ance)?|generat(?:ed|ing|ion)|bill(?:ed|able)|charg(?:ed|es|ing)|tool[\W_]+(?:call|result)|(?:request|prompt)[\W_]+(?:was[\W_]+)?(?:processed|completed)|(?:partial|produced|emitted)[\W_]+(?:content|output)|usage[\W_]+(?:reported|recorded|incurred))(?:$|[\W_])/i;
+  for (const value of [...Object.entries(payload).filter(([key]) => key !== 'error').map(([, value]) => value), ...Object.values(payload.error)]) {
+    if (value != null && !['string', 'number'].includes(typeof value)) return false;
+    if (typeof value === 'number' && !Number.isFinite(value)) return false;
+    if (typeof value === 'string' && generationEvidence.test(value)) return false;
   }
   return true;
 }

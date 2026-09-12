@@ -290,7 +290,9 @@ describe("provider-scoped account-selection queue", () => {
       isActive: true,
     });
     expect(quotaMocks.evaluateQuota).toHaveBeenCalledTimes(1);
-    expect(quotaMocks.evaluateQuota).toHaveBeenCalledWith(preferred);
+    expect(quotaMocks.evaluateQuota).toHaveBeenCalledWith(preferred, {
+      proxyOptions: expect.objectContaining({ resolutionKind: 'unselected', strictProxy: false }),
+    });
     releaseAccountLease(credentials.accountLease);
   });
 
@@ -327,6 +329,28 @@ describe("provider-scoped account-selection queue", () => {
     expect(result.apiKey).toBe('new-fixture-credential');
     expect(quotaMocks.evaluateQuota).toHaveBeenCalledTimes(2);
     releaseAccountLease(result.accountLease);
+  });
+
+  it('revalidates a changed pool endpoint without changing the stored connection', async () => {
+    const pending = deferred(), started = deferred();
+    const account = connection('openai', 'changed-pool');
+    account.providerSpecificData = { proxyPoolId: 'same-pool', strictProxy: true };
+    dbMocks.getProviderConnections.mockResolvedValue([account]);
+    let endpoint = 'http://old-proxy.test:8080';
+    proxyMocks.resolveConnectionProxyConfig.mockImplementation(async () => ({
+      kind: 'usable', resolutionKind: 'selected-proxy', proxyPoolId: 'same-pool',
+      connectionProxyEnabled: true, connectionProxyUrl: endpoint, strictProxy: true,
+    }));
+    quotaMocks.evaluateQuota.mockImplementationOnce(() => { started.resolve(); return pending.promise; });
+    const selection = getProviderCredentials('openai', null, 'fixture-model', { preferredConnectionId: account.id });
+    await started.promise;
+    endpoint = 'http://new-proxy.test:8080';
+    pending.resolve({ paused: true, reason: 'low-quota', snapshot: null });
+    const selected = await selection;
+    expect(quotaMocks.evaluateQuota).toHaveBeenCalledTimes(2);
+    expect(quotaMocks.evaluateQuota.mock.calls[1][1].proxyOptions.connectionProxyUrl).toBe(endpoint);
+    expect(selected.providerSpecificData.connectionProxyUrl).toBe(endpoint);
+    releaseAccountLease(selected.accountLease);
   });
 
   it('cancels a quota waiter without a late reservation or retained provider lock', async () => {

@@ -98,7 +98,11 @@ function payloadContentText(parsed) {
 
 // Read only SSE bodies until output appears, then replay every buffered byte.
 // The handler can preserve an empty buffer briefly for its legacy error parser.
-export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS, { preserveOnNoContent = false, includeClaudeTerminal = false, requireActionableGeminiOutput = false } = {}) {
+export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS, { preserveOnNoContent = false, includeClaudeTerminal = false, requireActionableGeminiOutput = false, signal } = {}) {
+  if (signal?.aborted) {
+    try { Promise.resolve(response.body?.cancel(signal.reason)).catch(() => {}); } catch {}
+    signal.throwIfAborted();
+  }
   const contentType = (response.headers.get("content-type") || "").toLowerCase();
   if (!contentType.includes(SSE_CONTENT_TYPE) || !response.body) {
     return { hasContent: true, body: null };
@@ -122,6 +126,7 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
   let readError = null;
   let timedOut = false;
   let pendingRead = null;
+  let abortError = null;
 
   const decoder = createSseDecoder(event => {
     if (hasContent || upstreamError) return;
@@ -132,20 +137,28 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
     }
   });
 
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   let timer = null;
+  let onAbort = null;
   const expiry = new Promise(resolve => {
     timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    onAbort = () => resolve({ aborted: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 
   try {
     while (!hasContent) {
-      if (Date.now() >= deadline) {
+      if (performance.now() >= deadline) {
         timedOut = true;
         break;
       }
       pendingRead = reader.read();
       const next = await Promise.race([pendingRead, expiry]);
+      if (next?.aborted) {
+        abortError = signal.reason;
+        break;
+      }
       if (next?.timedOut) {
         timedOut = true;
         break;
@@ -176,19 +189,23 @@ export async function peekStreamForContent(response, timeoutMs = STREAM_FIRST_CH
     decoder.release();
     if (upstreamDone) releaseReader();
     if (timer) clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
   }
 
   // A raced read remains live after the timeout wins. Leaving it attached to
   // the reader makes the replay body's first pull issue a second read: the
   // late frame can go to the abandoned read while the replay hangs or sees EOF.
   // Cancel and settle that read first, then replay only bytes already buffered.
-  if (timedOut) {
-    const cancellation = cancelReader();
-    await Promise.allSettled([cancellation, pendingRead].filter(Boolean));
+  if (timedOut || abortError) {
+    // Cancellation closes the reader immediately. An uncooperative source's
+    // cancellation acknowledgement must not hold a request past its deadline.
+    void cancelReader(abortError || new DOMException('Stream content timeout', 'TimeoutError'));
+    if (pendingRead) await Promise.allSettled([pendingRead]);
     pendingRead = null;
     upstreamDone = true;
     releaseReader();
   }
+  if (abortError) throw abortError;
 
   const createReplayBody = () => new ReadableStream({
     start(controller) {

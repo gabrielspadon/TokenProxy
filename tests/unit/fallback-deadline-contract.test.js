@@ -72,6 +72,21 @@ describe('shared fallback deadline', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('terminates a silent accepted stream at the remaining deadline without another model', async () => {
+    const deadline = createFallbackDeadline({ timeoutMs: 1000 });
+    const cancel = vi.fn(() => new Promise(() => {}));
+    const dispatch = vi.fn(async () => new Response(new ReadableStream({ cancel }), {
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const pending = handleComboChat({ body, models: ['p/a', 'p/b'], log, deadline, handleSingleModel: dispatch });
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await pending;
+    expect(result.status).toBe(502);
+    expect(result.headers.get('x-tokenproxy-replay-safe')).toBe('false');
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it('limits header acquisition to the remaining subsecond budget', async () => {
     const fallbackDeadline = createFallbackDeadline({ timeoutMs: 1200 });
     await vi.advanceTimersByTimeAsync(900);

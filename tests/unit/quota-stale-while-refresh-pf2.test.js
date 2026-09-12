@@ -7,6 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // misses share one fetch. Fail-open is preserved: a rejecting refresh never
 // throws into the caller.
 
+vi.mock("@/lib/db/repos/quotaHistoryRepo.js", () => ({ retainQuotaUsage: vi.fn().mockResolvedValue(undefined) }));
+
 vi.mock("open-sse/services/usage.js", () => ({
   getUsageForProvider: vi.fn(),
 }));
@@ -18,18 +20,27 @@ vi.mock("@/lib/localDb", () => ({
   updateConnectionProxyPoolSnapshotIfBound: vi.fn().mockResolvedValue(undefined),
 }));
 
+import { retainQuotaUsage } from "@/lib/db/repos/quotaHistoryRepo.js";
 import { evaluateQuota, _clearQuotaCache } from "@/sse/services/quotaGuard.js";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { updateProviderConnection } from '@/lib/localDb';
 import { withRequestLifetime } from 'open-sse/utils/requestLifetime.js';
+import { quotaEvidenceIdentity } from '@/sse/services/quotaEvidenceIdentity.js';
 
-const okConn = (over = {}) => ({
+const okConn = (over = {}) => {
+  const connection = {
   id: "c-pf2",
   provider: "claude",
   authType: "oauth",
   quotaPauseThresholds: {},
   ...over,
-});
+  };
+  if (connection.lastQuotaSnapshot && !connection.lastQuotaSnapshot.evidenceIdentity) {
+    connection.lastQuotaSnapshot = { ...connection.lastQuotaSnapshot,
+      evidenceIdentity: quotaEvidenceIdentity(connection, { strictProxy: false }) };
+  }
+  return connection;
+};
 
 const staleSnapshot = () => ({
   windows: [{ key: "session (5h)", remainingPercentage: 20, resetAt: null, unlimited: false }],
@@ -43,6 +54,38 @@ beforeEach(() => {
 afterEach(() => { _clearQuotaCache(); vi.useRealTimers(); });
 
 describe("quota evidence stale-while-revalidate (P-F2)", () => {
+  it('releases a refresh owner whose retention write never settles', async () => {
+    vi.useFakeTimers();
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    retainQuotaUsage.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = evaluateQuota(okConn());
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(pending).resolves.toMatchObject({ reason: 'no-data', failureClass: 'timeout' });
+    await vi.advanceTimersByTimeAsync(5001);
+    await evaluateQuota(okConn());
+    expect(getUsageForProvider).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not use unbound legacy quota as current credential evidence after a cold start', async () => {
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    const connection = okConn({ accessToken: 'current-token' });
+    connection.lastQuotaSnapshot = staleSnapshot();
+    const result = await evaluateQuota(connection);
+    expect(result).toMatchObject({ reason: 'no-data', snapshot: null });
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an old credential observation after caches are cleared', async () => {
+    const old = okConn({ accessToken: 'old-token' });
+    const snapshot = { ...staleSnapshot(), fetchedAt: new Date().toISOString(),
+      evidenceIdentity: quotaEvidenceIdentity(old, { strictProxy: false }) };
+    getUsageForProvider.mockResolvedValue({ quotas: {} });
+    _clearQuotaCache();
+    const result = await evaluateQuota({ ...old, accessToken: 'new-token', lastQuotaSnapshot: snapshot });
+    expect(result).toMatchObject({ reason: 'no-data', snapshot: null });
+    expect(getUsageForProvider).toHaveBeenCalledTimes(1);
+  });
+
   it("serves a stale snapshot synchronously and refreshes in the background", async () => {
     let resolveFetch;
     getUsageForProvider.mockImplementation(
@@ -128,9 +171,10 @@ describe("quota evidence stale-while-revalidate (P-F2)", () => {
   it('does not reuse an older successful snapshot after credential rotation', async () => {
     const snapshot = { ...staleSnapshot(), fetchedAt: new Date().toISOString() };
     getUsageForProvider.mockResolvedValue({ quotas: {} });
-    await evaluateQuota(okConn({ accessToken: 'test-token-a', lastQuotaSnapshot: snapshot }));
+    const original = okConn({ accessToken: 'test-token-a', lastQuotaSnapshot: snapshot });
+    await evaluateQuota(original);
     expect(getUsageForProvider).not.toHaveBeenCalled();
-    const result = await evaluateQuota(okConn({ accessToken: 'test-token-b', lastQuotaSnapshot: snapshot }));
+    const result = await evaluateQuota({ ...original, accessToken: 'test-token-b' });
     expect(getUsageForProvider).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ reason: 'no-data', snapshot: null });
   });

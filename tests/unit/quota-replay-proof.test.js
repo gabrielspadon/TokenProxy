@@ -15,6 +15,9 @@ describe('quota rejection proof', () => {
     { ...canonical(), output: [] }, { ...canonical(), choices: [] },
     { error: { message: 'quota', metadata: { cost: 0 } } },
     { error: { message: 'quota', metadata: { tool_calls: [] } } },
+    { error: { type: 'rate_limit_error', message: 'quota exhausted after generation accepted' } },
+    { error: { type: 'rate_limit_error', message: 'quota exhausted', detail: 'generation accepted' } },
+    { error: { type: 'rate_limit_error', message: 'quota exhausted', param: 'request accepted' } },
   ])('refuses incomplete, noncanonical or generation-bearing evidence %j', payload => {
     expect(isSafeQuotaAccountRejection(rejected(), payload)).toBe(false);
   });

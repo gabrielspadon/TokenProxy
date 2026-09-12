@@ -8,6 +8,7 @@ import { errorResponse, unavailableResponse, extractRetryAfterDeadline } from ".
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { peekStreamForContent } from "../utils/streamContent.js";
+import { STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { estimateTokenCount } from "./memory/contextCompactor.js";
 import { createFallbackDeadline, isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
 
@@ -749,7 +750,8 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // An accepted request can still be billable when its stream has no
       // usable answer. Inspect it without dispatching a replacement generation.
       if (result.ok) {
-        const { hasContent, body: replayBody, upstreamError } = await peekStreamForContent(result);
+        const { hasContent, body: replayBody, upstreamError } = await peekStreamForContent(result,
+          Math.min(STREAM_FIRST_CHUNK_TIMEOUT_MS, deadline.remainingMs()), { signal });
         if (hasContent) {
           log.info("COMBO", `Model ${modelStr} succeeded`);
           if (i > 0) {

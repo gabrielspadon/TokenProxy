@@ -284,3 +284,22 @@ describe('refreshWithRetry', () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 });
+
+
+describe('refresh durability and cancellation are terminal', () => {
+  it.each(['CREDENTIAL_PERSISTENCE_UNCONFIRMED', 'FALLBACK_DEADLINE_EXCEEDED', 'AbortError'])(
+    'never retries %s', async kind => {
+      vi.useFakeTimers();
+      const error = new Error('credential secret canary');
+      if (kind === 'AbortError') error.name = kind;
+      else error.code = kind;
+      if (kind === 'CREDENTIAL_PERSISTENCE_UNCONFIRMED') error.retryable = false;
+      const refresh = vi.fn().mockRejectedValue(error);
+      const log = { warn: vi.fn(), debug: vi.fn(), error: vi.fn() };
+      await expect(refreshWithRetry(refresh, 3, log)).rejects.toBe(error);
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(JSON.stringify(log.warn.mock.calls)).not.toContain('credential secret canary');
+    },
+  );
+});

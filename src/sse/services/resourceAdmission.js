@@ -188,25 +188,31 @@ export function releaseOnResponse(response, release, signal) {
   return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
-export async function withResourceAdmission(request, run, { signal = request?.signal, deadline } = {}) {
+export async function withResourceAdmission(request, run, { signal = request?.signal, deadline, fallbackDeadline } = {}) {
   if (hasRequestAdmission()) { requestSignal()?.throwIfAborted(); return run(); }
   if (Number.isFinite(deadline)) {
     const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - Date.now())));
     signal = signal ? AbortSignal.any([signal, timeout]) : timeout;
   }
   if (signal?.aborted || Number.isFinite(deadline) && deadline <= Date.now()) return new Response(null, { status: 499 });
-  await refreshAdmissionPolicy();
+  const prepare = (operation, onLateResult) => fallbackDeadline
+    ? fallbackDeadline.run(operation, { signal, onLateResult })
+    : operation(signal);
+  await prepare(() => refreshAdmissionPolicy());
   startAdmissionSampling();
-  const { isValidApiKey } = await import('./auth.js');
-  const principal = await resolveClientApiKey(request, isValidApiKey, { admission: true });
+  const principal = await prepare(async () => {
+    const { isValidApiKey } = await import('./auth.js');
+    return resolveClientApiKey(request, isValidApiKey, { admission: true });
+  });
   if (principal.refusal) return principal.refusal;
   const client = principal.valid && principal.apiKey ? createHash('sha256').update(principal.apiKey).digest('hex') : 'anonymous';
-  const slot = await resourceAdmission.acquire({ client, signal, deadline });
+  const slot = await prepare(boundedSignal => resourceAdmission.acquire({ client, signal: boundedSignal, deadline }),
+    value => { if (value?.admitted) value.release(); });
   if (!slot.admitted) return Response.json({ error: { message: slot.why === 'aborted' ? 'Request aborted' : 'TokenProxy admission queue unavailable', type: 'admission_error', code: slot.why } }, { status: slot.why === 'aborted' ? 499 : 503, headers: { 'retry-after': '1', 'x-tokenproxy-replay-safe': 'true' } });
   try {
     if (signal?.aborted) { slot.release(); return new Response(null, { status: 499 }); }
     const response = await withRequestLifetime(signal, run, { admitted: true }); slot.releaseHandler();
-    if (signal?.aborted) { await response?.body?.cancel?.().catch(() => {}); slot.release(); return new Response(null, { status: 499 }); }
+    if (signal?.aborted) { response?.body?.cancel?.().catch(() => {}); slot.release(); return new Response(null, { status: 499 }); }
     return releaseOnResponse(response, slot.release, signal);
   } catch (error) { slot.release(); if (signal?.aborted) return new Response(null, { status: 499 }); throw error; }
 }

@@ -532,7 +532,6 @@ export async function getProviderCredentials(
     // filtered-out account is a decision, and "who was skipped and why" is the
     // first question an auditor asks of a refusal.
     const drainExcluded = [];
-    const quotaExhausted = [];
     const availableConnections = connections.filter((c) => {
       // A stored account with nothing to present cannot answer; it is skipped
       // here so an upstream 401 never stands in for the pool's real state.
@@ -542,17 +541,29 @@ export async function getProviderCredentials(
       }
       const admissionReason = accountAdmissionReason(c, { model, preferredConnectionId,
         strictPreferredConnection, excluded: excludeSet.has(c.id), disabled: modelDisabled(c),
-        draining: draining.has(c.id) });
+        draining: draining.has(c.id), quotaSnapshot: null });
       if (admissionReason === 'model-disabled') emit('SEL', 'skipped', { conn: prefix8(c.id), why: admissionReason });
       if (admissionReason === 'account-draining') drainExcluded.push(prefix8(c.id));
-      if (admissionReason === 'quota-exhausted') quotaExhausted.push(prefix8(c.id));
       if (admissionReason) return false;
       return true;
     });
     throwIfRequestAborted();
-    const prepared = options[preparedQuota] || { evidence: new Map(), passes: 0 };
+    const prepared = options[preparedQuota] || {
+      evidence: new Map(), passes: 0, pinActionId: pendingPinAction?.id ?? null,
+    };
+    if (prepared.pinActionId !== (pendingPinAction?.id ?? null)) return commandWait();
     const evidenceByIdentity = prepared.evidence;
-    const missingEvidence = availableConnections.filter(c => !evidenceByIdentity.has(quotaEvidenceIdentity(c)));
+    const quotaRoutes = new Map(await waitForPreparation(Promise.all(availableConnections.map(async c => {
+      const data = c.providerSpecificData || {};
+      const config = await resolveConnectionProxyConfig(data, {
+        persistPoolSnapshot: data.proxyPoolId
+          ? pair => updateConnectionProxyPoolSnapshotIfBound(c.id, data.proxyPoolId, pair)
+          : undefined,
+      });
+      const proxyOptions = config.kind === 'usable' ? toConnectionProxyOptions(config) : config;
+      return [c.id, { config, proxyOptions, identity: quotaEvidenceIdentity(c, proxyOptions) }];
+    })), requestSignal()));
+    const missingEvidence = availableConnections.filter(c => !evidenceByIdentity.has(quotaRoutes.get(c.id).identity));
     if (missingEvidence.length) {
       if (prepared.passes >= MAX_QUOTA_REVALIDATIONS) return commandWait();
       prepared.passes++;
@@ -561,13 +572,14 @@ export async function getProviderCredentials(
       finishQueue();
       await waitForPreparation(Promise.all(missingEvidence.map(async c => {
         let evidence;
-        try { evidence = await evaluateQuota(c); }
+        const route = quotaRoutes.get(c.id);
+        try { evidence = await evaluateQuota(c, { proxyOptions: route.proxyOptions }); }
         catch (error) {
           throwIfRequestAborted();
           evidence = { paused: false, reason: 'no-data', failureClass: 'fetch-error', snapshot: null, rawUsage: null };
         }
         throwIfRequestAborted();
-        evidenceByIdentity.set(quotaEvidenceIdentity(c), evidence);
+        evidenceByIdentity.set(route.identity, evidence);
       })), requestSignal());
       throwIfRequestAborted();
       return getProviderCredentials(provider, excludeConnectionIds, model, { ...options, [preparedQuota]: prepared });
@@ -577,9 +589,6 @@ export async function getProviderCredentials(
         alt: drainExcluded.slice(0, 3),
         ...(drainExcluded.length > 3 ? { more: drainExcluded.length - 3 } : {}),
       });
-    }
-    for (const c of quotaExhausted) {
-      emit('SEL', 'quota-paused', { conn: c, why: 'provider-window-exhausted' });
     }
 
     // Filter out accounts paused due to low remaining quota (safety buffer).
@@ -596,9 +605,16 @@ export async function getProviderCredentials(
     // evidence-less one are decisions the log must be able to answer for.
     const quotaPaused = [];
     const quotaUnknown = [];
+    const verifiedQuotaConnections = new Map();
     const quotaChecked = availableConnections.map((c) => {
         throwIfRequestAborted();
-        const q = evidenceByIdentity.get(quotaEvidenceIdentity(c));
+        const q = evidenceByIdentity.get(quotaRoutes.get(c.id).identity);
+        const verified = { ...c, lastQuotaSnapshot: q.snapshot || null };
+        verifiedQuotaConnections.set(c.id, verified);
+        if (getExhaustedQuotaWindow(verified, model, nowMs)) {
+          emit('SEL', 'quota-paused', { conn: prefix8(c.id), why: 'provider-window-exhausted' });
+          return null;
+        }
         if (q.reason === 'no-data' || q.reason === 'required-proxy-unavailable') {
           quotaUnknown.push({ connection: c, reason: q.failureClass || q.reason });
         }
@@ -615,13 +631,13 @@ export async function getProviderCredentials(
         // snapshot:null means the read itself found nothing (ineligible, a
         // required proxy unavailable, or a failed/empty fetch) rather than "the
         // pause gate is off". The persisted snapshot the usage route writes
-        // (src/app/api/usage/[connectionId]/route.js:208) is the fallback for
-        // that case, in the identical shape. q.rawUsage is THIS call's raw
+        // (src/app/api/usage/[connectionId]/route.js) must be bound to the
+        // current evidence identity before quotaGuard accepts it. q.rawUsage is THIS call's raw
         // payload, paired one-to-one with q.snapshot (quotaGuard.js never hands
         // back one without the other) — forwarding it is what lets the bridge
         // upgrade a window from the synthetic percentage scale to the
         // provider's own absolute remaining/limit.
-        const evidence = q.snapshot || (['ineligible', 'disabled'].includes(q.reason) ? c.lastQuotaSnapshot : null) || null;
+        const evidence = q.snapshot || null;
         resourceAdmission.recordQuota(c.id, evidence, q.paused);
         const windows = toRankerWindows(evidence, q.rawUsage || null, { now: nowMs });
         persistWindows(c.id, windows, { hasEvidence: Boolean(evidence) });
@@ -644,7 +660,7 @@ export async function getProviderCredentials(
     connections.forEach((c) => {
       const excluded = excludeSet.has(c.id);
       const isDraining = draining.has(c.id);
-      const spent = getExhaustedQuotaWindow(c, model);
+      const spent = getExhaustedQuotaWindow(verifiedQuotaConnections.get(c.id), model);
       if (excluded || isDraining || spent) {
         log.debug(
           'AUTH',
@@ -660,7 +676,8 @@ export async function getProviderCredentials(
         (!strictPreferredConnection || connection.id === preferredConnectionId)
         && !modelDisabled(connection));
       const lockedPairs = lockCandidates
-        .map((connection) => ({ connection, failure: getActiveModelFailure(connection, model) }))
+        .map((connection) => ({ connection, failure: getActiveModelFailure(
+          verifiedQuotaConnections.get(connection.id) || { ...connection, lastQuotaSnapshot: null }, model) }))
         .filter((entry) => entry.failure);
       const selected = lockedPairs.sort((a, b) =>
         a.failure.until.localeCompare(b.failure.until)
@@ -695,7 +712,6 @@ export async function getProviderCredentials(
     // The scheduler's verdict for the caller: REQ.ok sel= and path= read this
     // in a later wave (row 29's silent pin-hit reaches the caller here).
     let selection = null;
-    let commandProxy = null;
     // Pin to preferred connection if specified and available. This is an
     // OPERATOR pin (a combo member, a replay of the connection that just
     // failed), which is a different fact from the session pin the scheduler
@@ -719,13 +735,7 @@ export async function getProviderCredentials(
 
     if (connection) {
       if (pendingPinAction) {
-        const proxyData = connection.providerSpecificData || {};
-        commandProxy = await resolveConnectionProxyConfig(proxyData, {
-          persistPoolSnapshot: proxyData.proxyPoolId
-            ? pair => updateConnectionProxyPoolSnapshotIfBound(connection.id, proxyData.proxyPoolId, pair) : undefined,
-        });
-        throwIfRequestAborted();
-        if (commandProxy.kind !== 'usable') return commandWait();
+        if (quotaRoutes.get(connection.id).config.kind !== 'usable') return commandWait();
       }
       // An operator pin still takes a LEASE: rule 7's per-account ceiling is
       // about the account, not about how it was chosen, and skipping the
@@ -926,11 +936,9 @@ export async function getProviderCredentials(
 
     const connectionProxyData = connection.providerSpecificData || {};
     const expectedPoolId = connectionProxyData.proxyPoolId;
-    const resolvedProxy = commandProxy ?? await resolveConnectionProxyConfig(connectionProxyData, {
-      persistPoolSnapshot: expectedPoolId
-        ? (pair) => updateConnectionProxyPoolSnapshotIfBound(connection.id, expectedPoolId, pair)
-        : undefined,
-    });
+    // Dispatch the resolved route whose evidence was revalidated under this
+    // selection lock. A later pool edit belongs to the next selection.
+    const resolvedProxy = quotaRoutes.get(connection.id).config;
     throwIfRequestAborted();
     if (resolvedProxy.kind !== 'usable') {
       // Row 36: the account was selected but its proxy resolution failed —

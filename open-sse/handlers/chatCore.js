@@ -1,6 +1,8 @@
 import { prepareContextCapture } from "../../src/lib/db/repos/contextEvidenceRepo.js";
 import { isReplaySafeRejection, isSafeQuotaAccountRejection, withReplaySafety } from "../utils/replaySafety.js";
 import { isFallbackDeadlineError } from "../utils/fallbackDeadline.js";
+import { withRequestLifetime } from "../utils/requestLifetime.js";
+import { waitForPreparation } from "../utils/preparationAbort.js";
 import { createStageGuard } from "../utils/stageOutcome.js";
 import { pendingShapingHandoffs } from "../../src/lib/db/repos/shapingHandoffsRepo.js";
 import { injectHandoffPackets } from "../services/memory/handoffStore.js";
@@ -2228,7 +2230,8 @@ async function handleChatCoreAttempt({
     connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
     let dispatches = 0;
     releaseFallbackPreparation?.();
-    const execute = (signal, releaseHeaderBudget) => executor.execute({ ...args, signal, beforeDispatch: async (wire = {}) => {
+    const execute = async (signal, releaseHeaderBudget) => {
+      const result = await executor.execute({ ...args, signal, beforeDispatch: async (wire = {}) => {
       signal?.throwIfAborted();
       connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
       if (dispatches++ > 0) {
@@ -2242,10 +2245,12 @@ async function handleChatCoreAttempt({
       contextTelemetry.dispatchCoverage = "physical-dispatch";
       await recordContextAttempt(contextTelemetry, { provider, model, connectionId });
       connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
-    }, afterDispatch: (result) => {
+    }, afterDispatch: (response) => observeBudgetResponse(contextTelemetry, response) });
+      // Internal rejected responses can precede another executor dispatch.
+      // Only the executor's final result transfers ownership to the stream.
       releaseHeaderBudget?.();
-      return observeBudgetResponse(contextTelemetry, result);
-    } });
+      return result;
+    };
     return connectTimeout?.fallbackDeadline
       ? connectTimeout.fallbackDeadline.run(execute, { signal: executionSignal, onLateResult: discardLateResponse })
       : execute(executionSignal);
@@ -2282,42 +2287,36 @@ async function handleChatCoreAttempt({
       providerResponse.status === HTTP_STATUS.FORBIDDEN)
   ) {
     try {
-      // Mutate credentials after each successful refresh: rotating refresh_token
-      // providers (xAI/grok-cli) issue a new RT on every refresh; without this,
-      // refreshWithRetry's 2nd/3rd attempt reuses the already-consumed RT →
-      // invalid_grant → auth_failed retryable=false.
-      const refresh = () => refreshWithRetry(
+      // Issued rotating-token redemption belongs to an independent owner.
+      // Its durable acknowledgement must complete even after this caller leaves.
+      const refresh = () => withRequestLifetime(undefined, () => refreshWithRetry(
         async () => {
           executionSignal.throwIfAborted();
           connectTimeout?.fallbackDeadline?.throwIfExpired(executionSignal);
           const result = await executor.refreshCredentials(credentials, log);
-          if (
-            result?.refreshToken &&
-            result.refreshToken !== credentials.refreshToken
-          ) {
-            if (result.accessToken)
-              credentials.accessToken = result.accessToken;
-            credentials.refreshToken = result.refreshToken;
+          if (!result) return result;
+          if (!onCredentialsRefreshed) return result;
+          try {
+            const stored = await onCredentialsRefreshed(result);
+            if (!stored || typeof stored !== "object") throw new Error('Missing credential acknowledgement');
+            return stored;
+          } catch {
+            const error = new Error('Credential persistence was not confirmed');
+            error.code = 'CREDENTIAL_PERSISTENCE_UNCONFIRMED';
+            error.retryable = false;
+            throw error;
           }
-          return result;
         },
         3,
         log,
-      );
+      ));
       const newCredentials = connectTimeout?.fallbackDeadline
         ? await connectTimeout.fallbackDeadline.run(refresh, { signal: executionSignal })
-        : await refresh();
+        : await waitForPreparation(refresh(), executionSignal);
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         if (log?.line)
           log.line(reqTag, "🔑", `TOKEN REFRESHED · ${provider}/${model}`);
         Object.assign(credentials, newCredentials);
-        if (onCredentialsRefreshed) {
-          try {
-            await onCredentialsRefreshed(newCredentials);
-          } catch (e) {
-            log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`);
-          }
-        }
         try {
           try { Promise.resolve(providerResponse.body?.cancel()).catch(() => {}); } catch {}
           contextTelemetry = await nextContextAttempt(contextTelemetry, { provider, model, connectionId, requestStartTime, dispatchCoverage: "executor-invocation" });
@@ -2348,6 +2347,11 @@ async function handleChatCoreAttempt({
       }
     } catch (e) {
       if (isFallbackDeadlineError(e) || executionSignal.aborted) return mapTransportError(e);
+      if (e?.code === 'CREDENTIAL_PERSISTENCE_UNCONFIRMED') {
+        try { Promise.resolve(providerResponse.body?.cancel()).catch(() => {}); } catch {}
+        log?.warn?.("TOKEN", "Credential persistence was not confirmed");
+        return mapTransportError(e);
+      }
       log?.warn?.(
         "TOKEN",
         `${provider.toUpperCase()} | refresh threw: ${provider === "antigravity" ? ANTIGRAVITY_SAFE_ERROR_MESSAGE : e.message}`,
@@ -2594,7 +2598,7 @@ async function handleChatCoreAttempt({
     // An executor may convert an accepted SSE failure to HTTP. Preserve its
     // explicit no-replay provenance instead of treating it as a rejection.
     const safeAcrossAccounts = isSafeQuotaAccountRejection(providerResponse, errorPayload);
-    const safeToReplay = isReplaySafeRejection(providerResponse)
+    const safeToReplay = isReplaySafeRejection(providerResponse, errorPayload)
       && (providerResponse.status !== HTTP_STATUS.RATE_LIMITED || safeAcrossAccounts);
     return withSaverHeaders(createErrorResult(safeStatusCode, errMsg, resetsAtMs, { ...failureMetadata, safeToReplay, safeAcrossAccounts }, rid), saverMeta);
   }

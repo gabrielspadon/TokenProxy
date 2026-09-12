@@ -14,7 +14,7 @@ export { holdsCredential } from '@/shared/utils/accountCredential.js';
 
 export function accountAdmissionReason(connection, { model, preferredConnectionId = null,
   strictPreferredConnection = false, excluded = false, disabled = false,
-  draining = false, now = Date.now() } = {}) {
+  draining = false, now = Date.now(), quotaSnapshot = connection?.lastQuotaSnapshot } = {}) {
   if (strictPreferredConnection && connection.id !== preferredConnectionId) return 'strict-account-mismatch';
   if (excluded) return 'request-excluded';
   if (!accountSupportsModel(connection, model)) return 'account-model-excluded';
@@ -26,6 +26,6 @@ export function accountAdmissionReason(connection, { model, preferredConnectionI
   // just failed stays in the pool and the request moves to the next one, so a
   // failure can never empty the eligible set and strand the caller behind a
   // cooldown it has to wait out.
-  if (getExhaustedQuotaWindow(connection, model, now)) return 'quota-exhausted';
+  if (getExhaustedQuotaWindow({ ...connection, lastQuotaSnapshot: quotaSnapshot }, model, now)) return 'quota-exhausted';
   return null;
 }

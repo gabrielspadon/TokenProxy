@@ -254,6 +254,22 @@ export class BaseExecutor {
     let lastError = null;
     let lastStatus = 0;
     const retryAttemptsByUrl = {};
+    const replayProofs = new WeakMap();
+    const canReplay = async response => {
+      if (response?.status !== 429) return isReplaySafeRejection(response);
+      if (response.headers?.get?.('x-tokenproxy-replay-safe') === 'false'
+          || response.headers?.get?.('x-should-retry') === 'false') return false;
+      if (!replayProofs.has(response)) replayProofs.set(response, (async () => {
+        try {
+          const inspected = await inspectErrorBody(response, { signal });
+          return inspected.complete && isReplaySafeRejection(response, JSON.parse(inspected.text));
+        } catch {
+          signal?.throwIfAborted();
+          return false;
+        }
+      })());
+      return replayProofs.get(response);
+    };
     // Captured from a retried attempt's own body before it is discarded, so an
     // exhausted final attempt that comes back empty doesn't leave the caller
     // with nothing but the generic "Internal server error" default (#2722).
@@ -265,7 +281,7 @@ export class BaseExecutor {
     // Plan a retry. The discarded response is cancelled before waiting.
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
-      if (!isReplaySafeRejection(response)) return null;
+      if (!await canReplay(response)) return null;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts)
         return null;
@@ -372,7 +388,7 @@ export class BaseExecutor {
           continue;
         }
 
-        if (isReplaySafeRejection(response) && this.shouldRetry(response.status, urlIndex)) {
+        if (await canReplay(response) && this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.(
             "RETRY",
             `${response.status} on ${url}, trying fallback ${urlIndex + 1}`,

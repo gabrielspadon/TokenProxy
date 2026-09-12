@@ -133,6 +133,7 @@ async function resolvePatCredential(pat, proxyOptions = null, signal = null) {
 
   const { jobToken, expiresAt } = await exchangeJobToken(pat, proxyOptions, signal);
   const userId = await fetchUserIdForJobToken(jobToken, proxyOptions, signal);
+  signal?.throwIfAborted();
   const resolved = { accessToken: jobToken, userId, expiresAt };
   patJobCache.set(pat, resolved);
   return resolved;
@@ -144,6 +145,8 @@ async function resolvePatCredential(pat, proxyOptions = null, signal = null) {
  *   - everything else → passed through unchanged
  */
 export async function resolveQoderCredentials(credentials, proxyOptions = null, signal = null) {
+  signal = signal && proxyOptions?.signal ? AbortSignal.any([signal, proxyOptions.signal]) : signal || proxyOptions?.signal;
+  signal?.throwIfAborted();
   const raw = credentials?.apiKey || credentials?.accessToken;
   if (isQoderPat(raw)) {
     const resolved = await resolvePatCredential(raw, proxyOptions, signal);
@@ -338,7 +341,9 @@ export async function resolveQoderModels(credentials, options = {}) {
   try {
     resolved = await resolveQoderCredentials(credentials, options.proxyOptions, options.signal);
   } catch (error) {
-    options.log?.warn?.("QODER", `PAT exchange failed: ${error.message}`);
+    options.signal?.throwIfAborted();
+    options.proxyOptions?.signal?.throwIfAborted();
+    options.log?.warn?.("QODER", "PAT exchange failed");
     return null;
   }
   if (!resolved?.accessToken || !(resolved.providerSpecificData || {}).userId) return null;

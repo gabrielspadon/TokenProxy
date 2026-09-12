@@ -16,6 +16,7 @@ import { deriveQuotaSnapshot, isQuotaEligible } from "@/shared/utils/quotaPause.
 import { runAntigravityUsageProbe } from "@/lib/antigravityVerification";
 import { ANTIGRAVITY_SAFE_ERROR_MESSAGE } from "open-sse/services/antigravityValidation.js";
 import { runUsageProbe } from "@/lib/usageProbeGate.js";
+import { bindQuotaSnapshot } from '@/sse/services/quotaEvidenceIdentity.js';
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -264,9 +265,9 @@ async function handleUsageRequest(connectionId, force) {
     // when its remaining % drops to/below the per-account pause threshold
     // (see src/sse/services/quotaGuard.js). The remaining % is nested inside
     // usage.quotas, so derive it first. Fail-open — never block the response.
-    const snapshot = deriveQuotaSnapshot(connection.provider, usage);
+    const snapshot = bindQuotaSnapshot(connection, proxyOptions, deriveQuotaSnapshot(connection.provider, usage));
     if (snapshot) {
-      updateProviderConnection(connection.id, { lastQuotaSnapshot: snapshot }).catch(() => {});
+      updateProviderConnection(connection.id, { lastQuotaSnapshot: snapshot }, { expectedCredentials: connection }).catch(() => {});
     }
 
     await retainQuotaUsage(connection, usage);

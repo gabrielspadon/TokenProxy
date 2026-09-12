@@ -50,7 +50,8 @@ const USAGE_HANDLERS = {
   qoder: async (c) => {
     // PAT (pt-...) connections must be exchanged to a job token before the
     // quota endpoint accepts them.
-    const resolved = await resolveQoderCredentials(c, c.proxyOptions).catch(() => null);
+    const resolved = await resolveQoderCredentials(c, c.proxyOptions, c.signal).catch(() => null);
+    c.signal?.throwIfAborted();
     return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions);
   },
   iflow: (c) => getIflowUsage(c.accessToken),

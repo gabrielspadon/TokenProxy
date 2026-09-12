@@ -7,7 +7,7 @@ import { trackResponseLifetime } from '../helpers/response-lifetime.js';
 // the antigravity projectId cold-miss path. Upstream dispatch (handleChatCore)
 // and account selection are mocked; expectations read the mocks' captured
 // arguments rather than literals where the handler owns the wiring.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
   clearAccountError: vi.fn(),
@@ -142,7 +142,37 @@ beforeEach(() => {
   authMocks.getProviderCredentials.mockResolvedValue(null);
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe('fallback deadline across preparation', () => {
+  it('refuses a connection repurposed or disabled during proactive refresh', async () => {
+    authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'changed', providerSpecificData: {} });
+    refreshMocks.checkAndRefreshToken.mockRejectedValueOnce(Object.assign(new Error('Selected connection changed'), {
+      code: 'CREDENTIAL_SELECTION_CHANGED', retryable: false,
+    }));
+    const response = await handleChat(request());
+    expect(response.status).toBe(503);
+    expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledOnce();
+  });
+  it.each(['settings', 'model', 'combo', 'augmentation'])('bounds a stalled %s lookup before account reservation', async stage => {
+    vi.useFakeTimers();
+    const stalled = () => new Promise(() => {});
+    if (stage === 'settings') settingsMocks.getSettings.mockImplementation(stalled);
+    if (stage === 'model') modelMocks.getModelInfo.mockImplementation(stalled);
+    if (stage === 'combo') modelMocks.getComboModels.mockImplementation(stalled);
+    if (stage === 'augmentation') {
+      capacityMocks.augmentModelsWithCapacityAdapter.mockReturnValue(['prov/m', 'other/m']);
+      authMocks.getReachableProviders.mockImplementation(stalled);
+    }
+    const pending = handleChat(request());
+    await vi.advanceTimersByTimeAsync(120_000);
+    const result = await pending;
+    expect(result.status).toBe(504);
+    expect(authMocks.getProviderCredentials).not.toHaveBeenCalled();
+    expect(coreMocks.handleChatCore).not.toHaveBeenCalled();
+  });
+
   it('does not escalate a configured cascade after an uncertain cheap-model failure', async () => {
     settingsMocks.getSettings.mockResolvedValue({ cascadePairs: [{ strong: 'prov/strong', cheap: 'prov/cheap' }] });
     authMocks.getProviderCredentials.mockResolvedValue({ connectionId: 'c1', providerSpecificData: {} });
@@ -406,7 +436,8 @@ describe('the single-model loop', () => {
     });
     expect(refreshMocks.updateProviderCredentials).toHaveBeenCalledWith(
       'c1',
-      expect.objectContaining({ accessToken: 'new', testStatus: 'active' })
+      expect.objectContaining({ accessToken: 'new', testStatus: 'active' }),
+      { expectedCredentials: undefined, durability: 'critical' },
     );
     expect(authMocks.markAccountUnavailable).toHaveBeenCalled(); // onEmptyStream lock
     expect(authMocks.clearAccountError).toHaveBeenCalledWith('c1', expect.anything(), 'g');

@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
 const auth = vi.hoisted(() => ({ operator: true, inference: false, loopback: true }));
-const runtime = vi.hoisted(() => ({ proxy: 'usable', snapshot: null, onQuota: null }));
+const runtime = vi.hoisted(() => ({ proxy: 'usable', snapshot: null, onQuota: null, resolveProxy: null }));
 vi.mock('@/dashboardGuard', () => ({ hasValidCliToken: async () => auth.operator, isLocalRequest: () => auth.loopback }));
 vi.mock('@/lib/auth/dashboardSession', () => ({ verifyDashboardAuthToken: async () => false }));
 vi.mock('@/lib/auth/clientApiKey', () => ({ resolveClientApiKey: async () => ({ valid: auth.inference }) }));
 vi.mock('@/lib/admin/authzLog.js', () => ({ logAdminAuthz: vi.fn() }));
 vi.mock('@/sse/services/quotaGuard.js', () => ({ evaluateQuota: vi.fn(async () => { const hook = runtime.onQuota; runtime.onQuota = null; if (hook) await hook(); return { paused: false, snapshot: runtime.snapshot }; }) }));
-vi.mock('@/lib/network/connectionProxy', () => ({ resolveConnectionProxyConfig: async () => ({ kind: runtime.proxy }), toConnectionProxyOptions: () => ({}) }));
+vi.mock('@/lib/network/connectionProxy', () => ({
+  resolveConnectionProxyConfig: async () => runtime.resolveProxy?.() || ({ kind: runtime.proxy }),
+  toConnectionProxyOptions: config => config.connectionProxyUrl ? ({ connectionProxyUrl: config.connectionProxyUrl }) : ({}),
+}));
 
 import { GET, POST } from '@/app/api/admin/session-pins/[[...path]]/route.js';
 import { getAdapter } from '@/lib/db/driver.js';
@@ -44,7 +47,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   Object.assign(auth, { operator: true, inference: false, loopback: true });
-  Object.assign(runtime, { proxy: 'usable', snapshot: null, onQuota: null });
+  Object.assign(runtime, { proxy: 'usable', snapshot: null, onQuota: null, resolveProxy: null });
   db.run('DELETE FROM sessionAffinity'); db.run('DELETE FROM sessionPinActions'); db.run('DELETE FROM accountSwitches');
   await setPin(hash, model, a.id, { now: new Date(now), expiresAt: new Date(now + 86400000).toISOString() });
   await enableModels('claude', [model], b.id);
@@ -75,6 +78,25 @@ it('API preview, apply, receipt and next real selection preserve exact model and
   const stable = await getProviderCredentials('claude', null, model, options);
   expect(stable.connectionId).toBe(target); leaseRegistry.release(stable.accountLease);
   expect(fetch).not.toHaveBeenCalled();
+});
+it('dispatches an operator reassignment on the route whose quota evidence was checked', async () => {
+  const admission = await getProviderCredentials('claude', null, model, options);
+  const target = admission.connectionId === a.id ? b.id : a.id;
+  leaseRegistry.release(admission.accountLease);
+  const selectedPin = (await listSessionPins()).pins.find(p => p.id !== encodePinId(pin()));
+  const packet = await previewSessionPin({ id: randomUUID(), pinId: selectedPin.id,
+    expectedRevision: selectedPin.revision, action: 'reassign', targetConnectionId: target }, {});
+  expect((await apply(packet)).status).toBe('queued');
+  let resolutions = 0;
+  runtime.resolveProxy = () => ({ kind: 'usable',
+    connectionProxyUrl: ++resolutions <= 2 ? 'http://checked-route.test:8080' : 'http://unchecked-route.test:8080' });
+  const selected = await getProviderCredentials('claude', null, model, options);
+  try {
+    expect(selected.connectionId).toBe(target);
+    expect(selected.providerSpecificData.connectionProxyUrl).toBe('http://checked-route.test:8080');
+    expect(resolutions).toBe(2);
+    expect((await getSessionPinAction(packet.id)).status).toBe('applied');
+  } finally { leaseRegistry.release(selected.accountLease); }
 });
 it('absolute expiry survives a pin touch and expires at the exact boundary', async () => {
   const deadline = new Date(now + 60000).toISOString();

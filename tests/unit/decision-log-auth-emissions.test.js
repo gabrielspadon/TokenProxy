@@ -123,7 +123,7 @@ beforeEach(async () => {
   await loadModules();
   decideModule.__decide.resetState();
   decideModule.__decide.disableSink();
-  quotaMocks.evaluateQuota.mockImplementation(async () => ({ paused: false, reason: 'disabled', snapshot: null }));
+  quotaMocks.evaluateQuota.mockImplementation(async connection => ({ paused: false, reason: 'ok', snapshot: connection.lastQuotaSnapshot }));
   proxyMocks.resolveConnectionProxyConfig.mockImplementation(async () => ({ kind: 'usable' }));
   dbMocks.getProviderConnections.mockImplementation(async () => [connA(), connB()]);
 });
@@ -140,7 +140,6 @@ describe('auth.js selection emissions', () => {
   it('emits SEL.win with the worked-example field shape and the repin receipt as rcpt', async () => {
     const picked = await auth.getProviderCredentials(PROVIDER, null, MODEL, clientOptions('sess-win'));
     expect(picked.connectionId).toBe('conn_aaaaaaaa');
-    console.warn('DUMP', JSON.stringify(logSpy.mock.calls.map((c) => String(c[0])), null, 1));
     const win = findLine('SEL.win');
     expect(win).toBeDefined();
     expect(win).toContain(`rid=${RID}`);

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -159,6 +159,10 @@ const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
 const { ConnectTimeoutError } = await import("../../open-sse/utils/responseHeaderTimeout.js");
 const { applyCodexFastMode } = await import("../../open-sse/config/codexFastMode.js");
 
+const { createFallbackDeadline } = await import("../../open-sse/utils/fallbackDeadline.js");
+const { requestSignal, withRequestLifetime } = await import("../../open-sse/utils/requestLifetime.js");
+afterEach(() => vi.useRealTimers());
+
 const connectTimeout = { providerOverride: 8000, globalTimeout: 15000 };
 
 function response(status) {
@@ -201,6 +205,9 @@ function options(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.execute.mockReset();
+  mocks.refreshCredentials.mockReset();
+  mocks.refreshWithRetry.mockReset();
   mocks.refreshCredentials.mockResolvedValue({ accessToken: "fresh-token" });
   mocks.refreshWithRetry.mockImplementation(async (refresh) => refresh());
   mocks.parseUpstreamError.mockImplementation(async (upstream) => ({
@@ -336,6 +343,16 @@ describe("chat connect timeout propagation", () => {
     expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 
+  it('does not authorize cross-account replay when a canonical 429 reports accepted generation', async () => {
+    mocks.execute.mockResolvedValueOnce(response(429));
+    const message = 'quota exhausted after generation accepted';
+    mocks.parseUpstreamError.mockResolvedValue({ statusCode: 429, message,
+      errorPayload: { error: { type: 'rate_limit_error', message } } });
+    const result = await handleChatCore(options());
+    expect(result.failureMetadata).toMatchObject({ safeToReplay: false, safeAcrossAccounts: false });
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
   it("forbids another replay after an accepted field-strip retry returns a synthetic failure", async () => {
     const rejected = response(503);
     rejected.response.headers.set("x-tokenproxy-replay-safe", "false");
@@ -384,6 +401,66 @@ describe("chat connect timeout propagation", () => {
     });
     expect(mocks.execute).toHaveBeenCalledTimes(2);
   });
+  it('keeps the deadline armed after intermediate rejected headers', async () => {
+    vi.useFakeTimers();
+    const fallbackDeadline = createFallbackDeadline({ timeoutMs: 1000 });
+    mocks.execute.mockImplementationOnce(async ({ afterDispatch }) => {
+      await afterDispatch(new Response(null, { status: 503 }));
+      return new Promise(() => {});
+    });
+    const pending = handleChatCore(options({ connectTimeout: { ...connectTimeout, fallbackDeadline } }));
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(pending).resolves.toMatchObject({ status: 504, failureMetadata: { safeToReplay: false } });
+    expect(mocks.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each(['deadline', 'caller'])('persists an issued one-use refresh after its %s expires without dispatching', async (termination) => {
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const fallbackDeadline = createFallbackDeadline({ timeoutMs: 1000 });
+    let completeRedemption;
+    mocks.execute.mockResolvedValueOnce(response(401));
+    mocks.refreshCredentials.mockImplementationOnce(() => {
+      expect(requestSignal()).toBeUndefined();
+      return new Promise(resolve => { completeRedemption = resolve; });
+    });
+    const stored = { accessToken: 'durable-access', refreshToken: 'durable-rotation' };
+    const persist = vi.fn(async () => stored);
+    const pending = withRequestLifetime(caller.signal, () => handleChatCore(options({
+      callerSignal: caller.signal, connectTimeout: { ...connectTimeout, fallbackDeadline }, onCredentialsRefreshed: persist,
+    })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(completeRedemption).toBeTypeOf('function');
+    if (termination === 'caller') caller.abort();
+    else await vi.advanceTimersByTimeAsync(1000);
+    await expect(pending).resolves.toMatchObject({ status: termination === 'caller' ? 499 : 504 });
+    completeRedemption({ accessToken: 'rotated-access', refreshToken: 'one-use-rotation' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(persist).toHaveBeenCalledExactlyOnceWith({ accessToken: 'rotated-access', refreshToken: 'one-use-rotation' });
+    expect(mocks.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each([null, false, 'throw'])('refuses retry dispatch when credential persistence returns %s', async acknowledgement => {
+    mocks.execute.mockResolvedValueOnce(response(401));
+    const persist = vi.fn(async () => {
+      if (acknowledgement === 'throw') throw new Error('SECRET_CANARY');
+      return acknowledgement;
+    });
+    await expect(handleChatCore(options({ onCredentialsRefreshed: persist }))).resolves.toMatchObject({
+      status: 502, failureMetadata: { safeToReplay: false },
+    });
+    expect(mocks.execute).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('SECRET_CANARY');
+  });
+
+  it('dispatches only the authoritative persisted refresh result', async () => {
+    mocks.execute.mockResolvedValueOnce(response(401)).mockResolvedValueOnce(response(200));
+    const persist = vi.fn(async () => ({ accessToken: 'persisted-winner', refreshToken: 'persisted-rotation' }));
+    await expect(handleChatCore(options({ onCredentialsRefreshed: persist }))).resolves.toMatchObject({ success: true });
+    expect(mocks.execute.mock.calls[1][0].credentials).toMatchObject({ accessToken: 'persisted-winner', refreshToken: 'persisted-rotation' });
+  });
+
+
 });
 
 describe("Codex Sol Fast policy", () => {

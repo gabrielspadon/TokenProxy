@@ -36,7 +36,7 @@ import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { isRequestReplayBufferError } from "open-sse/services/accountFallback.js";
 import { peekStreamForContent } from "open-sse/utils/streamContent.js";
 import { getActiveRequests } from "@/lib/usageDb.js";
-import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
+import { HTTP_STATUS, STREAM_FIRST_CHUNK_TIMEOUT_MS } from "open-sse/config/runtimeConfig.js";
 import { TRANSIENT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
@@ -326,22 +326,27 @@ function withoutClientCredentialHeaders(clientRawRequest) {
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null, options = {}) {
-  getRequestFallbackDeadline(request);
+  const fallbackDeadline = getRequestFallbackDeadline(request);
   if (Number.isFinite(options.deadline)) {
     const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(options.deadline - Date.now())));
     const caller = options.signal || request?.signal;
     options = { ...options, signal: caller ? AbortSignal.any([caller, timeout]) : timeout };
   }
   try {
-    return await withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline });
+    return await withResourceAdmission(request, () => handleChatAdmitted(request, clientRawRequest, options), { signal: options.signal || request?.signal, deadline: options.deadline, fallbackDeadline });
   } catch (error) {
     if (isFallbackDeadlineError(error)) return terminalAttemptResponse(errorResponse(504, error.message, { failurePhase: "routing" }));
+    if (error?.code === 'CREDENTIAL_SELECTION_CHANGED') {
+      return terminalAttemptResponse(errorResponse(503, 'Selected credentials changed before dispatch', { failurePhase: 'routing' }));
+    }
     throw error;
   }
 }
 
 async function handleChatAdmitted(request, clientRawRequest = null, options = {}) {
-  const resolvedApiKey = await resolveClientApiKey(request, isValidApiKey);
+  const fallbackDeadline = getRequestFallbackDeadline(request);
+  const callerSignal = options.signal || request?.signal;
+  const resolvedApiKey = await fallbackDeadline.run(() => resolveClientApiKey(request, isValidApiKey), { signal: callerSignal });
   if (resolvedApiKey.refusal) return resolvedApiKey.refusal;
   const apiKey = resolvedApiKey.valid ? resolvedApiKey.apiKey : null;
   const rateLimitKey = apiKey || request.headers.get("x-forwarded-for") || "anonymous";
@@ -387,7 +392,10 @@ async function handleChatAdmitted(request, clientRawRequest = null, options = {}
 
   // AUTHENTICATED: shaped, not refused. A wait is the answer; a 429 is only
   // what is left when the queue itself is out of room.
-  const slot = await acquireAdmission(rateLimitKey, options.signal || request?.signal);
+  const slot = await fallbackDeadline.run(signal => acquireAdmission(rateLimitKey, signal), {
+    signal: callerSignal,
+    onLateResult: value => { if (value?.admitted) releaseAdmission(rateLimitKey); },
+  });
   if (!slot.admitted) {
     if (slot.why === "aborted") return errorResponse(499, "Request aborted");
     decide("ADM", "evicted", {
@@ -432,19 +440,22 @@ async function handleChatAdmitted(request, clientRawRequest = null, options = {}
  * hundred lines in a try block; every caller still arrives through handleChat.
  */
 async function handleAdmittedChat(request, clientRawRequest, options, { resolvedApiKey, rid }) {
+  const callerSignal = options.signal || request?.signal;
+  const fallbackDeadline = getRequestFallbackDeadline(request);
+  const prepare = operation => fallbackDeadline.run(operation, { signal: callerSignal });
   const presentedApiKey = resolvedApiKey.apiKey;
   const apiKey = resolvedApiKey.valid ? presentedApiKey : null;
 
   let body = options.body;
   if (body === undefined) {
     try {
-      body = await request.json();
-    } catch {
+      body = await prepare(() => request.json());
+    } catch (error) {
+      if (isFallbackDeadlineError(error) || callerSignal?.aborted) throw error;
       log.warn("CHAT", "Invalid JSON body");
       return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
     }
   }
-  const callerSignal = options.signal || request?.signal;
 
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
@@ -476,13 +487,13 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
   // the requirement, and there is deliberately no value of it that removes one
   // the stored setting imposes. A container operator has no dashboard to click,
   // which is why the env var has to work at all.
-  const settings = await getSettings();
+  const settings = await prepare(() => getSettings());
   // `source` is which requirement fired: the stored setting wins when both
   // are set, because the env var can only tighten, never relax (see below).
   const requireApiKeySource = settings.requireApiKey ? "setting" : "env";
   const requireApiKey = settings.requireApiKey || process.env.REQUIRE_API_KEY === "true";
   if (requireApiKey) {
-    const authorized = await isInternalModelTestAuthorized(request, apiKey, isValidApiKey);
+    const authorized = await prepare(() => isInternalModelTestAuthorized(request, apiKey, isValidApiKey));
     if (!authorized) {
       // One decision, one line: ADM.key-required when nothing was presented,
       // ADM.key-invalid when a key was presented but did not validate. The key
@@ -532,7 +543,7 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
   ) {
     const compat = readClaudeCompat(settings);
     if (compat.enabled) {
-      const normalized = normalizeClaudeModelName(modelStr, await buildClaudeRoutingIndex());
+      const normalized = normalizeClaudeModelName(modelStr, await prepare(() => buildClaudeRoutingIndex()));
       if (normalized !== modelStr) {
         log.info("CHAT", `Claude compat: "${modelStr}" -> "${normalized}"`);
         body.model = normalized;
@@ -545,7 +556,7 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
   // every other modality could reach a barred model with the same key
   // (#448, #2833). Checked once modelStr is final and the key is valid,
   // and before any upstream work or rotation slot is spent.
-  const barred = await refuseDisallowedModel(apiKey, modelStr, log);
+  const barred = await prepare(() => refuseDisallowedModel(apiKey, modelStr, log));
   if (barred) return barred;
 
   // A disabled model vanished from /v1/models but still answered when asked
@@ -553,7 +564,7 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
   // (#577). Combos were already handled by #1521; this is the direct path.
   // Skipped for a combo name, which has no alias/model shape and whose
   // members are filtered later.
-  if (await isModelDisabled(modelStr)) {
+  if (await prepare(() => isModelDisabled(modelStr))) {
     log.warn("CHAT", `Disabled model requested: ${modelStr}`);
     return errorResponse(HTTP_STATUS.NOT_FOUND, `Model is disabled: ${modelStr}`);
   }
@@ -568,8 +579,8 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
   // fallback and usage all see a normal model string (#1386). A combo the user
   // named "auto" still wins, because a thing they configured outranks a
   // built-in default.
-  if (AUTO_MODEL_IDS.has(modelStr) && !(await getComboModels(modelStr))) {
-    const routed = await resolveAutoModel(body, settings);
+  if (AUTO_MODEL_IDS.has(modelStr) && !(await prepare(() => getComboModels(modelStr)))) {
+    const routed = await prepare(() => resolveAutoModel(body, settings));
     if (!routed) {
       log.info("CHAT", `Auto router: nothing routable for "${modelStr}"`);
       return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `No model available to route "${modelStr}" to`);
@@ -582,7 +593,7 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
   const requiredCapabilities = detectRequiredCapabilities(body);
 
   // Check if model is a combo (has multiple models with fallback)
-  const rawComboModels = await getComboModels(modelStr);
+  const rawComboModels = await prepare(() => getComboModels(modelStr));
   // A combo is one flat pool, so a sub-agent spawned for an auxiliary task
   // draws from the same top-tier members the main loop does. When the user has
   // assigned a model group to a role, narrow the combo to it, keeping the
@@ -600,10 +611,10 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
     const comboStrategy = comboSpecificStrategy || settings.comboStrategy || "fallback";
-    const { models: augmentedModels, adapterAdded } = await reachableAugmentation(
+    const { models: augmentedModels, adapterAdded } = await prepare(() => reachableAugmentation(
       comboModels,
       augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings),
-    );
+    ));
 
     if (comboStrategy === "fusion") {
       log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
@@ -647,10 +658,10 @@ async function handleAdmittedChat(request, clientRawRequest, options, { resolved
 
   // Single model request — may still switch to a capacity-adapter model if the
   // target lacks a capability the request needs (e.g. no vision, request has an image).
-  const { models: soloAugmented, adapterAdded } = await reachableAugmentation(
+  const { models: soloAugmented, adapterAdded } = await prepare(() => reachableAugmentation(
     [modelStr],
     augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings),
-  );
+  ));
   if (soloAugmented.length > 1) {
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
     return handleComboChat({
@@ -738,12 +749,13 @@ async function planCascadeStep(body, modelStr, clientRawRequest) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, comboChain = null, callerSignal = request?.signal, cascadeCtx = null, allowCascade = false) {
-  getRequestFallbackDeadline(request).throwIfExpired(callerSignal);
+  const fallbackDeadline = getRequestFallbackDeadline(request);
+  fallbackDeadline.throwIfExpired(callerSignal);
   // The cascade only engages for the model the caller actually asked for on a
   // solo request: combo members and capacity-adapter substitutes re-enter this
   // wrapper with allowCascade=false and dispatch unchanged.
   if (!cascadeCtx && allowCascade && !comboChain) {
-    const plan = await planCascadeStep(body, modelStr, clientRawRequest);
+    const plan = await fallbackDeadline.run(() => planCascadeStep(body, modelStr, clientRawRequest), { signal: callerSignal });
     if (plan.action === "cheap") {
       log.info("CHAT", `Cascade: ${modelStr} -> ${plan.cheapModel} (exploration-class)`);
       return handleSingleModelChat(body, plan.cheapModel, clientRawRequest, request, apiKey, comboChain, callerSignal,
@@ -766,7 +778,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // around the account lease; discarding it unread would hold both. Cancel
       // releases the lease and the socket before the strong dispatch spends its
       // own.
-      try { await response.body?.cancel(); } catch { /* best-effort */ }
+      try { Promise.resolve(response.body?.cancel()).catch(() => {}); } catch { /* best-effort */ }
       pinEscalatedSession(cascadeCtx.sid);
       log.warn("CHAT", `Cascade: ${modelStr} failed (${response.status}) -> escalating to ${cascadeCtx.strong}`);
       return handleSingleModelChat(body, cascadeCtx.strong, clientRawRequest, request, apiKey, comboChain, callerSignal,
@@ -789,18 +801,19 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // operator configuration. The read stays lazy: a dispatch that never needs
   // it never pays for it, and concurrent callers share the one promise.
   let settingsOnce = null;
-  const dispatchSettings = () => (settingsOnce ??= getSettings());
+  const prepare = operation => fallbackDeadline.run(operation, { signal: callerSignal });
+  const dispatchSettings = () => (settingsOnce ??= prepare(() => getSettings()));
   // An explicit connection also disambiguates a bare default before admission.
   const pinnedConnectionId = comboChain
     ? resolveComboMemberConnection(comboChain, modelStr, await dispatchSettings())
     : null;
   const requestedConnectionId = request?.headers?.get(REQUEST_CONNECTION_HEADER) || null;
-  const modelInfo = await resolveRequestModel(modelStr, { preferredConnectionId: pinnedConnectionId || requestedConnectionId });
+  const modelInfo = await prepare(() => resolveRequestModel(modelStr, { preferredConnectionId: pinnedConnectionId || requestedConnectionId }));
   if (modelInfo.error) return errorResponse(HTTP_STATUS.BAD_REQUEST, modelInfo.error);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
-    const comboModels = await getComboModels(modelStr);
+    const comboModels = await prepare(() => getComboModels(modelStr));
     if (comboModels) {
       // Nested combos are deliberate: a member with no provider is expanded as a
       // combo in its own right. Without a cycle guard a combo naming itself, or
@@ -820,10 +833,10 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
       const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
       const requiredCapabilities = detectRequiredCapabilities(body);
-      const { models: augmentedModels, adapterAdded } = await reachableAugmentation(
+      const { models: augmentedModels, adapterAdded } = await prepare(() => reachableAugmentation(
         comboModels,
         augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, chatSettings),
-      );
+      ));
 
       if (comboStrategy === "fusion") {
         log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
@@ -880,7 +893,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
   // request onto the first one. Unset (the default) skips the lookup entirely.
   // Fail-open on an unreadable settings row is this check's contract, so the
   // snapshot is offered rather than required here.
-  const overflow = await providerConcurrencyOverflow(provider, await dispatchSettings().catch(() => null));
+  const overflow = await prepare(async () => providerConcurrencyOverflow(provider, await dispatchSettings().catch(() => null)));
   if (overflow) {
     log.warn("CHAT", `[${provider}/${model}] ${overflow}`);
     // A LOCAL admission refusal, not a claim that the provider is out of
@@ -1042,7 +1055,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
       // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
       if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
         const projectVerificationHooks = provider === "antigravity"
-          ? await createAntigravityVerificationHooks(credentials.connectionId)
+          ? await prepare(() => createAntigravityVerificationHooks(credentials.connectionId))
           : {};
         const pid = await fallbackDeadline.run(() => getProjectIdForConnection(
           credentials.connectionId,
@@ -1072,7 +1085,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         fallbackDeadline,
       };
       const chatVerificationHooks = provider === "antigravity"
-        ? await createAntigravityVerificationHooks(credentials.connectionId)
+        ? await prepare(() => createAntigravityVerificationHooks(credentials.connectionId))
         : {};
       const result = await handleChatCore({
         // Same Request object as handleChat saw, so this is the SAME rid: the
@@ -1128,7 +1141,7 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         pxpipeMinChars: chatSettings.pxpipeMinChars,
         pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
         // Lazily warms the in-process module on first use; null when not installed (fail-open)
-        pxpipeTransform: comboTokenSaver.pxpipeEnabled ? await getPxpipeTransform() : null,
+        pxpipeTransform: comboTokenSaver.pxpipeEnabled ? await prepare(() => getPxpipeTransform()) : null,
         onPxpipeEvent: appendPxpipeEvent,
         onTokenSaverEvent: appendTokenSaverEvent,
         // 8-char session prefix for REQ ce= cache-epoch telemetry; idPrefix
@@ -1151,11 +1164,14 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         onValidationRequired: chatVerificationHooks.onValidationRequired,
         onVerificationSuccess: chatVerificationHooks.onVerificationSuccess,
         onCredentialsRefreshed: async (newCreds) => {
-          await updateProviderCredentials(credentials.connectionId, {
+          const expectedCredentials = refreshedCredentials._connection || credentials._connection;
+          const stored = await updateProviderCredentials(credentials.connectionId, {
             ...newCreds,
-            existingProviderSpecificData: credentials.providerSpecificData,
+            existingProviderSpecificData: expectedCredentials?.providerSpecificData || credentials.providerSpecificData,
             testStatus: "active"
-          });
+          }, { expectedCredentials, durability: 'critical' });
+          if (stored && typeof stored === 'object') refreshedCredentials._connection = stored;
+          return stored;
         },
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
@@ -1176,13 +1192,20 @@ async function dispatchSingleModelChat(body, modelStr, clientRawRequest = null, 
         }
       });
 
-      if (callerSignal?.aborted) return errorResponse(499, "Request aborted");
+      if (callerSignal?.aborted) {
+        try { Promise.resolve(result.response?.body?.cancel(callerSignal.reason)).catch(() => {}); } catch {}
+        return errorResponse(499, "Request aborted");
+      }
 
       // A successful upstream status can represent billable work even when no
       // usable output arrives. Inspect the stream, but never replay that work.
       if (result.success) {
-        const peeked = await peekStreamForContent(result.response);
-        if (callerSignal?.aborted) return errorResponse(499, "Request aborted");
+        const peeked = await peekStreamForContent(result.response,
+          Math.min(STREAM_FIRST_CHUNK_TIMEOUT_MS, fallbackDeadline.remainingMs()), { signal: callerSignal });
+        if (callerSignal?.aborted) {
+          try { Promise.resolve((peeked.body || result.response.body)?.cancel(callerSignal.reason)).catch(() => {}); } catch {}
+          return errorResponse(499, "Request aborted");
+        }
         if (peeked.hasContent) {
           // The answer is live from here to the last token, which for a long
           // stream is minutes after this return. Ownership of the slot moves to

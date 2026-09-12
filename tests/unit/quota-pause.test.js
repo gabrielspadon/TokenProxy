@@ -26,6 +26,7 @@ vi.mock("@/lib/localDb", () => ({
 import { evaluateQuota, _clearQuotaCache } from "@/sse/services/quotaGuard.js";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { updateProviderConnection } from "@/lib/localDb";
+import { bindQuotaSnapshot } from '@/sse/services/quotaEvidenceIdentity.js';
 
 const okConn = (over = {}) => ({
   id: "c1",
@@ -174,6 +175,7 @@ describe("evaluateQuota (routing engine)", () => {
       quotaPauseThresholds: { "session (5h)": 15 },
       lastQuotaSnapshot: { windows: [{ key: "session (5h)", remainingPercentage: 5, resetAt: null, unlimited: false }], fetchedAt: new Date().toISOString() },
     });
+    conn.lastQuotaSnapshot = bindQuotaSnapshot(conn, { strictProxy: false }, conn.lastQuotaSnapshot);
     const r = await evaluateQuota(conn);
     expect(r.paused).toBe(true);
     expect(getUsageForProvider).not.toHaveBeenCalled();

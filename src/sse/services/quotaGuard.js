@@ -64,8 +64,7 @@ function readSnapshot(connection, identity) {
     if (s) return s;
   }
   const persisted = connection.lastQuotaSnapshot;
-  if (cached && cached.identity !== identity && Date.parse(persisted?.fetchedAt) <= cached.fetchedAt) return null;
-  if (persisted?.credentialRevisionId && persisted.credentialRevisionId !== connection.credentialRevisionId) return null;
+  if (persisted?.evidenceIdentity !== identity) return null;
   if (persisted) {
     const s = freshSnapshot(persisted, persisted.fetchedAt);
     if (s) {
@@ -85,7 +84,7 @@ function staleSnapshot(connection, identity) {
   if (cached?.identity === identity && cached.snapshot) return cached.snapshot;
   if (cached && cached.identity !== identity) return null;
   const persisted = connection.lastQuotaSnapshot;
-  if (persisted?.credentialRevisionId && persisted.credentialRevisionId !== connection.credentialRevisionId) return null;
+  if (persisted?.evidenceIdentity !== identity) return null;
   if (persisted) setBounded(memoryCache, connection.id, { identity, snapshot: persisted, fetchedAt: Date.parse(persisted.fetchedAt) });
   return persisted || null;
 }
@@ -127,7 +126,7 @@ async function fetchLiveSnapshot(connection, providedProxyOptions, signal) {
 }
 
 function storeSnapshot(connection, snapshot, identity, signal) {
-  const stored = { ...snapshot, ...(connection.credentialRevisionId ? { credentialRevisionId: connection.credentialRevisionId } : {}) };
+  const stored = { ...snapshot, evidenceIdentity: identity };
   setBounded(memoryCache, connection.id, { snapshot: stored, identity, fetchedAt: Date.parse(snapshot.fetchedAt) });
   // Best-effort persistence so the dashboard and subsequent routing reads stay warm.
   updateProviderConnection(connection.id, { lastQuotaSnapshot: stored }, { expectedCredentials: connection, signal }).catch(() => {});
@@ -150,7 +149,7 @@ async function runLiveRefresh(connection, proxyOptions, entry) {
     } else {
       setBounded(negativeCache, connection.id, { identity: entry.identity, expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS, failureClass: 'empty' });
     }
-    await retainQuotaUsage(connection, fetched?.rawUsage);
+    await waitForPreparation(retainQuotaUsage(connection, fetched?.rawUsage), signal);
     return { ...fetched, ...(!fetched?.snapshot ? { failureClass: 'empty' } : {}) };
   } catch (error) {
     const failureClass = error?.name === 'TimeoutError' ? 'timeout' : signal.aborted ? 'superseded' : 'fetch-error';
@@ -203,12 +202,12 @@ function scheduleRefresh(connection, proxyOptions, identity) {
  *   is null on a cache hit (no live fetch ran) or when the read produced no
  *   usable snapshot, so it is never paired with evidence it did not produce.
  */
-export async function evaluateQuota(connection) {
+export async function evaluateQuota(connection, { proxyOptions: providedProxyOptions } = {}) {
   const signal = requestSignal();
   signal?.throwIfAborted();
   if (!isQuotaEligible(connection)) return { paused: false, reason: "ineligible", snapshot: null, rawUsage: null };
 
-  const proxyOptions = await waitForPreparation(buildProxyOptions(connection), signal);
+  const proxyOptions = providedProxyOptions || await waitForPreparation(buildProxyOptions(connection), signal);
   signal?.throwIfAborted();
   if (proxyOptions?.kind === "required-unavailable") {
     return {

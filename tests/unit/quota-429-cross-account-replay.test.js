@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { trackResponseLifetime } from '../helpers/response-lifetime.js';
+import { isSafeQuotaAccountRejection } from 'open-sse/utils/replaySafety.js';
 
 // A quota-class 429 carries an upstream x-should-retry: false, which
 // isReplaySafeRejection turns into safeToReplay: false. That advice is about
@@ -111,6 +112,19 @@ function request(headers = {}) {
 }
 
 describe("quota 429 with upstream x-should-retry: false", () => {
+  it('does not rotate a physical account when the canonical 429 message reports accepted generation', async () => {
+    authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 5000, mustWait: false, failureClass: 'quota' });
+    dispatchMocks.handleChatCore.mockImplementation(async () => {
+      const payload = { error: { message: 'Request was accepted; generation billed before quota failure' } };
+      const response = Response.json(payload, { status: 429, headers: { 'x-should-retry': 'false' } });
+      return { success: false, status: 429, response, error: payload.error.message,
+        failureMetadata: { safeToReplay: false, safeAcrossAccounts: isSafeQuotaAccountRejection(response, payload) } };
+    });
+    expect((await handleChat(request())).status).toBe(429);
+    expect(dispatchMocks.handleChatCore).toHaveBeenCalledOnce();
+    expect(authMocks.getProviderCredentials).toHaveBeenCalledOnce();
+  });
+
   it.each([false, undefined])('requires positive wire evidence even when a synthetic 429 is classified as quota (%s)', async proof => {
     authMocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true, cooldownMs: 5000, mustWait: false, failureClass: 'quota' });
     dispatchMocks.handleChatCore.mockImplementation(async () => {

@@ -67,6 +67,22 @@ describe('isQoderPat', () => {
 });
 
 describe('resolveQoderCredentials PAT exchange', () => {
+  it('does not cache a partial credential when user-id lookup is cancelled', async () => {
+    const owner = new AbortController();
+    const reason = new DOMException('quota owner expired', 'AbortError');
+    mocks.proxyAwareFetch.mockImplementation(async (url) => {
+      if (url === QODER_JOB_TOKEN_EXCHANGE_URL) return jsonRes({ token: 'jt-owned' });
+      owner.abort(reason);
+      throw reason;
+    });
+    await expect(resolveQoderCredentials({ apiKey: 'pt-cancelled-owner' }, { signal: owner.signal })).rejects.toBe(reason);
+    mocks.proxyAwareFetch.mockImplementation(async url => jsonRes(url === QODER_JOB_TOKEN_EXCHANGE_URL
+      ? { token: 'jt-complete' } : { id: 'complete-user' }));
+    const result = await resolveQoderCredentials({ apiKey: 'pt-cancelled-owner' });
+    expect(result.accessToken).toBe('jt-complete');
+    expect(result.providerSpecificData.userId).toBe('complete-user');
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledTimes(4);
+  });
   it('exchanges a PAT for a job token and resolves the user id', async () => {
     mocks.proxyAwareFetch.mockImplementation(async (url) => {
       if (url === QODER_JOB_TOKEN_EXCHANGE_URL) {
