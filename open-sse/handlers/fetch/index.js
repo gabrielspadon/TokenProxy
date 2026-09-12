@@ -831,7 +831,11 @@ async function runJina({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQuer
   const upstreamMs = Date.now() - upstreamStart;
   const body = await r.res.text();
   if (!r.res.ok) {
-    return upstreamFailure(r.res, body?.slice(0, 500) || `Jina error: ${r.res.status}`);
+    // The parsed envelope is the replay evidence. Dropping it classified the
+    // same upstream rejection differently here than on the other providers.
+    let payload = null;
+    try { payload = JSON.parse(body); } catch { /* non-JSON upstream text */ }
+    return upstreamFailure(r.res, body?.slice(0, 500) || `Jina error: ${r.res.status}`, payload);
   }
   const text = truncate(body, maxCharacters);
   return {
