@@ -194,15 +194,26 @@ describe("x-tp-rid header echo", () => {
   });
 });
 
-describe("ACCT.alias-dropped", () => {
-  it("names the dropped alias with conn/model context", () => {
-    canonicalizeUsage({ cache_write_tokens: 12, prompt_tokens: 5 }, { conn: "abc12345", model: "m" });
-    const acct = classLines("ACCT");
-    expect(acct).toHaveLength(1);
-    expect(acct[0]).toContain("ACCT.alias-dropped");
-    expect(acct[0]).toContain("conn=abc12345");
-    expect(acct[0]).toContain("model=m");
-    expect(acct[0]).toContain("why=cache_write_tokens");
+describe("ACCT telemetry for cache aliases the resolver supports", () => {
+  // CACHE_WRITE_KEYS carries `cache_write_tokens`, so resolveCacheTokens reads
+  // the spelling. A dropped-alias line here would report a loss that did not
+  // happen; the quantity assertion is what proves the silence is earned.
+  it("stays silent on a flat cache_write_tokens and keeps its quantity", () => {
+    const out = canonicalizeUsage({ cache_write_tokens: 12, prompt_tokens: 5 });
+    expect(out.cache_creation_input_tokens).toBe(12);
+    expect(classLines("ACCT")).toHaveLength(0);
+  });
+
+  it("stays silent on the nested input_tokens_details spelling", () => {
+    const out = canonicalizeUsage({ input_tokens: 20, input_tokens_details: { cache_write_tokens: 6 } });
+    expect(out.cache_creation_input_tokens).toBe(6);
+    expect(classLines("ACCT")).toHaveLength(0);
+  });
+
+  it("stays silent on a reported zero and on a genuine absence alike", () => {
+    expect(canonicalizeUsage({ prompt_tokens: 5, cache_write_tokens: 0 }).cache_creation_input_tokens).toBe(0);
+    expect(canonicalizeUsage({ prompt_tokens: 5 }).cache_creation_input_tokens).toBe(0);
+    expect(classLines("ACCT")).toHaveLength(0);
   });
 });
 

@@ -65,7 +65,7 @@ describe("the closed verdict enum", () => {
 
 describe("silence policy is structural, not a review habit", () => {
   it("never spreads or stringifies an object into a line", () => {
-    const line = formatLine("ACCT", "alias-dropped", { rid: "r", body: { messages: ["secret prompt"] } }, AT);
+    const line = formatLine("ACCT", "detail-write-failed", { rid: "r", body: { messages: ["secret prompt"] } }, AT);
     expect(line).toContain("body=[non-scalar]");
     expect(line).not.toContain("secret prompt");
   });

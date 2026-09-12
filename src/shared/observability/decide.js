@@ -67,7 +67,7 @@ export const VERDICTS = Object.freeze({
   XFORM: Object.freeze(['headroom-skip', 'headroom-unavailable', 'headroom-phantom', 'tool-strip', 'cache-keep', 'cache-legacy', 'rtk-applied', 'headroom-applied', 'tool-distill', 'mem-pruned', 'compact-applied', 'injected', 'thinking-stripped', 'qac-applied', 'pairs-dropped', 'reorder-applied', 'midinject-applied', 'saver-guard', 'privacy-applied', 'pxpipe-applied', 'mem-handoff', 'reorder-degraded']),
   UP: Object.freeze(['retry', 'failover', 'attempt-ceiling', 'replay-overflow', 'no-replay']),
   STREAM: Object.freeze(['stalled', 'empty', 'non-sse', 'terminal-synthesized', 'usage-estimated', 'detail-pending']),
-  ACCT: Object.freeze(['detail-write-failed', 'alias-dropped']),
+  ACCT: Object.freeze(['detail-write-failed']),
   DRAIN: Object.freeze(['begin', 'end']),
   REQ: Object.freeze(['ok', 'failed', 'refused', 'unknown']),
   LOG: Object.freeze(['throttled', 'resumed', 'sink-failed', 'unknown-verdict', 'boot']),
