@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useOAuthCodeInput } from '@/shared/components/OAuthCodeInput';
 
 let host, root, api;
-function Harness() { api = useOAuthCodeInput(); return api.codeInput; }
+function Harness() {
+  const input = useOAuthCodeInput();
+  useEffect(() => { api = input; }, [input]);
+  return input.codeInput;
+}
 beforeEach(async () => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
