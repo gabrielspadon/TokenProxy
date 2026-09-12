@@ -18,12 +18,9 @@
 .period { display: flex; gap: 4px; align-items: center; }
 .period b { font-size: var(--type-ui); font-weight: 600; min-width: 9.5ch; text-align: center; }
 
-.calendar { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); grid-template-areas: 'legend legend' 'month side'; align-items: start; gap: 6px 28px; min-width: 0; }
-.calendar > .legend { grid-area: legend; }
-.month { grid-area: month; }
-.readout { grid-area: side; }
-/* One column below the width where a second column would squeeze the grid. */
-@media (max-width: 1100px) { .calendar { grid-template-columns: minmax(0, 1fr); grid-template-areas: 'legend' 'month' 'side'; } }
+.calendar { display: grid; gap: 8px; min-width: 0; }
+.calendarScroll { overflow-x: auto; min-width: 0; padding: 2px; }
+.calendarScroll:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
 /* One visible key for the fixed quadrant order plus the two non-colours that
    carry absence and a recorded zero. */
 .legendQuadrants { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; width: 14px; height: 14px; border-radius: 2px; overflow: hidden; }
@@ -33,18 +30,20 @@
 .legendKey i[data-level='0'] { background: var(--paper); box-shadow: inset 0 0 0 1px var(--rule); }
 .legendKey i[data-absent='true'] { background: repeating-linear-gradient(135deg, var(--rule) 0 1.5px, var(--raised) 1.5px 4px); box-shadow: inset 0 0 0 1px var(--rule); }
 
-.month { border-collapse: separate; border-spacing: 3px; table-layout: fixed; width: 100%; max-width: 420px; }
+.month { border-collapse: separate; border-spacing: 3px; width: max-content; }
 .month caption { text-align: left; font-size: var(--type-dense); color: var(--slate); line-height: 1.4; padding-bottom: 4px; }
 .month th { font-size: var(--type-dense); font-weight: 500; color: var(--slate); text-align: center; padding: 0 0 2px; }
+.month th[scope='row'] { text-align: left; padding-right: 8px; }
+.month thead th { max-width: 32px; overflow: hidden; white-space: nowrap; text-align: left; }
 .month td { padding: 0; }
 .only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 /* One button per day: one tab stop for the month, arrow keys inside it. */
-.month button { display: grid; gap: 2px; justify-items: center; width: 100%; padding: 2px 0 3px; background: none; border: 0; border-radius: var(--radius-button); color: var(--slate); font: inherit; font-size: var(--type-dense); cursor: pointer; }
+.month button { display: grid; place-items: center; width: 32px; height: 32px; padding: 3px; background: none; border: 0; border-radius: var(--radius-button); color: var(--slate); font: inherit; font-size: var(--type-dense); cursor: pointer; }
 .month button:hover { background: var(--paper); }
 .month button:focus-visible { outline: 2px solid var(--signal); outline-offset: 1px; }
 .month button[data-selected] { background: var(--signal-wash); color: var(--ink); box-shadow: inset 0 0 0 1px var(--signal); }
-.date { font-variant-numeric: tabular-nums; line-height: 1.1; }
+.date { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .quadrants { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1px; width: 26px; height: 26px; border-radius: 3px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--rule); }
 /* Colour identifies WHICH token metric the quadrant is. Its step is that
    metric's share of its own maximum in this month, never a price or a rate. */
@@ -62,7 +61,7 @@
 .month button:has(b[data-absent='unasked']) { opacity: 0.55; }
 .month button:has(b[data-absent='unasked']) .quadrants { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rule) 55%, transparent); }
 
-.readout { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: var(--type-dense); line-height: 1.5; color: var(--slate); min-height: 2.8em; max-width: 46ch; }
+.readout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 0; font-size: var(--type-dense); line-height: 1.5; color: var(--slate); min-height: 2.8em; }
 .readout b { font-weight: 600; color: var(--ink); font-size: var(--type-ui); margin-bottom: 2px; }
 .readout span { display: inline-flex; align-items: center; gap: 5px; }
 .readout span[data-reported] { font-variant-numeric: tabular-nums; color: var(--ink); }
@@ -76,7 +75,7 @@
   /* 44px minimum touch target on the day cells; the quadrant plate grows with
      it so the four metrics stay readable rather than shrinking on a phone. */
   .month { border-spacing: 2px; max-width: none; }
-  .month button { min-height: 46px; padding: 3px 0 4px; }
+  .month button { width: 44px; height: 44px; padding: 7px; }
   .quadrants { width: 30px; height: 30px; }
   .period b { min-width: auto; }
 }

@@ -35,9 +35,24 @@ export const STYLES = [
 ];
 export const CALENDAR_METRICS = [
   { value: 'inputTokens', samples: 'inputSamples', label: 'Tokens in', token: '--metric-input' },
-  { value: 'outputTokens', samples: 'outputSamples', label: 'Tokens out', token: '--metric-output' },
-  { value: 'cacheReadTokens', samples: 'cacheReadSamples', label: 'Cache read', token: '--metric-cache' },
-  { value: 'cacheWriteTokens', samples: 'cacheWriteSamples', label: 'Cache write', token: '--metric-write' },
+  {
+    value: 'outputTokens',
+    samples: 'outputSamples',
+    label: 'Tokens out',
+    token: '--metric-output',
+  },
+  {
+    value: 'cacheReadTokens',
+    samples: 'cacheReadSamples',
+    label: 'Cache read',
+    token: '--metric-cache',
+  },
+  {
+    value: 'cacheWriteTokens',
+    samples: 'cacheWriteSamples',
+    label: 'Cache write',
+    token: '--metric-write',
+  },
 ];
 const WEEKDAYS = [
   ['Mon', 'Monday'],
@@ -322,7 +337,9 @@ export const capacityShiftMonth = (ms, months) => {
 // month: cache reads are routinely an order of magnitude above output tokens,
 // and one shared scale would flatten the smaller pair into the zero plate.
 export const capacityCalendarLevel = (value, max) =>
-  !Number.isFinite(value) || value <= 0 || !(max > 0) ? 0 : Math.min(4, Math.ceil((value / max) * 4));
+  !Number.isFinite(value) || value <= 0 || !(max > 0)
+    ? 0
+    : Math.min(4, Math.ceil((value / max) * 4));
 
 export function capacityCalendarMonth(points, monthMs, window = null) {
   const byDay = capacityCalendarDays(points);
@@ -340,10 +357,16 @@ export function capacityCalendarMonth(points, monthMs, window = null) {
     // of absence the request never sought.
     const outside = Boolean(
       window &&
-        ((Number.isFinite(window.startMs) && dayMs + DAY <= window.startMs) ||
-          (Number.isFinite(window.endMs) && dayMs >= window.endMs))
+      ((Number.isFinite(window.startMs) && dayMs + DAY <= window.startMs) ||
+        (Number.isFinite(window.endMs) && dayMs >= window.endMs))
     );
-    return { dayMs, day: key, date: index + 1, outside, entry: outside ? null : byDay.get(key) || null };
+    return {
+      dayMs,
+      day: key,
+      date: index + 1,
+      outside,
+      entry: outside ? null : byDay.get(key) || null,
+    };
   });
   const maxima = Object.fromEntries(
     CALENDAR_METRICS.map((item) => [
@@ -369,6 +392,69 @@ export function capacityCalendarMonth(points, monthMs, window = null) {
     maxima,
     recordedDays: days.filter((cell) => cell.entry).length,
     askedDays: days.filter((cell) => !cell.outside).length,
+  };
+}
+
+// Bound the DOM for long histories; each page keeps a shared metric scale.
+export function capacityCalendarRange(points, startMs, endMs, page = null) {
+  const byDay = capacityCalendarDays(points);
+  const timestamps = points.map((point) => point.bucketStartMs).filter(Number.isFinite);
+  const end = Number.isFinite(endMs)
+    ? endMs
+    : timestamps.length
+      ? (Math.floor(Math.max(...timestamps) / DAY) + 1) * DAY
+      : DAY;
+  const start = Number.isFinite(startMs)
+    ? startMs
+    : timestamps.length
+      ? Math.min(...timestamps)
+      : end - DAY;
+  const first = Math.floor(start / DAY) * DAY;
+  const totalDays = Math.max(1, Math.ceil((end - first) / DAY));
+  const pageSize = 366;
+  const pages = Math.ceil(totalDays / pageSize);
+  const currentPage = Math.max(0, Math.min(pages - 1, Number.isInteger(page) ? page : pages - 1));
+  const offset = currentPage * pageSize;
+  const days = Array.from({ length: Math.min(pageSize, totalDays - offset) }, (_, index) => {
+    const dayMs = first + (offset + index) * DAY;
+    const key = day(dayMs);
+    return {
+      dayMs,
+      day: key,
+      date: new Date(dayMs).getUTCDate(),
+      outside: false,
+      entry: byDay.get(key) || null,
+    };
+  });
+  const maxima = Object.fromEntries(
+    CALENDAR_METRICS.map((item) => [
+      item.value,
+      Math.max(
+        0,
+        ...[...byDay.values()]
+          .filter((entry) => {
+            const ms = Date.parse(entry.day);
+            return ms + DAY > start && ms < end;
+          })
+          .map((entry) =>
+            entry.metrics[item.value].measured ? entry.metrics[item.value].total : 0
+          )
+      ),
+    ])
+  );
+  const lead = (new Date(days[0].dayMs).getUTCDay() + 6) % 7;
+  const cells = [...Array(lead).fill(null), ...days];
+  while (cells.length % 7) cells.push(null);
+  return {
+    days,
+    maxima,
+    weeks: Array.from({ length: cells.length / 7 }, (_, i) => cells.slice(i * 7, i * 7 + 7)),
+    label: `${dayLabel(days[0].dayMs)} to ${dayLabel(days.at(-1).dayMs)}`,
+    recordedDays: days.filter((cell) => cell.entry).length,
+    askedDays: days.length,
+    totalDays,
+    page: currentPage,
+    pages,
   };
 }
 
@@ -399,7 +485,7 @@ export function capacityCalendarReading(cell) {
   };
 }
 
-const ARROWS = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+const ARROWS = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 };
 
 function CapacityCalendar({ month, selectedDay, onSelect }) {
   const grid = useRef(null);
@@ -462,72 +548,105 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
           Not reported
         </span>
       </div>
-      <table className={styles.month} ref={grid}>
-        <caption>
-          {month.label}. Daily token totals in UTC, four metrics per day. Move with the arrow
-          keys; select a day to focus the page on it.
-        </caption>
-        <thead>
-          <tr>
-            {WEEKDAYS.map(([short, long]) => (
-              <th key={long} scope="col" abbr={long}>
-                <span aria-hidden="true">{short}</span>
-                <span className={styles.only}>{long}</span>
+      <div
+        className={styles.calendarScroll}
+        role="region"
+        aria-label="Daily token calendar"
+        tabIndex={0}
+      >
+        <table className={styles.month} ref={grid}>
+          <caption>
+            {month.label}. Daily token totals in UTC, four metrics per day. Move with the arrow
+            keys; select a day to focus the page on it. Darker shades show more tokens relative to
+            each metric’s maximum across the selected period.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">
+                <span className={styles.only}>Weekday</span>
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {month.weeks.map((week, index) => (
-            <tr key={week.find(Boolean)?.day || index}>
-              {week.map((cell, position) =>
-                cell ? (
-                  <td key={cell.day}>
-                    <button
-                      type="button"
-                      data-day={cell.day}
-                      data-selected={cell.day === selectedDay ? 'true' : undefined}
-                      aria-pressed={cell.day === selectedDay}
-                      aria-label={capacityCalendarReading(cell).label}
-                      tabIndex={cell.day === anchor ? 0 : -1}
-                      onFocus={() => setActive(cell.day)}
-                      onBlur={() => setActive(null)}
-                      onMouseEnter={() => setActive(cell.day)}
-                      onMouseLeave={() => setActive(null)}
-                      onKeyDown={(event) => keys(event, cell)}
-                      onClick={() => onSelect(cell.day)}
-                    >
-                      <span className={styles.date} aria-hidden="true">
-                        {cell.date}
-                      </span>
-                      <span className={styles.quadrants} aria-hidden="true">
-                        {CALENDAR_METRICS.map((item) => {
-                          const metric = cell.entry?.metrics[item.value];
-                          const reported = Boolean(metric?.measured);
-                          return (
-                            <b
-                              key={item.value}
-                              style={{ '--quadrant': `var(${item.token})` }}
-                              data-absent={reported ? undefined : cell.outside ? 'unasked' : 'true'}
-                              data-level={
-                                reported
-                                  ? capacityCalendarLevel(metric.total, month.maxima[item.value])
-                                  : undefined
-                              }
-                            />
-                          );
-                        })}
-                      </span>
-                    </button>
-                  </td>
-                ) : (
-                  <td key={`blank-${index}-${position}`} />
-                )
-              )}
+              {month.weeks.map((week, index) => {
+                const first = week.find(Boolean);
+                const previous = month.weeks[index - 1]?.find(Boolean);
+                const boundary =
+                  first &&
+                  (!previous ||
+                    capacityMonthStart(first.dayMs) !== capacityMonthStart(previous.dayMs));
+                return (
+                  <th
+                    key={index}
+                    scope="col"
+                    aria-label={first ? `Week of ${day(first.dayMs)}` : undefined}
+                  >
+                    {boundary
+                      ? new Intl.DateTimeFormat('en-GB', {
+                          month: 'short',
+                          timeZone: 'UTC',
+                        }).format(first.dayMs)
+                      : ''}
+                  </th>
+                );
+              })}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {WEEKDAYS.map(([short, long], index) => (
+              <tr key={long}>
+                <th scope="row" abbr={long}>
+                  {short}
+                </th>
+                {month.weeks.map((week, position) => {
+                  const cell = week[index];
+                  return cell ? (
+                    <td key={cell.day}>
+                      <button
+                        type="button"
+                        data-day={cell.day}
+                        data-selected={cell.day === selectedDay ? 'true' : undefined}
+                        aria-pressed={cell.day === selectedDay}
+                        aria-label={capacityCalendarReading(cell).label}
+                        tabIndex={cell.day === anchor ? 0 : -1}
+                        onFocus={() => setActive(cell.day)}
+                        onBlur={() => setActive(null)}
+                        onMouseEnter={() => setActive(cell.day)}
+                        onMouseLeave={() => setActive(null)}
+                        onKeyDown={(event) => keys(event, cell)}
+                        onClick={() => onSelect(cell.day)}
+                      >
+                        <span className={styles.date} aria-hidden="true">
+                          {cell.date}
+                        </span>
+                        <span className={styles.quadrants} aria-hidden="true">
+                          {CALENDAR_METRICS.map((item) => {
+                            const metric = cell.entry?.metrics[item.value];
+                            const reported = Boolean(metric?.measured);
+                            return (
+                              <b
+                                key={item.value}
+                                style={{ '--quadrant': `var(${item.token})` }}
+                                data-absent={
+                                  reported ? undefined : cell.outside ? 'unasked' : 'true'
+                                }
+                                data-level={
+                                  reported
+                                    ? capacityCalendarLevel(metric.total, month.maxima[item.value])
+                                    : undefined
+                                }
+                              />
+                            );
+                          })}
+                        </span>
+                      </button>
+                    </td>
+                  ) : (
+                    <td key={`blank-${index}-${position}`} />
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <p className={styles.readout} aria-live="polite">
         {shown ? (
           <>
@@ -556,11 +675,11 @@ function CapacityCalendar({ month, selectedDay, onSelect }) {
 
 // One line of truth about whether this panel refreshes itself. The shared
 // observation policy already knows; a quiet panel under a paused policy would
-// otherwise read as quiet traffic. ui_live owns the control and the wording of
-// the modes, this only reports the state it publishes.
+// otherwise read as quiet traffic. Report the shared observation state.
 export function capacityRefreshStatus(observations, snapshot) {
   if (!observations) return null;
-  if (snapshot) return 'Fixed snapshot. This panel does not refresh; no activity since capture is implied.';
+  if (snapshot)
+    return 'Fixed snapshot. This panel does not refresh; no activity since capture is implied.';
   if (observations.mode === 'paused')
     return `Updates paused${observations.pausedAt ? ` at ${utc(observations.pausedAt)} UTC` : ''}. This panel is not refreshing, so later activity is not shown here.`;
   if (observations.mode === 'summary')
@@ -584,7 +703,7 @@ export function CapacityActivity() {
     key: 'tokenproxy.capacity-style',
     defaultValue: 'lines',
   });
-  const [monthMs, setMonthMs] = useState(null);
+  const [calendarPage, setCalendarPage] = useState(null);
   // One clock read per mount. Reading it during render would make the visible
   // month depend on when React happened to re-render.
   const [mountedAt] = useState(() => Date.now());
@@ -602,7 +721,6 @@ export function CapacityActivity() {
     summary = workspace.activity.data?.summary;
   const bucketMs = resource.data?.series?.bucketMs;
   const { start: scopeStart, end: scopeEnd } = workspace.scope;
-  const receivedAt = resource.receivedAt;
   const option = useMemo(
     () =>
       chart === 'tokens'
@@ -612,23 +730,20 @@ export function CapacityActivity() {
           : null,
     [chart, points, bucketMs, style]
   );
-  // The month on screen: the operator's own navigation while it is set,
-  // otherwise the last month the selected period reaches.
-  const latest = scopeEnd
-    ? Date.parse(scopeEnd) - 1
-    : (points.at(-1)?.bucketStartMs ?? (receivedAt ? Date.parse(receivedAt) : mountedAt));
-  const shownMonthMs = monthMs ?? capacityMonthStart(latest);
-  // What the current request actually covered, so an unasked day says so.
-  const observed = {
-    startMs: scopeStart ? Date.parse(scopeStart) : null,
-    endMs: scopeEnd ? Date.parse(scopeEnd) : null,
-  };
-  const month = capacityCalendarMonth(points, shownMonthMs, observed);
-  // Only the future is out of bounds. A floor at the earliest retained bucket
-  // was tried and locked the operator out of every earlier month the moment a
-  // selection narrowed the series to one day.
-  const latestMonth = capacityMonthStart(Math.max(latest, mountedAt));
-  const shiftMonth = (months) => setMonthMs(capacityShiftMonth(shownMonthMs, months));
+  const filters = resource.data?.filters;
+  const rangeStart = Date.parse(filters?.start || scopeStart);
+  const rangeEnd = Date.parse(filters?.end || scopeEnd);
+  const calendarScope = JSON.stringify(workspace.scope);
+  const pageIndex = calendarPage?.scope === calendarScope ? calendarPage.page : null;
+  const calendarEnd = Number.isFinite(rangeEnd)
+    ? rangeEnd
+    : points.length
+      ? undefined
+      : (Math.floor(mountedAt / DAY) + 1) * DAY;
+  const month = useMemo(
+    () => capacityCalendarRange(points, rangeStart, calendarEnd, pageIndex),
+    [points, rangeStart, calendarEnd, pageIndex]
+  );
   // A period of exactly one whole UTC day is the calendar's own selection.
   const selectedDay =
     Date.parse(scopeEnd) - Date.parse(scopeStart) === DAY && scopeStart?.endsWith('T00:00:00.000Z')
@@ -641,7 +756,7 @@ export function CapacityActivity() {
   const chooseDay = (value) => {
     const next = capacityDayScope(value);
     if (next) {
-      setMonthMs(capacityMonthStart(Date.parse(next.start)));
+      setCalendarPage(null);
       workspace.setScope(next);
     }
   };
@@ -658,34 +773,31 @@ export function CapacityActivity() {
         <h2>Requests &amp; cache</h2>
         <div className={styles.selectors}>
           {chart === 'calendar' ? (
-            <div className={styles.period}>
-              <Button
-                size="compact-xs"
-                variant="default"
-                aria-label="Previous month"
-                onClick={() => shiftMonth(-1)}
-              >
-                ‹
-              </Button>
-              <b>{month.label}</b>
-              <Button
-                size="compact-xs"
-                variant="default"
-                aria-label="Next month"
-                disabled={shownMonthMs >= latestMonth}
-                onClick={() => shiftMonth(1)}
-              >
-                ›
-              </Button>
-              <Button
-                size="compact-xs"
-                variant="subtle"
-                disabled={shownMonthMs === capacityMonthStart(latest)}
-                onClick={() => setMonthMs(null)}
-              >
-                Latest month
-              </Button>
-            </div>
+            month.pages > 1 ? (
+              <div className={styles.period}>
+                <Button
+                  size="compact-xs"
+                  variant="default"
+                  aria-label="Previous days"
+                  disabled={month.page === 0}
+                  onClick={() => setCalendarPage({ scope: calendarScope, page: month.page - 1 })}
+                >
+                  Earlier
+                </Button>
+                <span>
+                  {month.page + 1} / {month.pages}
+                </span>
+                <Button
+                  size="compact-xs"
+                  variant="default"
+                  aria-label="Next days"
+                  disabled={month.page === month.pages - 1}
+                  onClick={() => setCalendarPage({ scope: calendarScope, page: month.page + 1 })}
+                >
+                  Later
+                </Button>
+              </div>
+            ) : null
           ) : (
             <>
               <Select
@@ -787,7 +899,8 @@ export function CapacityActivity() {
                     : 'Requests, attempts and cache tokens over the selected UTC period. Counts and tokens use separate aligned tracks. Select an interval to focus on it.'
                 }
                 onEvents={{
-                  click: (event) => choose(points.find((point) => point.bucketStartMs === event.value?.[0])),
+                  click: (event) =>
+                    choose(points.find((point) => point.bucketStartMs === event.value?.[0])),
                 }}
               />
             </>
