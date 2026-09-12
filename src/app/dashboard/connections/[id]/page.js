@@ -1,4 +1,5 @@
 'use client';
+import { useOAuthCodeInput } from '@/shared/components/OAuthCodeInput';
 import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
@@ -59,6 +60,7 @@ const toast = (color, message, title) =>
   notifications.show({ color, message, title, autoClose: color === 'teal' ? 4000 : 9000 });
 
 export default function ConnectionPage({ params }) {
+  const { requestCode, codeInput } = useOAuthCodeInput();
   const { id } = use(params);
   const advanced = useLevel();
   const [now, setNow] = useState(() => Date.now());
@@ -224,6 +226,7 @@ export default function ConnectionPage({ params }) {
               reauth,
             })
           : await runGrant(c.provider, kind, {
+              requestCode,
               reauth,
               report: setGrantStep,
               deviceOptions: psd,
@@ -829,6 +832,7 @@ export default function ConnectionPage({ params }) {
                   }
                 />
               </div>
+              {codeInput}
               {grantStep ? (
                 <Text size="xs" c="dimmed">
                   {grantStep}

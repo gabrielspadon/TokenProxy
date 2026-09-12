@@ -4,6 +4,7 @@ import { extractClaudeAccountInfo } from "../providerHelpers.js";
 const claude = {
   config: CLAUDE_CONFIG,
   flowType: "authorization_code_pkce",
+  manualRedirectUri: CLAUDE_CONFIG.manualRedirectUri,
   buildAuthUrl: (config, redirectUri, state, codeChallenge) => {
     const params = new URLSearchParams({
       code: "true",
@@ -25,6 +26,9 @@ const claude = {
       const parts = authCode.split("#");
       authCode = parts[0];
       codeState = parts[1] || "";
+      if (parts.length !== 2 || !codeState || codeState !== state) {
+        throw new Error('This code belongs to a different sign-in. Start again.');
+      }
     }
 
     const response = await fetch(config.tokenUrl, {

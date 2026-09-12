@@ -1,4 +1,5 @@
 'use client';
+import { useOAuthCodeInput } from '@/shared/components/OAuthCodeInput';
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActionIcon, Button, PasswordInput, Select, Text, TextInput, Tooltip } from '@mantine/core';
@@ -44,6 +45,7 @@ const OPTION_PROVIDERS = new Set([
 // rather than reimplementing a grant. Nothing else about the flow changes, so
 // the epoch guard, the paste-back fallback and the naming stage are shared.
 export function AddAccountRow({ onClose, onAdded, provider = null }) {
+  const { requestCode, codeInput } = useOAuthCodeInput();
   const entries = useMemo(
     () =>
       Object.values(AI_PROVIDERS)
@@ -171,6 +173,7 @@ export function AddAccountRow({ onClose, onAdded, provider = null }) {
         abortRef.current = controller;
         out = await runGrant(entry.id, flow?.flowType || 'authorization_code', {
           signal: controller.signal,
+          requestCode,
           report: (text) => current === choice.current && setStep(text),
           deviceHook: (info) => current === choice.current && setDevice(info),
           // Fires once the loopback proxy is listening and the window has been
@@ -337,6 +340,7 @@ export function AddAccountRow({ onClose, onAdded, provider = null }) {
     (mode === 'oauth' ? Boolean(flow) && (!paste || secret.trim()) : secret.trim());
   return (
     <form className={styles.addRow} aria-label="Add account" onSubmit={submit}>
+      {codeInput}
       {saved ? (
         <>
           <Text size="xs" className={styles.addNote} role="status">

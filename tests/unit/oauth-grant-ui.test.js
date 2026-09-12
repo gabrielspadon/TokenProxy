@@ -14,6 +14,27 @@ const popupStub = () => {
   return popup;
 };
 
+it('uses the hosted Claude code flow with its issued verifier and selected account', async () => {
+  popupStub();
+  const redirectUri = 'https://platform.claude.com/oauth/code/callback';
+  call.mockResolvedValueOnce({ ok: true, body: { manualCode: true, authUrl: 'https://claude.ai/oauth/authorize', state: 'issued-state', codeVerifier: 'issued-verifier', redirectUri } })
+    .mockResolvedValueOnce({ ok: true, body: { success: true, connection: { id: 'existing-account' } } });
+  const requestCode = vi.fn(async () => ({ code: 'issued-code', state: 'issued-state' }));
+  expect(await runGrant('claude', 'authorization_code_pkce', { requestCode, reauth: { reauthConnectionId: 'existing-account' } })).toMatchObject({ ok: true });
+  expect(requestCode).toHaveBeenCalledWith({ state: 'issued-state', signal: undefined });
+  expect(call.mock.calls[1]).toEqual(['/api/oauth/claude/exchange', { method: 'POST', body: {
+    code: 'issued-code', state: 'issued-state', codeVerifier: 'issued-verifier', redirectUri, reauthConnectionId: 'existing-account',
+  } }]);
+});
+
+it('cancels a hosted Claude code entry without exchanging credentials', async () => {
+  const popup = popupStub();
+  call.mockResolvedValueOnce({ ok: true, body: { manualCode: true, authUrl: 'https://claude.ai/oauth/authorize', state: 'issued-state' } });
+  expect(await runGrant('claude', 'authorization_code_pkce', { requestCode: async () => null })).toMatchObject({ ok: false });
+  expect(call).toHaveBeenCalledTimes(1);
+  expect(popup.close).toHaveBeenCalled();
+});
+
 it('carries Kiro registration metadata through device polling without exposing it to display state', async () => {
   vi.useFakeTimers();
   const device = { deviceCode: 'fixture-device', userCode: 'FIXTURE', verificationUri: 'https://fixture.invalid',

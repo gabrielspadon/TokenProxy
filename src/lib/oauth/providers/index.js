@@ -99,7 +99,7 @@ export async function generateAuthData(providerName, redirectUri, meta) {
   // the grant polls a proxy that never receives a callback. The provider's URI wins and
   // is echoed back, so the session registered before the popup and the code exchanged
   // after it carry the same value.
-  const effectiveRedirectUri = provider.loopbackRedirectUri || redirectUri;
+  const effectiveRedirectUri = provider.manualRedirectUri || provider.loopbackRedirectUri || redirectUri;
 
   let authUrl;
   if (provider.flowType === "device_code") {
@@ -117,6 +117,7 @@ export async function generateAuthData(providerName, redirectUri, meta) {
     codeVerifier,
     codeChallenge,
     redirectUri: effectiveRedirectUri,
+    ...(provider.manualRedirectUri ? { manualCode: true } : {}),
     flowType: provider.flowType,
     fixedPort: provider.fixedPort,
     callbackPath: provider.callbackPath || "/callback",
@@ -133,7 +134,7 @@ export async function exchangeTokens(providerName, code, redirectUri, codeVerifi
     ? await provider.prepareConfig(provider.config, meta || {})
     : provider.config;
 
-  const tokens = await provider.exchangeToken(config, code, redirectUri, codeVerifier, state, meta || {});
+  const tokens = await provider.exchangeToken(config, code, provider.manualRedirectUri || redirectUri, codeVerifier, state, meta || {});
 
   let extra = null;
   if (provider.postExchange) {
