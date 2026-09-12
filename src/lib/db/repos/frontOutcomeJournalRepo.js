@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from '../../dataDir.js';
@@ -14,6 +14,7 @@ const MAX_IMPORT_INTERVAL_MS = 60_000;
 // can move to a newer UUID version without making valid front evidence unreadable.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RECEIPT = /^[a-f0-9]{64}$/;
+const KEY_ID = /^[a-f0-9]{32}$/;
 const ORIGINS = new Set(['production', 'test', 'import', 'unknown']);
 const STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted', 'unknown']);
 // The front namespaces each rotated segment with its active clock domain.
@@ -28,25 +29,46 @@ function isTimestamp(value) {
   return typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
-function isFlatRecord(value) {
-  return value && !Array.isArray(value) && typeof value === 'object'
-    && Object.values(value).every((item) => item === null || ['string', 'boolean'].includes(typeof item)
-      || (typeof item === 'number' && Number.isFinite(item)));
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (!value || typeof value !== 'object') fail('non-canonical JSON');
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
 }
 
 function canonicalReceipt(record) {
   const copy = { ...record };
   delete copy.receiptId;
-  return createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(copy).sort().map((key) => [key, copy[key]])))).digest('hex');
+  return canonicalJson(copy);
 }
 
-function assertReceipt(record, label) {
-  if (!isFlatRecord(record) || !RECEIPT.test(record.receiptId || '') || canonicalReceipt(record) !== record.receiptId) fail(`${label} receipt`);
+function decodeKey(value) {
+  if (typeof value !== 'string') return null;
+  const key = Buffer.from(value, 'base64');
+  return key.length === 32 && key.toString('base64') === value ? key : null;
 }
 
-function assertBase(record, label) {
-  assertReceipt(record, label);
-  if (record.schemaVersion !== 1 || !UUID.test(record.clockDomain || '') || !isTimestamp(record.recordedAt)) fail(`${label} envelope`);
+function parseKeyring(content) {
+  let value;
+  try { value = JSON.parse(content.toString('utf8')); } catch { fail('journal keyring JSON'); }
+  if (!value || Array.isArray(value) || typeof value !== 'object' || value.schemaVersion !== 1
+    || !KEY_ID.test(value.activeKeyId || '') || !value.keys || Array.isArray(value.keys) || typeof value.keys !== 'object') fail('journal keyring');
+  const keys = Object.fromEntries(Object.entries(value.keys).map(([id, encoded]) => [id, decodeKey(encoded)]));
+  if (!Object.keys(keys).length || Object.entries(keys).some(([id, key]) => !KEY_ID.test(id) || !key) || !keys[value.activeKeyId]) fail('journal keyring');
+  return { activeKeyId: value.activeKeyId, keys };
+}
+
+function assertReceipt(record, label, keyring) {
+  if (!record || Array.isArray(record) || typeof record !== 'object' || !RECEIPT.test(record.receiptId || '')
+    || !KEY_ID.test(record.authKeyId || '') || !keyring.keys[record.authKeyId]) fail(`${label} receipt`);
+  const expected = createHmac('sha256', keyring.keys[record.authKeyId]).update(canonicalReceipt(record)).digest();
+  if (!timingSafeEqual(expected, Buffer.from(record.receiptId, 'hex'))) fail(`${label} receipt`);
+}
+
+function assertBase(record, label, keyring) {
+  assertReceipt(record, label, keyring);
+  if (record.schemaVersion !== 2 || !UUID.test(record.clockDomain || '') || !isTimestamp(record.recordedAt)) fail(`${label} envelope`);
 }
 
 function assertId(value, label, nullable = false) {
@@ -63,8 +85,8 @@ function duration(value, label) {
   return value;
 }
 
-function validateEvent(record, label) {
-  assertBase(record, label);
+function validateEvent(record, label, keyring) {
+  assertBase(record, label, keyring);
   if (record.kind === 'process-start') return { type: 'process-start', record };
   assertId(record.frontIngressId, `${label} frontIngressId`);
   if (record.kind === 'start') {
@@ -95,12 +117,12 @@ function validateEvent(record, label) {
   fail(`${label} kind`);
 }
 
-function openOwnedRegular(file, label) {
+function openOwnedRegular(file, label, maxBytes = MAX_SEGMENT_BYTES) {
   let fd;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_SEGMENT_BYTES || (stat.mode & 0o777) !== 0o600
+    if (!stat.isFile() || stat.size > maxBytes || (stat.mode & 0o777) !== 0o600
       || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail(`${label} must be an owned mode-0600 regular file`);
     return { fd, stat };
   } catch (error) {
@@ -109,8 +131,8 @@ function openOwnedRegular(file, label) {
   }
 }
 
-function readOwnedFile(file, label) {
-  const { fd, stat } = openOwnedRegular(file, label);
+function readOwnedFile(file, label, maxBytes) {
+  const { fd, stat } = openOwnedRegular(file, label, maxBytes);
   try {
     const content = Buffer.alloc(stat.size);
     let read = 0;
@@ -134,16 +156,25 @@ function checksum(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-function parseActiveClock(directory) {
+function readKeyring(file) {
+  const directory = path.dirname(file);
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o777) !== 0o700
+    || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) fail('journal keyring directory');
+  const { content } = readOwnedFile(file, 'journal keyring', MAX_LINE_BYTES);
+  return parseKeyring(content);
+}
+
+function parseActiveClock(directory, keyring) {
   const { content } = readOwnedFile(path.join(directory, 'active-clock.json'), 'active clock');
   let active;
   try { active = JSON.parse(content.toString('utf8')); } catch { fail('active clock JSON'); }
-  assertBase(active, 'active clock');
-  if (Object.keys(active).some((key) => !['schemaVersion', 'clockDomain', 'recordedAt', 'receiptId'].includes(key))) fail('active clock fields');
+  assertBase(active, 'active clock', keyring);
+  if (Object.keys(active).some((key) => !['schemaVersion', 'clockDomain', 'recordedAt', 'authKeyId', 'receiptId'].includes(key))) fail('active clock fields');
   return active;
 }
 
-function readSegment(directory, name, checkpoint) {
+function readSegment(directory, name, checkpoint, keyring) {
   const { content, stat } = readOwnedFile(path.join(directory, name), `segment ${name}`);
   const continuing = checkpoint && checkpoint.dev === stat.dev && checkpoint.ino === stat.ino;
   const offset = continuing ? checkpoint.offset : 0;
@@ -162,7 +193,7 @@ function readSegment(directory, name, checkpoint) {
     if (!line.length || line.length > MAX_LINE_BYTES) fail(`segment ${name} line`);
     let value;
     try { value = JSON.parse(line.toString('utf8')); } catch { fail(`segment ${name} JSON`); }
-    events.push(validateEvent(value, `segment ${name}`));
+    events.push(validateEvent(value, `segment ${name}`, keyring));
     cursor = newline + 1;
   }
   const nextOffset = offset + completeLength;
@@ -303,6 +334,7 @@ export async function stopFrontOutcomeJournalIngestion() {
 
 export async function ingestFrontOutcomeJournal({
   directory,
+  keyringPath,
 } = {}) {
   // The front unit's default is DATA_DIR/front-telemetry.  An explicit null
   // remains the operator and test seam that disables this optional import.
@@ -311,7 +343,10 @@ export async function ingestFrontOutcomeJournal({
   const directoryStat = fs.lstatSync(journalDirectory);
   if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) fail('directory');
   const resolvedDirectory = fs.realpathSync(journalDirectory);
-  const active = parseActiveClock(resolvedDirectory);
+  const resolvedKeyring = keyringPath || process.env.TOKENPROXY_FRONT_TELEMETRY_KEYRING
+    || path.join(path.dirname(resolvedDirectory), 'front-telemetry-auth', 'keyring.json');
+  const keyring = readKeyring(resolvedKeyring);
+  const active = parseActiveClock(resolvedDirectory, keyring);
   const db = await getAdapter();
   const names = fs.readdirSync(resolvedDirectory).filter((name) => SEGMENT.test(name)).sort();
   const segmentData = names.map((name) => {
@@ -322,7 +357,7 @@ export async function ingestFrontOutcomeJournal({
       if (!Number.isInteger(checkpoint.offset) || checkpoint.offset < 0 || !Number.isInteger(checkpoint.dev) || !Number.isInteger(checkpoint.ino)
         || !RECEIPT.test(checkpoint.prefixSha256 || '')) fail(`checkpoint ${name}`);
     }
-    return { name, ...readSegment(resolvedDirectory, name, checkpoint) };
+    return { name, ...readSegment(resolvedDirectory, name, checkpoint, keyring) };
   });
   const operations = collectOperations(db, active, segmentData);
   let interrupted = 0;

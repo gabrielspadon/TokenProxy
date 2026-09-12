@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,21 +11,41 @@ const CLOCK = '11111111-1111-4111-8111-111111111111';
 const INGRESS = '22222222-2222-4222-8222-222222222222';
 const LOGICAL = '33333333-3333-4333-8333-333333333333';
 const AT = '2026-09-12T12:00:00.000Z';
+const AUTH_KEY_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const directories = [];
 const db = await getAdapter();
 
-function signed(record) {
-  const canonical = Object.fromEntries(Object.keys(record).sort().map((key) => [key, record[key]]));
-  return { ...record, receiptId: createHash('sha256').update(JSON.stringify(canonical)).digest('hex') };
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+function defaultKeyring() {
+  return { schemaVersion: 1, activeKeyId: AUTH_KEY_ID, keys: { [AUTH_KEY_ID]: Buffer.alloc(32, 7).toString('base64') } };
+}
+
+function signed(record, keyring = defaultKeyring()) {
+  const unsigned = { ...record, schemaVersion: 2, authKeyId: record.authKeyId || keyring.activeKeyId };
+  return { ...unsigned, receiptId: createHmac('sha256', Buffer.from(keyring.keys[unsigned.authKeyId], 'base64'))
+    .update(canonicalJson(unsigned)).digest('hex') };
 }
 
 function journal(events, activeClock = CLOCK) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenproxy-front-outcome-'));
-  directories.push(directory);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenproxy-front-outcome-'));
+  const directory = path.join(root, 'front-telemetry');
+  directories.push(root);
+  fs.mkdirSync(directory, { mode: 0o700 });
   fs.chmodSync(directory, 0o700);
-  const active = signed({ schemaVersion: 1, clockDomain: activeClock, recordedAt: AT });
+  const keyringDirectory = path.join(path.dirname(directory), 'front-telemetry-auth');
+  const keyring = defaultKeyring();
+  fs.mkdirSync(keyringDirectory, { mode: 0o700 });
+  fs.chmodSync(keyringDirectory, 0o700);
+  fs.writeFileSync(path.join(keyringDirectory, 'keyring.json'), JSON.stringify(keyring), { mode: 0o600 });
+  const active = signed({ schemaVersion: 2, clockDomain: activeClock, recordedAt: AT }, keyring);
   fs.writeFileSync(path.join(directory, 'active-clock.json'), JSON.stringify(active), { mode: 0o600 });
-  fs.writeFileSync(path.join(directory, `private-${activeClock}-00000000.jsonl`), `${events.map((event) => JSON.stringify(signed(event))).join('\n')}\n`, { mode: 0o600 });
+  fs.writeFileSync(path.join(directory, `private-${activeClock}-00000000.jsonl`), `${events.map((event) => JSON.stringify(signed(event, keyring))).join('\n')}\n`, { mode: 0o600 });
   return directory;
 }
 
@@ -39,6 +59,10 @@ function terminal({ clockDomain = CLOCK, state = 'succeeded', total = 20 } = {})
 
 function segment(directory) {
   return path.join(directory, `private-${CLOCK}-00000000.jsonl`);
+}
+
+function keyringPath(directory) {
+  return path.join(path.dirname(directory), 'front-telemetry-auth', 'keyring.json');
 }
 
 beforeEach(() => {
@@ -243,4 +267,57 @@ it('rejects journal records with a forged receipt and insecure segment files', a
   fs.writeFileSync(segment(directory), '', { mode: 0o644 });
   fs.chmodSync(segment(directory), 0o644);
   await expect(ingestFrontOutcomeJournal({ directory })).rejects.toThrow('mode-0600 regular file');
+});
+
+it('verifies recursively canonical HMAC records after an active-key rotation retains their key', async () => {
+  const directory = journal([
+    { schemaVersion: 2, kind: 'start', clockDomain: CLOCK, recordedAt: AT, frontIngressId: INGRESS,
+      logicalRequestId: null, firstObservedAt: AT, state: 'pending', dataOrigin: 'production', originReceiptId: null,
+      extension: { z: 1, a: [{ b: true, a: null }] } },
+  ]);
+  const keyring = JSON.parse(fs.readFileSync(keyringPath(directory), 'utf8'));
+  const nextId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  keyring.activeKeyId = nextId;
+  keyring.keys[nextId] = Buffer.alloc(32, 9).toString('base64');
+  fs.writeFileSync(keyringPath(directory), JSON.stringify(keyring), { mode: 0o600 });
+
+  await expect(ingestFrontOutcomeJournal({ directory })).resolves.toMatchObject({ events: 1, interrupted: 0 });
+  expect(db.get('SELECT state FROM frontRequestOutcomes WHERE frontIngressId=?', [INGRESS])).toEqual({ state: 'pending' });
+});
+
+it('fails closed for plain SHA, unknown auth keys, malformed keyrings, symlinks, and permissive keyring files', async () => {
+  const plainDirectory = journal([]);
+  const plain = { schemaVersion: 2, kind: 'process-start', clockDomain: CLOCK, recordedAt: AT, authKeyId: AUTH_KEY_ID };
+  plain.receiptId = createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(plain).sort().map((key) => [key, plain[key]])))).digest('hex');
+  fs.writeFileSync(segment(plainDirectory), `${JSON.stringify(plain)}\n`, { mode: 0o600 });
+  await expect(ingestFrontOutcomeJournal({ directory: plainDirectory })).rejects.toThrow('receipt');
+
+  const legacyDirectory = journal([]);
+  const legacy = { schemaVersion: 1, kind: 'process-start', clockDomain: CLOCK, recordedAt: AT };
+  legacy.receiptId = createHash('sha256').update(JSON.stringify(Object.fromEntries(Object.keys(legacy).sort().map((key) => [key, legacy[key]])))).digest('hex');
+  fs.writeFileSync(segment(legacyDirectory), `${JSON.stringify(legacy)}\n`, { mode: 0o600 });
+  await expect(ingestFrontOutcomeJournal({ directory: legacyDirectory })).rejects.toThrow('receipt');
+
+  const unknownDirectory = journal([]);
+  const unknownId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const unknownKeyring = defaultKeyring();
+  unknownKeyring.keys[unknownId] = Buffer.alloc(32, 9).toString('base64');
+  const unknown = signed({ schemaVersion: 2, kind: 'process-start', clockDomain: CLOCK, recordedAt: AT, authKeyId: unknownId }, unknownKeyring);
+  fs.writeFileSync(segment(unknownDirectory), `${JSON.stringify(unknown)}\n`, { mode: 0o600 });
+  await expect(ingestFrontOutcomeJournal({ directory: unknownDirectory })).rejects.toThrow('receipt');
+
+  const malformedDirectory = journal([]);
+  fs.writeFileSync(keyringPath(malformedDirectory), '{"schemaVersion":1}', { mode: 0o600 });
+  await expect(ingestFrontOutcomeJournal({ directory: malformedDirectory })).rejects.toThrow('journal keyring');
+
+  const symlinkDirectory = journal([]);
+  const symlinkKeyring = keyringPath(symlinkDirectory);
+  const target = `${symlinkKeyring}.target`;
+  fs.renameSync(symlinkKeyring, target);
+  fs.symlinkSync(target, symlinkKeyring);
+  await expect(ingestFrontOutcomeJournal({ directory: symlinkDirectory })).rejects.toThrow();
+
+  const permissiveDirectory = journal([]);
+  fs.chmodSync(keyringPath(permissiveDirectory), 0o644);
+  await expect(ingestFrontOutcomeJournal({ directory: permissiveDirectory })).rejects.toThrow('mode-0600 regular file');
 });
