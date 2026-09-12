@@ -208,7 +208,7 @@ function _refreshProjectId(provider, connectionId, accessToken, options = {}) {
  *
  * @param {string} connectionId
  * @param {object} newCredentials
- * @returns {Promise<boolean>}
+ * @returns {Promise<object>} the authoritative stored connection revision
  */
 export async function updateProviderCredentials(connectionId, newCredentials, options = {}) {
   options.signal?.throwIfAborted();
