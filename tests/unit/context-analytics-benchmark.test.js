@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assessBenchmarkAffinity,
+  benchmarkReceiptSettings,
   evaluateGrowthQualification,
   parseCpuList,
   validateGrowthMarker,
@@ -65,6 +66,33 @@ describe("context analytics growth benchmark", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects every occupied data directory before opening its database", () => {
+    for (const occupiedPath of ["sentinel.txt", join("db", "data.sqlite")]) {
+      const dataDir = mkdtempSync(join(tmpdir(), "tokenproxy-growth-occupied-test-"));
+      const existing = join(dataDir, occupiedPath);
+      const receipt = join(dataDir, "receipt.json");
+      try {
+        mkdirSync(join(existing, ".."), { recursive: true });
+        writeFileSync(existing, "preserve-me");
+        const result = spawnSync(process.execPath, [join(process.cwd(), "tests/qa/economics-analytics-seed.mjs"), `--data-dir=${dataDir}`, "--rows=1", receipt], {
+          cwd: process.cwd(), encoding: "utf8",
+        });
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("seed data directory must be empty or absent");
+        expect(readFileSync(existing, "utf8")).toBe("preserve-me");
+        expect(existsSync(receipt)).toBe(false);
+        expect(existsSync(join(dataDir, ".tokenproxy-economics-fixture.json"))).toBe(false);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("retains affinity evidence in standard benchmark receipt settings", () => {
+    const affinityPreflight = { accepted: true, allowedCores: [4, 5], selectedCores: [4, 5], busyCores: [] };
+    expect(benchmarkReceiptSettings(affinityPreflight)).toEqual({ cacheTtlMs: 1000, serviceDeadlineMs: 15000, affinityPreflight });
   });
 
   it("qualifies exactly thirty-two deliveries and sixteen bounded computations", () => {

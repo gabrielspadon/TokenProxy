@@ -1,7 +1,7 @@
 // Builds an isolated synthetic fixture in a separate process so profiling RSS
 // starts from a reopened production-shaped database.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,7 +12,10 @@ if(!dataDirArg||!rowsArg||!output)throw new Error('usage: economics-analytics-se
 const dataDir=resolve(dataDirArg.slice('--data-dir='.length));
 const rowsPerTable=Number(rowsArg.slice('--rows='.length));
 if(!Number.isSafeInteger(rowsPerTable)||rowsPerTable<1||rowsPerTable>1000000)throw new Error('rows must be 1..1000000');
-mkdirSync(dataDir,{recursive:true});
+if(existsSync(dataDir)){
+  const state=lstatSync(dataDir);
+  if(!state.isDirectory()||state.isSymbolicLink()||readdirSync(dataDir).length)throw new Error('seed data directory must be empty or absent');
+}else mkdirSync(dataDir,{recursive:true});
 process.env.DATA_DIR=dataDir;
 process.chdir(resolve(fileURLToPath(new URL('../..',import.meta.url))));
 const started=performance.now();

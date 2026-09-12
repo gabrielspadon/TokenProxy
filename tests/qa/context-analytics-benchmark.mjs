@@ -64,6 +64,10 @@ export function validateGrowthMarker(marker){
   return marker;
 }
 
+export function benchmarkReceiptSettings(affinityPreflight=null){
+  return {cacheTtlMs:1000,serviceDeadlineMs:15000,affinityPreflight};
+}
+
 const exactGrowthParity=(value,rowsPerTable)=>value?.requestRows===rowsPerTable&&value?.usageRows===rowsPerTable
   &&value?.projectionRows===rowsPerTable&&value?.missingRows===0&&value?.orphanRows===0;
 export function evaluateGrowthQualification({deliveries,computations,writerCoverage,failures,writerFailures,beforeParity,afterParity,plans,rowsPerTable,peakRssBytes,deadlineMs}){
@@ -281,7 +285,7 @@ if(economicsMode){
       missingRows:db.get('SELECT COUNT(*) AS n FROM usageHistory u LEFT JOIN usageEconomicsProjection p ON p.id=u.id WHERE p.id IS NULL').n,
       orphanRows:db.get('SELECT COUNT(*) AS n FROM usageEconomicsProjection p LEFT JOIN usageHistory u ON u.id=p.id WHERE u.id IS NULL').n});
     const receipt=(status,currentProfile=null)=>({fixture:{version:'economics-analytics-v1',rowsPerTable,requestRows:rowsPerTable,usageRows:rowsPerTable,prebuilt:!ownsTemporary},
-      settings:{cacheTtlMs:1000,serviceDeadlineMs:15000},progress:{status,completedSamples:samples.length,scheduledSamples,completedProfiles:profileRows().length,scheduledProfiles,currentProfile},
+      settings:benchmarkReceiptSettings(affinityPreflight),progress:{status,completedSamples:samples.length,scheduledSamples,completedProfiles:profileRows().length,scheduledProfiles,currentProfile},
       profiles:profileRows(),samples,
       syntheticWriteHealth:{writes,pendingReadOverlappingWrites:overlappingWrites,failures:writerFailures,p95Ms:percentile(writeDurations,0.95),maxMs:writeDurations.length?Math.max(...writeDurations):null,maxTickDelayMs:maxWriterTickDelayMs,
         computations:writerComputationCoverage.length,minimumCommittedWritesWithinWorkerSnapshot:writerComputationCoverage.length?Math.min(...writerComputationCoverage.map(row=>row.committedWritesWithinWorkerSnapshot)):null,
@@ -320,7 +324,7 @@ if(economicsMode){
       const qualification=evaluateGrowthQualification({deliveries:samples,computations,writerCoverage:writerComputationCoverage,failures,writerFailures,
         beforeParity,afterParity,plans,rowsPerTable,peakRssBytes:peakRss,deadlineMs:15000});
       const finalReceipt={fixture:{version:'economics-analytics-v1',rowsPerTable,requestRows:beforeParity.requestRows,usageRows:beforeParity.usageRows,
-          prebuilt:true,completed:true,freshProcessOnly:true},settings:{cacheTtlMs:1000,serviceDeadlineMs:15000,affinityPreflight},
+          prebuilt:true,completed:true,freshProcessOnly:true},settings:benchmarkReceiptSettings(affinityPreflight),
         progress:{status:qualification.passed?'qualification-passed':'qualification-failed',completedDeliveries:samples.length,scheduledDeliveries:32,
           completedComputations:computations.length,scheduledComputations:16},labels:qualification.labels,latencyQualified:false,qualification,deliveries:samples,computations,correctnessOracles,
         syntheticWriteHealth:{writes,failures:writerFailures,computations:writerComputationCoverage.length,committedSnapshots:writerComputationCoverage.filter(row=>row.committedWritesWithinWorkerSnapshot>=1).length,
