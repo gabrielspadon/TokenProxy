@@ -337,6 +337,11 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   }
 
   delete result.input;
+  // `instructions` already became the leading system message above, so the
+  // Responses-only field is removed after translation rather than forwarded on
+  // a Chat Completions body. The sibling conversion in formats/responsesApi.js
+  // already does this.
+  delete result.instructions;
   delete result.include;
   delete result.prompt_cache_key;
   delete result.store;
