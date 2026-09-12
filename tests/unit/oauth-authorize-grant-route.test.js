@@ -36,14 +36,15 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("mints an independent state and PKCE pair on every claude authorize, bound to the caller callback", async () => {
-  const first = await (await authorize("claude")).json();
-  const second = await (await authorize("claude")).json();
+it("mints an independent state and PKCE pair on every claude authorize, bound to the registered hosted callback", async () => {
+  const first = await (await authorize("claude", "https://rtx.sawfish-hydra.ts.net:20443/callback")).json();
+  const second = await (await authorize("claude", "https://rtx.sawfish-hydra.ts.net:20443/callback")).json();
 
   const url = new URL(first.authUrl);
   expect(url.origin + url.pathname).toBe("https://claude.ai/oauth/authorize");
-  expect(url.searchParams.get("redirect_uri")).toBe(DASHBOARD_CALLBACK);
-  expect(first.redirectUri).toBe(DASHBOARD_CALLBACK);
+  expect(url.searchParams.get("redirect_uri")).toBe("https://platform.claude.com/oauth/code/callback");
+  expect(first.redirectUri).toBe("https://platform.claude.com/oauth/code/callback");
+  expect(first.manualCode).toBe(true);
   expect(url.searchParams.get("code_challenge_method")).toBe("S256");
   // The challenge in the URL belongs to the verifier the body hands back, so the
   // pair the grant later exchanges with is the pair the provider was shown.

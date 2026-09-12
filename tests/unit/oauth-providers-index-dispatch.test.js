@@ -50,6 +50,11 @@ describe('getProvider / getProviderNames', () => {
 });
 
 describe('generateAuthData', () => {
+  it('rejects a Claude code carrying another grant state before exchange', async () => {
+    const mod = await loadIndex();
+    await expect(mod.PROVIDERS.claude.exchangeToken(mod.PROVIDERS.claude.config, 'code#other-state',
+      'https://platform.claude.com/oauth/code/callback', 'verifier', 'current-state')).rejects.toThrow('different sign-in');
+  });
   it('returns a null authUrl and provider callback metadata for a device_code provider', async () => {
     const mod = await loadIndex();
     const name = mod
@@ -73,7 +78,7 @@ describe('generateAuthData', () => {
         (n) =>
           mod.PROVIDERS[n].flowType === 'authorization_code_pkce' &&
           !mod.PROVIDERS[n].prepareConfig &&
-          !mod.PROVIDERS[n].loopbackRedirectUri
+          !mod.PROVIDERS[n].loopbackRedirectUri && !mod.PROVIDERS[n].manualRedirectUri
       );
     const plainName = mod
       .getProviderNames()
@@ -81,7 +86,7 @@ describe('generateAuthData', () => {
         (n) =>
           mod.PROVIDERS[n].flowType === 'authorization_code' &&
           !mod.PROVIDERS[n].prepareConfig &&
-          !mod.PROVIDERS[n].loopbackRedirectUri
+          !mod.PROVIDERS[n].loopbackRedirectUri && !mod.PROVIDERS[n].manualRedirectUri
       );
 
     for (const [name, expectChallenge] of [
@@ -123,13 +128,13 @@ describe('generateAuthData', () => {
       expect(loopback.pathname).toBe(provider.callbackPath);
       spy.mockRestore();
     }
-    // A provider with no fixed loopback keeps the dashboard origin, which is what the
-    // same-origin /callback relay needs.
+    // Claude uses its registered hosted callback on local and remote dashboards.
     expect(mod.PROVIDERS.claude.loopbackRedirectUri).toBeUndefined();
     const claude = await mod.generateAuthData('claude', 'http://127.0.0.1:20129/callback');
-    expect(claude.redirectUri).toBe('http://127.0.0.1:20129/callback');
+    expect(claude.redirectUri).toBe('https://platform.claude.com/oauth/code/callback');
+    expect(claude.manualCode).toBe(true);
     expect(new URL(claude.authUrl).searchParams.get('redirect_uri')).toBe(
-      'http://127.0.0.1:20129/callback'
+      'https://platform.claude.com/oauth/code/callback'
     );
   });
 
@@ -181,7 +186,7 @@ describe('exchangeTokens', () => {
     expect(ex).toHaveBeenCalledWith(
       provider.config,
       'code-1',
-      'http://127.0.0.1:1/cb',
+      provider.manualRedirectUri || 'http://127.0.0.1:1/cb',
       'ver-1',
       'state-1',
       {}
