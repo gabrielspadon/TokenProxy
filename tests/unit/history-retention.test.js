@@ -3,11 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
 
 const priorDataDir = process.env.DATA_DIR;
 const oldTime = '2023-11-14T00:00:00.000Z';
 const fixtureKey = 'history-retention-fixture-key';
-let tempDir, db, saveRequestStats, ingestContextEvent, cleanupContext, retentionDays, validateAnalyticsQuery;
+let tempDir, db, saveRequestStats, ingestContextEvent, cleanupContext, retentionDays, validateAnalyticsQuery, visible;
 
 beforeEach(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenproxy-history-retention-'));
@@ -20,6 +21,7 @@ beforeEach(async () => {
   ({ ingestContextEvent } = await import('../../src/lib/db/repos/contextClientEventsRepo.js'));
   ({ cleanupContext, retentionDays } = await import('../../src/lib/db/repos/contextRepo.js'));
   ({ validateAnalyticsQuery } = await import('../../src/lib/db/analytics/contextQueries.mjs'));
+  visible = createVisibleTelemetryFixture(db, 'history-retention');
   db.run('INSERT INTO apiKeys(id,key,createdAt) VALUES(?,?,?)', ['fixture-key-id', fixtureKey, oldTime]);
   db.run('INSERT INTO contextSessions(id,sessionHash,identitySource,firstSeenAt,lastSeenAt) VALUES(?,?,?,?,?)',
     [1, 'fixture-session', 'explicit', oldTime, oldTime]);
@@ -69,7 +71,12 @@ describe('explicit history retention policy', () => {
     'keeps every old evidence row byte-for-byte on the first request with %j', async (policy) => {
       settings(policy);
       const before = historicalEvidence();
-      await saveRequestStats({ id: 'new-request', timestamp: new Date().toISOString(), status: 'success', tokens: { prompt_tokens: 2 } });
+      // The public overview below counts through telemetryFilterSql, which
+      // excludes test-origin rows. This row is written by the real producer, so
+      // it is quarantined like any other test write; the fixture re-labels only
+      // this operation's own row as an identified synthetic import. The seeded
+      // historical row is untouched, so the expected 2 is seeded + this one.
+      await visible(() => saveRequestStats({ id: 'new-request', timestamp: new Date().toISOString(), status: 'success', tokens: { prompt_tokens: 2 } }));
       expect(db.get('SELECT id FROM requestStats WHERE id=?', ['new-request'])).toBeTruthy();
       expect(historicalEvidence()).toEqual(before);
       const { getContextOverview } = await import('../../src/lib/db/repos/contextRepo.js');

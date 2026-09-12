@@ -4,10 +4,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { createVisibleTelemetryFixture } from '../fixtures/visible-telemetry.mjs';
+
+// Public analytics deliberately exclude dataOrigin='test' (usageRepo.js's
+// telemetryFilterSql). This suite drives the REAL producer, so every row it
+// writes is test-origin and invisible to getUsageStats/getUsageHistory. The
+// fixture re-labels ONLY the rows each operation just created, after they reach
+// a durable terminal state, so the counts below are read back through the
+// unmodified production filter rather than around it.
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
 let db;
+let adapter;
+let visible;
 
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenproxy-concurrent-'));
@@ -15,6 +25,9 @@ beforeAll(async () => {
   vi.resetModules();
   db = await import('@/lib/db/index.js');
   await db.initDb();
+  const { getAdapter } = await import('@/lib/db/driver.js');
+  adapter = await getAdapter();
+  visible = createVisibleTelemetryFixture(adapter, 'db-concurrent');
 });
 
 afterAll(() => {
@@ -39,7 +52,7 @@ describe('DB Concurrency — atomic safety', () => {
         })
       );
     }
-    await Promise.all(promises);
+    await visible(() => Promise.all(promises));
 
     const stats = await db.getUsageStats('24h');
     expect(stats.totalRequests).toBe(N);
@@ -99,7 +112,7 @@ describe('DB Concurrency — atomic safety', () => {
       ops.push(db.setModelAlias(`a-${i}`, `target-${i}`));
       ops.push(db.disableModels('openai', [`d-${i}`]));
     }
-    await Promise.all(ops);
+    await visible(() => Promise.all(ops));
 
     const aliases = await db.getModelAliases();
     expect(Object.keys(aliases).filter((k) => k.startsWith('a-')).length).toBe(50);
@@ -191,7 +204,7 @@ describe('DB Concurrency — atomic safety', () => {
         })
       );
     }
-    await Promise.all(promises);
+    await visible(() => Promise.all(promises));
 
     const stats = await db.getUsageStats('7d');
     const g = stats.byProvider.google;

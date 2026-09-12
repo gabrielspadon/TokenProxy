@@ -26,6 +26,18 @@ describe("CLI build cleanup", () => {
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(stagedOutputDir, { recursive: true });
       fs.copyFileSync(buildScript, path.join(scriptsDir, "build-cli.js"));
+      // build-cli.js requires ../../scripts/build-identity.cjs, which in this
+      // layout is <fixtureDir>/scripts/. Without it the spawned build dies at
+      // require time, before the compiler shim runs -- and MODULE_NOT_FOUND
+      // also exits 1, so the status check passed while the observation file was
+      // never written. Stage the real module rather than a stub so the fixture
+      // keeps exercising the actual build entry point.
+      const repoScriptsDir = path.join(fixtureDir, "scripts");
+      fs.mkdirSync(repoScriptsDir, { recursive: true });
+      fs.copyFileSync(
+        path.join(rootDir, "scripts/build-identity.cjs"),
+        path.join(repoScriptsDir, "build-identity.cjs"),
+      );
       fs.writeFileSync(path.join(cliDir, "package.json"), '{"version":"0.0.0"}\n');
       fs.writeFileSync(path.join(fixtureDir, "package.json"), '{"version":"0.0.0"}\n');
       fs.writeFileSync(path.join(stagedOutputDir, "stale-client-artifact.js"), "stale\n");

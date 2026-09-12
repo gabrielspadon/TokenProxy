@@ -10,10 +10,19 @@ const src = readFileSync(new URL("../../custom-server.js", import.meta.url), "ut
 // an unhandled rejection in the log even though the request simply went away.
 describe("a client disconnect is not reported as a server error (#3564)", () => {
   it("catches the handler rejection instead of leaving it unhandled", () => {
-    expect(src).toContain("const result = handler(req, res);");
-    expect(src).toContain("if (isClientDisconnect(err, req, res)) return;");
+    // BEHAVIOUR, not call text. The handler is now invoked through the live
+    // safety scanner when one is installed, so pinning the bare
+    // `handler(req, res)` spelling asserted a refactor had not happened rather
+    // than that a disconnect is still swallowed. What must hold is that the
+    // handler's result is awaited, a disconnect returns quietly, and anything
+    // else is rethrown.
+    const wrap = src.slice(src.indexOf("const safety = globalThis.__tokenproxyLiveSafety;"));
+    const body = wrap.slice(0, wrap.indexOf("// Next creates one server"));
+    expect(body).toContain("handler(req, res)");
+    expect(body).toContain("typeof result.catch === 'function'");
+    expect(body).toContain("if (isClientDisconnect(err, req, res)) return;");
     // Anything that is NOT a disconnect must still surface.
-    expect(src).toContain("throw err;");
+    expect(body).toContain("throw err;");
   });
 
   it("recognises every shape Node reports an abandoned request as", () => {
