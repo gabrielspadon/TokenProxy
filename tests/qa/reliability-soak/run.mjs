@@ -128,11 +128,22 @@ async function waitQuiet(socket, timeoutMs = 10_000) {
   throw new Error(`front never quiesced (${JSON.stringify(status)})`);
 }
 
+export function hasStreamFailureFrame(output) {
+  return output.split(/\r?\n\r?\n/u).some((frame) => {
+    if (/^event:\s*error\s*$/mu.test(frame)) return true;
+    const data = frame.split(/\r?\n/u).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n');
+    try {
+      const value = JSON.parse(data);
+      return Boolean(value && typeof value === 'object' && (value.type === 'error' || value.type === 'response.failed' || value.error));
+    } catch { return false; }
+  });
+}
+
 export async function clientRequest({ baseUrl, authorization, id, scenario, phase, timeoutMs = 45_000 }) {
   const started = performance.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('request deadline')), timeoutMs);
-  const row = { id, case: scenario, phase, state: 'failed', status: null, frontIngressId: null, logicalRequestId: null, receivedContent: false, terminalFrame: false };
+  const row = { id, case: scenario, phase, state: 'failed', status: null, frontIngressId: null, logicalRequestId: null, receivedContent: false, terminalFrame: false, explicitErrorFrame: false };
   try {
     const streaming = ['stream', 'sustained', 'cancel', 'stream-reset'].includes(scenario);
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -164,6 +175,7 @@ export async function clientRequest({ baseUrl, authorization, id, scenario, phas
           if (output.length > 64 * 1024) throw new Error('fixture response too large');
           row.receivedContent = output.includes('soak-content');
           row.terminalFrame = output.includes('[DONE]');
+          row.explicitErrorFrame = hasStreamFailureFrame(output);
           if (scenario === 'cancel' && row.receivedContent) { await reader.cancel(); controller.abort(); break; }
         }
       } catch (error) {
@@ -172,9 +184,12 @@ export async function clientRequest({ baseUrl, authorization, id, scenario, phas
       }
       if (!row.receivedContent) throw new Error('stream lost fixture content');
       if (scenario === 'stream-reset') {
-        if (row.terminalFrame || !row.transportTerminated) throw new Error('abrupt provider stream became an apparent completed stream');
+        if (!row.explicitErrorFrame && (row.terminalFrame || !row.transportTerminated)) throw new Error('abrupt provider stream became an apparent completed stream');
         if (row.replaySafe === 'true') throw new Error('partial generation incorrectly marked replay safe');
-      } else if (scenario !== 'cancel' && !row.terminalFrame) throw new Error('stream lacks terminal frame');
+      } else if (scenario !== 'cancel') {
+        if (row.explicitErrorFrame) throw new Error('healthy provider stream ended in an explicit error');
+        if (!row.terminalFrame) throw new Error('stream lacks terminal frame');
+      }
     } else {
       const body = await response.json();
       if (response.status !== 200 || body.choices?.[0]?.message?.content !== 'soak-content') throw new Error('successful JSON body mismatch');
@@ -400,6 +415,7 @@ export async function runSoak(config) {
   } catch (error) { receipt.errors.push(error.message); if (error.receipt) receipt.startupFailure = error.receipt; }
   finally {
     clearInterval(interval);
+    while (sampling) await delay(10);
     // Every terminal check runs even when workload, restart, or preceding cleanup failed.
     // Close front first, then leave the running gateway time to import its final journal.
     if (front) {

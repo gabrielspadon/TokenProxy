@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CASES, FULL_DURATION_MS, FULL_REQUESTS, qualification, reconcile, resourceSummary, slope } from '../qa/reliability-soak/evidence.mjs';
-import { artifactTreeSha256, clientRequest, configuration } from '../qa/reliability-soak/run.mjs';
+import { artifactTreeSha256, clientRequest, configuration, hasStreamFailureFrame } from '../qa/reliability-soak/run.mjs';
 
 const dirs = [];
 afterEach(() => { vi.unstubAllGlobals(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -120,5 +120,14 @@ describe('client observed stream truth', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('data: {"content":"soak-content"}\n\ndata: [DONE]\n\n', { status: 200 })));
     expect(await clientRequest({ baseUrl: 'http://127.0.0.1:1', authorization: 'fixture', id: 'deterministic-1', scenario: 'stream-reset', phase: 'deterministic' }))
       .toMatchObject({ state: 'failed', error: 'abrupt provider stream became an apparent completed stream' });
+  });
+  it('accepts an explicit SSE error after reset without demanding a transport exception', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('data: {"content":"soak-content"}\n\nevent: error\ndata: {"error":{"message":"upstream reset"}}\n\ndata: [DONE]\n\n', { status: 200 })));
+    expect(await clientRequest({ baseUrl: 'http://127.0.0.1:1', authorization: 'fixture', id: 'deterministic-1', scenario: 'stream-reset', phase: 'deterministic' }))
+      .toMatchObject({ state: 'passed', explicitErrorFrame: true, terminalFrame: true });
+  });
+  it('does not misclassify literal error text as a failure event', () => {
+    expect(hasStreamFailureFrame('data: {"choices":[{"delta":{"content":"event: error"}}]}\n\n')).toBe(false);
+    expect(hasStreamFailureFrame('data: {"type":"response.failed","response":{"error":{}}}\n\n')).toBe(true);
   });
 });
