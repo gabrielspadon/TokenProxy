@@ -44,7 +44,6 @@ import {
   SORTS,
   accountCategory,
   categorySummary,
-  accountHeld,
   accountStateWord,
   credentialModes,
   filterAccounts,
@@ -56,7 +55,6 @@ import {
   accountControlBaseline,
   accountControlEvidence,
   accountControlId,
-  accountControlState,
   mergeAccountControls,
   readAccountControls,
   saveAccountControls,
@@ -112,19 +110,12 @@ const MODE_WORD = {
   paste: 'Pasted token',
 };
 
-// Connections keeps one distinction the Capacity board folds away: an account
-// whose qualification has never been established is not ready, it is unknown,
-// and this page exists to say which.
-const unchecked = (account, state) => state === 'Not checked' || !account.status;
-// A held account is KNOWN whether or not a qualification probe ever ran, so it
-// keeps its own word instead of collapsing into "unknown". That exception used
-// to be spelled out as its own list of state names here, which is how a page
-// carrying a private copy of the grouping rules ends up disagreeing with the
-// board it mirrors: the copy still read a quota pause as the operator's own.
-// accountHeld answers the same question from the one model.
-const known = (account, now) => accountHeld(account, now) || !unchecked(account, accountControlState(account, now));
 const bucketOf = accountCategory;
-const wordOf = (account, now) => (known(account, now) ? accountStateWord(account, now) : 'Not checked');
+// One vocabulary with Capacity. An unchecked account is Unknown, which is what
+// `accountStateWord` already returns for it; saying "Not checked" here made
+// Connections show a fifth category word that the filter chips never offered.
+// The distinction survives in the tooltip and in `accountStateReason`.
+const wordOf = (account, now) => accountStateWord(account, now);
 const summaryOf = categorySummary;
 
 const toast = (color, message, title) =>

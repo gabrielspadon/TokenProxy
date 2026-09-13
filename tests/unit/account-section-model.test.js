@@ -76,7 +76,7 @@ describe('depletion', () => {
     ]);
     expect(accountDepleted(mixed, NOW)).toBe(true);
     expect(accountSection(mixed, NOW)).toBe('resting');
-    expect(accountStateWord(mixed, NOW)).toBe('Out of quota');
+    expect(accountStateWord(mixed, NOW)).toBe('Cooldown');
   });
   it('lets a sub-quota run dry without benching the whole connection', () => {
     // spark_weekly and `weekly opus (7d)` are sub-quotas of one plan, not the

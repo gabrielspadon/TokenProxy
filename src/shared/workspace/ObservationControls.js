@@ -21,10 +21,11 @@ const BEHAVIORS = [
 // Said where the choice is made, so the operator does not have to open a
 // tooltip to learn whether the screen is reading. Per-panel freshness stays
 // authoritative for when each source last succeeded.
+// Short enough for one rail line. The full sentence is the tooltip above.
 const BEHAVIOR_NOTE = {
-  summary: 'Reads each source once when a page opens. Refresh to read again.',
-  live: 'Refreshes automatically and follows supported streams. Refreshes slow under load.',
-  paused: 'No repeating reads or streams. Shown values are held until you refresh.',
+  summary: 'Reads once per page open.',
+  live: 'Refreshes and follows streams.',
+  paused: 'Held until you refresh.',
 };
 const utcClock = (value) => `${new Date(value).toISOString().slice(11, 19)} UTC`;
 
@@ -90,7 +91,7 @@ export function ObservationControls() {
       </Tooltip>
       <p className={local.behavior}>
         {snapshot && observations.mode !== 'paused'
-          ? 'Reads the captured dataset once. Live updates are unavailable for it.'
+          ? 'Captured dataset, read once.'
           : BEHAVIOR_NOTE[observations.mode]}
       </p>
       {observations.pausedAt && (

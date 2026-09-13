@@ -64,15 +64,16 @@ describe('exactly four categories, and Low quota is not one of them', () => {
   it('keeps a low window Active, because it can still take work', () => {
     const low = account({}, [{ key: 'weekly', remainingPercentage: 8, resetAt: minutes(3000) }]);
     expect(accountCategory(low, NOW)).toBe('active');
-    // The low reading is not lost: it is evidence, on the meter and in the word.
-    expect(accountStateWord(low, NOW)).toBe('Low quota');
+    // The card word is one of the four categories. The low reading is not lost:
+    // it stays on the meter, and in the reason sentence beside the card.
+    expect(accountStateWord(low, NOW)).toBe('Active');
     expect(windowLevel({ remaining: 8, threshold: 0, unlimited: false }, NOW)).toBe('low');
   });
 
   it('files a depleted window under Cooldown, since a clock clears it', () => {
     const empty = account({}, [{ key: 'weekly', remainingPercentage: 0, resetAt: minutes(600) }]);
     expect(accountCategory(empty, NOW)).toBe('cooldown');
-    expect(accountStateWord(empty, NOW)).toBe('Out of quota');
+    expect(accountStateWord(empty, NOW)).toBe('Cooldown');
   });
 });
 
@@ -84,7 +85,7 @@ describe('ordered precedence, one rung at a time', () => {
       { key: 'weekly', remainingPercentage: 0, resetAt: minutes(600) },
     ]);
     expect(accountCategory(row, NOW)).toBe('unknown');
-    expect(accountStateWord(row, NOW)).toBe('No credential');
+    expect(accountStateWord(row, NOW)).toBe('Unknown');
   });
 
   it('separates the operator own hold from a failure that switched the account off', () => {
@@ -95,14 +96,14 @@ describe('ordered precedence, one rung at a time', () => {
 
     const killed = account({ isActive: false, errorCode: 401, lastError: 'x-api-key header is required' });
     expect(accountCategory(killed, NOW)).toBe('unknown');
-    expect(accountStateWord(killed, NOW)).toBe('Needs sign-in');
+    expect(accountStateWord(killed, NOW)).toBe('Unknown');
   });
 
   it('keeps a timed hold in Cooldown and a hold needing a person in Unknown', () => {
     expect(accountCategory(account({ status: 'cooldown' }), NOW)).toBe('cooldown');
     const quotaPause = account({ quotaPauseThresholds: { weekly: 80 } });
     expect(accountCategory(quotaPause, NOW)).toBe('cooldown');
-    expect(accountStateWord(quotaPause, NOW)).toBe('Quota pause');
+    expect(accountStateWord(quotaPause, NOW)).toBe('Cooldown');
     // Degraded needs a test run by a person, so no clock returns it.
     expect(accountCategory(account({ status: 'degraded' }), NOW)).toBe('unknown');
   });
@@ -148,9 +149,14 @@ describe('Unknown is about evidence, never about quota', () => {
       'unknown',
       'unknown',
     ]);
+    // The word is the category, so all four read "Unknown". That is exactly why
+    // the reason must stay distinct: it is now the only surface that separates a
+    // missing credential from a 401, a 403 and an account never checked.
     const words = rows.map((row) => accountStateWord(row, NOW));
-    expect(new Set(words).size).toBe(words.length);
-    for (const row of rows) expect(accountStateReason(row, NOW)).toBeTruthy();
+    expect(new Set(words)).toEqual(new Set(['Unknown']));
+    const reasons = rows.map((row) => accountStateReason(row, NOW));
+    for (const reason of reasons) expect(reason).toBeTruthy();
+    expect(new Set(reasons).size).toBe(reasons.length);
   });
 });
 
