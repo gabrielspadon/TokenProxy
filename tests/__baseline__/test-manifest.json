@@ -1137,6 +1137,21 @@
       "the four accounts that were all reading \"Paused\" on 2026-09-11 gives each card a reason drawn from what actually switched it off",
       "the four accounts that were all reading \"Paused\" on 2026-09-11 reads none of them as Paused and files none of them under Cooling down"
     ],
+    "tests/unit/account-state-word-vocabulary.test.js": [
+      "the card word is always one of the four categories 401 disabled reads as a category, not a private word",
+      "the card word is always one of the four categories 403 disabled reads as a category, not a private word",
+      "the card word is always one of the four categories cooldown reads as a category, not a private word",
+      "the card word is always one of the four categories degraded reads as a category, not a private word",
+      "the card word is always one of the four categories depleted window reads as a category, not a private word",
+      "the card word is always one of the four categories draining reads as a category, not a private word",
+      "the card word is always one of the four categories healthy reads as a category, not a private word",
+      "the card word is always one of the four categories low window reads as a category, not a private word",
+      "the card word is always one of the four categories missing credential reads as a category, not a private word",
+      "the card word is always one of the four categories never checked reads as a category, not a private word",
+      "the card word is always one of the four categories offers exactly the four the user asked for",
+      "the card word is always one of the four categories operator hold reads as a category, not a private word",
+      "the card word is always one of the four categories quota pause reads as a category, not a private word"
+    ],
     "tests/unit/account-unavailability-reset-precedence-3075.test.js": [
       "account reset metadata precedence (PR #3075) does not persist or replay a malformed request with future reset metadata",
       "account reset metadata precedence (PR #3075) retains a precise future reset for a genuine 429 rate limit"
